@@ -231,8 +231,8 @@ void TBellDolpic::calcRootMatrix()
 	TMapObjBase::calcRootMatrix();
 	J3DModel* model = getModel();
 	Mtx temp;
-	PSMTXRotAxisRad(temp, &unk140, DEG_TO_RAD(unk14C));
-	PSMTXConcat(model->getBaseTRMtx(), temp, model->getBaseTRMtx());
+	MTXRotAxisRad(temp, &unk140, DEG_TO_RAD(unk14C));
+	MTXConcat(model->getBaseTRMtx(), temp, model->getBaseTRMtx());
 }
 
 void TBellDolpic::ring(const JGeometry::TVec3<f32>& pos)

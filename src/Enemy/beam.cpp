@@ -91,8 +91,8 @@ void TConeBeam::calcVertices(int count)
 	} else {
 		local_134.cross(local_140, local_128);
 
-		PSVECNormalize(&local_140, &local_140);
-		PSVECNormalize(&local_134, &local_134);
+		VECNormalize(&local_140, &local_140);
+		VECNormalize(&local_134, &local_134);
 	}
 
 	if (mBGCheckData == nullptr) {
@@ -113,11 +113,11 @@ void TConeBeam::calcVertices(int count)
 	} else {
 		JGeometry::TPartition3<f32> partition(mBGCheckData->getNormal(),
 		                                      mBGCheckData->getPlaneDistance());
-		f32 local_128Len = PSVECMag(&local_128);
+		f32 local_128Len = VECMag(&local_128);
 		f32 angle        = matan(local_128Len, mScale)
 		            * (360.0f / 65536.0f); // this is SHORT2DEGANGLE constant
 
-		PSVECNormalize(&local_128, &local_128);
+		VECNormalize(&local_128, &local_128);
 
 		for (int i = 0; i <= mVtxCount; i++) {
 			f32 sinA = MsSin(i * (360.0f / mVtxCount));

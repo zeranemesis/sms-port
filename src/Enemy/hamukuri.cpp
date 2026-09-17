@@ -100,7 +100,7 @@ void THamuKuriLauncher::stateLaunch()
 			} else {
 				local_3c.set(0.0f, 0.0f, 0.0f);
 			}
-			PSMTXMultVec(afStack_6c, &local_3c, &local_3c);
+			MTXMultVec(afStack_6c, &local_3c, &local_3c);
 			hamukuri->resetSRTV(mPosition, local_30, hamukuri->mScaling,
 			                    local_3c);
 		}

@@ -1075,7 +1075,7 @@ void TEggYoshi::load(JSUMemoryInputStream& stream)
 	    J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
 	        | (1 << J3DMLF_TevStageNumShift));
 	MtxPtr src = getModel()->getAnmMtx(0);
-	PSMTXCopy(src, unk148->getModel()->getBaseTRMtx());
+	MTXCopy(src, unk148->getModel()->getBaseTRMtx());
 	unk148->setBck("eggyoshi_fukidashi_wait");
 	unk148->setBtp("eggyoshi_fukidashi");
 	unk148->getFrameCtrl(ANM_TYPE_BTP)->setRate(0.0f);
@@ -1165,7 +1165,7 @@ void TItemNozzle::calcRootMatrix()
 	if (isState(STATE_HOLDING) && mHolder != nullptr) {
 		MtxPtr src = mHolder->getTakingMtx();
 		MtxPtr mtx = getModel()->getAnmMtx(0);
-		PSMTXCopy(src, mtx);
+		MTXCopy(src, mtx);
 
 		if (isActorType(0x20000022))
 			mtx[1][3] += 50.0f;

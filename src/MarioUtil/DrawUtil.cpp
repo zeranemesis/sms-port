@@ -137,18 +137,18 @@ void TSilhouette::perform(u32 cue, JDrama::TGraphics* graphics)
 		C_MTXLightFrustum(afStack_80, -1.0f, 1.0f, -1.0f, 1.0f, 10.0f, 0.5f,
 		                  0.5f, 0.5f, 0.5f);
 		Mtx afStack_b0;
-		PSMTXRotRad(afStack_b0, 0x58, 1.5707964f);
+		MTXRotRad(afStack_b0, 0x58, 1.5707964f);
 		Mtx afStack_50;
-		PSMTXConcat(afStack_80, afStack_b0, afStack_50);
+		MTXConcat(afStack_80, afStack_b0, afStack_50);
 		Mtx afStack_e0;
-		PSMTXScale(afStack_e0, unk3C, unk3C, unk3C);
+		MTXScale(afStack_e0, unk3C, unk3C, unk3C);
 		Mtx afStack_110;
-		PSMTXTrans(afStack_110, -gpMarioPos->x, 0.0f, -gpMarioPos->z);
+		MTXTrans(afStack_110, -gpMarioPos->x, 0.0f, -gpMarioPos->z);
 		Mtx afStack_140;
-		PSMTXTrans(afStack_140, 1.75f, 1.75f, 0.0f);
-		PSMTXConcat(afStack_e0, afStack_110, afStack_e0);
-		PSMTXConcat(afStack_50, afStack_e0, afStack_50);
-		PSMTXConcat(afStack_140, afStack_50, afStack_50);
+		MTXTrans(afStack_140, 1.75f, 1.75f, 0.0f);
+		MTXConcat(afStack_e0, afStack_110, afStack_e0);
+		MTXConcat(afStack_50, afStack_e0, afStack_50);
+		MTXConcat(afStack_140, afStack_50, afStack_50);
 		GXLoadTexMtxImm(afStack_50, 0x1e, GX_MTX3x4);
 		GXSetNumTexGens(2);
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, 0x3c, 0,

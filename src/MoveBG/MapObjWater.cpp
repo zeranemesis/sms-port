@@ -80,7 +80,7 @@ void TMapObjWaterFilter::perform(u32 cue, JDrama::TGraphics* graphics)
 		Mtx afStack_78;
 		J3DGetTranslateRotateMtx(info, afStack_78);
 		Mtx afStack_a8;
-		PSMTXScale(afStack_a8, mScaling.x, mScaling.y, mScaling.z);
+		MTXScale(afStack_a8, mScaling.x, mScaling.y, mScaling.z);
 		Mtx afStack_48;
 		MTXInverse(graphics->mViewMtx, afStack_48);
 		MTXConcat(afStack_48, afStack_78, afStack_48);

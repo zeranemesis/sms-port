@@ -167,7 +167,7 @@ DEFINE_NERVE(TNerveRHGraphWander, TLiveActor)
 
 		JGeometry::TVec3<f32> dPos = self->getUnkF4().getPoint();
 		dPos.sub(self->getPosition());
-		PSVECNormalize(&dPos, &dPos);
+		VECNormalize(&dPos, &dPos);
 		dPos.scale(self->getMarchSpeed());
 		self->mPosition.add(dPos);
 		return false;

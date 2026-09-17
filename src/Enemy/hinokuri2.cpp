@@ -353,7 +353,7 @@ void THino2Mask::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 
 			{
-				PSMTXIdentity(afStack_58);
+				MTXIdentity(afStack_58);
 				afStack_58[0][3] = unk1C.x;
 				afStack_58[1][3] = unk1C.y;
 				afStack_58[2][3] = unk1C.z;
