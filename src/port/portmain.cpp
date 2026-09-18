@@ -157,6 +157,21 @@ extern "C" int port_main(int argc, char *argv[])
     sms::ui::push_document(std::make_unique<sms::ui::MenuBar>(), false);
     (void)auroraInfo;
 
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+    // generated/ exists (see CMakeLists.txt), so game_recompiled built
+    // successfully - but booting it needs two more things this comment
+    // can't invent: the entry point's guest address, and the real
+    // DOLRECOMP_SYMBOL_* bindings for sms::recomp::dolphin_sdk's
+    // trampolines. Both come from generated/generated_symbols.h, which is
+    // specific to whatever GMSP01 dump produced generated/ and isn't
+    // something this codebase can know in advance. The shape once that
+    // header exists: #include it here, build a CPUState (cpu_init),
+    // sms::recomp::install_host_calls(&cpu), pass its DOLRECOMP_SYMBOL_*
+    // constants to sms::recomp::dolphin_sdk::register_known_dolphin_sdk_calls,
+    // set cpu.pc to the entry symbol, and drive func_<entry>(&cpu) from
+    // run_menu_loop()'s per-frame update instead of just the menu.
+#endif
+
     const bool cleanExit = run_menu_loop();
 
     sms::ui::shutdown();

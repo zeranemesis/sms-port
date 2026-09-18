@@ -57,6 +57,21 @@ include(files.cmake)
 
 source_group("Port" FILES ${PORT_FILES})
 
+# Recompiled game code (docs/recompilation.md) derives from a copyrighted
+# disc image and is never committed - see .gitignore. If
+# tools/port/recompile.py has already been run against a real GMSP01
+# dump, its output lands in generated/ and gets picked up here
+# automatically; nothing to edit in this file to build it. Without that
+# dump - the normal case for a fresh checkout, and for CI - this glob is
+# empty and dolphinjet builds exactly as before (menu shell only).
+file(GLOB DOLPHINJET_GENERATED_GAME_FILES "${CMAKE_CURRENT_SOURCE_DIR}/generated/*.c")
+if (DOLPHINJET_GENERATED_GAME_FILES)
+    message(STATUS "dolphinjet: found generated/ - building recompiled game code")
+    add_library(game_recompiled STATIC ${DOLPHINJET_GENERATED_GAME_FILES})
+    target_include_directories(game_recompiled PRIVATE extern/dolrecomp/src "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+    target_link_libraries(game_recompiled PUBLIC dr_cpu)
+endif ()
+
 add_executable(dolphinjet ${PORT_FILES})
 target_compile_definitions(dolphinjet PRIVATE TARGET_PC NON_MATCHING)
 target_include_directories(dolphinjet PRIVATE include extern extern/aurora/include extern/aurora/include/dolphin extern/dolrecomp/src)
@@ -64,6 +79,10 @@ target_link_libraries(dolphinjet PRIVATE
         aurora::main aurora::core aurora::card aurora::dvd aurora::gx aurora::mtx aurora::os aurora::si aurora::vi aurora::pad
         dr_cpu
         absl::flat_hash_map nlohmann_json::nlohmann_json fmt::fmt)
+if (TARGET game_recompiled)
+    target_link_libraries(dolphinjet PRIVATE game_recompiled)
+    target_compile_definitions(dolphinjet PRIVATE DOLPHINJET_HAVE_RECOMPILED_GAME)
+endif ()
 if (TARGET rmlui_debugger)
     target_link_libraries(dolphinjet PRIVATE rmlui_debugger)
 endif ()

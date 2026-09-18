@@ -25,6 +25,10 @@ build/
 .ninja_*
 build.ninja
 
+# DolRecomp output (tools/port/recompile.py) - derives from a copyrighted
+# disc image, never committed. See docs/recompilation.md.
+/generated/
+
 # decompctx output
 ctx.*
 *.ctx

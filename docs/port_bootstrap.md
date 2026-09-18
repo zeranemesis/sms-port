@@ -236,3 +236,29 @@ depend on Aurora's rendering backends initializing correctly, only on
 --recomp-dolphin-sdk-self-test` the same way to check the OSReport
 trampoline's format-string substitution. Both are also run in
 `port-build.yml` once the build succeeds.
+
+## What actually needs a disc image from here
+
+Everything above builds and self-tests without one. What's left genuinely
+can't move further without a real GMSP01 dump:
+
+1. Run `tools/port/recompile.py` against it to produce `generated/*.c` and
+   `generated/generated_symbols.h`. `CMakeLists.txt` already globs
+   `generated/*.c` into a `game_recompiled` target automatically when
+   present (and defines `DOLPHINJET_HAVE_RECOMPILED_GAME` for
+   `dolphinjet`) - nothing to edit there.
+2. In `src/port/portmain.cpp`, the `#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME`
+   block says exactly what's next: build a `CPUState`, install the
+   host-call bridge, bind `sms::recomp::dolphin_sdk`'s trampolines to their
+   real addresses from `generated_symbols.h`'s `DOLRECOMP_SYMBOL_*`
+   constants, and drive the entry point. Left as a comment rather than
+   code because the entry symbol and the actual set of `DOLRECOMP_SYMBOL_*`
+   names are specific to that dump and unknowable in advance.
+3. More trampolines in `recomp_dolphin_sdk.cpp` as real host-call misses
+   get logged at step 2 - `PADRead`/`PADInit` in particular need their
+   guest-memory `PADStatus` layout checked against that real dump first
+   (see "A first real trampoline: OSReport" above for why).
+4. Audio has no answer yet on any route - JAudio2 has no direct hardware
+   calls to bridge the way GX/PAD/OS do (per the audit in
+   `README.port.md`), so it needs its own design, not just more
+   trampolines.
