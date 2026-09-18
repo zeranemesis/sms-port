@@ -93,11 +93,13 @@ python tools/port/audit.py .
 Produit le rapport de portabilité chiffré ci-dessus. À relancer pour suivre la
 progression — le compteur de souches vides est le vrai indicateur d'avancement.
 
-## Bootstrap Aurora (menu, pas encore le jeu)
+## Bootstrap Aurora — DolphinJet (menu, pas encore le jeu)
 
 Une première couche `src/port`/`CMakeLists.txt` existe désormais à côté de la
 décomp : elle fait tourner Aurora et un menu façon Party Board (Marioparty4),
-sans encore y brancher de code de jeu SMS. Voir `docs/port_bootstrap.md` pour
+sans encore y brancher de code de jeu SMS. Le port s'appelle **DolphinJet**
+(exécutable `dolphinjet`, dossier de préférences `dolphinjet`). Voir
+`docs/port_bootstrap.md` pour
 ce qui existe, ce qui manque, et comment le construire.
 
 ## Construire la décomp (inchangé pour l'instant)

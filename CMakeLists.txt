@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.25)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
 
-project(smsport LANGUAGES C CXX)
+project(dolphinjet LANGUAGES C CXX)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "_cmake")
@@ -48,25 +48,25 @@ include(files.cmake)
 
 source_group("Port" FILES ${PORT_FILES})
 
-add_executable(smsport ${PORT_FILES})
-target_compile_definitions(smsport PRIVATE TARGET_PC NON_MATCHING)
-target_include_directories(smsport PRIVATE include extern extern/aurora/include extern/aurora/include/dolphin)
-target_link_libraries(smsport PRIVATE
+add_executable(dolphinjet ${PORT_FILES})
+target_compile_definitions(dolphinjet PRIVATE TARGET_PC NON_MATCHING)
+target_include_directories(dolphinjet PRIVATE include extern extern/aurora/include extern/aurora/include/dolphin)
+target_link_libraries(dolphinjet PRIVATE
         aurora::main aurora::core aurora::card aurora::dvd aurora::gx aurora::mtx aurora::os aurora::si aurora::vi aurora::pad
         absl::flat_hash_map nlohmann_json::nlohmann_json fmt::fmt)
 if (TARGET rmlui_debugger)
-    target_link_libraries(smsport PRIVATE rmlui_debugger)
+    target_link_libraries(dolphinjet PRIVATE rmlui_debugger)
 endif ()
 
 if (WIN32)
-    target_link_libraries(smsport PRIVATE ws2_32)
+    target_link_libraries(dolphinjet PRIVATE ws2_32)
 endif ()
 
-aurora_copy_runtime_dlls(smsport smsport)
+aurora_copy_runtime_dlls(dolphinjet dolphinjet)
 
 # res/ holds the fonts and RmlUi (.rcss) stylesheets the menu shell needs at
 # runtime; ship it next to the executable the same way Marioparty4 does.
-add_custom_command(TARGET smsport POST_BUILD
+add_custom_command(TARGET dolphinjet POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_CURRENT_SOURCE_DIR}/res" "$<TARGET_FILE_DIR:smsport>/res"
+        "${CMAKE_CURRENT_SOURCE_DIR}/res" "$<TARGET_FILE_DIR:dolphinjet>/res"
         COMMENT "Copying menu resources (fonts, RmlUi stylesheets)")

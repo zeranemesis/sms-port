@@ -41,7 +41,7 @@ aurora::Module SmsMainLog("sms::main");
 
 static std::filesystem::path calculate_config_path()
 {
-    char *prefPath = SDL_GetPrefPath("smsport", "SMS Port");
+    char *prefPath = SDL_GetPrefPath("dolphinjet", "DolphinJet");
     if (prefPath == nullptr) {
         SmsMainLog.error("Unable to get preferences path: {}", SDL_GetError());
         return {};
@@ -125,7 +125,7 @@ extern "C" int port_main(int argc, char *argv[])
     sms::config::LoadFromUserPreferences();
 
     AuroraConfig config {};
-    config.appName = "SMS Port";
+    config.appName = "DolphinJet";
     const auto configPathString = sms::ConfigPath.u8string();
     config.userPath = reinterpret_cast<const char *>(configPathString.c_str());
     config.vsync = sms::getSettings().video.enableVsync;
@@ -143,7 +143,7 @@ extern "C" int port_main(int argc, char *argv[])
 
     const AuroraInfo auroraInfo = aurora_initialize(argc, argv, &config);
 
-    VISetWindowTitle("SMS Port");
+    VISetWindowTitle("DolphinJet");
 
     AuroraSetViewportPolicy(sms::getSettings().video.lockAspectRatio.getValue() ? AURORA_VIEWPORT_FIT : AURORA_VIEWPORT_STRETCH);
 

@@ -1,4 +1,4 @@
-# Aurora port bootstrap
+# Aurora port bootstrap (DolphinJet)
 
 What exists now, on top of `README.port.md` and `docs/recompilation.md`: a
 CMake build alongside the existing `configure.py`/`ninja` decomp workflow
@@ -95,7 +95,7 @@ and **Quit**. Settings has:
   window, ported unchanged from Marioparty4), Allow Background Input.
 
 Settings persist to `config.json` under the OS preferences directory
-(`SDL_GetPrefPath("smsport", "SMS Port")`) via the same layered `ConfigVar`
+(`SDL_GetPrefPath("dolphinjet", "DolphinJet")`) via the same layered `ConfigVar`
 system Marioparty4 uses (`include/port/config_var.hpp`, `config.hpp`,
 `src/port/config.cpp` - ported near-verbatim, only the CVar map's container
 changed from Abseil to `std::unordered_map` since nothing here depends on
@@ -126,7 +126,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build
 ```
 
-This should produce an `smsport` executable that opens a window and shows
+This should produce a `dolphinjet` executable that opens a window and shows
 the empty Party-Board-style menu on F1 - there is no game to boot yet, so
 that is the actual milestone, not a placeholder for one. No disc image is
 needed for this; one *is* needed for the next phase (wiring in recompiled
