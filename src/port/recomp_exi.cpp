@@ -55,6 +55,30 @@ std::array<u32, kWordCount> g_shadow {};
 // forced clear on read.
 constexpr u32 kSelfClearingResetBit = 1u << 0;
 
+// Third correction from the same investigation, after the DSPCR fix above
+// got past its poll: the next hang (still inside _OSInitAudioSystem, a
+// different PC) spins reading 0xCC005004 forever, always getting back 0 -
+// with nothing ever written there to echo, a plain shadow can't help this
+// one at all, unlike the DSPCR case. The access sequence leading up to it
+// (a real run, addresses/values as logged): write 0xCC005000 (CPU->DSP
+// mailbox, high half), then a DMA setup (0xCC005020/24/28), then this
+// read of 0xCC005004. Per the publicly documented GameCube DSP interface
+// register layout, 0xCC005000/5002 is the CPU->DSP mailbox
+// (high/low halves) and 0xCC005004/5006 is the DSP->CPU mailbox
+// (high/low) - this fits exactly: the code wrote a command to the DSP's
+// inbox and is now waiting for its outbox to have a response, which real
+// DSP firmware signals by setting bit 15 of the high mailbox halfword
+// (the "mailbox valid" convention documented across GC/Wii DSP homebrew
+// sources). Nothing here has a real DSP core to produce an actual
+// response, so this only reports "a response is ready" (bit 15 set) -
+// the response's actual content is left at 0, since what a real DSP
+// would have replied with is unknown and not guessed at here. This may
+// get boot past audio init without audio actually working, which is the
+// explicit, already-documented scope of "audio has no answer on any
+// route" (README.port.md) - not an attempt to make audio work.
+constexpr u32 kDspToCpuMailboxHigh = 0xCC005004u;
+constexpr u16 kMailboxValidBit = 0x8000u;
+
 size_t word_index(u32 addr)
 {
     return (addr - kRangeBase) / 4;
@@ -63,10 +87,14 @@ size_t word_index(u32 addr)
 u64 read(CPUState *cpu, u32 addr, u8 size)
 {
     const size_t index = word_index(addr & ~3u);
+    u32 word = index < g_shadow.size() ? g_shadow[index] : 0;
     // Bit 0 always reads clear - see kSelfClearingResetBit's comment - the
     // underlying shadow word still keeps it set (write() doesn't touch
     // it), only the read side simulates the instantaneous self-clear.
-    const u32 word = (index < g_shadow.size() ? g_shadow[index] : 0) & ~kSelfClearingResetBit;
+    word &= ~kSelfClearingResetBit;
+    if ((addr & ~1u) == kDspToCpuMailboxHigh) {
+        word |= (u32(kMailboxValidBit) << 16);
+    }
     // Sub-word reads pull the requested bytes out of the containing
     // big-endian 32-bit word, matching how a real register would be
     // byte/halfword-addressable within its word.

@@ -482,3 +482,27 @@ so far; both stay unverified beyond the self-tests until audio/DSP clears
 enough for boot to reach that code. Every run in this session remains
 SCRIPTED-level verification only (a timed launch, log inspection) - no
 rendered frame has been seen.
+
+### DSP mailbox: one step further, then the real wall
+
+Following up on the blocker above (`0xCC005004` always reading `0`): the
+GameCube DSP interface's mailbox registers are publicly documented as
+`0xCC005000`/`0xCC005002` (CPU->DSP, high/low) and `0xCC005004`/`0xCC005006`
+(DSP->CPU, high/low), with bit 15 of the high half conventionally meaning
+"a response is ready" - `recomp_exi.cpp` now always reports that bit set on
+reads of `0xCC005004`, leaving the actual response content (the low half,
+`0xCC005006`, and the rest of the high half) at whatever was never written -
+effectively `0`.
+
+**Real run result**: this did move the hang - past the "wait for a
+response" wait, to a *new* one a few instructions later, still inside
+`_OSInitAudioSystem`, reading both mailbox halves in a loop
+(`0xCC005004` -> `0x8000`, `0xCC005006` -> `0x0`, repeating). This reads
+as validating the response's actual *content* against an expected value
+(a DSP-firmware boot-acknowledgment code, most likely) - not just its
+presence. That value is not known here (it would need either a real
+hardware capture or the DSP IROM's own disassembly, neither available in
+this session), and guessing at it would be exactly the kind of fix "based
+on a plausible mechanism" this project's own methodology rules out. This
+is the real, precise boundary of "audio has no answer on any route" -
+not a vague statement anymore, but the literal missing piece.
