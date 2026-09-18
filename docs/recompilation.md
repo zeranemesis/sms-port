@@ -224,13 +224,20 @@ Correctif sans toucher au système : sortir vers un chemin court avec `--output`
 lib/ModernGekko/build/moderngekko-run.exe     --game extracted/<slug>     --module C:/mgm/GMSP01/<hash>/gGMSP01_recomp.dll     --allow-interpreter
 ```
 
-**Resultat mesure sur GMSP01 :** le module se charge (`entry=0x8000522C`,
-le point d'entree reel du jeu), le backend audio Cubeb s'initialise, et le
-processus tourne en continu avec environ 1,0 Go residents. L'essai s'est termine
-sur un `timeout` de 90 s decide par nous, pas sur un plantage.
+Sous Windows PowerShell 5.1, enchainer avec `;` : `&&` y est une erreur de
+syntaxe.
 
-Ce qui n'est pas verifie a ce stade : le rendu a l'ecran. Il demande un oeil
-humain sur la fenetre.
+**Resultat verifie sur GMSP01 : le jeu tourne et s'affiche.** Le module se charge
+(`entry=0x8000522C`, le point d'entree reel du jeu), le backend audio Cubeb
+s'initialise, et le jeu atteint l'ecran de selection de fichier -- decor rendu,
+Mario affiche, dialogue de carte memoire fonctionnel. Fenetre titree
+`ModernGekko - Super Mario Sunshine [GMSP01]`.
+
+**Performance : 20,6 FPS**, en deca de la vitesse nominale. C'est attendu avec le
+backend C, qui produit du C portable et non du code optimise. Le backend qui
+donnerait la performance est justement celui qui ne peut pas etre lie (voir
+ci-dessous) : le decalage amont cesse d'etre un desagrement pour devenir le
+verrou de performance du projet.
 
 ### `--headless` plante
 
