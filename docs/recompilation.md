@@ -233,7 +233,32 @@ s'initialise, et le jeu atteint l'ecran de selection de fichier -- decor rendu,
 Mario affiche, dialogue de carte memoire fonctionnel. Fenetre titree
 `ModernGekko - Super Mario Sunshine [GMSP01]`.
 
-**Performance : 20,6 FPS**, en deca de la vitesse nominale. C'est attendu avec le
+### Performance mesuree
+
+Le compteur de FPS s'affiche dans le titre de la fenetre, donc il se lit sans
+capture d'ecran :
+
+```powershell
+$p = Start-Process -FilePath <moderngekko-run.exe> -ArgumentList $a -PassThru
+$p.Refresh(); $p.MainWindowTitle
+```
+
+| configuration | regime etabli |
+|---|---|
+| sans `--allow-interpreter` | 22 - 27 FPS |
+| avec `--allow-interpreter` | 29 - 32 FPS |
+
+Le compteur atteint **exactement 50,0** pendant les scenes legeres, ce qui est la
+cadence nominale PAL. Le jeu tourne donc **autour de la moitie de sa vitesse**.
+
+**Attention a ne pas surinterpreter ce tableau.** Les deux mesures ne sont pas
+comparables : rien ne garantit que les deux executions etaient au meme point du
+jeu au meme instant, et la charge varie enormement d'une scene a l'autre.
+L'hypothese que `--allow-interpreter` coutait les images manquantes n'est **pas**
+confirmee -- la mesure suggere meme l'inverse. Une comparaison valable demande
+d'atteindre la meme scene dans les deux cas.
+
+**Performance : en deca de la vitesse nominale.** C'est attendu avec le
 backend C, qui produit du C portable et non du code optimise. Le backend qui
 donnerait la performance est justement celui qui ne peut pas etre lie (voir
 ci-dessous) : le decalage amont cesse d'etre un desagrement pour devenir le
