@@ -11,6 +11,8 @@ on:
       - 'src/port/**'
       - 'include/port/**'
       - 'res/**'
+      - 'extern/dolrecomp'
+      - 'tools/port/recompile.py'
       - '.github/workflows/port-build.yml'
   pull_request:
     paths:
@@ -20,6 +22,8 @@ on:
       - 'src/port/**'
       - 'include/port/**'
       - 'res/**'
+      - 'extern/dolrecomp'
+      - 'tools/port/recompile.py'
       - '.github/workflows/port-build.yml'
 
 jobs:
@@ -55,3 +59,8 @@ jobs:
 
       - name: Build
         run: cmake --build build
+
+      # Needs no disc image and no Aurora rendering backend, so it fails
+      # fast and separately from an actual boot failure.
+      - name: Recompilation host-call bridge self-test
+        run: ./build/dolphinjet --recomp-hostcall-self-test

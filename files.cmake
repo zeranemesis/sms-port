@@ -9,6 +9,7 @@ set(PORT_FILES
         src/port/entry.cpp
         src/port/io.cpp
         src/port/portmain.cpp
+        src/port/recomp_host.cpp
         src/port/settings.cpp
 
         src/port/ui/bool_button.cpp

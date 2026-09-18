@@ -42,6 +42,15 @@ set(AURORA_ENABLE_RMLUI ON CACHE BOOL "Enable RmlUi UI support" FORCE)
 # checkout, the same way Marioparty4's build.yml does for its own patches.
 add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
 
+# The DolRecomp host tool (build-time code generator, not linked into
+# dolphinjet) plus dr_cpu, the small register-file/memory runtime its plain
+# C backend targets. DOLRECOMP_ENABLE_LLVM stays off: the LLVM object
+# backend is a separate, heavier codegen path this port does not use - see
+# docs/recompilation.md's "DolRecomp runtime contract" section for why the
+# plain C backend needs no external runtime (no ModernGekko, no LLVM) at
+# all, only this dr_cpu-based host-call bridge into Aurora.
+add_subdirectory(extern/dolrecomp EXCLUDE_FROM_ALL)
+
 include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
 
 include(files.cmake)
@@ -50,9 +59,10 @@ source_group("Port" FILES ${PORT_FILES})
 
 add_executable(dolphinjet ${PORT_FILES})
 target_compile_definitions(dolphinjet PRIVATE TARGET_PC NON_MATCHING)
-target_include_directories(dolphinjet PRIVATE include extern extern/aurora/include extern/aurora/include/dolphin)
+target_include_directories(dolphinjet PRIVATE include extern extern/aurora/include extern/aurora/include/dolphin extern/dolrecomp/src)
 target_link_libraries(dolphinjet PRIVATE
         aurora::main aurora::core aurora::card aurora::dvd aurora::gx aurora::mtx aurora::os aurora::si aurora::vi aurora::pad
+        dr_cpu
         absl::flat_hash_map nlohmann_json::nlohmann_json fmt::fmt)
 if (TARGET rmlui_debugger)
     target_link_libraries(dolphinjet PRIVATE rmlui_debugger)

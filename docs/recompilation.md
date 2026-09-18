@@ -122,6 +122,43 @@ Aurora (`encounter/aurora`) reste l'alternative sur ce point : une vraie couche 
 compatibilité source GX → Vulkan/Metal/D3D12, sans cœur d'émulateur, au prix d'un
 travail bien plus long et sans réponse pour l'audio.
 
+## Contrat d'exécution de DolRecomp — et pourquoi ModernGekko n'est pas nécessaire
+
+Le blocage consigné plus haut (« le backend qui donnerait la performance est
+celui qui ne peut pas être lié » — LLVM, requis par le runtime ModernGekko) est
+spécifique à la route ModernGekko, pas à DolRecomp lui-même. Lu dans
+`extern/dolrecomp/src/cpu/cpu.h`, le contrat du backend simple
+(`--backend c`, sans LLVM) est indépendant de tout runtime externe :
+
+- Chaque fonction recompilée devient `void func_<adresse>(CPUState* ctx)` où
+  `CPUState` est un simple fichier de registres PowerPC (gpr/fpr/ps1/pc/lr/cr/
+  msr/…) — vérifié en construisant `extern/dolrecomp` (backend C, sans LLVM)
+  dans ce bac à sable : `cmake -S extern/dolrecomp -B build && cmake --build
+  build --target dolrecomp` réussit sans réseau, sans zlib, sans LLVM.
+- `CPUState::host_call` est un simple pointeur de fonction
+  (`bool(*)(CPUState*, u32 adresse)`) appelé quand le code recompilé saute
+  vers une adresse que DolRecomp n'a pas traduite nativement — typiquement un
+  appel à une fonction du SDK Dolphin (`GXSetVtxDesc`, `PADRead`, `OSReport`…)
+  identifiée par son adresse dans la MAP du jeu.
+
+C'est exactement le point d'accroche pour rediriger ces appels vers les
+implémentations d'Aurora plutôt que vers le runtime « Dolphin-dérivé » de
+ModernGekko : `src/port/recomp_host.cpp` installe ce hook et tient la table de
+correspondance adresse → trampoline natif. **Aucune entrée n'y est encore
+enregistrée** — la table est indexée par adresse, et une adresse n'existe
+qu'une fois `dolrecomp` lancé sur un vrai DOL/MAP GMSP01 (voir
+`tools/port/recompile.py`) — mais le mécanisme est vérifié de bout en bout,
+sans code de jeu ni image disque, par `sms::recomp::run_self_test()`
+(`--recomp-hostcall-self-test`) : chemin de correspondance et chemin
+d'échec (adresse non enregistrée, journalisée pour savoir quoi ajouter à la
+table une fois la MAP en main) fonctionnent tous les deux.
+
+Ceci répond à la question laissée ouverte plus haut : la route Aurora n'a
+plus besoin d'être « plus longue et sans réponse pour l'audio » sur le plan de
+l'intégration CPU — reste effectivement l'audio (JAudio2 n'a aucun appel
+matériel direct, donc aucun crochet naturel côté DolRecomp pour cette
+raison), qui demandera son propre travail quel que soit le chemin retenu.
+
 ## Monter la chaîne sur Windows
 
 Quatre points coûtent une tentative chacun si on ne les connaît pas.

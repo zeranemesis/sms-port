@@ -29,14 +29,55 @@ instead - see below), and anything netplay-related.
 Per `README.port.md`, SMS decomp is far less complete than Marioparty4's
 (≈18% vs. Marioparty4 being close to fully matched), so directly compiling
 `src/game` the way Marioparty4's CMake does would leave ~2,489 functions
-undefined at link time. `docs/recompilation.md` already chose the way past
-that - static recompilation of the original PowerPC binary (DolRecomp +
-ModernGekko), hybridized with matched decomp code over time - but vendoring
-that toolchain (DolRecomp, ModernGekko, its LLVM 19/20 backend) and wiring
-its generated C output into this CMake build is a separate, substantial
-piece of work, not attempted in this pass. `CMakeLists.txt` and
+undefined at link time. `docs/recompilation.md` chose the way past that -
+static recompilation of the original PowerPC binary - and that toolchain is
+now partially wired in (see "Recompilation pipeline" below), but there is
+still no generated game code to link: that requires an actual GMSP01 dump,
+which nobody running this in CI or this sandbox has. `CMakeLists.txt` and
 `files.cmake` only list the port/menu layer (`PORT_FILES`); adding
-`GAME_FILES`/recompiled sources is the next phase.
+generated/recompiled sources once they exist is the next step.
+
+## Recompilation pipeline (DolRecomp, no ModernGekko)
+
+`extern/dolrecomp` (`ExpansionPak/DolRecomp`, pinned submodule) is now
+vendored and wired into `CMakeLists.txt` (`add_subdirectory(extern/dolrecomp
+EXCLUDE_FROM_ALL)`, `DOLRECOMP_ENABLE_LLVM` left off). This is a real,
+locally-verified change, unlike the Aurora side of this build: DolRecomp's
+plain `--backend c` has no network-fetched dependencies (no zlib/LLVM
+required), so `cmake -S extern/dolrecomp -B build && cmake --build build
+--target dolrecomp` was actually run and succeeded in this sandbox.
+
+`docs/recompilation.md` had already flagged that the LLVM backend ModernGekko
+needs "cannot be fixed locally" on this project's own Windows setup (DIA SDK
+path issue) - and separately, that ModernGekko brings its own Dolphin-derived
+video/audio/HLE runtime, which is not "tout sous Aurora." **This port does
+not use ModernGekko.** Instead, `src/port/recomp_host.cpp` (new,
+`include/port/recomp_host.h`) hooks DolRecomp's plain-C-backend contract
+directly: generated functions are `void func_<address>(CPUState* ctx)`
+operating on a register file DolRecomp's own `dr_cpu` library provides, and
+`CPUState::host_call` fires whenever generated code jumps to an address
+DolRecomp didn't translate - which is exactly what happens at a Dolphin SDK
+call (`GXSetVtxDesc`, `PADRead`, `OSReport`, ...) identified by its address
+from the game's MAP file. `recomp_host.cpp` is the dispatch table for that
+hook, meant to redirect those addresses into Aurora's own GX/PAD/OS/VI
+implementations - the same ones Marioparty4's decompiled C already calls.
+
+No entries are registered in that table yet: they're keyed by runtime
+address, and no address exists without running `dolrecomp` against a real
+DOL and MAP (`tools/port/recompile.py` wraps that invocation once you have
+one). What **is** verified, with no disc image needed - `dr_cpu` has none
+either - is the mechanism itself: `sms::recomp::run_self_test()`
+(`--recomp-hostcall-self-test`) builds a real `CPUState` via DolRecomp's own
+`cpu_init`, installs the dispatcher, and exercises both the hit path (a
+registered entry runs and sees the right register state) and the miss path
+(an unregistered address is logged with the calling PC rather than crashing).
+This was compiled and run standalone against real `dr_cpu` object code in
+this sandbox (with the logging call swapped for a stub, since `aurora::Module`
+needs the full Aurora dependency chain this sandbox can't fetch) and passed.
+`dr_cpu` itself needs no `extern "C"` guard when built as C - but its
+headers have none for C++ callers, unlike Aurora's `dolphin/*.h`, so
+`recomp_host.h` wraps the include itself; skipping that produces
+C++-name-mangled references to `dr_cpu`'s plain-C symbols and fails to link.
 
 ## Aurora submodule patches
 
@@ -113,10 +154,23 @@ before that a prebuilt Dawn package) - GitHub's archive/release download
 endpoints return `403` through this session's outbound proxy, even though
 plain `git clone`/`fetch` over HTTPS to `github.com` (used for the
 submodules) works fine. That is a sandbox network-policy limitation, not a
-problem in this repository's build files: **the actual compile of this
-port layer's ~30 files, and a real boot, are unverified.**
+problem in this repository's build files: **the actual compile of the menu
+layer against Aurora, and a real boot, are unverified.**
 
-To actually verify, on a machine with normal GitHub access:
+`extern/dolrecomp` is the exception: it has no network-fetched dependencies
+with `DOLRECOMP_ENABLE_LLVM` off, so it was actually configured and built in
+this sandbox (`cmake -S extern/dolrecomp -B build && cmake --build build
+--target dolrecomp`, real compiler output, real `dolrecomp` binary, no
+network needed beyond the initial submodule clone). `src/port/recomp_host.cpp`
+was likewise compiled and linked against `dr_cpu`'s real object code
+(`cpu.c` compiled with `gcc -std=c11`, `recomp_host.cpp` with `g++
+-std=c++20`, linked together - matching how CMake already builds them as
+separate C/C++ targets) and `run_self_test()` passed, with `aurora::Module`
+swapped for a stub logger since exercising the real one needs the
+Aurora dependency chain above. This is the one piece of Phase 2 genuinely
+verified end to end in this session, not just written.
+
+To actually verify the rest, on a machine with normal GitHub access:
 
 ```bash
 git submodule update --init --recursive
@@ -131,3 +185,8 @@ the empty Party-Board-style menu on F1 - there is no game to boot yet, so
 that is the actual milestone, not a placeholder for one. No disc image is
 needed for this; one *is* needed for the next phase (wiring in recompiled
 or decompiled game code) as it always has been in `recompilation.md`.
+
+Run `dolphinjet --recomp-hostcall-self-test` to check the host-call bridge
+independently of the menu - it needs no disc image, and passing does not
+depend on Aurora's rendering backends initializing correctly, only on
+`dr_cpu` and the dispatch table in `recomp_host.cpp`.
