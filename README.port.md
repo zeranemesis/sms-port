@@ -50,9 +50,14 @@ bloc plutôt que site par site.
 
 ## Ce qui bloque un build natif
 
-- **Matrices — déjà résolu pour l'essentiel.** `include/dolphin/mtx.h` bascule
-  entre `PSMTX*` (paired-singles Gekko) et `C_MTX*` (portable) selon `#ifdef DEBUG`.
-  Reste ~46 appels directs à router via les macros `MTX*`, dans ~14 fichiers.
+- **Matrices — résolu.** `include/dolphin/mtx.h` bascule entre `PSMTX*`/`PSVEC*`
+  (paired-singles Gekko) et `C_MTX*`/`C_VEC*` (portable) selon `#ifdef DEBUG`.
+  Le code de gameplay n'appelle plus aucune de ces fonctions directement ;
+  tout passe désormais par les macros `MTX*`/`VEC*`, ce qui laisse le port
+  redéfinir la couche matérielle sans retoucher le gameplay. JSystem,
+  THPPlayer et le SDK dolphin appellent encore `PSMTX*`/`PSVEC*` en direct,
+  mais ces répertoires sont hors de portée pour un agent autonome (voir
+  `AGENTS.md`).
 - **Assembleur inline** : un seul fichier de gameplay (`src/MarioUtil/MathUtil.cpp`),
   mais 3 headers en contiennent et contaminent leurs includeurs
   (`dolphin/os.h`, `J3DTransform.hpp`, `JGMatrix34.hpp`).
