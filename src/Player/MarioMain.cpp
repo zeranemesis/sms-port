@@ -120,7 +120,7 @@ void TMario::perform(u32 cue, JDrama::TGraphics* graphics)
 			dir.x = JMASSin(mFaceAngle.y);
 			dir.y = 0.0f;
 			dir.z = JMASCos(mFaceAngle.y);
-			PSMTXMultVecSR(graphics->mViewMtx, &dir, &unk4F0);
+			MTXMultVecSR(graphics->mViewMtx, &dir, &unk4F0);
 		}
 	}
 

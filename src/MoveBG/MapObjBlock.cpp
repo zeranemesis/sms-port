@@ -363,10 +363,10 @@ void TTelesaBlock::perform(u32 cue, JDrama::TGraphics* graphics)
 		mtx.ref(1, 3) = 0.0f;
 		mtx.ref(2, 3) = 0.0f;
 		mtx.setScale(unk140.x, unk140.y, unk140.z);
-		PSMTXConcat(getModel()->getAnmMtx(1), mtx, getModel()->getAnmMtx(1));
+		MTXConcat(getModel()->getAnmMtx(1), mtx, getModel()->getAnmMtx(1));
 
 		mtx.setScale(unk140.y, unk140.y, unk140.z);
-		PSMTXConcat(getModel()->getAnmMtx(0), mtx, getModel()->getAnmMtx(0));
+		MTXConcat(getModel()->getAnmMtx(0), mtx, getModel()->getAnmMtx(0));
 	}
 }
 

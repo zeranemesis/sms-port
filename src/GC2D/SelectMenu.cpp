@@ -178,7 +178,7 @@ void TSelectGrad::perform(u32 flags, JDrama::TGraphics* gfx)
 		GXSetDither(GX_TRUE);
 
 		Mtx mtx;
-		PSMTXIdentity(mtx);
+		MTXIdentity(mtx);
 		GXLoadPosMtxImm(mtx, GX_PNMTX0);
 
 		GXSetCullMode(GX_CULL_BACK);
