@@ -167,6 +167,77 @@ fin du clonage (`Externals` dépasse 600 Mo) avant de lancer CMake.
 machine et n'a jusqu'ici été réclamé ni par le `Makefile` ni par les
 `CMakeLists.txt`. La compilation de `moderngekko-port` reste à mener à son terme.
 
+## Construire le module du jeu
+
+`moderngekko-port build` enchaîne trois choses : il relance `dolrecomp` sur le
+DOL, configure le *module-template* et compile une DLL par jeu.
+
+```bash
+lib/ModernGekko/build/moderngekko-port.exe build extracted/<slug> \
+    --backend c --toolchain auto --output C:\mgm
+```
+
+**Résultat sur GMSP01 :** `gGMSP01_recomp.dll`, **264 Mo**, 219 chunks,
+2 plages de code et 135 plages de code auto-modifiant. La chaîne complète
+fonctionne — outils, extraction, traduction, compilation, édition de liens.
+
+### Le backend LLVM ne passe pas l'édition de liens
+
+Symptôme : `LNK2001: ppc_native_region_available` sur chaque chunk, puis
+`LNK1120` sur la DLL.
+
+Cause : il existe **deux copies** du runtime CPU dans le Dolphin vendorisé
+(`ExpansionPak/RecompCore`), et le *module-template* compile la mauvaise :
+
+| copie | taille | définit le symbole |
+|---|---|---|
+| `DolRecomp/src/cpu/cpu.c` | 51,5 Ko | oui |
+| `GXRuntime/src/core/cpu.c` (celle que le module compile) | 12,9 Ko | **non** |
+
+Le symbole n'est émis que par `DolRecomp/src/backend/llvm/exits.cpp`, donc le
+backend C n'est pas concerné. Repointer le sous-module ne corrige rien : l'amont
+n'a qu'un seul commit d'avance, sans rapport. C'est un décalage à signaler au
+mainteneur, ou à corriger localement.
+
+**Conséquence pratique : utiliser `--backend c`.** C'est de toute façon le défaut
+du gabarit.
+
+### MAX_PATH bloque la compilation du module
+
+Symptôme trompeur, côté ninja et non côté code :
+
+```
+ninja: error: WriteFile(...chunk_0000_text0_80003100.c.obj.rsp): Unable to create file.
+```
+
+Le chemin faisait **261 caractères**, un de plus que la limite Windows. Le
+répertoire de cache combine une empreinte de 64 caractères et une de 16, ce qui
+suffit à déborder depuis un répertoire de travail ordinaire.
+
+Correctif sans toucher au système : sortir vers un chemin court avec `--output`
+(`C:\mgm` ramène les chemins à environ 210 caractères). Activer
+`LongPathsEnabled` marcherait aussi mais c'est un réglage machine.
+
+## Lancer le jeu
+
+```bash
+lib/ModernGekko/build/moderngekko-run.exe     --game extracted/<slug>     --module C:/mgm/GMSP01/<hash>/gGMSP01_recomp.dll     --allow-interpreter
+```
+
+**Resultat mesure sur GMSP01 :** le module se charge (`entry=0x8000522C`,
+le point d'entree reel du jeu), le backend audio Cubeb s'initialise, et le
+processus tourne en continu avec environ 1,0 Go residents. L'essai s'est termine
+sur un `timeout` de 90 s decide par nous, pas sur un plantage.
+
+Ce qui n'est pas verifie a ce stade : le rendu a l'ecran. Il demande un oeil
+humain sur la fenetre.
+
+### `--headless` plante
+
+En mode `--headless` le meme module part en `SIGSEGV` (code 139) juste apres le
+chargement. Le mode fenetre, lui, tient. Le chemin sans fenetre est donc a eviter
+pour valider un jeu : il donne un faux negatif spectaculaire.
+
 ## Ce qui n'est pas versionné ici
 
 Le code produit par la recompilation dérive du disque et n'est pas commité :
