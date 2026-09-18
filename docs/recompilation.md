@@ -313,6 +313,40 @@ stable (pas de crash), FPS lu depuis le titre de fenêtre. Aucune partie
 humaine jouée sur ce backend pour l'instant — la comparaison de performance
 ressenties en jeu réel reste à faire.
 
+**Mise à jour du 2026-09-19 : la mesure ci-dessus vient de la cinématique
+d'intro, pas du gameplay — ne pas la généraliser.** Valentin a fait remarquer,
+à juste titre, qu'une cinématique n'est pas représentative : elle enchaîne des
+plans très divers (avion, foule de Pianta, gros plans figés) dont la charge
+GPU n'a aucun rapport avec le jeu réellement joué. Mesurer là-dessus et
+conclure sur « la vitesse du jeu » aurait été trompeur.
+
+Pour corriger ça, le protocole d'automatisation intégré à ModernGekko
+(`--automation-dir`, fichiers `commands/*.txt` en clé=valeur, `status.txt`
+avec `fps`/`vps`/`speed` lus directement depuis `Core::System::GetPerfMetrics()`
+côté moteur — pas depuis le titre de fenêtre) a servi à naviguer les menus
+jusqu'à une vraie partie : création de fichier sur la carte mémoire, sélection
+de données, `START` sur le fichier, traversée de la cinématique d'arrivée,
+jusqu'au HUD de jeu complet (pièces, soleils, vies) avec Mario réellement
+déplaçable au stick. Vérifié positivement : `main_y`/`main_x` font marcher
+et nager Mario (ondulations d'eau en temps réel autour de lui, capture à
+l'appui), donc c'est bien de l'interaction, pas une seconde cinématique.
+
+**Mesuré en gameplay réel (plage/eau autour de l'aéroport de Delfino,
+backend LLVM + résolution interne 6x)** : `speed` = 0.997, 1.002, 1.006,
+0.9996, 1.008 sur cinq échantillons pris pendant un déplacement effectif du
+personnage (pas à l'arrêt) — c'est-à-dire la cadence nominale PAL **atteinte
+et même très légèrement dépassée** sur cette zone, contre 0.4-0.55 relevé
+plus tôt pendant les passages les plus chargés de l'intro. La cinématique
+d'intro est donc le pire cas du jeu côté performance, pas une référence pour
+le reste.
+
+**Toujours SCRIPTED, et une seule zone testée.** Ce sont des entrées
+automatisées (fichiers de commande), pas une manette tenue par un humain, et
+la zone testée est une plage ouverte peu chargée (peu de géométrie, aucun
+PNJ) — pas la place de Delfino elle-même, plus dense (façades, Pianta,
+eau/particules), qui reste le vrai test de charge à faire avant de conclure
+que « le jeu tourne à 50 FPS » sans qualificatif.
+
 **Conséquence pratique : `--backend llvm` est utilisable**, mais `--backend c`
 reste le défaut du gabarit et le choix le plus sûr tant que ce correctif n'est
 pas remonté en amont (`ExpansionPak/ModernGekko`) ni éprouvé au-delà de la
