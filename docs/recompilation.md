@@ -122,6 +122,51 @@ Aurora (`encounter/aurora`) reste l'alternative sur ce point : une vraie couche 
 compatibilité source GX → Vulkan/Metal/D3D12, sans cœur d'émulateur, au prix d'un
 travail bien plus long et sans réponse pour l'audio.
 
+## Monter la chaîne sur Windows
+
+Quatre points coûtent une tentative chacun si on ne les connaît pas.
+
+**Pas besoin de convertir le RVZ en ISO.** Le `Makefile` du gabarit
+`ModernGekko-Template` pilote tout par `ISO=`, mais sa cible d'extraction est un
+**fichier réel** (`extracted/<slug>/sys/main.dol`), pas une règle *phony*. Il
+suffit donc de pré-remplir `extracted/<slug>/` avec l'extraction faite par `dtk`
+— qui lit le RVZ nativement — puis de passer `GAME=<slug>` au lieu de `ISO=` :
+l'extraction est sautée. Pour GMSP01 : 1,2 Go, `sys/` complet plus
+`files/marioEU.MAP`.
+
+**`make` n'est pas nécessaire.** Git Bash n'en fournit pas, et le `Makefile` ne
+fait qu'envelopper CMake. Reproduire ses deux cibles suffit :
+
+```bash
+cmake -S lib/DolRecomp   -B lib/DolRecomp/build   -G Ninja -DCMAKE_BUILD_TYPE=Release       -DBUILD_TESTING=OFF -DDOLRECOMP_ENABLE_LLVM=ON -DLLVM_DIR="<...>/lib/cmake/llvm"
+cmake --build lib/DolRecomp/build --target dolrecomp -j12
+# idem avec lib/ModernGekko, cible moderngekko-port
+```
+
+**Le générateur Ninja impose l'environnement MSVC.** Contrairement au générateur
+Visual Studio, Ninja exige `cl.exe` dans le `PATH`. Piège connu : lancer
+`vcvars64.bat` via `cmd /c` **depuis Bash se bloque**. Il faut importer
+l'environnement depuis PowerShell, dans le **même** processus que le build :
+
+```powershell
+cmd /c "`"$vcvars`" >nul 2>&1 && set" | ForEach-Object {
+  if ($_ -match '^([^=]+)=(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
+}
+```
+
+**Le clonage récursif doit être terminé avant de configurer.** ModernGekko
+embarque Dolphin, qui a 35 sous-modules `Externals`, lesquels en ont à leur tour.
+Configurer pendant que `git submodule update --init --recursive` tourne encore
+échoue sur des messages trompeurs — `Externals/libspng/libspng` sans
+`CMakeLists.txt`, `cubeb` réclamant `sanitizers-cmake`. Ce ne sont pas des
+dépendances manquantes : ce sont des répertoires pas encore remplis. Attendre la
+fin du clonage (`Externals` dépasse 600 Mo) avant de lancer CMake.
+
+**État vérifié :** `dolrecomp` se configure et se compile avec
+`DOLRECOMP_ENABLE_LLVM=ON` sous Ninja + MSVC 19.51. `pkg-config` est absent de la
+machine et n'a jusqu'ici été réclamé ni par le `Makefile` ni par les
+`CMakeLists.txt`. La compilation de `moderngekko-port` reste à mener à son terme.
+
 ## Ce qui n'est pas versionné ici
 
 Le code produit par la recompilation dérive du disque et n'est pas commité :
