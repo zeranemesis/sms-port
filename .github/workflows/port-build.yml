@@ -64,3 +64,6 @@ jobs:
       # fast and separately from an actual boot failure.
       - name: Recompilation host-call bridge self-test
         run: ./build/dolphinjet --recomp-hostcall-self-test
+
+      - name: Dolphin SDK host-call trampoline self-test
+        run: ./build/dolphinjet --recomp-dolphin-sdk-self-test

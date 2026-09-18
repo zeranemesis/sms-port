@@ -79,6 +79,49 @@ headers have none for C++ callers, unlike Aurora's `dolphin/*.h`, so
 `recomp_host.h` wraps the include itself; skipping that produces
 C++-name-mangled references to `dr_cpu`'s plain-C symbols and fails to link.
 
+### A first real trampoline: OSReport
+
+`src/port/recomp_dolphin_sdk.cpp`/`include/port/recomp_dolphin_sdk.h` add
+the first actual Dolphin SDK bridge, `OSReport`. It's a reasonable first
+target for two reasons: reading a NUL-terminated string from guest memory
+has no endianness to get wrong (bytes are bytes), and DolRecomp's CPUState
+register file already holds scalar arguments as correctly-decoded
+host-native values (per the "Contrat d'exécution de DolRecomp" section of
+`docs/recompilation.md`), so there's no struct layout to guess at either.
+It implements a real, if partial, printf-style substitution
+(`%s`/`%d`/`%i`/`%u`/`%x`/`%X`/`%c`/`%%`, reading each variadic argument
+from `r4`-`r10` per the PowerPC EABI - `%f`/`%g` would need the separately-
+tracked FPR file and aren't handled) and logs the formatted string through
+`aurora::Module`.
+
+**Deliberately not attempted yet:** `PADRead`/`PADInit`. Their `PADStatus*`
+argument points at guest memory laid out per the *original* GameCube ABI,
+which is not byte-identical to Aurora's own `PADStatus` (it has a
+`TARGET_PC`-only `extButton` field, confirmed by reading
+`extern/aurora/include/dolphin/pad.h`) - and nothing here has been checked
+against a real disc's actual in-memory layout. `docs/recompilation.md`'s own
+portability audit already names exactly this class of bug (endianness/
+layout mismatches at a struct boundary) as the port's most serious silent-
+corruption risk. Guessing at that marshalling without a real map/dol to
+test it against would be writing precisely the kind of bug that audit
+warns about, so `PADRead`/`PADInit` calls stay as unresolved (logged, not
+crashed) host calls until there's something real to check the layout
+against.
+
+`register_known_dolphin_sdk_calls()` takes `{name, address}` pairs (still
+nothing to populate them with, same as `recomp_host.cpp`'s table) and wires
+matching trampolines - currently just `"OSReport"` - into the dispatch
+table by name, so filling in real addresses later is a data problem, not a
+code change.
+
+**Verified the same way as the host-call mechanism itself:**
+`format_os_report()` was compiled and linked against real `dr_cpu` object
+code in this sandbox and its self-test
+(`sms::recomp::dolphin_sdk::run_dolphin_sdk_self_test()`,
+`--recomp-dolphin-sdk-self-test`) passed: given a guest format string
+`"Hello %s, %d/%u/%x/%%!"` and register arguments, it produces exactly
+`"Hello world, -5/42/beef/%!"`.
+
 ## Aurora submodule patches
 
 `extern/aurora` is pinned to the same commit Marioparty4 uses
@@ -189,4 +232,7 @@ or decompiled game code) as it always has been in `recompilation.md`.
 Run `dolphinjet --recomp-hostcall-self-test` to check the host-call bridge
 independently of the menu - it needs no disc image, and passing does not
 depend on Aurora's rendering backends initializing correctly, only on
-`dr_cpu` and the dispatch table in `recomp_host.cpp`.
+`dr_cpu` and the dispatch table in `recomp_host.cpp`. Run `dolphinjet
+--recomp-dolphin-sdk-self-test` the same way to check the OSReport
+trampoline's format-string substitution. Both are also run in
+`port-build.yml` once the build succeeds.
