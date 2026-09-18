@@ -17,7 +17,9 @@ static void unitVecTo(const Vec& from, const Vec& to,
 	out->normalize();
 }
 
+#ifdef __MWERKS__
 #pragma strength off
+#endif
 
 TCameraShake::TCameraShake()
 {

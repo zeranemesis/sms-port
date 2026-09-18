@@ -38,7 +38,9 @@ bool TQuestionManager::request(JGeometry::TVec3<f32> param_1, f32 param_2)
 	return false;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TQuestionManager::makeDL(JDrama::TGraphics* param_1) const
 {
 	for (int i = 0; i < unk12; ++i) {
@@ -53,7 +55,9 @@ void TQuestionManager::makeDL(JDrama::TGraphics* param_1) const
 	}
 	unk20->setEnd();
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TQuestionManager::draw() const
 {

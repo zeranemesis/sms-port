@@ -55,7 +55,9 @@ void TMovieRumble::checkRumbleOn()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TMovieRumble::checkRumbleOff()
 {
 	if (unk24 != -1 && unk20 <= unk10->getFrameNumber()) {
@@ -65,7 +67,9 @@ void TMovieRumble::checkRumbleOff()
 		unk28 = false;
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TMovieRumble::readCurInfo()
 {

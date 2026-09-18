@@ -475,7 +475,9 @@ void CPolarSubCamera::doLButtonCameraOn_()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void CPolarSubCamera::doLButtonCameraOff_(bool param_1)
 {
 	if (isThing2()) {
@@ -505,7 +507,9 @@ bool CPolarSubCamera::isChangeToBossGesoCamera_() const
 	}
 	return result;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 bool CPolarSubCamera::isChangeToCancanCamera_() const
 {

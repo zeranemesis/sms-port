@@ -283,7 +283,9 @@ void TSpineEnemy::goToInitialVisibleNode(f32, f32) { }
 
 void TSpineEnemy::goToInitialGraphNodeCheckY(f32 param_1) { }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 int TSpineEnemy::goToShortestNextGraphNode()
 {
 	if (unk124->unk0 == nullptr)
@@ -303,7 +305,9 @@ int TSpineEnemy::goToShortestNextGraphNode()
 	unk12C = 0.0f;
 	return 0;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 int TSpineEnemy::jumpToNextGraphNode()
 {

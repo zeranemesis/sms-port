@@ -769,9 +769,13 @@ void TModelWaterManager::calcWorldMinMax()
 	unk5D7C.z = fVar123.z + 200.0f;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TModelWaterManager::calcDrawVtx(MtxPtr) { }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TModelWaterManager::calcVMMtxGround(MtxPtr param_1, f32 param_2,
                                          const JGeometry::TVec3<f32>& param_3,

@@ -15,7 +15,9 @@ void TMapCollisionManager::changeCollision(u32 i)
 
 void TMapCollisionManager::getFileName(const char*, char*) { }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TMapCollisionManager::createCollision(const char* param_1, u8 param_2)
 {
 	switch (param_2) {
@@ -31,7 +33,9 @@ void TMapCollisionManager::createCollision(const char* param_1, u8 param_2)
 		break;
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 // fabricated
 inline u8 col_type(u16 param_1) { return param_1 & 3; }

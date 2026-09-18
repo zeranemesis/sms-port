@@ -162,12 +162,16 @@ void TMarDirector::movement()
 		movement_game();
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TMarDirector::setNextStage(u16 param_1, JDrama::TActor* param_2)
 {
 	// TODO: wtf is happening in this function it's cursed
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TMarDirector::fireStageEvent(TMapObjBase*) { }
 

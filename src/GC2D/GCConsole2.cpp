@@ -2611,7 +2611,9 @@ void TGCConsole2::pauseOut()
 }
 
 // TODO: figure out inlining without pragmas
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 bool TGCConsole2::startDisappearBalloon(u32 param_1, bool param_2)
 {
 	if (!param_2 && unk3F4 == 0xffffffff && (param_1 != unk3E0 || unk3E4 != 0))
@@ -2622,7 +2624,9 @@ bool TGCConsole2::startDisappearBalloon(u32 param_1, bool param_2)
 	unk10 = 4;
 	return true;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 bool TGCConsole2::startAppearBalloon(u32 messageID, bool autoClose)
 {

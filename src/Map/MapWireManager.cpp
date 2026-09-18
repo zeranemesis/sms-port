@@ -62,14 +62,18 @@ void TMapWireActor::init(TMapWireActorManager* manager)
 	group->getChildren().push_back(this);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 TMapWireActor::TMapWireActor(const char* name)
     : TTakeActor(name)
     , unk70(0)
     , unk74(nullptr)
 {
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 static void initDraw()
 {

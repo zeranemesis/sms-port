@@ -14,7 +14,9 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 BOOL TMario::winDemo()
 {
 	switch (mStatusState) {
@@ -38,7 +40,9 @@ BOOL TMario::winDemo()
 
 	return FALSE;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 BOOL TMario::readBillboard()
 {

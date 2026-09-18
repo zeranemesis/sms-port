@@ -94,7 +94,9 @@ void TMario::emitSmoke(s16 rot)
 		    PARTICLE_MS_MARIWALK1_A, &mPosition, 0, rot, 0, 0, nullptr);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TMario::emitSweat(s16 rot)
 {
 	if (!checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)
@@ -108,7 +110,9 @@ void TMario::emitSweat(s16 rot)
 		                                       0, nullptr);
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TMario::emitSweatSometimes()
 {

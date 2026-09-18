@@ -353,7 +353,9 @@ void TConsoleStr::startAppearScenario()
 	                         465 - unk290[1]->getInitialBounds().y1);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 bool TConsoleStr::processReady(int param_1)
 {
 	bool result = false;
@@ -564,7 +566,9 @@ bool TConsoleStr::processMiss(int param_1)
 
 	return result;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 bool TConsoleStr::processScenario(int)
 {

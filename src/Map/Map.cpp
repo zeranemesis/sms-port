@@ -101,7 +101,9 @@ static void initMare()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 static void initPinnaParco()
 {
 	J3DModel* model = new J3DModel(
@@ -112,7 +114,9 @@ static void initPinnaParco()
 	mapModelActor->setActor(actor);
 	TMapObjBase::joinToGroup("鏡シーン", mapModelActor);
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 static void initStageCommon()
 {

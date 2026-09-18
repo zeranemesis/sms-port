@@ -547,7 +547,9 @@ void TBiancoGateKeeper::startFinishDemo()
 }
 
 // TODO: fake/temporary dont_inline
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 BOOL TBiancoGateKeeper::isHeadHitActive() const
 {
 	J3DFrameCtrl* fc = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
@@ -566,7 +568,9 @@ BOOL TBiancoGateKeeper::isHeadHitActive() const
 		return true;
 	return false;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 BOOL TBiancoGateKeeper::isDamageFogSituation() const
 {

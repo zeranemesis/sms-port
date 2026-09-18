@@ -534,7 +534,9 @@ void TTamaNoko::requestShadow()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TTamaNoko::landEffect()
 {
 	if (mGroundPlane->isSand()) {
@@ -567,7 +569,9 @@ void TTamaNoko::landEffect()
 	gpCameraShake->startShake(CAM_SHAKE_MODE_UNK7, 1.0f);
 	SMSRumbleMgr->start(8, 1, (float*)nullptr);
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TTamaNoko::forceWakeUp() { }
 

@@ -190,7 +190,9 @@ static BOOL WaterGunDivingCtrlR(J3DNode* node, BOOL param_2)
 }
 
 // Not sure why this get's inlined aggressively
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 TNozzleBase::TNozzleBase(const char* name, const char* prm, TWaterGun* fludd)
     : mEmitParams(prm)
     , mFludd(fludd)
@@ -202,7 +204,9 @@ TNozzleBase::TNozzleBase(const char* name, const char* prm, TWaterGun* fludd)
 	unk378 = 0.0f;
 	unk37C = 0.0f;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TNozzleBase::init()
 {
@@ -1418,7 +1422,9 @@ void TWaterGun::init()
 void TWaterGun::initInLoadAfter() { }
 
 // TODO: Do i really need to explcitly say this?
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 MtxPtr TWaterGun::getEmitMtx(int jointIndex)
 {
 	MtxPtr result = nullptr;
@@ -1444,7 +1450,9 @@ MtxPtr TWaterGun::getEmitMtx(int jointIndex)
 	}
 	return result;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 MtxPtr TWaterGun::getNozzleMtx()
 {
@@ -1721,7 +1729,9 @@ f32 TWaterGun::getPressureMax()
 }
 
 // TODO: Figure out why inline happens
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TWaterGun::getEmitPosDirSpeed(int index, JGeometry::TVec3<f32>* pos,
                                    JGeometry::TVec3<f32>* dir,
                                    JGeometry::TVec3<f32>* speed)
@@ -1744,7 +1754,9 @@ void TWaterGun::getEmitPosDirSpeed(int index, JGeometry::TVec3<f32>* pos,
 	speed->y = 0.0f;
 	speed->z = mMario->mVel.z * 0.125f;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TWaterGun::rotateProp(f32 rotation)
 {

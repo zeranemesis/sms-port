@@ -1061,7 +1061,9 @@ void TEnemyMario::emPreDownAnimation()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TEnemyMario::emDownAnimation()
 {
 	changePlayerStatus(MARIO_STATUS_NOMOTION, 0, true);
@@ -1083,7 +1085,9 @@ void TEnemyMario::emDownAnimation()
 		changeEMDoing(EM_DOING_RUN_AWAY_TO_NEAREST_NODE);
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TEnemyMario::startRunAway()
 {

@@ -366,7 +366,9 @@ u16 TYoshi::changeHand()
 	return 22;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TYoshi::getEmitPosDir(JGeometry::TVec3<f32>* dir,
                            JGeometry::TVec3<f32>* pos) const
 {
@@ -380,7 +382,9 @@ void TYoshi::getEmitPosDir(JGeometry::TVec3<f32>* dir,
 	dir->y = mtx[1][3];
 	dir->z = mtx[2][3];
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TYoshi::setEggYoshiPtr(TEggYoshi* egg) { mEgg = egg; }
 

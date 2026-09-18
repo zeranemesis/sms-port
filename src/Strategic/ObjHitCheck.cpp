@@ -93,7 +93,9 @@ TObjHitCheck::checkWaterWithActorsInList(const JGeometry::TVec3<f32>& pos,
 	return nullptr;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TObjHitCheck::checkWater()
 {
 	f32 fVar2 = TModelWaterManager::mStaticHitActor.getEntryRadius();
@@ -117,7 +119,9 @@ void TObjHitCheck::checkWater()
 			particleHitActors[i] = checkWaterWithActorsInList(pos, list.unk0);
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TObjHitCheck::entryActor(THitActor* actor, TObjCheckList* head)
 {

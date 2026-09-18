@@ -20,7 +20,9 @@ u32 TMapCollisionData::getEntryID()
 	return result;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 TBGCheckList* TMapCollisionData::allocCheckList(int kind, int count)
 {
 	TBGCheckList* result;
@@ -40,7 +42,9 @@ TBGCheckList* TMapCollisionData::allocCheckList(int kind, int count)
 	}
 	return result;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 TBGCheckList* TMapCollisionData::getListRoot(int i, int j, int kind,
                                              int param_4) const
@@ -61,7 +65,9 @@ TBGCheckList* TMapCollisionData::getListRoot(int i, int j, int kind,
 	return result;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 static void addAfterPreNode(int param_1, int param_2, TBGCheckList* param_3,
                             TBGCheckList* param_4, int kind)
 {
@@ -121,7 +127,9 @@ static TBGCheckList* addGroundNode(TBGCheckList* param_1, TBGCheckData* param_2)
 	}
 	return param_1;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TMapCollisionData::addCheckDataToList(int i, int j, int param_3,
                                            int param_4, TBGCheckData* param_5)

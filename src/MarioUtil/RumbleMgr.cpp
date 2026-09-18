@@ -216,7 +216,9 @@ void RumbleControllerMgr::reset()
 }
 
 // Hmm... why does this inline in RumbleMgr::start(int, f32*)?
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void RumbleControllerMgr::start(int channelDataIdx, int repeatCount,
                                 f32* multiplierF)
 {
@@ -227,10 +229,14 @@ void RumbleControllerMgr::start(int channelDataIdx, int repeatCount,
 		}
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline reset
+#endif
 
 // This one also inlines in RumbleMgr::start(int, Vec*)?
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void RumbleControllerMgr::start(int channelDataIdx, int repeatCount,
                                 Vec* worldPos)
 {
@@ -241,7 +247,9 @@ void RumbleControllerMgr::start(int channelDataIdx, int repeatCount,
 		}
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline reset
+#endif
 
 // Size needed: 0x10C, current: 0x10C
 void RumbleControllerMgr::stop()
@@ -254,7 +262,9 @@ void RumbleControllerMgr::stop()
 }
 
 // This one also inlines in RumbleMgr::stop(int)?
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void RumbleControllerMgr::stop(int channelDataIdx)
 {
 	for (int i = 0; i < RUMBLE_CHANNELS_PER_CONTROLLER; i++) {
@@ -264,7 +274,9 @@ void RumbleControllerMgr::stop(int channelDataIdx)
 		}
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline reset
+#endif
 
 // Size needed: 0x11C, current: 0x11C
 bool RumbleControllerMgr::channelMgrIsAllFree()

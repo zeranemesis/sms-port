@@ -108,7 +108,9 @@ void TPollutionLayer::glassWall()
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TPollutionLayer::fire()
 {
 	if (getPollutedPosNear(mFireArea, &mEffectPositions[mCurEffectPosIndex])) {
@@ -134,7 +136,9 @@ void TPollutionLayer::fire()
 		}
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TPollutionLayer::action()
 {

@@ -400,7 +400,9 @@ void TFireWanwanTailNode::setBarAnmMtx(MtxPtr mtx)
 	mMActor->getModel()->setAnmMtx(mJointIdx, mtx);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TFireWanwanTailNode::perform(u32 cue, JDrama::TGraphics* graphics,
                                   const JGeometry::TVec3<f32>& param_3,
                                   const JGeometry::TVec3<f32>& param_4)
@@ -421,7 +423,9 @@ void TFireWanwanTailNode::perform(u32 cue, JDrama::TGraphics* graphics,
 	if (!(unk10 & 0x4))
 		mMActor->perform(cue, graphics);
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 TFireWanwanTailHit::TFireWanwanTailHit(TFireWanwan& param_1)
     : TTakeActor("ファイヤーワンワン尻尾当たり")

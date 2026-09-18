@@ -91,7 +91,9 @@ void TCardManager::TCriteria::setEmpty()
 }
 
 // TODO: incorrect
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 s32 TCardManager::decideUseSector(TCardManager::TCriteria* criteria)
 {
 	if (criteria[0].getState() == TCriteria::STATE_EMPTY)
@@ -113,7 +115,9 @@ s32 TCardManager::decideUseSector(TCardManager::TCriteria* criteria)
 		idx = 1;
 	return idx;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 // TODO: what is this?
 s32 TCardManager::getLoadIndex(TCardManager::TCriteria* criteria) { }

@@ -913,7 +913,9 @@ BOOL TBossGesso::receiveMessage(THitActor* sender, u32 message)
 	return false;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TBossGesso::doAttackSingle()
 {
 	if (getLatestNerve() != &TNerveBGPollute::theNerve()) {
@@ -975,7 +977,9 @@ void TBossGesso::doAttackSingle()
 
 	// TODO: ughhhhhhhhhhhhhh
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TBossGesso::doAttackDouble()
 {

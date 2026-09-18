@@ -795,7 +795,9 @@ bool TSmallEnemy::isMarioInWater() const
 	       || SMS_CheckMarioFlag(MARIO_FLAG_IN_WATER);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 bool TSmallEnemy::isFindMarioFromParam(float param_1) const
 {
 	TSmallEnemyParams* prms = getSaveParams();
@@ -819,7 +821,9 @@ bool TSmallEnemy::isFindMarioFromParam(float param_1) const
 
 	return false;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TSmallEnemy::generateEffectColumWater()
 {

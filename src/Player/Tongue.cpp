@@ -115,7 +115,9 @@ void TYoshiTongue::rest(const JGeometry::TVec3<f32>& a,
 {
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 BOOL TYoshiTongue::canGo()
 {
 	JGeometry::TVec3<f32> toTip = mTipPos - mHeadPos;
@@ -144,7 +146,9 @@ BOOL TYoshiTongue::canGo()
 
 	return true;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 THitActor* TYoshiTongue::findTarget(bool allowExtra, bool checkForward)
 {

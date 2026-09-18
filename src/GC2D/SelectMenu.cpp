@@ -1153,7 +1153,9 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 s8 TSelectMenu::getNextIndex()
 {
 	s8 res    = -1;
@@ -1171,9 +1173,13 @@ s8 TSelectMenu::getNextIndex()
 	}
 	return res;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 s8 TSelectMenu::getPrevIndex()
 {
 	s8 res    = -1;
@@ -1191,7 +1197,9 @@ s8 TSelectMenu::getPrevIndex()
 	}
 	return res;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TSelectMenu::startOpenWindow()
 {

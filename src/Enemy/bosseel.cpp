@@ -1194,7 +1194,9 @@ void TBossEelHeartCoin::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TBossEelHeartCoin::generate(JGeometry::TVec3<f32>& position)
 {
 	mPosition.set(position.x, position.y, position.z);
@@ -1206,7 +1208,9 @@ void TBossEelHeartCoin::generate(JGeometry::TVec3<f32>& position)
 		mCoins[i]->mPosition.set(coinMtx[0][3], coinMtx[1][3], coinMtx[2][3]);
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 TBossEel::TBossEel(const char* name)
     : TSpineEnemy(name)
@@ -1640,7 +1644,9 @@ void TBossEel::shedTears(MtxPtr spawnMtx)
 	tears->mVelocity = direction;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TBossEel::forceShedTears(bool rearEyes)
 {
 	mTearEyeToggle = !mTearEyeToggle;
@@ -1660,7 +1666,9 @@ void TBossEel::forceShedTears(bool rearEyes)
 	mEyes[eyeIndex]->mAnimationLoopCount = 0;
 	shedTears(spawnMtx);
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TBossEel::generateVortex()
 {

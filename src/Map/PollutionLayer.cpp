@@ -162,9 +162,13 @@ void TPollutionLayer::stampModel(J3DModel* model)
 	gpPollution->unk70.pushModelStampTask(mIndexInParent & 0xff, model);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TPollutionLayer::appearItem(f32, f32, f32) { }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TPollutionLayer::cleaned(f32 x, f32 y, f32 z, f32 s)
 {

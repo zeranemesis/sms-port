@@ -361,7 +361,9 @@ TOptionRumbleUnit::TOptionRumbleUnit(J2DScreen* screen)
 	setState(STATE_INACTIVE);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TOptionRumbleUnit::update()
 {
 	switch (mState) {
@@ -383,7 +385,9 @@ void TOptionRumbleUnit::update()
 		break;
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TOptionRumbleUnit::checkRumble()
 {
@@ -595,7 +599,9 @@ void TOptionSoundUnit::initSurroundAnm()
 	mMonteIcons[2].set(mSurroundAnimations, ARRAY_COUNT(mSurroundAnimations));
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TOptionSoundUnit::update()
 {
 	switch (mState) {
@@ -616,7 +622,9 @@ void TOptionSoundUnit::update()
 		break;
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TOptionSoundUnit::updatePatternAnm()
 {
@@ -798,7 +806,9 @@ void TOptionControl::load()
 	mWasJumping = false;
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TOptionControl::loadSetting()
 {
 	switch (TFlagManager::getInstance()->getFlag(0xA0000)) {
@@ -824,7 +834,9 @@ void TOptionControl::loadSetting()
 
 	resetChangedSetting();
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TOptionControl::movementCommon() { }
 

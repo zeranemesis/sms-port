@@ -300,7 +300,9 @@ void TMapStaticObj::initMapCollision(const char* name)
 	mCollisionManager->setUpUnk8TRS(mPosition, mRotation, mScaling);
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TMapStaticObj::initModel(const char* name)
 {
 	char buffer[256];
@@ -327,7 +329,9 @@ void TMapStaticObj::initModel(const char* name)
 
 	TMapObjBase::startAllAnim(mMActor, name);
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TMapStaticObj::init(const char* name)
 {

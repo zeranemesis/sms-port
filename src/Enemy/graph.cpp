@@ -643,7 +643,9 @@ void TGraphWeb::getNodeIndexInXZRange(const JGeometry::TVec3<f32>&, f32,
 {
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TGraphWeb::calcGraphDirection(int n)
 {
 	TGraphNode& graphNode = getGraphNode(n);
@@ -663,7 +665,9 @@ void TGraphWeb::calcGraphDirection(int n)
 		}
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TGraphWeb::initGoalIndex(const Vec& param_1)
 {

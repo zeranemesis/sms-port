@@ -602,7 +602,9 @@ void TTelesa::setWalkAnm()
 void TTelesa::setWaitAnm() { setBckAnm(6); }
 
 // TODO: wut?
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 void TTelesa::reduceFlyForce()
 {
 	if (mCurrentFlyHeight > 0.0f)
@@ -625,7 +627,9 @@ void TTelesa::reduceFlyForce()
 	mFlyBobPhase *= 0.9f;
 	mRotation.x *= 0.9f;
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 f32 TTelesa::getGravityY() const
 {

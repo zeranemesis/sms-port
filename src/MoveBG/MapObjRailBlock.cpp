@@ -27,7 +27,9 @@ TRailMapObj::TRailMapObj(const char* name)
 {
 }
 
+#ifdef __MWERKS__
 #pragma dont_inline on
+#endif
 // TODO: weird stack frame issues here D:
 void TRailMapObj::initGraphTracer(TGraphWeb* graph)
 {
@@ -50,7 +52,9 @@ void TRailMapObj::initGraphTracer(TGraphWeb* graph)
 		resetStep(unk144);
 	}
 }
+#ifdef __MWERKS__
 #pragma dont_inline off
+#endif
 
 void TRailMapObj::resetStep(float param_1)
 {
