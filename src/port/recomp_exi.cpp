@@ -89,7 +89,7 @@ constexpr u32 kSelfClearingResetBit = 1u << 0;
 // immediately and lets loop_8033B5B8 through as many times as it's
 // reached, at the cost of not modeling the real handshake precisely.
 constexpr u32 kDspToCpuMailboxHigh = 0xCC005004u;
-constexpr u16 kMailboxValidBit = 0x8000u;
+constexpr u32 kDspToCpuMailboxLow = 0xCC005006u;
 bool g_mailboxResponsePending = false;
 
 size_t word_index(u32 addr)
@@ -108,7 +108,16 @@ u64 read(CPUState *cpu, u32 addr, u8 size)
 
     const bool touchesMailboxWord = (addr & ~3u) == kDspToCpuMailboxHigh;
     if (touchesMailboxWord && g_mailboxResponsePending) {
-        word |= (u32(kMailboxValidBit) << 16);
+        // 0x80544348: the real GameCube DSP audio-init UCode's boot
+        // acknowledgment value - not guessed, this is Dolphin emulator's
+        // own DSP HLE INIT UCode (Source/Core/Core/HW/DSPHLE/UCodes/
+        // INIT.cpp, INITUCode::Initialize(): m_mail_handler.PushMail(
+        // 0x80544348)), which real games' _OSInitAudioSystem-equivalent
+        // code has to accept correctly since Dolphin's HLE is verified
+        // against real hardware behavior across the whole game library.
+        // Already includes bit 15 of the high half (0x8054 & 0x8000 != 0)
+        // as the "mailbox valid" bit - no separate OR needed.
+        word = 0x80544348u;
     }
 
     // Sub-word reads pull the requested bytes out of the containing
@@ -117,6 +126,16 @@ u64 read(CPUState *cpu, u32 addr, u8 size)
     const u32 shift = (4 - size - (addr & 3u)) * 8;
     const u64 value = (u64(word) >> shift) & ((size == 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1));
     Log.info("read  {:#010x} (size={}) -> {:#x} [word {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+
+    // The low half is the "consuming" read - loop_8033B5B8 reads both
+    // halves together and waits for exactly this to bring the valid bit
+    // back down (real read-clears mailbox hardware behavior) before it
+    // proceeds - see the comment above g_mailboxResponsePending for why
+    // this alone isn't sufficient and the DSPCR trigger in write() below
+    // is also needed.
+    if (touchesMailboxWord && (addr == kDspToCpuMailboxLow || (addr == kDspToCpuMailboxHigh && size == 4))) {
+        g_mailboxResponsePending = false;
+    }
     return value;
 }
 
@@ -127,10 +146,30 @@ void write(CPUState *cpu, u32 addr, u64 value, u8 size)
         return;
     }
     u32 &word = g_shadow[index];
+    const u32 oldWord = word;
     const u32 shift = (4 - size - (addr & 3u)) * 8;
     const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
     word = (word & ~mask) | ((u32(value) << shift) & mask);
     Log.info("write {:#010x} (size={}) <- {:#x} [word now {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+
+    // The DSPHalt bit (bit 2 of DSPCR, per Dolphin emulator's own
+    // UDSPControl struct - Source/Core/Core/HW/DSP.h) transitioning from
+    // set to clear is the CPU starting the DSP running after upload -
+    // verified from the real generated code (chunk_0206_text1_80339600.c,
+    // labels 0x8033B674-0x8033B680): it read-modify-writes DSPCR clearing
+    // exactly this bit right between loop_8033B5B8 (consumes the first
+    // mailbox response) and loop_8033B688 (waits for a *second* one),
+    // with no fresh CPU->DSP mailbox write of its own in between. Real
+    // hardware's DSP would, once started, asynchronously send its own
+    // second "I'm up" message on its own - simulated here as: clearing
+    // DSPHalt re-arms the mailbox valid flag, standing in for that
+    // self-initiated message since nothing here has a real DSP core to
+    // send one for real.
+    constexpr u32 kDspHaltBit = 1u << 2;
+    if ((addr & ~3u) == kRangeBase + 0x08u && (oldWord & kDspHaltBit) && !(word & kDspHaltBit)) {
+        g_mailboxResponsePending = true;
+        Log.info("  (DSPHalt cleared -> re-arming mailbox valid, simulating the DSP's own started-running message)");
+    }
 
     // Writing the CPU->DSP mailbox's high half is the "send a command"
     // step - simulate the DSP responding instantly (nothing here has a
@@ -139,6 +178,122 @@ void write(CPUState *cpu, u32 addr, u64 value, u8 size)
     if ((addr & ~3u) == kRangeBase) {
         g_mailboxResponsePending = true;
     }
+}
+
+// The REAL EXI (External Interface - memory card/GBA link/serial device
+// bus) hardware register block, at its actual documented address -
+// distinct from the mis-hypothesized 0xCC0050xx range above (that turned
+// out to be the DSP interface instead, see that range's own comment).
+// Reached for real once DVDInit's own translated body runs (verified:
+// bridging DVDInit to Aurora's real no-op DVDInit() - matching how
+// CARDInit bridges to a real implementation - stopped the "bootrom"
+// OSReport loop it was stuck in, but its own caller then called it again
+// in an immediate, unbroken retry loop, the same "no-op stub doesn't set
+// a guest-side flag the caller polls for" lesson as EXIInit - so DVDInit
+// isn't bridged either, letting its real body run and reach this).
+//
+// Register layout per channel (base 0xCC006800, 3 channels 0x14 bytes
+// apart: 0xCC006800/6814/6828) is real, not guessed - Dolphin emulator's
+// own EXI_Channel.h (Source/Core/Core/HW/EXI/EXI_Channel.h):
+//   +0x00 Status:  bit 12 = EXT (device physically present, read-only)
+//   +0x04 DMA address, +0x08 DMA length (not touched here)
+//   +0x0C Control: bit 0 = TSTART (write 1 to start an immediate/DMA
+//                  transfer; real hardware clears it back to 0 once the
+//                  transfer completes - the same self-clearing-bit
+//                  pattern already used for DSPCR above, now for a
+//                  precisely-known real bit instead of a guessed one)
+//   +0x10 Immediate data register
+// A zero-initialized shadow already gives the right answer for EXT
+// (clear = "nothing attached", exactly what a real, cardless/deviceless
+// setup should report) without any special-casing - only TSTART needs
+// the self-clear simulation, since nothing here has real EXI hardware to
+// finish a transfer and clear it on its own.
+constexpr u32 kExiChannelBase = 0xCC006800u;
+constexpr u32 kExiChannelEnd = 0xCC006840u; // 3 channels x 0x14, rounded up
+constexpr u32 kExiChannelStride = 0x14u;
+constexpr u32 kExiControlOffset = 0x0Cu;
+constexpr u32 kExiTStartBit = 1u << 0;
+std::array<u32, (kExiChannelEnd - kExiChannelBase) / 4> g_exiShadow {};
+
+bool is_exi_control_register(u32 wordAddr)
+{
+    return (wordAddr - kExiChannelBase) % kExiChannelStride == kExiControlOffset;
+}
+
+u64 exi_read(CPUState *cpu, u32 addr, u8 size)
+{
+    const u32 wordAddr = addr & ~3u;
+    const size_t index = (wordAddr - kExiChannelBase) / 4;
+    u32 word = index < g_exiShadow.size() ? g_exiShadow[index] : 0;
+    if (is_exi_control_register(wordAddr)) {
+        word &= ~kExiTStartBit;
+    }
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    const u64 value = (u64(word) >> shift) & ((size == 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1));
+    Log.info("EXI read  {:#010x} (size={}) -> {:#x} [word {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+    return value;
+}
+
+void exi_write(CPUState *cpu, u32 addr, u64 value, u8 size)
+{
+    const u32 wordAddr = addr & ~3u;
+    const size_t index = (wordAddr - kExiChannelBase) / 4;
+    if (index >= g_exiShadow.size()) {
+        return;
+    }
+    u32 &word = g_exiShadow[index];
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
+    word = (word & ~mask) | ((u32(value) << shift) & mask);
+    Log.info("EXI write {:#010x} (size={}) <- {:#x} [word now {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+}
+
+// The GameCube DI (Disc Interface) hardware register block - genuinely
+// disc-hardware-related, unlike EXI/DSP above, reached once DVDInit's own
+// translated body starts issuing real disc commands (writes to
+// 0xCC006000/6004 observed right before it, in a real run, immediately
+// preceding an OSReport("bootrom") retry loop - a disc/BS2-version
+// diagnostic message, judging by the name).
+//
+// Layout (base 0xCC006000) per Dolphin emulator's own DVDInterface.h
+// (Source/Core/Core/HW/DVD/DVDInterface.h) and the standard GC memory
+// map: +0x00 DISR (status), +0x04 DICVR (cover - bit 0 = cover open,
+// clear = closed, matching a zero shadow's default), +0x08/0x0C/0x10
+// DICMDBUF0-2, +0x14 DIMAR, +0x18 DILENGTH, +0x1C DICR (control - bit 0
+// TSTART, hardware-cleared on completion, the same self-clearing pattern
+// as EXI/DSPCR above, +0x20 DIIMMBUF.
+constexpr u32 kDiBase = 0xCC006000u;
+constexpr u32 kDiEnd = 0xCC006030u;
+constexpr u32 kDiControlOffset = 0x1Cu;
+constexpr u32 kDiTStartBit = 1u << 0;
+std::array<u32, (kDiEnd - kDiBase) / 4> g_diShadow {};
+
+u64 di_read(CPUState *cpu, u32 addr, u8 size)
+{
+    const u32 wordAddr = addr & ~3u;
+    const size_t index = (wordAddr - kDiBase) / 4;
+    u32 word = index < g_diShadow.size() ? g_diShadow[index] : 0;
+    if (wordAddr - kDiBase == kDiControlOffset) {
+        word &= ~kDiTStartBit;
+    }
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    const u64 value = (u64(word) >> shift) & ((size == 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1));
+    Log.info("DI read  {:#010x} (size={}) -> {:#x} [word {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+    return value;
+}
+
+void di_write(CPUState *cpu, u32 addr, u64 value, u8 size)
+{
+    const u32 wordAddr = addr & ~3u;
+    const size_t index = (wordAddr - kDiBase) / 4;
+    if (index >= g_diShadow.size()) {
+        return;
+    }
+    u32 &word = g_diShadow[index];
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
+    word = (word & ~mask) | ((u32(value) << shift) & mask);
+    Log.info("DI write {:#010x} (size={}) <- {:#x} [word now {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
 }
 
 } // namespace
@@ -160,9 +315,27 @@ void install()
     register_mmio_range({
         .base = kRangeBase,
         .end = kRangeEnd,
-        .name = "EXI",
+        .name = "DSP", // see this range's own comment - misnamed "EXI" originally
         .read = &read,
         .write = &write,
+    });
+
+    g_exiShadow.fill(0);
+    register_mmio_range({
+        .base = kExiChannelBase,
+        .end = kExiChannelEnd,
+        .name = "EXI",
+        .read = &exi_read,
+        .write = &exi_write,
+    });
+
+    g_diShadow.fill(0);
+    register_mmio_range({
+        .base = kDiBase,
+        .end = kDiEnd,
+        .name = "DI",
+        .read = &di_read,
+        .write = &di_write,
     });
 }
 

@@ -506,3 +506,54 @@ this session), and guessing at it would be exactly the kind of fix "based
 on a plausible mechanism" this project's own methodology rules out. This
 is the real, precise boundary of "audio has no answer on any route" -
 not a vague statement anymore, but the literal missing piece.
+
+## Breakthrough: past the DSP wall, using real Dolphin emulator source
+
+Follow-up to the DSP mailbox section above. Real, freely-available reference
+material was found and used - not guessed at - closing the gap that section
+left open:
+
+- **Dolphin emulator's own source (github.com/dolphin-emu/dolphin) documents
+  the exact GameCube hardware this session was reverse-engineering from
+  behavior alone.** `Source/Core/Core/HW/DSP.h`'s `UDSPControl` confirmed
+  DSPReset is bit 0 (validating the earlier DSPCR fix after the fact) and
+  named DSPHalt as bit 2. `Source/Core/Core/HW/DSPHLE/UCodes/INIT.cpp`
+  gives the real DSP audio-init boot acknowledgment value Dolphin's HLE
+  sends real games to satisfy their `_OSInitAudioSystem`-equivalent code:
+  **`0x80544348`**. Using it (`recomp_exi.cpp`'s DSP mailbox read) plus
+  simulating a *second*, DSP-self-initiated ready message once DSPHalt
+  gets cleared (a real two-stage handshake, confirmed by reading the
+  generated code directly - see the file's own comments) **cleared the
+  DSP wall entirely** - `_OSInitAudioSystem` completes and boot proceeds
+  well past it, into other real hardware.
+- The same technique (fetch Dolphin's real register-layout headers rather
+  than guess) was applied to two more hardware blocks discovered right
+  after: **EXI** (`Source/Core/Core/HW/EXI/EXI_Channel.h` - base
+  `0xCC006800`, 3 channels 0x14 bytes apart, status/control register
+  layout with a self-clearing TSTART bit) and **DI, the Disc Interface**
+  (`Source/Core/Core/HW/DVD/DVDInterface.h` - base `0xCC006000`, DISR/
+  DICVR/DICR layout, also a self-clearing TSTART bit). Both are now
+  handled in `recomp_exi.cpp` (kept in that file/module despite the name
+  history - see its own header comment) with the real bit layout, not a
+  guessed one.
+- `DVDInit` itself was tried as a `host_call` bridge to Aurora's own real
+  (no-op) `DVDInit()` - same pattern as `CARDInit`. It IS reached through
+  a genuine cross-chunk call boundary (unlike `EXIInit`/
+  `_OSInitAudioSystem`), so the bridge fires, but its caller then called
+  it again in an immediate retry loop - the same "a no-op stub doesn't set
+  the guest-side state the caller polls for" lesson as `EXIInit`. Reverted;
+  `DVDInit`'s own translated body runs for real instead, which is what
+  actually reaches the EXI/DI registers above.
+
+**Current, new, more precise blocker**: past EXI and DI's completion
+signaling, `DVDInit`'s caller loops calling `OSReport("bootrom")` -
+almost certainly a disc/BS2-bootrom-version check reading an actual value
+back from the disc via DI's immediate-data register (`DIIMMBUF`,
+`recomp_exi.cpp`'s DI range +0x20), which this session's DI shadow always
+reports as `0` since nothing here has produced a real disc-hardware
+response value for it. Same category of gap as the DSP mailbox's response
+*content* (as opposed to just its "ready" signal) - a specific expected
+value neither guessed at nor found in the research done so far. GX/CARD
+bridging (see the section above) remains wired, self-test clean, and
+still unexercised by a real run - boot has not reached that code, now
+for this new, different reason instead of the DSP one.

@@ -291,6 +291,17 @@ bool boot_game(CPUState *cpu)
         // never fires (verified: the hang persisted, identical PC, with
         // this registered). The real fix is the DSPCR self-clearing-bit
         // simulation in include/port/recomp_exi.h's install() instead.
+        // DVDInit was tried the same way (IS reached via a real
+        // cross-chunk call boundary, unlike those two) and bridging it to
+        // Aurora's real no-op DVDInit() DID stop the "bootrom" OSReport
+        // loop it was stuck in - but its own caller then called DVDInit
+        // again in an immediate, unbroken retry loop instead (same
+        // "no-op stub doesn't set a guest-side flag the caller polls for"
+        // lesson as EXIInit) - so it's not registered here either.
+        // Un-registering it let its own translated body run for real,
+        // which is what actually reaches the real EXI channel registers
+        // (0xCC0068xx - see include/port/recomp_exi.h's second
+        // MmioRangeHandler) that were the real, more specific blocker.
     };
     dolphin_sdk::register_known_dolphin_sdk_calls(kKnownDolphinSdkCalls, std::size(kKnownDolphinSdkCalls));
 

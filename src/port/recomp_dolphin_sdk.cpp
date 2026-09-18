@@ -90,7 +90,7 @@ bool host_call_os_report(CPUState *cpu, u32 address)
 {
     (void)address;
     const std::string message = format_os_report(cpu, cpu->gpr[3]);
-    Log.info("{}", message);
+    Log.info("{} (called from pc={:#010x} lr={:#010x})", message, cpu->pc, cpu->lr);
     return true;
 }
 
