@@ -245,7 +245,7 @@ void TSpineEnemy::updateSquareToMario()
 {
 	// assert?
 	(void)gpMarioPos;
-	mDistToMarioSquared = PSVECSquareDistance(&mPosition, gpMarioPos);
+	mDistToMarioSquared = VECSquareDistance(&mPosition, gpMarioPos);
 }
 
 BOOL TSpineEnemy::receiveMessage(THitActor* sender, u32 message)
