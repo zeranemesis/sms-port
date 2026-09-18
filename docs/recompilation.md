@@ -199,6 +199,32 @@ backend C n'est pas concerné. Repointer le sous-module ne corrige rien : l'amon
 n'a qu'un seul commit d'avance, sans rapport. C'est un décalage à signaler au
 mainteneur, ou à corriger localement.
 
+**Ce n'est pas qu'un symbole manquant, et il n'y a pas de correctif local.**
+Ajouter la fonction à GXRuntime compile, mais produit un module inerte.
+
+Le protocole entier manque au runtime : `grep` sur les sources de ModernGekko et
+sur l'ABI StaticRecomp ne trouve **ni** `PPC_HOST_CALL_NATIVE_REGION_QUERY`
+(`0xFFFFFFFC`) **ni** `NATIVE_REGION`. L'hôte ne sait pas répondre à la requête.
+
+Or voici ce que `src/backend/llvm/exits.cpp` émet à chaque entrée de région :
+
+```
+aucun host_call installé -> exécution native
+sinon                    -> appeler ppc_native_region_available
+    vrai                 -> exécution native
+    faux                 -> interception_exit
+```
+
+ModernGekko **installe** un `host_call` : c'est un runtime dérivé de Dolphin, il
+intercepte. Chaque région passerait donc par la requête, une implémentation
+bouchon renverrait faux (`handled` ne pouvant jamais valoir
+`PPC_NATIVE_REGION_QUERY_HANDLED`), et toutes les régions sortiraient par
+`interception_exit`. Le module se lierait et n'exécuterait **rien** nativement —
+l'inverse exact du gain recherché.
+
+**Conclusion : le backend LLVM n'est pas utilisable avec ce runtime aujourd'hui.**
+C'est un écart d'intégration à corriger en amont, pas une dépendance à ajouter.
+
 **Conséquence pratique : utiliser `--backend c`.** C'est de toute façon le défaut
 du gabarit.
 
