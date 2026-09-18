@@ -337,3 +337,40 @@ pour valider un jeu : il donne un faux negatif spectaculaire.
 
 Le code produit par la recompilation dérive du disque et n'est pas commité :
 seule la recette l'est. Chacun le régénère depuis sa propre copie du jeu.
+
+## Reproduction locale du 2026-09-18 — recette confirmée reproductible
+
+La recette ci-dessus a été rejouée intégralement sur une machine Windows 11
+distincte, avec le vrai dump GMSP01 PAL déjà extrait pour la route Aurora
+(`sms-port/orig/GMSP01/`, réutilisé tel quel dans `extracted/GMSP01/` du
+template, sans re-extraction). Chaque étape a été exécutée séparément et
+vérifiée avant de passer à la suivante :
+
+- MSVC 19.51 (VS 18 Insiders) + Ninja embarqué + LLVM 20.1.8 (archive
+  officielle extraite localement, `LLVMExports.cmake` patché sur le chemin
+  DIA SDK réel de cette machine) : `dolrecomp` se configure et compile sans
+  erreur avec `DOLRECOMP_ENABLE_LLVM=ON`.
+- `lib/ModernGekko` (qui embarque Dolphin, 35 sous-modules `Externals`,
+  ~881 Mo une fois clonés) se configure et compile sans erreur, cible
+  `moderngekko-port`.
+- `moderngekko-port.exe build extracted/GMSP01 --backend c --toolchain auto
+  --output C:\mgm` produit `gGMSP01_recomp.dll` sans erreur.
+- `moderngekko-run.exe --game extracted/GMSP01 --module <dll>
+  --allow-interpreter` (fenêtré, pas `--headless`) : le jeu démarre
+  (`entry=0x8000522C`, identique à la session précédente), le titre de
+  fenêtre affiche un FPS qui monte de 0 à ~15-24 en quelques secondes, et
+  **deux captures d'écran réelles** confirment un rendu correct au-delà du
+  point déjà documenté : la cinématique d'intro (avion, vue de l'archipel
+  depuis le hublot) puis la scène d'accueil sur la place Delfino avec les
+  Pianta et le sous-titre "We're so pleased to welcome you to our beautiful
+  home!" rendu net. Aucune erreur dans les logs (`stderr` ne contient que les
+  deux lignes de boot attendues).
+
+**Preuve de niveau SCRIPTED uniquement** : ce run a été lancé et observé par
+capture d'écran automatisée, sans manette ni entrée humaine. Il valide que la
+chaîne d'outils est reproductible sur une machine neuve et que le rendu/l'audio
+progressent bien au-delà du point déjà atteint précédemment, mais **ne
+constitue pas** une validation de jouabilité : rester jusqu'à l'écran de
+sélection de fichier puis manipuler réellement une manette (niveau HUMAN)
+reste l'étape suivante avant de considérer la question de la jouabilité comme
+avancée.
