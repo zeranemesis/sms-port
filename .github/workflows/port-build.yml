@@ -1,0 +1,57 @@
+name: Port build
+
+# Builds the native Aurora port (CMakeLists.txt), separate from build.yml's
+# GameCube decomp-matching build. See docs/port_bootstrap.md.
+on:
+  push:
+    paths:
+      - 'CMakeLists.txt'
+      - 'files.cmake'
+      - 'patches/**'
+      - 'src/port/**'
+      - 'include/port/**'
+      - 'res/**'
+      - '.github/workflows/port-build.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'files.cmake'
+      - 'patches/**'
+      - 'src/port/**'
+      - 'include/port/**'
+      - 'res/**'
+      - '.github/workflows/port-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      # extern/aurora is a pinned submodule commit; these are working-tree
+      # patches applied fresh at every checkout, not commits (see
+      # docs/port_bootstrap.md for why). Applying them out of order or
+      # skipping one silently produces a build that does not match what a
+      # local dev tree (with the patches already applied) built and tested.
+      - name: Apply port dependency patches
+        shell: bash
+        run: |
+          git -C extern/aurora apply --check patches/aurora-port-fixes.patch
+          git -C extern/aurora apply patches/aurora-port-fixes.patch
+          git -C extern/aurora apply --check patches/aurora-render-fixes.patch
+          git -C extern/aurora apply patches/aurora-render-fixes.patch
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
+
+      - name: Build
+        run: cmake --build build

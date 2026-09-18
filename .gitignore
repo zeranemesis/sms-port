@@ -35,5 +35,6 @@ compile_commands.json
 
 # Miscellaneous
 /*.txt
+!/CMakeLists.txt
 *.exe
 tools/mwcc_compiler
