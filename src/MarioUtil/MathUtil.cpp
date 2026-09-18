@@ -1,5 +1,6 @@
 #include <MarioUtil/MathUtil.hpp>
 #include <JSystem/JMath.hpp>
+#include <math.h>
 
 static u16 atntable[] = {
 	0,    10,   20,   31,   41,   51,   61,   71,   81,   92,   102,  112,
@@ -407,9 +408,9 @@ void SMSCalcJumpVelocityXZ(const JGeometry::TVec3<f32>& param_1,
 	result->z = resZ;
 }
 
+#ifdef __MWERKS__ // clang-format off
 asm f32 MsVECMag2(register Vec* v)
 {
-#ifdef __MWERKS__ // clang-format off
   psq_l   f3, Vec.x(v), 0, qr0
   ps_mul  f3, f3, f3
 
@@ -421,12 +422,22 @@ asm f32 MsVECMag2(register Vec* v)
   fneg    f1, f2
   fsel    f0, f1, f2, f0
   fmuls   f1, f2, f0
-#endif // clang-format on
 }
+#endif // clang-format on
+#ifndef __MWERKS__
+// Portable fallback: MWCC's asm body above is a Gekko paired-single
+// frsqrte-based approximation of sqrtf(x*x + y*y + z*z) with no Newton
+// refinement (compare dolphin/mtx/vec.c's PSVECMag, which does refine).
+// The port doesn't need bit-exact matching, so just call the real sqrt.
+f32 MsVECMag2(Vec* v)
+{
+	return std::sqrtf(v->x * v->x + v->y * v->y + v->z * v->z);
+}
+#endif
 
+#ifdef __MWERKS__ // clang-format off
 asm void MsVECNormalize(register Vec* v1, register Vec* v2)
 {
-#ifdef __MWERKS__ // clang-format off
   psq_l   f6, Vec.x(v1), 0, qr0
   ps_mul  f3, f6, f6
 
@@ -441,5 +452,18 @@ asm void MsVECNormalize(register Vec* v1, register Vec* v2)
   psq_st f6, Vec.x(v2), 0, qr0
   fmuls  f4, f4, f0
   stfs   f4, Vec.z(v2)
-#endif // clang-format on
 }
+#endif // clang-format on
+#ifndef __MWERKS__
+// Portable fallback: divides v1 by its magnitude into v2, matching the
+// asm body's behavior (including using the raw reciprocal with no
+// zero-vector guard, same as the hardware frsqrte path above).
+void MsVECNormalize(Vec* v1, Vec* v2)
+{
+	f32 invMag
+	    = 1.0f / std::sqrtf(v1->x * v1->x + v1->y * v1->y + v1->z * v1->z);
+	v2->x = v1->x * invMag;
+	v2->y = v1->y * invMag;
+	v2->z = v1->z * invMag;
+}
+#endif
