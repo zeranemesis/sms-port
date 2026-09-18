@@ -1,11 +1,13 @@
 // Adapted from the Party Board (Marioparty4) port layer, credit: TwilitRealm
 //
 // This is the Aurora bootstrap for the SMS native PC port: it brings up a
-// window, the Party-Board-style menu (F1), and an update/render loop, but
-// does not yet call into any SMS game code. There is none linked in yet -
-// see docs/port_bootstrap.md for what still has to happen (recompiled or
-// decompiled game code providing a game_main-equivalent entry point) before
-// this loop has an actual game to hand off to.
+// window, the Party-Board-style menu (F1), and an update/render loop. When
+// generated/ exists (tools/port/recompile.py has run against a real GMSP01
+// dump - see docs/recompilation.md and docs/port_bootstrap.md), it also
+// opens the disc image configured in Settings -> Prelaunch -> Disc Image
+// and drives the recompiled game through include/port/recomp_boot.h.
+// Without a dump, DOLPHINJET_HAVE_RECOMPILED_GAME is undefined and this
+// file builds exactly as before (menu shell only).
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -30,6 +32,12 @@
 
 #include <cstdio>
 #include <cstdlib>
+
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+#include <aurora/dvd.h>
+#include <dolphin/dvd.h>
+#include <port/recomp_boot.h>
+#endif
 
 namespace sms {
 bool IsRunning = true;
@@ -82,17 +90,52 @@ static AuroraBackend resolve_desired_backend()
     return BACKEND_AUTO;
 }
 
-// Runs the Aurora event/render loop with only the Party-Board-style menu on
-// screen. Once SMS game code (recompiled and/or decompiled, per
-// docs/recompilation.md) provides an entry point, this becomes the fallback
-// path for BACKEND_NULL / no-disc-configured, the same way Marioparty4's
-// launchUILoop() is, rather than the whole program.
-//
-// Both ways out below - the Quit menu action (sets sms::IsRunning to
-// false) and AURORA_EXIT (the OS/window asking to close) - are ordinary,
-// successful ways to end the program, not errors; there is no failure path
-// in this loop yet. The bool return stays meaningful for later, once a
-// real error condition exists to report through it.
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+namespace {
+CPUState g_gameCpu {};
+bool g_gameRunning = false;
+
+// dolrecomp_run_blocks' "blocks" are calls into the top-level chassis
+// dispatch (generated.h's dolrecomp_find_original), not PPC instructions -
+// each one runs an entire recompiled chunk function until it hits a
+// cross-chunk branch or an unresolved host call. There is no real game
+// running yet to measure a per-frame budget against (see
+// docs/port_bootstrap.md's verification section - this is unexecuted), so
+// this is a conservative starting guess, not a tuned constant: small
+// enough that a stuck/looping region can't wedge the host's own render
+// loop for long, logged loudly if it turns out too small to make
+// progress. Expect to revisit once this has actually been run once.
+constexpr unsigned kGameBlocksPerFrame = 4096;
+
+// Opens the configured disc image and boots the recompiled game. Called
+// once, before the first frame - see port_main(). Logs and leaves
+// g_gameRunning false on any failure, which keeps the menu-only loop as
+// the fallback exactly as it was before this game code existed.
+void try_boot_game()
+{
+    const auto discPath = sms::getSettings().backend.discPath.getValue();
+    if (discPath.empty()) {
+        SmsMainLog.info("No disc image configured (Settings -> Prelaunch) - menu only");
+        return;
+    }
+    if (!aurora_dvd_open(discPath.c_str())) {
+        SmsMainLog.error("Failed to open disc image '{}'", discPath);
+        return;
+    }
+    DVDInit();
+    g_gameRunning = sms::recomp::boot_game(&g_gameCpu);
+    if (!g_gameRunning) {
+        SmsMainLog.error("Failed to boot the recompiled game from '{}' - falling back to the menu-only loop", discPath);
+    }
+}
+} // namespace
+#endif
+
+// Runs the Aurora event/render loop with the Party-Board-style menu on
+// screen. When DOLPHINJET_HAVE_RECOMPILED_GAME is defined and a disc image
+// booted successfully (try_boot_game(), called once from port_main()), the
+// recompiled game is stepped once per frame underneath the menu/overlay -
+// otherwise this is exactly the menu-only loop it always was.
 static bool run_menu_loop()
 {
     while (sms::IsRunning) {
@@ -113,6 +156,12 @@ static bool run_menu_loop()
         if (!aurora_begin_frame()) {
             continue;
         }
+
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+        if (g_gameRunning) {
+            g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
+        }
+#endif
 
         sms::ui::update();
 
@@ -164,21 +213,16 @@ extern "C" int port_main(int argc, char *argv[])
     (void)auroraInfo;
 
 #ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
-    // generated/ exists (see CMakeLists.txt), so game_recompiled built
-    // successfully - but booting it needs two more things this comment
-    // can't invent: the entry point's guest address, and the real
-    // DOLRECOMP_SYMBOL_* bindings for sms::recomp::dolphin_sdk's
-    // trampolines. Both come from generated/generated_symbols.h, which is
-    // specific to whatever GMSP01 dump produced generated/ and isn't
-    // something this codebase can know in advance. The shape once that
-    // header exists: #include it here, build a CPUState (cpu_init),
-    // sms::recomp::install_host_calls(&cpu), pass its DOLRECOMP_SYMBOL_*
-    // constants to sms::recomp::dolphin_sdk::register_known_dolphin_sdk_calls,
-    // set cpu.pc to the entry symbol, and drive func_<entry>(&cpu) from
-    // run_menu_loop()'s per-frame update instead of just the menu.
+    try_boot_game();
 #endif
 
     const bool cleanExit = run_menu_loop();
+
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+    if (g_gameCpu.ram != nullptr) {
+        cpu_free(&g_gameCpu);
+    }
+#endif
 
     sms::ui::shutdown();
     aurora_shutdown();

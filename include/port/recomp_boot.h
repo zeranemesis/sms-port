@@ -1,0 +1,43 @@
+// Loads the recompiled game (docs/recompilation.md) from the disc image
+// configured in Settings -> Prelaunch -> Disc Image and drives it, once
+// generated/ exists (see include/port/recomp_host.h and
+// include/port/recomp_dolphin_sdk.h for the mechanism this sits on top of).
+//
+// Without a real GMSP01 dump, generated/ is empty and
+// DOLPHINJET_HAVE_RECOMPILED_GAME is not defined (see CMakeLists.txt) - in
+// that case both functions below are trivial stubs that return false, so
+// this header stays includable (and portmain.cpp stays buildable) on a
+// fresh checkout and in CI exactly as before.
+#pragma once
+
+extern "C" {
+#include "cpu/cpu.h"
+}
+
+namespace sms::recomp {
+
+// Requires a disc image already opened via aurora_dvd_open() + DVDInit()
+// (see docs/port_bootstrap.md's "What actually needs a disc image from
+// here"). Reads the DOL Aurora's DVD layer exposes via DVDGetDOLLocation
+// (the raw bytes nod already pulled off the mounted disc - no
+// "sys/main.dol" path lookup needed), checks the disc's game ID is GMSP01
+// (the dump generated/ was produced from - booting a different disc image
+// against it would silently run the wrong addresses), loads its text/data
+// sections into a freshly cpu_init'd *cpu, installs the host-call bridge
+// and the known Dolphin SDK trampolines, and sets cpu->pc to the DOL's own
+// entry point. Returns false, logged with the reason, on any failure - no
+// disc mounted, wrong game ID, out-of-range section, cpu_init failure.
+// On success, cpu owns heap state (CPUState::ram) that must eventually be
+// released with cpu_free().
+bool boot_game(CPUState *cpu);
+
+// Runs up to maxBlocks translated chunks (generated.h's
+// dolrecomp_run_blocks) starting from cpu->pc. Call once per frame after a
+// successful boot_game() - the block budget keeps one guest frame from
+// blocking the host's own render loop indefinitely. Returns false once the
+// guest can't continue (a CPU exception, or an unresolved host call - see
+// recomp_host.h) - logged with the last pc, not fatal to the caller, which
+// stays free to keep presenting the menu/overlay on top.
+bool step_game(CPUState *cpu, unsigned maxBlocks);
+
+} // namespace sms::recomp

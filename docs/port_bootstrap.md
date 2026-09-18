@@ -125,7 +125,7 @@ code in this sandbox and its self-test
 ## Aurora submodule patches
 
 `extern/aurora` is pinned to the same commit Marioparty4 uses
-(`5143394...`), with two **uncommitted, working-tree** patches applied
+(`5143394...`), with three **uncommitted, working-tree** patches applied
 locally, exactly like Marioparty4 keeps `extern/aurora`/`extern/musyx`:
 
 - `patches/aurora-render-fixes.patch` - copied unchanged from Marioparty4
@@ -136,17 +136,48 @@ locally, exactly like Marioparty4 keeps `extern/aurora`/`extern/musyx`:
   in `lib/window.cpp`. The rest of that patch (a `PartyBoard_`-prefixed
   test-automation input bridge reading `MarioPartyRD\Party Board\...`
   paths) is Party-Board-specific test harness code and was **not** ported.
+- `patches/aurora-dvd-os-link.patch` - two related fixes needed to link any
+  `AURORA_ENABLE_DVD` consumer at all, verified building `dolphinjet`, both
+  upstream Aurora gaps rather than anything port-specific:
+  - `lib/dolphin/os/OSReport.cpp` - `OSReport`/`OSVReport`/`OSPanic`/
+    `OSFatal` are fully written but sit inside `#if 0`/`#endif`, so nothing
+    in Aurora defines them at all. `dolphin/os.h` declares them
+    `DECL_WEAK` (`__declspec(weak)` on MSVC), which apparently doesn't
+    tolerate a truly absent definition the way GCC/Clang weak symbols do:
+    the real failure was `LNK2019: unresolved external symbol OSReport`
+    from this port's own `io.cpp`, and `OSPanic` from `aurora_dvd.lib`
+    (see below) - not a warning, not a null-call-skipped weak reference.
+    Un-`#if 0`-ing restores Aurora's own already-written implementation
+    unchanged.
+  - `cmake/aurora_dvd.cmake` - `aurora_dvd` never declared it needs
+    `aurora_os` (`lib/dolphin/dvd/dvd.cpp` calls `OSPanic`). Declared here
+    explicitly rather than relying on a consumer's own link order to
+    happen to put `aurora::os` early enough - `CMakeLists.txt` also puts
+    `aurora::os` right after `aurora::core` in `dolphinjet`'s own list for
+    the same reason (`io.cpp` calls `OSReport` directly), belt-and-braces
+    since the OSReport.cpp gap above was confounding earlier ordering
+    experiments at the time these were written.
 
 Because these are working-tree changes, not commits, CI must apply them at
 checkout - add an "Apply port dependency patches" step to
 `.github/workflows/*.yml` that runs, in order:
 
 ```bash
-git -C extern/aurora apply --check patches/aurora-port-fixes.patch
-git -C extern/aurora apply patches/aurora-port-fixes.patch
-git -C extern/aurora apply --check patches/aurora-render-fixes.patch
-git -C extern/aurora apply patches/aurora-render-fixes.patch
+git -C extern/aurora apply --check ../../patches/aurora-port-fixes.patch
+git -C extern/aurora apply ../../patches/aurora-port-fixes.patch
+git -C extern/aurora apply --check ../../patches/aurora-render-fixes.patch
+git -C extern/aurora apply ../../patches/aurora-render-fixes.patch
+git -C extern/aurora apply --check ../../patches/aurora-dvd-os-link.patch
+git -C extern/aurora apply ../../patches/aurora-dvd-os-link.patch
 ```
+
+`git -C <dir> apply <patch>` resolves `<patch>` relative to `<dir>`, not to
+the caller's cwd - verified on this Windows checkout, where `patches/...`
+(no `../../`) fails with "can't open patch". `.gitattributes` also now pins
+`*.patch` to `text eol=lf`: with `core.autocrlf=true` (the common Windows
+default), a working-tree patch file gets CRLF-normalized, and `git apply`
+then fails with "corrupt patch" because a blank context line becomes `\r`
+instead of empty.
 
 before configuring, exactly as Marioparty4's `build.yml` does. This
 repository does not have that CI step wired up yet.
@@ -187,6 +218,14 @@ its performance characteristics).
 
 ## Verification
 
+**Update - since resolved:** the `403` described below was specific to
+that sandboxed session's outbound proxy, not this repository. Run from an
+unrestricted machine, every one of those downloads succeeds, `dolphinjet`
+builds and links (after the fixes in "Booted against a real GMSP01 dump"
+above), and has actually been run against a real GMSP01 dump - see that
+section for what that run found. The rest of this section is kept as-is
+for the historical record of what was and wasn't checked at the time.
+
 **What was checked in this sandbox:** `cmake -S . -B build` parses this
 repository's own `CMakeLists.txt`/`files.cmake` correctly, resolves
 `nlohmann_json` via `FetchContent`, and correctly hands off into
@@ -217,8 +256,9 @@ To actually verify the rest, on a machine with normal GitHub access:
 
 ```bash
 git submodule update --init --recursive
-git -C extern/aurora apply patches/aurora-port-fixes.patch
-git -C extern/aurora apply patches/aurora-render-fixes.patch
+git -C extern/aurora apply ../../patches/aurora-port-fixes.patch
+git -C extern/aurora apply ../../patches/aurora-render-fixes.patch
+git -C extern/aurora apply ../../patches/aurora-dvd-os-link.patch
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build
 ```
@@ -237,10 +277,116 @@ depend on Aurora's rendering backends initializing correctly, only on
 trampoline's format-string substitution. Both are also run in
 `port-build.yml` once the build succeeds.
 
-## What actually needs a disc image from here
+## Booted against a real GMSP01 dump - what actually happened
 
-Everything above builds and self-tests without one. What's left genuinely
-can't move further without a real GMSP01 dump:
+Everything in "What actually needs a disc image from here" (below) was
+speculative when written - no dump, no test. This section replaces it with
+what was actually measured running `dolphinjet.exe` against a real,
+legally-owned PAL dump, end to end, on Windows/MSVC. **This is a SCRIPTED,
+automated run (a timed launch, log inspection) - nobody has looked at a
+rendered frame or touched a controller. That distinction matters and should
+not get blurred by how far execution got.**
+
+1. `tools/port/recompile.py` had two real bugs, both now fixed: it looked
+   for `dolrecomp.exe` in the wrong place under a multi-config generator
+   (Visual Studio), and it flattened `dolrecomp`'s own
+   `generated/chunks/*.c` output in a way that broke every chunk's
+   `#include "../generated.h"`. Re-running it against the real dump now
+   reliably reproduces `docs/recompilation.md`'s numbers exactly: 890,680
+   instructions, 0 unknown, 219 chunks.
+2. The Aurora dependency download that blocked the previous (sandboxed)
+   session is confirmed to be a sandbox network-policy limitation, not
+   anything in this repository - it just works from an unrestricted
+   network. `patches/aurora-dvd-os-link.patch` fixes two real upstream
+   Aurora gaps found getting `dolphinjet` to actually link (see "Aurora
+   submodule patches" above): `OSReport`/`OSPanic` are fully written but
+   sit inside `#if 0`, and `aurora_dvd` never declared it needs
+   `aurora_os`.
+3. `src/port/portmain.cpp`'s `DOLPHINJET_HAVE_RECOMPILED_GAME` block is no
+   longer a comment - `include/port/recomp_boot.h` / `src/port/recomp_boot.cpp`
+   do exactly what it described: open the disc image from
+   `Settings.backend.discPath` via `aurora_dvd_open`/`DVDInit`, pull the
+   DOL directly from `DVDGetDOLLocation` (no `sys/main.dol` path lookup
+   needed - `nod` already read it off the mounted image), load its
+   text/data sections into a fresh `CPUState`'s guest RAM by hand (GameCube
+   DOL header format, verified against `dr_frontend`'s own parser rather
+   than reused from it, since that parser reads from a file path and this
+   needs to read an in-memory buffer), install the host-call bridge, and
+   set `pc` to `DOLRECOMP_ENTRY_POINT`. Confirmed: the loaded DOL size
+   printed at boot (4,094,112 bytes) matches `dtk`'s own disc-info output
+   exactly.
+4. `generated/generated.h`'s chassis (`dolrecomp_find_original`,
+   `dolrecomp_call`, `dolrecomp_run_blocks`) is real, generated, working
+   code - not something this port needed to invent. `recomp_boot.cpp`
+   drives it with a per-frame block budget
+   (`kGameBlocksPerFrame` in `portmain.cpp`, currently an unmeasured
+   starting guess, not a tuned constant).
+5. Three real `dr_cpu` (DolRecomp's CPU runtime) gaps had to be closed
+   before execution got anywhere, each found by running into it, not by
+   guessing ahead of time - all in `recomp_boot.cpp`:
+   - `mfhid0`/other `mfspr`/`mtspr` accesses to implementation-specific
+     SPRs (HID0 etc. - cache/perf/thermal config registers with no
+     software-visible effect worth modeling) aren't implemented in
+     `dr_cpu`'s C backend and fall to `CPUState::instruction_fallback`,
+     unset by default, which is a `PPC_PROGRAM_ILLEGAL` exception with
+     nowhere to jump. Handled by decoding just enough of the raw
+     instruction to treat any unmodeled SPR as a plain read/write-back
+     storage cell.
+   - `dcbf`/`dcbst`/`dcbi`/`dcbt`/`dcbtst`/`icbi` (cache-management hints)
+     hit the same fallback path instead of `ppc_cache_control` (whose
+     *default* behavior, with no `cache_control` callback installed, is
+     already a safe no-op - verified in `cpu.c`). Now no-op'd directly.
+     `dcbz` is different - it actually zeroes memory games can observe -
+     and is implemented for real (8x `mem_write32`).
+   - `sc` (system call) raises `PPC_EXC_SYSTEM_CALL` unconditionally, by
+     PowerPC design; on real hardware, IPL/BS2 install a handler at its
+     vector (0xC00) before the game ever runs, and the DOL doesn't
+     include IPL code. Confirmed hitting this for real inside
+     `DCFlushRange` (address falls exactly inside its
+     `DOLRECOMP_SYMBOL_DCFlushRange`/`_SIZE_` range) - a GameCube SDK
+     cache routine, not application code expecting a real syscall ABI,
+     consistent with `sc` here being the documented "debugger trap point"
+     convention. **Registering a handler for this through
+     `recomp_host.h`'s normal host-call table does not work** -
+     `dolrecomp_run_blocks` (`generated.h`) stops as soon as
+     `CPUState::exception` is non-zero, *before* ever dispatching to the
+     vector address it just set `pc` to, so the table is never consulted
+     for it. `step_game()` handles it directly instead: clear
+     `cpu->exception`, bump `srr0` past the 4-byte `sc` (real PPC
+     convention - `ppc_rfi` returns to exactly `srr0`, so without this a
+     handler loops on the same instruction forever), call `ppc_rfi`, retry.
+6. **Execution now runs for a long time** - tens of millions of
+   `dolrecomp_run_blocks` iterations across many seconds of wall-clock
+   CPU work, not the handful of instructions before item 5's fixes - real
+   GameCube OS/init code, not just the crt0 prologue.
+7. **Current, concrete blocker**: sustained reads from `0xCC00500A` and
+   nearby addresses. `0xCC0050xx` is GameCube EXI hardware register space
+   (External Interface - memory card/GBA-link/serial bus), not part of
+   the translated DOL, and not anything `host_call` or
+   `instruction_fallback` intercepts either - these are plain `lhz`/`lwz`
+   loads dr_cpu executes inline, which fall through `mem_read16`'s
+   `resolve_addr` miss path straight to logging "unmapped" and returning
+   0 unconditionally (verified in `cpu.c`). The real game code is almost
+   certainly polling an EXI status/ready bit (memory card or controller
+   pak detection is the standard GameCube boot-time culprit) that a
+   constant 0 can never satisfy, hence the sustained loop rather than a
+   crash. `CPUState::external_read`/`external_read32`
+   (`extern/dolrecomp/src/cpu/cpu.h`) is the hook `mem_read16` already
+   checks before falling back to the unmapped-warning path - the
+   mechanism to use is not in question. What *is* still needed and was
+   not attempted: the actual EXI register map and the specific bit
+   pattern that reads as "channel present, no card/device attached" -
+   real GameCube hardware documentation, not a guess from this session.
+8. Audio still has no answer on any route - JAudio2 has no direct
+   hardware calls to bridge (per the audit in `README.port.md`), so it
+   needs its own design regardless of how far the EXI blocker above gets
+   resolved.
+
+## What actually needs a disc image from here (superseded, kept for history)
+
+Written before any real GMSP01 dump was available in this environment -
+every numbered item here has since either been done (see the section
+above) or turned out to need something more specific than it anticipated.
 
 1. Run `tools/port/recompile.py` against it to produce `generated/*.c` and
    `generated/generated_symbols.h`. `CMakeLists.txt` already globs
