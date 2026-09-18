@@ -259,11 +259,64 @@ bouchon renverrait faux (`handled` ne pouvant jamais valoir
 `interception_exit`. Le module se lierait et n'exécuterait **rien** nativement —
 l'inverse exact du gain recherché.
 
-**Conclusion : le backend LLVM n'est pas utilisable avec ce runtime aujourd'hui.**
-C'est un écart d'intégration à corriger en amont, pas une dépendance à ajouter.
+**Mise à jour du 2026-09-18 : corrigé localement.** L'écart tenait en deux
+parties bien identifiées une fois le code réel lu (pas deviné) des trois
+couches concernées (`GXRuntime/include/core/cpu.h`, `GXRuntime/src/core/cpu.c`,
+`Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp`) :
 
-**Conséquence pratique : utiliser `--backend c`.** C'est de toute façon le défaut
-du gabarit.
+1. **Le lien** : `GXRuntime/src/core/cpu.c` n'implémentait pas
+   `ppc_native_region_available`, ni les macros `PPC_HOST_CALL_NATIVE_REGION_QUERY`
+   / `PPC_NATIVE_REGION_QUERY_PENDING` / `PPC_NATIVE_REGION_QUERY_HANDLED` que
+   son propre `cpu.h` ne déclarait pas non plus — contrairement à la copie de
+   DolRecomp. Le layout de `CPUState` est vérifié identique entre les deux
+   copies (mêmes champs `external_addr`/`external_value`/`external_rid`,
+   même `host_call`), donc porter uniquement les trois macros + la fonction
+   (28 lignes, vérifiées ligne à ligne contre l'original) dans la copie de
+   GXRuntime est un ajout sûr, pas un remplacement de fichier.
+2. **Le protocole côté hôte** (la partie qui manquait vraiment et que le
+   `grep` précédent confirmait absente) : `StaticRecompCore::HookHostCall`
+   (`StaticRecompCore_Hooks.cpp`) transmettait tout appel, y compris
+   l'adresse sentinelle `0xFFFFFFFC`, tel quel à `ModManager::HostCall`, qui
+   ne la reconnaît pas — `external_rid` restait donc à `PENDING`, et
+   `ppc_native_region_available` renvoyait toujours "indisponible". Le
+   correctif intercepte cette adresse **avant** de transmettre, et répond
+   avec l'oracle déjà câblé mais jusque-là seulement utilisé au chargement du
+   module : `m_module_source.host_call_range_contains` (lui-même
+   `ModManager::HandlesRange`, qui sait déjà quelles plages contiennent un
+   point d'interception).
+
+Patch complet (3 fichiers, 92 lignes) : [`patches/moderngekko-native-region-query.patch`](../patches/moderngekko-native-region-query.patch).
+À appliquer depuis `lib/ModernGekko/vendor/dolphin` (le fork Dolphin vendorisé
+sous `ModernGekko`) :
+
+```bash
+git -C lib/ModernGekko/vendor/dolphin apply /path/to/sms-port/patches/moderngekko-native-region-query.patch
+```
+
+**Résultat mesuré sur GMSP01**, après avoir recompilé `moderngekko-port`/
+`moderngekko-run` (le correctif touche le runtime hôte, pas seulement le
+module par jeu) puis reconstruit le module avec `--backend llvm` : le lien
+**réussit sans erreur** (6978 chunks, `gGMSP01_recomp.dll` produite), et le
+module n'est **pas inerte** — capture d'écran à l'appui, le jeu affiche la
+même cinématique d'ouverture (avion, vue de l'archipel) qu'avec le backend C,
+preuve que l'exécution native est bien empruntée et pas juste que
+l'interception de secours tourne en boucle. FPS observé en fenêtré avec
+`--allow-interpreter` : pics à ~31-33 sur les scènes légères contre ~22-27
+avec `--backend c` au même point de la cinématique — un gain réel mais qui
+n'atteint pas encore les 50 FPS nominaux PAL ; d'autres goulots
+(vraisemblablement les sites d'interception encore fréquents dans le code de
+boot, et le thread audio) restent à investiguer séparément.
+
+**Preuve de niveau SCRIPTED uniquement** : lien vérifié par un build réel,
+rendu vérifié par capture d'écran automatisée sur ~2 minutes d'exécution
+stable (pas de crash), FPS lu depuis le titre de fenêtre. Aucune partie
+humaine jouée sur ce backend pour l'instant — la comparaison de performance
+ressenties en jeu réel reste à faire.
+
+**Conséquence pratique : `--backend llvm` est utilisable**, mais `--backend c`
+reste le défaut du gabarit et le choix le plus sûr tant que ce correctif n'est
+pas remonté en amont (`ExpansionPak/ModernGekko`) ni éprouvé au-delà de la
+cinématique d'intro.
 
 ### MAX_PATH bloque la compilation du module
 

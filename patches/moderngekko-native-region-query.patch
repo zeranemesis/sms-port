@@ -1,0 +1,92 @@
+diff --git a/GXRuntime/include/core/cpu.h b/GXRuntime/include/core/cpu.h
+index e242b00259..2c8470a208 100644
+--- a/GXRuntime/include/core/cpu.h
++++ b/GXRuntime/include/core/cpu.h
+@@ -91,6 +91,14 @@ extern "C" {
+ #define PPC_EAR_ENABLE 0x80000000u
+ #define PPC_SRR1_MACHINE_CHECK_DCBZL PPC_BIT(10)
+ 
++// Sentinel host_call address an LLVM-backend native chunk uses to ask the
++// host, ahead of entering a compiled region, whether that PC range is free
++// of interception points (ported from DolRecomp's newer cpu.h/cpu.c, which
++// this copy predates -- see ppc_native_region_available in cpu.c).
++#define PPC_HOST_CALL_NATIVE_REGION_QUERY 0xFFFFFFFCu
++#define PPC_NATIVE_REGION_QUERY_PENDING 0xFEu
++#define PPC_NATIVE_REGION_QUERY_HANDLED 0xFFu
++
+ typedef struct CPUState CPUState;
+ 
+ typedef u64 (*PPCExternalRead)(CPUState* cpu, u32 ea, u8 size);
+@@ -404,6 +412,7 @@ static inline bool ppc_fp_available_inline(CPUState* cpu, u32 cia) {
+ }
+ void ppc_fallback_instruction(CPUState* cpu, u32 raw, u32 cia);
+ bool ppc_host_call(CPUState* cpu, u32 address);
++bool ppc_native_region_available(CPUState* cpu, u32 start, u32 end);
+ void ppc_system_call_exception(CPUState* cpu, u32 cia);
+ void ppc_dsi_exception(CPUState* cpu, u32 ea, u32 cia, u32 dsisr);
+ void ppc_alignment_exception(CPUState* cpu, u32 ea, u32 cia);
+diff --git a/GXRuntime/src/core/cpu.c b/GXRuntime/src/core/cpu.c
+index 345b9602dd..24fb700c21 100644
+--- a/GXRuntime/src/core/cpu.c
++++ b/GXRuntime/src/core/cpu.c
+@@ -141,6 +141,31 @@ bool ppc_host_call(CPUState* cpu, u32 address) {
+     return cpu->host_call ? cpu->host_call(cpu, address) : false;
+ }
+ 
++// Ported verbatim from DolRecomp's newer cpu.c (this copy predates the
++// native-region-query protocol). Asks the host, via the existing host_call
++// hook and the reserved sentinel address, whether [start, end) is free of
++// interception points and can be entered natively without a per-instruction
++// check. The host signals it understood the query by leaving external_rid
++// set to PPC_NATIVE_REGION_QUERY_HANDLED; an old or unaware host leaves it
++// at PENDING, which this treats as "unavailable" (same as today's behavior).
++bool ppc_native_region_available(CPUState* cpu, u32 start, u32 end) {
++    if (!cpu || !cpu->host_call)
++        return true;
++
++    u32 saved_addr = cpu->external_addr;
++    u32 saved_value = cpu->external_value;
++    u8 saved_rid = cpu->external_rid;
++    cpu->external_addr = start;
++    cpu->external_value = end;
++    cpu->external_rid = PPC_NATIVE_REGION_QUERY_PENDING;
++    bool blocked = cpu->host_call(cpu, PPC_HOST_CALL_NATIVE_REGION_QUERY);
++    bool handled = cpu->external_rid == PPC_NATIVE_REGION_QUERY_HANDLED;
++    cpu->external_addr = saved_addr;
++    cpu->external_value = saved_value;
++    cpu->external_rid = saved_rid;
++    return handled && !blocked;
++}
++
+ void ppc_system_call_exception(CPUState* cpu, u32 cia) {
+     ppc_take_exception(cpu, PPC_EXC_SYSTEM_CALL, PPC_VECTOR_SYSTEM_CALL, cia + 4u, 0);
+ }
+diff --git a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+index 7b3d845cee..e9976339a1 100644
+--- a/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
++++ b/Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp
+@@ -22,6 +22,24 @@ constexpr u32 LOCKED_CACHE_BASE = 0xE0000000u;
+ bool StaticRecompCore::HookHostCall(CPUState* cpu, u32 address)
+ {
+   auto* core = static_cast<StaticRecompCore*>(cpu->external_user_data);
++
++  // A native (LLVM-backend) chunk asking, ahead of entering a compiled
++  // region, whether [external_addr, external_value) is free of interception
++  // points. Answered from the same host_call_range_contains oracle
++  // StaticRecompCore already uses at load/SMC time -- see
++  // StaticRecompCore.cpp:336 and StaticRecompCore_SMC.cpp:259. Leaving
++  // external_rid at PENDING when no oracle is registered keeps today's
++  // fallback behavior (always intercept) instead of guessing.
++  if (address == PPC_HOST_CALL_NATIVE_REGION_QUERY)
++  {
++    if (!core->m_module_source.host_call_range_contains)
++      return false;
++    const bool contains_interception = core->m_module_source.host_call_range_contains(
++        cpu->external_addr, cpu->external_value, core->m_module_source.host_call_user);
++    cpu->external_rid = PPC_NATIVE_REGION_QUERY_HANDLED;
++    return contains_interception;
++  }
++
+   return core->m_module_source.host_call &&
+          core->m_module_source.host_call(cpu, address, core->m_module_source.host_call_user);
+ }
