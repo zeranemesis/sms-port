@@ -81,7 +81,8 @@ décompilé.
   Princess), Metaforce et Party Board.
 - **Pas de réimplémentation partagée de JSystem/J3D**, et **pas de runtime audio
   DSP réutilisable** : Aurora ne fournit pas d'audio. C'est le poste le plus
-  incertain.
+  incertain — pour cette route-ci. La recompilation statique y échappe, mais en
+  reprenant un cœur dérivé de Dolphin : voir `docs/recompilation.md`.
 
 ## Outils
 

@@ -57,29 +57,70 @@ dolrecomp.exe --gamecube --cpu gekko --backend c --runtime recompcore \
 
 Zéro instruction non décodée : le binaire entier est traduit.
 
-## Deux points ouverts
 
-**Code auto-modifiant.** L'outil avertit que le DOL modifie de la mémoire
-exécutable à l'exécution et liste les instructions concernées dans
-`generated_smc.txt`. Ces sites demanderont des correctifs ciblés.
+## Backend LLVM et runtime ModernGekko
 
-**Runtime ModernGekko.** Il exige le backend LLVM, lequel exige les fichiers de
-développement LLVM 19 ou 20. Attention : l'installateur Windows officiel
-(`LLVM-*-win64.exe`, également ce que fournit winget) ne livre que les
-binaires — ni headers ni fichiers CMake. Il faut l'archive complète
-`clang+llvm-20.1.8-x86_64-pc-windows-msvc.tar.xz` (897 Mo), puis reconfigurer :
+Le runtime ModernGekko exige le backend LLVM, lequel exige les **fichiers de
+développement** LLVM 19 ou 20. Trois obstacles se présentent dans cet ordre, tous
+franchis :
+
+1. **L'installateur officiel ne suffit pas.** `LLVM-*-win64.exe` (et ce que
+   fournit winget) ne livre que les binaires — ni headers ni fichiers CMake. Il
+   faut l'archive complète `clang+llvm-20.1.8-x86_64-pc-windows-msvc.tar.xz`
+   (897 Mo).
+
+2. **L'archive référence un chemin qui n'existe pas chez soi.** Son
+   `lib/cmake/llvm/LLVMExports.cmake` code en dur, ligne 490, le DIA SDK de
+   Visual Studio 2019 Professional :
+   `C:/Program Files (x86)/Microsoft Visual Studio/2019/Professional/DIA SDK/lib/amd64/diaguids.lib`.
+   CMake échoue tant qu'on ne l'a pas remplacé par le chemin local du DIA SDK.
+
+3. **Reconfigurer avec le backend activé** :
 
 ```bash
 cmake -S . -B build-llvm -DDOLRECOMP_ENABLE_LLVM=ON \
       -DLLVM_DIR=<...>/lib/cmake/llvm
 ```
 
-## Ce que « traduit » ne veut pas dire
+**Résultat mesuré** avec ce backend :
 
-Le code est traduit, le jeu n'est pas jouable pour autant. Restent le runtime
-(mémoire, threads, interruptions) et surtout les couches plateforme. Aurora
-couvre GX ; **l'audio n'a aucune base réutilisable** et demeure le poste le plus
-incertain du projet.
+```bash
+dolrecomp.exe --gamecube --cpu gekko --backend llvm --runtime moderngekko \
+              --game-id GMSP01 --map <...>/marioEU.MAP -j12 <...>/sys/main.dol <sortie>
+```
+
+16 958 chunks objets LLVM, **50 879 fichiers, 4,0 Go**. Même avertissement de code
+auto-modifiant qu'avec le backend C.
+
+## Point ouvert : code auto-modifiant
+
+L'outil avertit que le DOL modifie de la mémoire exécutable à l'exécution et liste
+les instructions concernées dans `generated_smc.txt`. Ces sites demanderont des
+correctifs ciblés. L'avertissement apparaît avec les deux backends.
+
+## Ce que « traduit » ne veut pas dire — et ce que fournit ModernGekko
+
+Le code est traduit, le jeu n'est pas jouable pour autant : restent le runtime
+(mémoire, threads, interruptions) et les couches plateforme.
+
+**Fait à connaître avant de s'engager sur cette route.** ModernGekko se décrit
+lui-même comme « built on a Dolphin-derived core for video/audio/HLE », et embarque
+Dolphin en dépendance (`lib/ModernGekko/vendor/dolphin`, avec ses Externals
+FFmpeg/SDL sur Windows). Deux conséquences :
+
+- **L'audio cesse d'être le poste incertain.** Le reste de ce dépôt dit que
+  « l'audio n'a aucune base réutilisable » — c'est vrai pour un port natif écrit
+  depuis la décomp, faux pour cette route : Dolphin l'apporte.
+- **Ce n'est pas un port natif.** Ce qu'on obtient est un exécutable dédié au jeu
+  où le **CPU est recompilé statiquement** et où le reste de la machine vient des
+  sous-systèmes de Dolphin. Le gain face à « lancer Dolphin » se limite aux
+  performances CPU et à un binaire autonome — pas à une réécriture au niveau
+  source. La décision d'emprunter cette voie doit être prise en connaissance de
+  cela.
+
+Aurora (`encounter/aurora`) reste l'alternative sur ce point : une vraie couche de
+compatibilité source GX → Vulkan/Metal/D3D12, sans cœur d'émulateur, au prix d'un
+travail bien plus long et sans réponse pour l'audio.
 
 ## Ce qui n'est pas versionné ici
 
