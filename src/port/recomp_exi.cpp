@@ -55,29 +55,42 @@ std::array<u32, kWordCount> g_shadow {};
 // forced clear on read.
 constexpr u32 kSelfClearingResetBit = 1u << 0;
 
-// Third correction from the same investigation, after the DSPCR fix above
-// got past its poll: the next hang (still inside _OSInitAudioSystem, a
-// different PC) spins reading 0xCC005004 forever, always getting back 0 -
-// with nothing ever written there to echo, a plain shadow can't help this
-// one at all, unlike the DSPCR case. The access sequence leading up to it
-// (a real run, addresses/values as logged): write 0xCC005000 (CPU->DSP
-// mailbox, high half), then a DMA setup (0xCC005020/24/28), then this
-// read of 0xCC005004. Per the publicly documented GameCube DSP interface
-// register layout, 0xCC005000/5002 is the CPU->DSP mailbox
-// (high/low halves) and 0xCC005004/5006 is the DSP->CPU mailbox
-// (high/low) - this fits exactly: the code wrote a command to the DSP's
-// inbox and is now waiting for its outbox to have a response, which real
-// DSP firmware signals by setting bit 15 of the high mailbox halfword
-// (the "mailbox valid" convention documented across GC/Wii DSP homebrew
-// sources). Nothing here has a real DSP core to produce an actual
-// response, so this only reports "a response is ready" (bit 15 set) -
-// the response's actual content is left at 0, since what a real DSP
-// would have replied with is unknown and not guessed at here. This may
-// get boot past audio init without audio actually working, which is the
-// explicit, already-documented scope of "audio has no answer on any
-// route" (README.port.md) - not an attempt to make audio work.
+// Third correction, this time from reading the actual generated C code
+// (generated/chunks/chunk_0206_text1_80339600.c) around both hang points
+// directly, rather than inferring from log patterns alone - the previous
+// "always report bit 15 set" fix was only half right and created a new
+// hang of its own once the game read the SAME bit through a second loop.
+//
+// Per the publicly documented GameCube DSP interface register layout,
+// 0xCC005000/5002 is the CPU->DSP mailbox (high/low halves) and
+// 0xCC005004/5006 is the DSP->CPU mailbox (high/low), bit 15 of each
+// high half being the documented "mailbox valid" flag. Two distinct
+// loops poll it with *opposite* polarity - real evidence, not inferred:
+//   - loop_8033B688 (label_8033B688): reads only 0xCC005004, masks to
+//     bit 15, and loops *while that bit is 0* (`bc 12,2,...` = beq-style
+//     branch-if-CR0.EQ against a zero-masked result) - i.e. it waits for
+//     the bit to become SET.
+//   - loop_8033B5B8 (label_8033B5B8): reads BOTH 0xCC005004 and
+//     0xCC005006, combines them into one 32-bit value, masks to the same
+//     bit (now at position 31), and loops *while that bit is 1*
+//     (`bc 4,2,...` = bne-style branch) - i.e. it waits for the bit to
+//     become CLEAR again.
+// This looks like the standard hardware "read-clears" mailbox
+// convention at first - and a read-clear-on-low-half simulation of
+// exactly that was tried - but a real run showed the two loops don't run
+// in the order the static code's layout suggests: loop_8033B5B8 runs
+// (and, under read-clear, consumes the response) *before*
+// loop_8033B688's own later check ever sees it, leaving loop_8033B688
+// stuck waiting for a *second* response - almost certainly a real,
+// separate DSP-initiated message this CPU-side code alone doesn't
+// explain. Rather than guess at that second message's trigger, this
+// stays intentionally simple: the valid bit reads as permanently set
+// (see install() below) once installed - satisfies loop_8033B688
+// immediately and lets loop_8033B5B8 through as many times as it's
+// reached, at the cost of not modeling the real handshake precisely.
 constexpr u32 kDspToCpuMailboxHigh = 0xCC005004u;
 constexpr u16 kMailboxValidBit = 0x8000u;
+bool g_mailboxResponsePending = false;
 
 size_t word_index(u32 addr)
 {
@@ -92,9 +105,12 @@ u64 read(CPUState *cpu, u32 addr, u8 size)
     // underlying shadow word still keeps it set (write() doesn't touch
     // it), only the read side simulates the instantaneous self-clear.
     word &= ~kSelfClearingResetBit;
-    if ((addr & ~1u) == kDspToCpuMailboxHigh) {
+
+    const bool touchesMailboxWord = (addr & ~3u) == kDspToCpuMailboxHigh;
+    if (touchesMailboxWord && g_mailboxResponsePending) {
         word |= (u32(kMailboxValidBit) << 16);
     }
+
     // Sub-word reads pull the requested bytes out of the containing
     // big-endian 32-bit word, matching how a real register would be
     // byte/halfword-addressable within its word.
@@ -115,6 +131,14 @@ void write(CPUState *cpu, u32 addr, u64 value, u8 size)
     const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
     word = (word & ~mask) | ((u32(value) << shift) & mask);
     Log.info("write {:#010x} (size={}) <- {:#x} [word now {:#010x}] pc={:#010x}", addr, size, value, word, cpu->pc);
+
+    // Writing the CPU->DSP mailbox's high half is the "send a command"
+    // step - simulate the DSP responding instantly (nothing here has a
+    // real DSP core to respond for real, or to know what it should say -
+    // see the comment above g_mailboxResponsePending).
+    if ((addr & ~3u) == kRangeBase) {
+        g_mailboxResponsePending = true;
+    }
 }
 
 } // namespace
@@ -122,6 +146,17 @@ void write(CPUState *cpu, u32 addr, u64 value, u8 size)
 void install()
 {
     g_shadow.fill(0);
+    // Left permanently set rather than cleared on the "consuming" read a
+    // real read-clear mailbox would have - tried that, and reading the
+    // actual generated code (see the big comment above) confirmed it is
+    // genuinely a two-loop, opposite-polarity handshake, but a real
+    // run showed the two loops don't run in the static code's apparent
+    // order (the "wait for clear" loop runs and consumes the response
+    // *before* the "wait for set" loop checks it again), meaning a
+    // second, real DSP-initiated message is expected between them - not
+    // something derivable from the CPU-side code alone. Left simple and
+    // permanently-ready rather than guessed at further.
+    g_mailboxResponsePending = true;
     register_mmio_range({
         .base = kRangeBase,
         .end = kRangeEnd,
