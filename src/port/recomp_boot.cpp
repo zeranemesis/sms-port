@@ -8,7 +8,10 @@
 // dolphinjet (menu shell only) against the stub below.
 #ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
 
+#include "port/recomp_card.h"
 #include "port/recomp_dolphin_sdk.h"
+#include "port/recomp_exi.h"
+#include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
 
 #include "aurora/lib/logging.hpp"
@@ -28,6 +31,7 @@ extern "C" {
 #include "generated_symbols.h"
 }
 
+#include <chrono>
 #include <cstring>
 #include <iterator>
 #include <unordered_map>
@@ -212,6 +216,34 @@ bool load_dol_into_ram(CPUState *cpu, const u8 *dol, u32 dolSize)
     return true;
 }
 
+// dr_cpu's CPUState::timebase (extern/dolrecomp/src/cpu/cpu.h) only ever
+// changes when guest code explicitly writes it via mtspr (TBL/TBU) -
+// nothing advances it on its own, verified reading cpu.c's mftb/mtspr
+// handling. Real GameCube hardware's timebase counts continuously at
+// OS_TIMER_CLOCK, a real, already-defined constant in this codebase
+// (include/dolphin/os.h: OS_BUS_CLOCK/4; extern/aurora/include/dolphin/
+// os.h independently confirms OS_BUS_CLOCK as 162,000,000, i.e.
+// OS_TIMER_CLOCK = 40,500,000 Hz - not a guess, the decomp's own SDK
+// header). Verified hitting this for real: _OSInitAudioSystem spins
+// forever calling OSGetTick() in what is clearly a "wait N ticks" delay,
+// because with a frozen timebase no amount of elapsed real time ever
+// looks like elapsed guest time. Advancing it by real wall-clock elapsed
+// time between step_game() calls, at that same rate, is the least
+// arbitrary choice: guest ticks pass at the same rate real ticks would.
+constexpr u64 kTimerClockHz = 40500000ull;
+
+void advance_timebase(CPUState *cpu)
+{
+    using clock = std::chrono::steady_clock;
+    static clock::time_point lastTime = clock::now();
+    const clock::time_point now = clock::now();
+    const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastTime).count();
+    lastTime = now;
+    if (elapsedNs > 0) {
+        cpu->timebase += static_cast<u64>(elapsedNs) * kTimerClockHz / 1000000000ull;
+    }
+}
+
 } // namespace
 
 bool boot_game(CPUState *cpu)
@@ -244,6 +276,7 @@ bool boot_game(CPUState *cpu)
     }
 
     install_host_calls(cpu);
+    install_external_memory(cpu);
     cpu->instruction_fallback = &handle_instruction_fallback;
     // PPC_VECTOR_SYSTEM_CALL (sc) is handled directly in step_game(), not
     // through this table - see its own comment for why registering it
@@ -251,8 +284,57 @@ bool boot_game(CPUState *cpu)
 
     static const dolphin_sdk::NamedAddress kKnownDolphinSdkCalls[] = {
         { "OSReport", DOLRECOMP_SYMBOL_OSReport },
+        // _OSInitAudioSystem was briefly bridged as a full-function skip
+        // here, but its poll is reached via an internal goto within the
+        // same translated chunk as its caller, not a real dolrecomp_call
+        // boundary crossing - a host_call trampoline for its entry address
+        // never fires (verified: the hang persisted, identical PC, with
+        // this registered). The real fix is the DSPCR self-clearing-bit
+        // simulation in include/port/recomp_exi.h's install() instead.
     };
     dolphin_sdk::register_known_dolphin_sdk_calls(kKnownDolphinSdkCalls, std::size(kKnownDolphinSdkCalls));
+
+    // EXI: register-level range (unblocks the confirmed boot hang) plus
+    // cheap function-level stubs - see include/port/recomp_exi.h.
+    exi::install();
+    static const exi::NamedAddress kKnownExiCalls[] = {
+        // EXIInit is deliberately not registered here - see
+        // src/port/recomp_exi.cpp's register_known_exi_calls for why a
+        // no-op stub caused an infinite loop in a real run.
+        { "EXIProbe", DOLRECOMP_SYMBOL_EXIProbe },
+        { "EXIProbeEx", DOLRECOMP_SYMBOL_EXIProbeEx },
+        { "EXIGetState", DOLRECOMP_SYMBOL_EXIGetState },
+        { "EXIAttach", DOLRECOMP_SYMBOL_EXIAttach },
+    };
+    exi::register_known_exi_calls(kKnownExiCalls, std::size(kKnownExiCalls));
+
+    // CARD: bridges to Aurora's real, working implementation - see
+    // include/port/recomp_card.h.
+    static const card::NamedAddress kKnownCardCalls[] = {
+        { "CARDInit", DOLRECOMP_SYMBOL_CARDInit },
+        { "CARDMount", DOLRECOMP_SYMBOL_CARDMount },
+        { "CARDMountAsync", DOLRECOMP_SYMBOL_CARDMountAsync },
+        { "CARDProbeEx", DOLRECOMP_SYMBOL_CARDProbeEx },
+    };
+    card::register_known_card_calls(kKnownCardCalls, std::size(kKnownCardCalls));
+
+    // GX FIFO: register-level write-gather-pipe forwarding plus the
+    // control-plane calls that configure it - see
+    // include/port/recomp_gx_fifo.h. GXSetDrawDoneCallback isn't in this
+    // dump's symbol table at all - this SDK revision uses GXSetDrawDone
+    // instead (bridged below); GXWaitDrawDone has no Aurora
+    // implementation and isn't bridged yet.
+    gx_fifo::install();
+    static const gx_fifo::NamedAddress kKnownGxCalls[] = {
+        { "GXInit", DOLRECOMP_SYMBOL_GXInit },
+        { "GXSetCPUFifo", DOLRECOMP_SYMBOL_GXSetCPUFifo },
+        { "GXSetGPFifo", DOLRECOMP_SYMBOL_GXSetGPFifo },
+        { "GXSetDrawDone", DOLRECOMP_SYMBOL_GXSetDrawDone },
+        { "GXDrawDone", DOLRECOMP_SYMBOL_GXDrawDone },
+        { "GXFlush", DOLRECOMP_SYMBOL_GXFlush },
+        { "GXCopyDisp", DOLRECOMP_SYMBOL_GXCopyDisp },
+    };
+    gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
 
     cpu->pc = DOLRECOMP_ENTRY_POINT;
     Log.info("boot: loaded {} byte DOL, entry={:#010x}", dolSize, cpu->pc);
@@ -261,6 +343,8 @@ bool boot_game(CPUState *cpu)
 
 bool step_game(CPUState *cpu, unsigned maxBlocks)
 {
+    advance_timebase(cpu);
+
     // dolrecomp_run_blocks (generated.h) stops as soon as CPUState::exception
     // is non-zero, *before* dispatching to the vector address it just set
     // cpu->pc to - verified: registering a host-call handler for

@@ -19,7 +19,6 @@ aurora::Module Log("sms::recomp::dolphin_sdk");
 constexpr u32 kFirstVariadicGpr = 4;
 constexpr u32 kLastVariadicGpr = 10;
 constexpr size_t kMaxFormatLength = 4096;
-constexpr size_t kMaxStringArgLength = 4096;
 
 u32 next_variadic_gpr(CPUState *cpu, u32 &gprIndex)
 {
@@ -27,17 +26,6 @@ u32 next_variadic_gpr(CPUState *cpu, u32 &gprIndex)
         return 0;
     }
     return cpu->gpr[gprIndex++];
-}
-
-void append_guest_cstring(std::string &out, CPUState *cpu, u32 addr)
-{
-    for (size_t i = 0; i < kMaxStringArgLength; ++i) {
-        const u8 c = mem_read8(cpu, addr + static_cast<u32>(i));
-        if (c == 0) {
-            return;
-        }
-        out.push_back(static_cast<char>(c));
-    }
 }
 
 } // namespace
@@ -67,7 +55,7 @@ std::string format_os_report(CPUState *cpu, u32 formatGuestAddr)
                 out.push_back('%');
                 break;
             case 's':
-                append_guest_cstring(out, cpu, next_variadic_gpr(cpu, gprIndex));
+                out += read_guest_cstring(cpu, next_variadic_gpr(cpu, gprIndex));
                 break;
             case 'c':
                 out.push_back(static_cast<char>(next_variadic_gpr(cpu, gprIndex)));

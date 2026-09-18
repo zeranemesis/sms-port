@@ -10,7 +10,10 @@ set(PORT_FILES
         src/port/io.cpp
         src/port/portmain.cpp
         src/port/recomp_boot.cpp
+        src/port/recomp_card.cpp
         src/port/recomp_dolphin_sdk.cpp
+        src/port/recomp_exi.cpp
+        src/port/recomp_gx_fifo.cpp
         src/port/recomp_host.cpp
         src/port/settings.cpp
 

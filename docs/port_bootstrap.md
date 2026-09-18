@@ -408,3 +408,77 @@ above) or turned out to need something more specific than it anticipated.
    calls to bridge the way GX/PAD/OS do (per the audit in
    `README.port.md`), so it needs its own design, not just more
    trampolines.
+
+## EXI/CARD/GX bridging session - what was actually found running it
+
+Follow-up to "Booted against a real GMSP01 dump" above. That session's
+blocker (sustained reads from GameCube EXI hardware registers, `0xCC0050xx`)
+turned out to need more than one fix, discovered the same way as before -
+by running the real thing and reading the calling PC against
+`generated/generated_symbols.h`, never by guessing ahead of a real run.
+
+**What shipped**: `include/port/recomp_host.h`'s `MmioRangeHandler` table
+(address-*range*-keyed, parallel to the existing address-*exact*-keyed
+host-call table) plus `include/port/recomp_exi.h`, `recomp_card.h`,
+`recomp_gx_fifo.h` (and their `.cpp`s) bridging EXI probes, CARD (a real,
+working bridge to Aurora's GCI-folder-backed `card.cpp`), and the GX
+write-gather-pipe (`external_write` on `[0xCC008000, 0xCC009000)` forwards
+straight into `aurora::gx::fifo::write_u8/u16/u32` - Aurora's own,
+already-implemented GX command decoder, not reimplemented here) plus its
+control-plane calls (`GXInit`/`GXSetCPUFifo`/`GXSetGPFifo`/`GXSetDrawDone`/
+`GXDrawDone`/`GXFlush`/`GXCopyDisp`). `--recomp-mmio-self-test` exercises
+the new table without a disc image, same as the two pre-existing self-tests.
+
+**Two real bugs found and fixed, both more general than EXI/CARD/GX**:
+
+1. A no-op `EXIInit` stub (the obvious first guess) caused an *infinite
+   loop calling EXIInit itself* in a real run - real `EXIInit` almost
+   certainly writes an "initialized" flag into guest memory that other
+   guest code polls afterward, and a stub with no guest-memory side effect
+   can never satisfy that. Fixed by *not* bridging `EXIInit` at all and
+   letting its own fully-translated body run instead (dolrecomp translated
+   the whole DOL - there's a real implementation to fall back to, no need
+   to guess at one).
+2. `CPUState::timebase` (`extern/dolrecomp/src/cpu/cpu.h`) never advances
+   on its own - only `mtspr`/`mftb` touch it at all. Any "wait N ticks"
+   loop (found via `_OSInitAudioSystem` calling `OSGetTick()` in a tight
+   loop that never terminated) spins forever with a frozen timebase,
+   regardless of how much real wall-clock time passes. Fixed generally,
+   not just for audio: `src/port/recomp_boot.cpp`'s `advance_timebase()`
+   now advances it once per `step_game()` call by real elapsed wall-clock
+   time, converted at `OS_TIMER_CLOCK` (40,500,000 Hz - not a guess, this
+   codebase's own `include/dolphin/os.h`/`extern/aurora/include/dolphin/
+   os.h` both define it as `OS_BUS_CLOCK/4` with `OS_BUS_CLOCK =
+   162,000,000`). This should matter well beyond audio - anything using
+   `OSGetTick`/`OSGetTime`-based delays anywhere in the game had the same
+   problem before this fix.
+
+**One hardware-register hypothesis corrected against real data**: the
+`0xCC00500A` hang from the previous session is not EXI at all - the
+logged PC lands inside `_OSInitAudioSystem`'s own symbol range
+(`DOLRECOMP_SYMBOL__OSInitAudioSystem 0x8033B534`, size `0x1BC`), i.e. it
+is the GameCube **DSP interface** (DSPCR and neighbors), polled during
+audio bring-up. The real sequence, read off an actual run: write `0x8ac`,
+read it back, write `0x8ad` (only bit 0 changes, 0->1), then spin reading
+the same value forever - the standard "write a self-clearing reset bit,
+poll until hardware clears it" pattern. `recomp_exi.cpp`'s shadow register
+file (kept in that file/module for now rather than renamed mid-session)
+now always reports bit 0 as clear on read, simulating an instantaneous
+reset - this alone resolved the hang.
+
+**Current, more precisely located blocker**: past both fixes above, the
+same `_OSInitAudioSystem` now spins reading `0xCC005004` (a *different*
+offset in the same DSP register block - almost certainly a CPU<->DSP
+mailbox register) at `pc=0x8033b688`, always getting back `0`. This reads
+as a real DSP firmware-upload/ready handshake - the kind of thing that
+needs an actual (even if minimal) DSP core or HLE to answer correctly, not
+a shadow-memory bit trick. This is the same "audio has no answer on any
+route" gap already flagged in `README.port.md` and the original "What
+actually needs a disc image from here" list below, now pinned to an exact
+address and calling function rather than a general statement. **GX and
+CARD bridging are wired and self-test clean, but have not been exercised
+against a real run yet** - boot has not reached any GX or CARD call site
+so far; both stay unverified beyond the self-tests until audio/DSP clears
+enough for boot to reach that code. Every run in this session remains
+SCRIPTED-level verification only (a timed launch, log inspection) - no
+rendered frame has been seen.
