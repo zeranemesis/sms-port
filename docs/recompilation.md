@@ -352,6 +352,123 @@ reste le défaut du gabarit et le choix le plus sûr tant que ce correctif n'est
 pas remonté en amont (`ExpansionPak/ModernGekko`) ni éprouvé au-delà de la
 cinématique d'intro.
 
+## Préparer une vraie manette (clavier) pour un playtest humain
+
+Le générateur de config de ModernGekko (`GenerateControllerConfig`,
+`tools/frontend_config.cpp`) ne produit que des profils manette SDL
+(`Buttons/A = `Button A``) — inutilisable pour jouer au clavier, dont les
+touches n'ont pas ces noms. Il faut écrire à la main
+`<user-dir>/Config/GCPadNew.ini` (le fichier existant n'est jamais régénéré,
+`EnsureControllerConfig` vérifie juste sa présence) et ajouter
+`controller=<device>` sous `[Input]` dans `config.ini` pour que ce profil soit
+effectivement chargé au lancement (sinon `EnsureControllerConfig` n'est même
+pas appelé, `moderngekko_run.cpp:258`).
+
+**Deux pièges, trouvés en lisant `GXRuntime/vendor/dolphin/Source/Core/InputCommon/ControllerInterface/DInput/`
+après qu'un premier essai n'ait eu aucun effet** :
+- Le nom de périphérique clavier sous Windows est `DInput/0/Keyboard Mouse`
+  (`DInputKeyboardMouse.cpp` : `GetSource()` renvoie `"DInput"`, `GetName()`
+  renvoie `"Keyboard Mouse"`) — pas `Keyboard Mouse/0/Keyboard Mouse`.
+- Les touches spéciales sont nommées en **MAJUSCULES** dans la table
+  `NamedKeys.h` de Dolphin (`RETURN`, `UP`, `DOWN`, `LEFT`, `RIGHT`) — `Return`
+  ou `Up` ne correspondent à rien et sont silencieusement ignorés. Les lettres
+  seules (`A`-`Z`) ne sont pas affectées par ce piège.
+
+Profil clavier vérifié fonctionnel (testé : une pression sur `RETURN`
+interrompt immédiatement le mode démo automatique du titre, alors que la
+version fautive plus haut ne faisait jamais rien) :
+
+```ini
+[GCPad1]
+Device = DInput/0/Keyboard Mouse
+Buttons/A = X
+Buttons/B = Z
+Buttons/X = C
+Buttons/Y = S
+Buttons/Z = D
+Buttons/Start = RETURN
+D-Pad/Up = T
+D-Pad/Down = G
+D-Pad/Left = F
+D-Pad/Right = H
+Main Stick/Up = UP
+Main Stick/Down = DOWN
+Main Stick/Left = LEFT
+Main Stick/Right = RIGHT
+Main Stick/Modifier = Shift
+C-Stick/Up = I
+C-Stick/Down = K
+C-Stick/Left = J
+C-Stick/Right = L
+Triggers/L = Q
+Triggers/R = W
+```
+
+**Piège méthodologique attenant :** l'écran-titre de SMS ne reste pas figé sur
+« PRESS START! » — il enchaîne d'office sur un mode démo (extraits de gameplay
+auto-joués façon FLUDD). Presser une touche pendant l'intro ou la démo ne
+prouve donc rien par simple observation d'un changement de scène : ça peut
+avancer tout seul. Le test fiable est d'envoyer l'entrée et vérifier une
+transition **immédiate** (moins d'une seconde), pas juste « ça a changé après
+quelques secondes ».
+
+**`--automation-dir` et une vraie manette/clavier sont mutuellement
+exclusifs sur un même port** : l'automatisation installe un input overrider
+(`ciface::Touch::RegisterGameCubeInputOverrider`) qui prend la main sur
+l'entrée normale. Lancer avec `--automation-dir` pendant qu'un humain joue au
+clavier bloquerait ses touches — relancer sans ce flag pour un vrai playtest.
+
+## Bug ouvert : l'écran « Select data » affiche « New » malgré une sauvegarde réelle sur disque
+
+Constaté en relançant une session fraîche sur un profil qui avait déjà une
+partie créée : le fichier `.gci` existe bel et bien sur la carte mémoire
+virtuelle (`<user-dir>/GC/EUR/Card A/01-GMSP-super_mario_sunshine.gci`,
+57 Ko, horodaté de la session précédente — pas un fichier vide), mais l'écran
+« Select data » affiche quand même « New » sur les trois emplacements au lieu
+du nom/aperçu attendu pour un fichier existant. L'écriture sur la carte
+mémoire fonctionne donc, mais quelque chose dans la relecture/l'affichage au
+menu ne la reconnaît pas. Pas encore diagnostiqué plus loin (pas bloquant :
+sélectionner le bloc recrée simplement un fichier par-dessus), mais à
+creuser avant de considérer la persistance de sauvegarde comme fiable.
+
+## Mesure de charge au-delà de la plage : la zone de gunk hostile de l'aéroport
+
+En poussant plus loin après l'aéroport (zone recouverte du gunk
+rose/orange hostile de l'histoire, avec effet de teinte sur Mario et rendu de
+liquide), la vitesse mesurée est descendue à **0.90** (backend LLVM,
+résolution 6x) — la première zone où un vrai coût de rendu se voit, contre
+0.997-1.008 sur la plage ouverte et un retour à ~1.00-1.03 juste après, une
+fois sorti du gunk et de retour dans l'eau. Toujours loin des 0.40-0.55 de la
+cinématique d'intro, et toujours SCRIPTED. La place de Delfino elle-même
+(façades, Pianta, plus de géométrie) n'a pas été atteinte par navigation à
+l'aveugle cette session — reste le vrai test de charge à faire.
+
+## Test de fumée automatisé
+
+`tools/port/moderngekko_smoke_test.py` (dans ce dépôt) rejoue le strict
+minimum vérifiable de façon fiable : lancer `moderngekko-run.exe` avec
+`--automation-dir`, attendre `booted=1`, laisser tourner quelques secondes,
+et vérifier que `state=running` et que `speed` (lu depuis
+`Core::System::GetPerfMetrics`, pas le titre de fenêtre) dépasse un seuil bas.
+Volontairement **ne rejoue pas** la navigation de menus jusqu'au gameplay :
+cette séquence dépend du minutage exact des scènes de l'intro (voir plus haut)
+et serait un test fragile, pas un test fiable. Ça suffit en revanche à
+détecter un lien cassé, un module qui retombe silencieusement sur
+l'interpréteur, ou un crash au boot — exactement la classe de régression que
+le bug native-region-query aurait dû déclencher s'il avait existé un test
+avant cette session :
+
+```bash
+python tools/port/moderngekko_smoke_test.py \
+    --moderngekko-run <ModernGekko-Template>/lib/ModernGekko/build/moderngekko-run.exe \
+    --game <ModernGekko-Template>/extracted/GMSP01 \
+    --module <output>/GMSP01/<hash>/gGMSP01_recomp.dll
+```
+
+Vérifié dans les deux sens le 2026-09-19 : `PASS` avec le vrai module LLVM
+(`speed=0.516` pendant l'intro, cohérent avec les mesures ci-dessus), et
+`exit code 2` propre sur un chemin de module inexistant.
+
 ### MAX_PATH bloque la compilation du module
 
 Symptôme trompeur, côté ninja et non côté code :
