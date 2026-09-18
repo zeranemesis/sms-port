@@ -3,6 +3,7 @@
 #include "aurora/lib/logging.hpp"
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace sms::recomp {
@@ -16,13 +17,29 @@ std::unordered_map<u32, HostCallEntry> &table()
     return instance;
 }
 
+// A miss here fires on every cross-chunk branch/host call the recompiled
+// game makes to an address with no registered trampoline yet - which, once
+// real game code actually runs (not just the self-tests), is many times
+// per frame at the same handful of addresses. Logging every hit rather
+// than every distinct address filled a 1.4GB log file in under two minutes
+// running against a real GMSP01 dump. Each address is still worth exactly
+// one warning - that's what tells you which HostCallEntry to add next -
+// just not one per occurrence.
+std::unordered_set<u32> &already_warned()
+{
+    static std::unordered_set<u32> instance;
+    return instance;
+}
+
 bool dispatch(CPUState *cpu, u32 address)
 {
     const auto it = table().find(address);
     if (it == table().end()) {
-        Log.warn("unresolved host call to {:#010x} from pc={:#010x} - "
-                 "needs a HostCallEntry once the real MAP address is known",
-            address, cpu->pc);
+        if (already_warned().insert(address).second) {
+            Log.warn("unresolved host call to {:#010x} from pc={:#010x} - "
+                     "needs a HostCallEntry once the real MAP address is known",
+                address, cpu->pc);
+        }
         return false;
     }
     return it->second.fn(cpu, address);

@@ -557,3 +557,62 @@ value neither guessed at nor found in the research done so far. GX/CARD
 bridging (see the section above) remains wired, self-test clean, and
 still unexercised by a real run - boot has not reached that code, now
 for this new, different reason instead of the DSP one.
+
+## 2026-09-19: `dolphinjet.exe` actually run for the first time on this machine, two runaway-log bugs found and fixed
+
+The build in `build-msvc/RelWithDebInfo/dolphinjet.exe` (compiled by an
+earlier session, still current against today's source) was launched for the
+first time this session, in response to a direct request to build on the
+already-ported Party-Board-style menu. **It already works**: `MenuBar`'s tab
+bar (Settings/Quit) opens on F1, a real toast notification fires
+("NO CONTROLLER ASSIGNED - Configure controller port 1 in Settings"), and
+activating the Settings tab (Enter/click, not just keyboard focus - the tab
+bar highlighting a tab and *activating* it are different things, which cost
+a false "the panel is blank" diagnosis at first) opens a real, fully
+populated `SettingsWindow`: Fullscreen, Default Window Size, VSync, target
+frame rate, Lock 4:3, Adaptive Widescreen HUD, Pause on Focus Lost, FPS
+counter, Internal Resolution (Auto 1280x960), Shadow Resolution - screenshot
+evidence, not just reading the code. This whole shell is confirmed
+functional end to end, not just "should build."
+
+**What running it also showed**: `game_recompiled.lib` (DolRecomp's own
+recompilation of the real GMSP01 dump, built by an earlier session,
+separate from and unrelated to the ModernGekko-Template work elsewhere in
+this session) is linked into `dolphinjet.exe` and starts executing
+immediately on launch - `recomp_boot.cpp`'s boot path fires for real, not
+gated behind any menu action yet. It hits exactly the `OSReport("bootrom")`
+polling loop documented right above as the current blocker.
+
+**Two real bugs, not one**, both in unconditional per-call logging with no
+rate limit, found because they filled disk fast enough to matter:
+- `recomp_host.cpp`'s `dispatch()` logged every *miss* on an unresolved
+  host-call address - not every distinct address, every single hit. Against
+  the stuck bootrom loop (thousands of calls/sec at a handful of PCs) this
+  produced a 1.4GB log file in under two minutes. Fixed: an
+  `std::unordered_set<u32>` dedupes by address, so each one is still logged
+  exactly once (that's the actionable signal - which `HostCallEntry` to add
+  next), just not once per occurrence.
+- `recomp_dolphin_sdk.cpp`'s `host_call_os_report()` had the same shape:
+  every `OSReport` call logged unconditionally. The stuck loop calls it with
+  the *same* text from the *same* call site continuously - confirmed by
+  sampling the log mid-file (`grep` at the head looked fine; the real spam,
+  15.5 million lines of it, was further in). Fixed the same way, deduping on
+  `(message, pc)` so a call site whose message actually changes each time
+  (a frame counter, say) still logs every distinct value, only exact
+  repeats are suppressed.
+
+Both fixes verified by rebuilding and rerunning: log growth went from
+~470MB/15s to a flat 53KB that stayed flat over a further 15s. Neither fix
+touches *why* the bootrom loop is stuck - that's still the DI content gap
+described above - only how loudly it fails while stuck.
+
+**Unrelated but urgent, found while investigating the first log file**: the
+machine's `C:` drive was at 470GB/476GB used, 1.9GB free, before any of this
+session's own files were cleaned up - a pre-existing condition, not caused
+by this session, but close enough to full that the runaway log almost made
+it worse. Cleaned up ~4.9GB of this session's own reproducible scratch data
+(the downloaded LLVM archive and its extracted tree under
+`moderngekko-tools/`, safe to re-fetch per `docs/recompilation.md`'s own
+recipe) to bring it to 6.6GB free - still tight, worth Valentin's own
+attention on what else is using the other ~470GB, since that's pre-existing
+data on his machine, not this session's to decide about.
