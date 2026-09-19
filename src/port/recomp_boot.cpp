@@ -13,6 +13,7 @@
 #include "port/recomp_exi.h"
 #include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
+#include "port/recomp_interrupt.h"
 
 #include "aurora/lib/logging.hpp"
 
@@ -35,6 +36,7 @@ extern "C" {
 #include <cstring>
 #include <iterator>
 #include <unordered_map>
+#include <vector>
 
 namespace sms::recomp {
 namespace {
@@ -143,17 +145,217 @@ void handle_instruction_fallback(CPUState *cpu, u32 raw, u32 cia)
 // SDK cache-flush routine, not application code expecting a real syscall
 // ABI, consistent with `sc` here being the documented "debugger trap
 // point" convention: harmless to skip when nothing is attached to catch
-// it. `ppc_rfi` (extern/dolrecomp/src/cpu/cpu.c) restores msr from srr1
-// and sets pc = srr0 exactly - since srr0 was left pointing AT the `sc`
-// itself (not past it, unlike some architectures' trap instructions),
-// calling it unmodified would fault on the same instruction again forever;
-// bumping srr0 past the 4-byte `sc` first is the standard PowerPC
-// exception-handler convention for "continue after this trap".
+// it. `ppc_rfi` (extern/dolrecomp/src/cpu/cpu.c) restores msr from srr1 and
+// sets pc = srr0 exactly, so resuming is just a matter of srr0 already being
+// right - and it is: ppc_system_call_exception() (same file) raises the
+// exception with `cia + 4u`, which is what the PowerPC architecture
+// specifies for System Call (SRR0 <- CIA+4, unlike traps that leave SRR0 on
+// the faulting instruction).
+//
+// This used to add another 4 on top of that, on the stated premise that
+// srr0 pointed AT the `sc`. It does not, and the extra bump skipped exactly
+// one instruction after every single `sc` in the game. That is invisible
+// most of the time and fatal in one specific place: PPCSync() is `sc; blr`
+// at 0x80339C38, and PPCHalt - an unconditional infinite loop - starts four
+// bytes later at 0x80339C40. Skipping PPCSync's `blr` therefore fell
+// straight into PPCHalt, which is exactly where boot was parked (measured:
+// pc=0x80339C44 inside loop_80339C44, lr pointing back into __ARChecksize,
+// which contains no PPCHalt call of its own).
 bool handle_system_call(CPUState *cpu, u32 /*address*/)
 {
-    cpu->srr0 += 4;
     ppc_rfi(cpu, cpu->pc);
     return true;
+}
+
+// Why a translated block run stopped. dolrecomp_run_blocks only reports
+// "finished the budget" or "stopped"; the caller always has to know which kind
+// of stop it was, and both run loops in this file resolve the same two
+// exceptions the same way, so they share this.
+enum class RunStop {
+    BudgetExhausted,     // ran maxBlocks blocks without stopping
+    Halted,              // stopped with no exception - inspect cpu->pc
+    Exception,           // stopped on an exception this port does not handle
+    RepeatedSystemCalls, // the sc retry cap tripped
+};
+
+RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
+{
+    // dolrecomp_run_blocks (generated.h) stops as soon as CPUState::exception
+    // is non-zero, *before* dispatching to the vector address it just set
+    // cpu->pc to - verified: registering a host-call handler for
+    // PPC_VECTOR_SYSTEM_CALL through recomp_host.h's normal table never
+    // fired, because the loop bails out on ctx->exception first, so
+    // dolrecomp_call(ctx, 0xC00) - where that handler would have been
+    // looked up - is never reached. Handling PPC_EXC_SYSTEM_CALL here
+    // instead, directly, then clearing the flag and re-running
+    // dolrecomp_run_blocks for the same budget, is what actually reaches
+    // handle_system_call. Capped retry count, not the block budget itself,
+    // guards against a hypothetical sc-in-a-tight-loop from stalling a
+    // frame - each retry already ran up to maxBlocks real blocks first.
+    for (int retry = 0; retry < 64; ++retry) {
+        if (dolrecomp_run_blocks(cpu, maxBlocks)) {
+            return RunStop::BudgetExhausted;
+        }
+        // The SDK runs with MSR[FP] deliberately off and switches the FPU in
+        // on demand: the first floating-point instruction a thread executes
+        // traps to the 0x800 vector, whose handler enables FP (swapping the
+        // FPU context in on the way) and returns to the faulting
+        // instruction. That handler is copied into low memory by
+        // __OSExceptionInit at runtime, so a *static* recompiler never
+        // translated anything at 0x800 - measured: "CPU exception 0x20 ... at
+        // srr0=0x80011e94, vector pc=0x00000800", two step_game() calls in,
+        // and the guest dead from there. Setting MSR[FP] at boot does not
+        // help either (verified: the boot log shows msr=0x00002000 and the
+        // same trap still fires) precisely because the guest clears it again
+        // itself.
+        //
+        // So do here what that handler's *net effect* is: enable FP and
+        // resume at the faulting instruction. What this deliberately does
+        // NOT do is the FPU context swap the real handler also performs, so
+        // floating-point registers are not saved/restored across the guest's
+        // own thread switches - a real correctness gap to close (by giving
+        // the vector real translated code to jump to) before anything that
+        // depends on per-thread FP state can be trusted.
+        if (cpu->exception == PPC_EXC_FP_UNAVAILABLE) {
+            cpu->exception = 0;
+            // Return the way the real handler does - through rfi, which
+            // restores BOTH pc (from srr0) and msr (from srr1).
+            //
+            // This used to do `cpu->msr |= MSR_FP; cpu->pc = cpu->srr0;`, which
+            // gets the pc right and the msr catastrophically wrong: taking the
+            // exception already ran exception_msr() (extern/dolrecomp/src/cpu/
+            // cpu.c), which clears EE, IR, DR and RI, and resuming without an
+            // rfi left them cleared forever. So the first floating-point
+            // instruction a thread ever executed permanently disabled its
+            // interrupts.
+            //
+            // Measured, once interrupt delivery existed to notice it: MSR[EE]
+            // was clear at 172,801 out of 172,801 sampled slice boundaries,
+            // with msr=0x00003000 - exactly FP|ME, an exception-entry MSR with
+            // FP added back. A backtrace put the guest in JAudio's audio thread
+            // (audioproc -> Driver::init -> DSPInterface::initBuffer ->
+            // DsetupTable -> DSPSendCommands2), spinning on a flag only an
+            // interrupt could ever set.
+            ppc_rfi(cpu, cpu->pc);
+            cpu->msr |= 0x00002000u; // MSR[FP], PPC bit 18 - the handler's actual job
+            continue;
+        }
+        if (cpu->exception == PPC_EXC_SYSTEM_CALL) {
+            cpu->exception = 0;
+            handle_system_call(cpu, cpu->pc);
+            continue;
+        }
+        return cpu->exception ? RunStop::Exception : RunStop::Halted;
+    }
+    return RunStop::RepeatedSystemCalls;
+}
+
+// --- interrupt delivery -----------------------------------------------------
+//
+// This replaces a narrower mechanism that called __VIRetraceHandler directly,
+// but only while the guest sat in SelectThread's idle loop, where no thread
+// context could be lost. That got the scheduler moving and then hit its own
+// limit immediately: the next stall was a busy-wait in game code
+// (DSPSendCommands2's `while (Dsp_Running_Check() == 0) ;`), which is not a
+// scheduler idle point and never will be, so there was no safe moment to
+// special-case. Interrupts have to be deliverable wherever the guest is.
+//
+// recomp_interrupt.cpp does that properly - see its header for the whole
+// argument. All that is left here is deciding *when*.
+//
+// An interrupt can only be taken where the host holds control, i.e. between
+// runs of translated blocks, so how often the host takes control back is
+// exactly the interrupt latency. Running a whole frame in one go made that
+// latency a full frame, which is not what any of this hardware looks like:
+// VI fires once a frame, but DSP, AI, DVD and EXI fire whenever they are
+// ready. The frame is therefore run in slices (see step_game), and this is
+// tried at every slice boundary.
+// Walks the guest's stack back-chain and logs the return address saved in each
+// frame. The PowerPC EABI the SDK is built for stores the caller's stack
+// pointer at [r1] and the return address at [r1 + 4], so this is the same walk
+// a debugger would do.
+//
+// It exists because a pc alone does not say how the guest got somewhere, and
+// "stuck in a loop with interrupts disabled" is a question about the caller,
+// not about the loop.
+void log_guest_backtrace(CPUState *cpu, unsigned maxFrames)
+{
+    Log.info("backtrace: pc={:#010x} lr={:#010x} r1={:#010x} msr={:#010x}", cpu->pc, cpu->lr, cpu->gpr[1], cpu->msr);
+    u32 sp = cpu->gpr[1];
+    for (unsigned frame = 0; frame < maxFrames; ++frame) {
+        if (sp < GC_RAM_BASE || sp - GC_RAM_BASE + 8 > cpu->ram_size || (sp & 3u) != 0) {
+            Log.info("backtrace:   [{}] stack pointer {:#010x} is not usable, stopping", frame, sp);
+            return;
+        }
+        const u32 next = mem_read32(cpu, sp);
+        const u32 returnAddress = mem_read32(cpu, sp + 4);
+        Log.info("backtrace:   [{}] sp={:#010x} lr={:#010x}", frame, sp, returnAddress);
+        if (next <= sp) {
+            // The chain must climb; anything else is the end of it (or garbage
+            // worth not following).
+            return;
+        }
+        sp = next;
+    }
+}
+
+void deliver_pending_interrupts(CPUState *cpu)
+{
+    // Bounded outcome trace: whether an interrupt is actually being taken is
+    // not observable from the guest's pc alone, and "it is stuck in the same
+    // place" is equally consistent with dispatch working and with dispatch
+    // never firing. One line per distinct outcome, plus a count, says which.
+    static unsigned dispatched = 0;
+    static unsigned skippedMasked = 0;
+    static unsigned skippedNotTakeable = 0;
+    // Periodic rather than first-N: the first frames are all boot, and the
+    // question is what the steady state looks like. Every 300 calls is about
+    // once every five seconds at 60Hz, capped so it cannot run away.
+    static unsigned calls = 0;
+    static unsigned traced = 0;
+    ++calls;
+    const bool traceThisCall = (calls % 19200u) == 1u && traced < 24;
+    const auto trace = [&](const char *outcome) {
+        if (!traceThisCall) {
+            return;
+        }
+        ++traced;
+        Log.info("interrupt: {} after {} frames (dispatched={} masked={} not-takeable={}) "
+                 "msr={:#010x} piCause={:#010x} piMask={:#010x} pc={:#010x}",
+            outcome, calls, dispatched, skippedMasked, skippedNotTakeable, cpu->msr, interrupt::debug_cause(),
+            interrupt::debug_mask(), cpu->pc);
+    };
+
+    if (!interrupt::pending(cpu)) {
+        ++skippedMasked;
+        trace("masked");
+        // The guest has not unmasked PI_VI yet (SetInterruptMask,
+        // src/dolphin/os/OSInterrupt.c:244, is what ORs 0x100 into PI's mask).
+        // Nothing to do but leave the cause standing until it does.
+        return;
+    }
+    if (!interrupt::dispatch(cpu)) {
+        ++skippedNotTakeable;
+        trace("not takeable");
+        // One backtrace, the first time this is reached in the steady state:
+        // MSR[EE] being clear here means some caller disabled interrupts and
+        // never restored them, and only the call chain says which.
+        static bool backtraced = false;
+        if (!backtraced && skippedNotTakeable > 4096) {
+            backtraced = true;
+            log_guest_backtrace(cpu, 16);
+        }
+        // MSR[EE] clear, or no context to save into yet. The cause stays
+        // pending, so the next frame tries again - which is what a real level-
+        // triggered interrupt line does, rather than being dropped.
+        return;
+    }
+    ++dispatched;
+    trace("dispatched");
+    // Control does not come back from dispatch(): the guest is now inside
+    // __OSDispatchInterrupt and will resume itself through OSLoadContext. The
+    // cycle budget it spends there is its own.
+    rebase_guest_timebase(cpu);
 }
 
 // GameCube DOL header: 7 text + 11 data sections, all big-endian u32 at
@@ -230,18 +432,205 @@ bool load_dol_into_ram(CPUState *cpu, const u8 *dol, u32 dolSize)
 // looks like elapsed guest time. Advancing it by real wall-clock elapsed
 // time between step_game() calls, at that same rate, is the least
 // arbitrary choice: guest ticks pass at the same rate real ticks would.
-constexpr u64 kTimerClockHz = 40500000ull;
+// ...which this used to do from the host's wall clock, once per frame. That
+// is gone: guest time is now derived from consumed guest cycles and synced at
+// every MMIO access (sync_guest_timebase, recomp_host.h), because a
+// frame-granular clock cannot express the microsecond intervals the SDK's own
+// hardware-calibration loops measure - see that header's comment for the
+// __AI_SRC_INIT case that proved it. The long-run rate is unchanged: one
+// frame's cycle budget below is exactly one frame's worth of timebase ticks
+// (kCyclesPerFrame / 12 == 40,500,000 / 60), so OSGetTime() still advances at
+// OS_TIMER_CLOCK for a guest that keeps up with 60Hz.
 
-void advance_timebase(CPUState *cpu)
+// CPUState::downcount is a cycle budget the *host* owns: generated code only
+// ever spends it (`ctx->downcount -= 3;` and friends), and every extracted
+// tight loop checks it to decide whether to keep spinning or hand control
+// back:
+//
+//     if (ctx->downcount <= -(s64)DOLRECOMP_C_LOOP_CYCLE_BUDGET) {
+//         ctx->pc = <loop head>; return;   // yield
+//     }
+//     goto <loop head>;                    // keep going
+//
+// Nothing here ever refilled it, so it went negative within the first few
+// hundred guest cycles of the whole run and stayed there: from then on every
+// loop in the game - memset, memcpy, engine loops, wait loops - yielded after
+// a single iteration, forever. That is not a hang but a throttle, and a
+// brutal one; it is why a plain ~19MB arena memset appeared to freeze the
+// boot.
+//
+// One host time slice = one frame, so refill it with one frame's worth of
+// guest CPU cycles. The core clock is OS_BUS_CLOCK * 3 (162MHz bus, 486MHz
+// core - the same SDK constant kTimerClockHz above is derived from), and the
+// game targets 60Hz.
+constexpr u64 kCpuClockHz = 486000000ull;
+constexpr s64 kCyclesPerFrame = static_cast<s64>(kCpuClockHz / 60ull);
+
+void refill_slice_budget(CPUState *cpu, s64 cycles)
 {
-    using clock = std::chrono::steady_clock;
-    static clock::time_point lastTime = clock::now();
-    const clock::time_point now = clock::now();
-    const auto elapsedNs = std::chrono::duration_cast<std::chrono::nanoseconds>(now - lastTime).count();
-    lastTime = now;
-    if (elapsedNs > 0) {
-        cpu->timebase += static_cast<u64>(elapsedNs) * kTimerClockHz / 1000000000ull;
+    // Order matters: account for what the slice just ending actually consumed
+    // *before* the refill moves downcount, then tell the clock the new value
+    // is a refill rather than that many cycles of execution.
+    sync_guest_timebase(cpu);
+    cpu->downcount = cycles;
+    rebase_guest_timebase(cpu);
+}
+
+// The SDK's low-memory globals are not part of the DOL: on hardware the
+// IPL/apploader writes them before the game's entry point runs, and nothing
+// in this port did. A calloc'd guest RAM therefore answered 0 for every one
+// of them, and the SDK read those zeros as facts.
+//
+// That is not a cosmetic gap. OS_BUS_CLOCK is `__OSBusClock` (a variable at
+// OS_BASE_CACHED | 0x00F8 - include/dolphin/os.h:66), OS_TIMER_CLOCK is
+// OS_BUS_CLOCK / 4, and OSNanosecondsToTicks is
+// `((nsec) * (OS_TIMER_CLOCK / 125000)) / 8000`. With the clock at 0, every
+// nanosecond-to-tick conversion in the SDK collapses to 0.
+//
+// Measured consequence: __AI_SRC_INIT (src/dolphin/ai/ai.c) accepts its
+// measured interval only if `diff < bound_32KHz - buffer` or
+// `bound_32KHz + buffer <= diff < bound_48KHz - buffer`, and with every bound
+// converted to 0 both tests are false for any diff whatsoever, so it looped
+// forever. The interval itself was already correct - traced at 1271 ticks at
+// 32kHz and 843 at 48kHz, exactly the two sample periods - and would have
+// passed the first test against a real bound of 1155 ticks.
+//
+// Only the values this port can state as facts are written here. Anything
+// else is left at zero rather than invented.
+void install_low_memory_globals(CPUState *cpu)
+{
+    // include/dolphin/os.h's own constants: the GameCube bus runs at 162MHz
+    // and the core at 3x that. Both are fixed by the hardware, not by the
+    // disc.
+    constexpr u32 kBusClockHz = 162000000u;
+    constexpr u32 kCoreClockHz = 486000000u;
+
+    constexpr u32 kOSPhysicalMemSize = 0x80000028u; // __OSPhysicalMemSize
+    constexpr u32 kOSSimulatedMemSize = 0x800000F0u; // __OSSimulatedMemSize
+    constexpr u32 kOSBusClock = 0x800000F8u;        // __OSBusClock
+    constexpr u32 kOSCoreClock = 0x800000FCu;       // __OSCoreClock
+
+    // Whatever this CPUState was actually given, rather than the retail 24MB
+    // constant - the two agree today, and if they ever stop agreeing the
+    // guest should be told the truth.
+    mem_write32(cpu, kOSPhysicalMemSize, cpu->ram_size);
+    mem_write32(cpu, kOSSimulatedMemSize, cpu->ram_size);
+    mem_write32(cpu, kOSBusClock, kBusClockHz);
+    mem_write32(cpu, kOSCoreClock, kCoreClockHz);
+
+    // __OSTVMode (OS_BASE_CACHED | 0x00CC) is deliberately NOT set here. It
+    // is equally IPL-provided and equally zero, which reads as VI_NTSC for
+    // what is a PAL (GMSP01) disc - a real mismatch, but one that changes the
+    // render mode and framebuffer geometry, so it gets its own change and its
+    // own measurement rather than riding along with the clocks.
+    Log.info("low memory: busClock={} coreClock={} memSize={:#x}", kBusClockHz, kCoreClockHz, cpu->ram_size);
+}
+
+// OSBootInfo, and the job this port has been silently skipping: being the
+// apploader.
+//
+// OSBootInfo lives at OS_BASE_CACHED (include/dolphin/os.h:111) and is
+// written by the IPL/apploader, not by the DOL. Leaving it zeroed is what
+// produced the "bootrom" OSReport this port has printed since the very first
+// boot attempt, and that message is not cosmetic - it is DVDInit
+// (src/dolphin/dvd/dvd.c:82) branching on `bootInfo->magic`:
+//
+//     if (magic == 0xE5207C22)       -> booted via JTAG, load the FST itself
+//     else if (magic == 0xD15EA5E)   -> booted from bootrom, carry on
+//     else { FirstTimeInBootrom = TRUE; OSReport("bootrom\n"); }
+//
+// That third branch sends the SDK into the full drive bring-up dance -
+// inquiry, check ID, spin-up - which this port answers with zeros, so it
+// concluded the drive was bad and issued DVDLowStopMotor. Everything
+// downstream of that was dead: no FST, so no file ever opened, so every data
+// table the game reads was zeros.
+//
+// So this writes what the apploader would have: the disc ID the SDK compares
+// against, the magic that says the disc is already spun up and identified,
+// and - the part that actually costs work - the file system table, read off
+// the disc and parked in memory with arenaHi lowered to protect it, exactly
+// as a real apploader leaves things.
+bool install_boot_info(CPUState *cpu)
+{
+    constexpr u32 kBootInfoBase = 0x80000000u;
+    constexpr u32 kBootInfoDiskIdSize = 0x20u;
+    constexpr u32 kBootInfoMagicOffset = 0x20u;
+    constexpr u32 kBootInfoVersionOffset = 0x24u;
+    constexpr u32 kBootInfoConsoleTypeOffset = 0x2Cu;
+    constexpr u32 kBootInfoArenaHiOffset = 0x34u;
+    constexpr u32 kBootInfoFstLocationOffset = 0x38u;
+    constexpr u32 kBootInfoFstMaxLengthOffset = 0x3Cu;
+
+    // "DISEASE" - the value the bootrom leaves behind, per DVDInit's own test.
+    constexpr u32 kBootedFromBootrom = 0x0D15EA5Eu;
+
+    // DVDBB2, the disc's own boot block, at the fixed disc offset the SDK's
+    // stateCheckID2 reads it from (src/dolphin/dvd/dvd.c: `DVDLowRead(
+    // &tmpBuffer, OSRoundUp32B(sizeof(DVDBB2)), 0x420, ...)`). Field offsets
+    // from include/dolphin/dvd.h:55.
+    constexpr s32 kBootBlockOffset = 0x420;
+    constexpr u32 kBootBlockFstPosition = 0x04u;
+    constexpr u32 kBootBlockFstLength = 0x08u;
+    constexpr u32 kBootBlockFstMaxLength = 0x0Cu;
+
+    const DVDDiskID *diskId = DVDGetCurrentDiskID();
+    if (diskId == nullptr) {
+        Log.error("boot info: no disc mounted");
+        return false;
     }
+    const auto *diskIdBytes = reinterpret_cast<const u8 *>(diskId);
+    for (u32 i = 0; i < kBootInfoDiskIdSize; ++i) {
+        mem_write8(cpu, kBootInfoBase + i, diskIdBytes[i]);
+    }
+
+    mem_write32(cpu, kBootInfoBase + kBootInfoMagicOffset, kBootedFromBootrom);
+    mem_write32(cpu, kBootInfoBase + kBootInfoVersionOffset, 1);
+    // OS_CONSOLE_RETAIL. OSInit overwrites this with OS_CONSOLE_RETAIL1 on its
+    // way through anyway; what matters is that the development bit is clear.
+    mem_write32(cpu, kBootInfoBase + kBootInfoConsoleTypeOffset, 0);
+
+    // Aurora's DVDReadAbsAsyncPrio wants 32-byte alignment and a 32-byte
+    // multiple, the same constraints the real DI DMA has.
+    alignas(32) u8 bootBlock[0x20] {};
+    DVDCommandBlock block {};
+    DVDReadAbsAsyncPrio(&block, bootBlock, sizeof(bootBlock), kBootBlockOffset, nullptr, 2);
+
+    const u32 fstPosition = read_be32(bootBlock, kBootBlockFstPosition);
+    const u32 fstLength = read_be32(bootBlock, kBootBlockFstLength);
+    const u32 fstMaxLength = read_be32(bootBlock, kBootBlockFstMaxLength);
+
+    if (fstLength == 0 || fstLength > fstMaxLength || fstMaxLength > cpu->ram_size / 4) {
+        Log.error("boot info: disc boot block is not usable (fstPosition={:#x} fstLength={:#x} fstMaxLength={:#x})",
+            fstPosition, fstLength, fstMaxLength);
+        return false;
+    }
+
+    // Park the FST at the very top of MEM1 and pull arenaHi down below it,
+    // which is what stops the game's own allocator from handing that memory
+    // out. OSInit honours BootInfo->arenaHi whenever it is non-null
+    // (src/dolphin/os/OS.c:250), so this is the supported way to reserve it
+    // rather than a trick.
+    const u32 reserved = (fstMaxLength + 31u) & ~31u;
+    const u32 fstAddress = (GC_RAM_BASE + cpu->ram_size - reserved) & ~31u;
+
+    std::vector<u8> fst(((fstLength + 31u) & ~31u) + 32u, 0);
+    auto *alignedFst = fst.data();
+    if (const auto misalignment = reinterpret_cast<uintptr_t>(alignedFst) & 31u; misalignment != 0) {
+        alignedFst += 32u - misalignment;
+    }
+    DVDReadAbsAsyncPrio(&block, alignedFst, static_cast<s32>((fstLength + 31u) & ~31u),
+        static_cast<s32>(fstPosition), nullptr, 2);
+    for (u32 i = 0; i < fstLength; ++i) {
+        mem_write8(cpu, fstAddress + i, alignedFst[i]);
+    }
+
+    mem_write32(cpu, kBootInfoBase + kBootInfoFstLocationOffset, fstAddress);
+    mem_write32(cpu, kBootInfoBase + kBootInfoFstMaxLengthOffset, fstMaxLength);
+    mem_write32(cpu, kBootInfoBase + kBootInfoArenaHiOffset, fstAddress);
+
+    Log.info("boot info: disc {:.4}{:.2} magic=DISEASE, FST {:#x} bytes from disc {:#x} -> {:#010x} (arenaHi)",
+        diskId->gameName, diskId->company, fstLength, fstPosition, fstAddress);
+    return true;
 }
 
 } // namespace
@@ -275,8 +664,15 @@ bool boot_game(CPUState *cpu)
         return false;
     }
 
+    install_low_memory_globals(cpu);
+    if (!install_boot_info(cpu)) {
+        cpu_free(cpu);
+        return false;
+    }
+
     install_host_calls(cpu);
     install_external_memory(cpu);
+    interrupt::install();
     cpu->instruction_fallback = &handle_instruction_fallback;
     // PPC_VECTOR_SYSTEM_CALL (sc) is handled directly in step_game(), not
     // through this table - see its own comment for why registering it
@@ -344,48 +740,71 @@ bool boot_game(CPUState *cpu)
         { "GXDrawDone", DOLRECOMP_SYMBOL_GXDrawDone },
         { "GXFlush", DOLRECOMP_SYMBOL_GXFlush },
         { "GXCopyDisp", DOLRECOMP_SYMBOL_GXCopyDisp },
+        // Must be bridged, not forwarded: it carries a pointer - see
+        // recomp_gx_fifo.cpp's host_call_gx_set_array.
+        { "GXSetArray", DOLRECOMP_SYMBOL_GXSetArray },
     };
     gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
 
+    // MSR[FP] has to be on before the first guest instruction runs. A
+    // zero-initialised CPUState leaves it off, and generated code guards
+    // every floating-point instruction with ppc_fp_available_inline(), which
+    // raises PPC_EXC_FP_UNAVAILABLE and sends pc to the 0x800 vector the
+    // moment one is reached - measured: "CPU exception 0x20 ... at
+    // srr0=0x80011e94, vector pc=0x00000800", after exactly two step_game()
+    // calls, with nothing translated at that physical vector address to
+    // recover from it. On hardware this never happens to a game: the
+    // apploader runs with the FPU enabled and hands control over with
+    // MSR[FP] already set, which is what the SDK's own startup assumes.
+    // Setting it here reproduces that entry state rather than emulating an
+    // exception handler that the DOL does not contain.
+    // MSR[FP] spelled out rather than via PPC_MSR_FP, for the same reason
+    // extern/dolrecomp's own cpu.h does: that macro lives in cpu.c, not in
+    // any header this can include.
+    cpu->msr |= 0x00002000u; // MSR[FP], PPC bit 18
+
     cpu->pc = DOLRECOMP_ENTRY_POINT;
-    Log.info("boot: loaded {} byte DOL, entry={:#010x}", dolSize, cpu->pc);
+    Log.info("boot: loaded {} byte DOL, entry={:#010x} msr={:#010x}", dolSize, cpu->pc, cpu->msr);
     return true;
 }
 
 bool step_game(CPUState *cpu, unsigned maxBlocks)
 {
-    advance_timebase(cpu);
+    // One host frame is one guest frame, so this is the vertical retrace. It
+    // only raises the hardware line; when the guest actually takes it is up to
+    // MSR[EE] and PI's mask, exactly as on real hardware.
+    interrupt::raise_vi_retrace(cpu);
 
-    // dolrecomp_run_blocks (generated.h) stops as soon as CPUState::exception
-    // is non-zero, *before* dispatching to the vector address it just set
-    // cpu->pc to - verified: registering a host-call handler for
-    // PPC_VECTOR_SYSTEM_CALL through recomp_host.h's normal table never
-    // fired, because the loop bails out on ctx->exception first, so
-    // dolrecomp_call(ctx, 0xC00) - where that handler would have been
-    // looked up - is never reached. Handling PPC_EXC_SYSTEM_CALL here
-    // instead, directly, then clearing the flag and re-running
-    // dolrecomp_run_blocks for the same budget, is what actually reaches
-    // handle_system_call. Capped retry count, not the block budget itself,
-    // guards against a hypothetical sc-in-a-tight-loop from stalling a
-    // frame - each retry already ran up to maxBlocks real blocks first.
-    for (int retry = 0; retry < 64; ++retry) {
-        if (dolrecomp_run_blocks(cpu, maxBlocks)) {
-            return true;
-        }
-        if (cpu->exception != PPC_EXC_SYSTEM_CALL) {
-            if (cpu->exception) {
+    // The frame's work is run in slices rather than one go, because the host
+    // can only deliver an interrupt between slices - so the slice length *is*
+    // the interrupt latency, and a whole frame of it would mean no device but
+    // VI could ever be serviced in time. Both budgets are divided, since a
+    // slice ends on whichever runs out first: the cycle budget (which is what
+    // an extracted tight loop yields on) or the block count (which is what
+    // bounds straight-line code).
+    constexpr unsigned kSlicesPerFrame = 64;
+    const unsigned blocksPerSlice = maxBlocks / kSlicesPerFrame > 0 ? maxBlocks / kSlicesPerFrame : 1;
+
+    for (unsigned slice = 0; slice < kSlicesPerFrame; ++slice) {
+        refill_slice_budget(cpu, kCyclesPerFrame / kSlicesPerFrame);
+        deliver_pending_interrupts(cpu);
+
+        switch (run_blocks(cpu, blocksPerSlice)) {
+            case RunStop::BudgetExhausted:
+                continue;
+            case RunStop::Exception:
                 Log.warn("step_game: CPU exception {:#x} (program_exception cause={:#x}) at srr0={:#010x}, vector pc={:#010x}",
                     cpu->exception, cpu->program_exception, cpu->srr0, cpu->pc);
-            } else {
+                return false;
+            case RunStop::Halted:
                 Log.warn("step_game: halted at pc={:#010x} (unresolved call)", cpu->pc);
-            }
-            return false;
+                return false;
+            case RunStop::RepeatedSystemCalls:
+                Log.warn("step_game: gave up after repeated system-call traps near pc={:#010x}", cpu->pc);
+                return false;
         }
-        cpu->exception = 0;
-        handle_system_call(cpu, cpu->pc);
     }
-    Log.warn("step_game: gave up after repeated system-call traps near pc={:#010x}", cpu->pc);
-    return false;
+    return true;
 }
 
 } // namespace sms::recomp
