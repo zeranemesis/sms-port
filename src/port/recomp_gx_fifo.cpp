@@ -12,6 +12,7 @@
 #include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXManage.h>
 
+#include <cmath>
 #include <cstring>
 #include <unordered_map>
 #include <unordered_set>
@@ -250,6 +251,62 @@ bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
             textureMap, imageAddress, width, height, sourceBytes,
             sourceBytes == 0 ? 0.0 : (100.0 * double(nonZero) / double(sourceBytes)), mean, minByte, maxByte,
             revisionIt->second.version);
+
+        // Horizontal bands of corrupted pixels cross every rendered frame, and
+        // they cut through the subject rather than sitting above and below it,
+        // so they are not letterbox rows. This narrows where they come from.
+        //
+        // An I8 texture is tiled in 8x4 blocks, so a run of consecutive bytes
+        // is NOT a scanline: one row of tiles is (width/8) tiles of 32 bytes,
+        // i.e. width*4 bytes covering scanlines 4r..4r+3. Profiling by tile row
+        // is therefore the only row statistic that means anything here, and it
+        // is also exactly the granularity the locked-cache DMA works at.
+        //
+        // What decides: a natural image's tile-row means move smoothly, because
+        // each is an average over 2560 pixels. A band of corruption does not -
+        // it shows as a large jump against both neighbours. If the jumps are
+        // here, the plane is already wrong in guest RAM and the fault is in the
+        // decoder or its DMA; if the plane is smooth, the bands are introduced
+        // after this point, in the upload or the TEV combiner.
+        const u32 tileRowBytes = width * 4u;
+        const u32 tileRows = tileRowBytes == 0 ? 0u : u32(sourceBytes / tileRowBytes);
+        if (tileRows >= 3u) {
+            std::vector<double> rowMean(tileRows, 0.0);
+            for (u32 r = 0; r < tileRows; ++r) {
+                u64 rowSum = 0;
+                const u8 *row = plane + u64(r) * tileRowBytes;
+                for (u32 i = 0; i < tileRowBytes; ++i) {
+                    rowSum += row[i];
+                }
+                rowMean[r] = double(rowSum) / double(tileRowBytes);
+            }
+            // A band is a row unlike BOTH neighbours, so score on the smaller
+            // of the two differences: a genuine image edge moves one way and
+            // stays there, and scores zero here.
+            u32 worstRow = 0;
+            double worstScore = 0.0;
+            u32 zeroRows = 0;
+            for (u32 r = 0; r < tileRows; ++r) {
+                if (rowMean[r] == 0.0) {
+                    ++zeroRows;
+                }
+                if (r == 0 || r + 1 == tileRows) {
+                    continue;
+                }
+                const double up = std::abs(rowMean[r] - rowMean[r - 1]);
+                const double down = std::abs(rowMean[r] - rowMean[r + 1]);
+                const double score = up < down ? up : down;
+                if (score > worstScore) {
+                    worstScore = score;
+                    worstRow = r;
+                }
+            }
+            Log.info("THP plane rows: map={} tileRows={} zeroRows={} worstBand=row{} (scanlines {}-{}) score={:.1f} "
+                     "neighbours={:.1f}/{:.1f}/{:.1f}",
+                textureMap, tileRows, zeroRows, worstRow, worstRow * 4u, worstRow * 4u + 3u, worstScore,
+                worstRow > 0 ? rowMean[worstRow - 1] : 0.0, rowMean[worstRow],
+                worstRow + 1 < tileRows ? rowMean[worstRow + 1] : 0.0);
+        }
         revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
     }
 
