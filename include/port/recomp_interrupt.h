@@ -69,6 +69,22 @@ void clear(u32 causeBits);
 // the guest is next interruptible.
 void raise_vi_retrace(CPUState *cpu);
 
+// Installs the DEC SPR callbacks and begins tracking the GameCube
+// decrementer.  The SDK's OSAlarm code programs DEC through mtspr 22; unlike
+// PI devices this is a CPU exception, so expiry enters the guest's registered
+// decrementer exception handler directly.
+void install_decrementer(CPUState *cpu);
+
+// Accounts for guest timebase ticks that have elapsed since the previous
+// call.  Returns true when expiry transferred control to the guest exception
+// handler.  Call only at a translated-block boundary, where the host owns the
+// CPUState and can safely inject an asynchronous exception.
+bool advance_decrementer(CPUState *cpu, u64 elapsedTicks);
+
+// Exercises DEC's SPR wiring, countdown and exception handoff without
+// requiring a disc image or a running Aurora window.
+bool run_decrementer_self_test();
+
 // True when PI reports a cause that PI's own mask lets through. Mirrors
 // __OSDispatchInterrupt's own opening test (`intsr == 0 ||
 // (intsr & __PIRegs[1]) == 0`), so the host does not enter dispatch just to

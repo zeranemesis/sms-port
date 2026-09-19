@@ -4,6 +4,8 @@
 #include "port/main.h"
 #include "port/recomp_dolphin_sdk.h"
 #include "port/recomp_host.h"
+#include "port/recomp_interrupt.h"
+#include "port/recomp_pad.h"
 
 #include <cstring>
 
@@ -17,6 +19,12 @@ int main(int argc, char *argv[])
     }
     if (argc == 2 && std::strcmp(argv[1], "--recomp-mmio-self-test") == 0) {
         return sms::recomp::run_mmio_self_test() ? 0 : 1;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--recomp-decrementer-self-test") == 0) {
+        return sms::recomp::interrupt::run_decrementer_self_test() ? 0 : 1;
+    }
+    if (argc == 2 && std::strcmp(argv[1], "--recomp-pad-self-test") == 0) {
+        return sms::recomp::pad::run_pad_self_test() ? 0 : 1;
     }
     return port_main(argc, argv);
 }

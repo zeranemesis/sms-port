@@ -14,6 +14,7 @@
 #include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
 #include "port/recomp_interrupt.h"
+#include "port/recomp_pad.h"
 #include "port/recomp_probe.h"
 
 #include "aurora/lib/logging.hpp"
@@ -472,7 +473,14 @@ void refill_slice_budget(CPUState *cpu, s64 cycles)
     // Order matters: account for what the slice just ending actually consumed
     // *before* the refill moves downcount, then tell the clock the new value
     // is a refill rather than that many cycles of execution.
+    const u64 timebaseBefore = cpu->timebase;
     sync_guest_timebase(cpu);
+    // DEC uses the same 40.5MHz units as the timebase (OSAlarm passes its
+    // OSTime delta directly to PPCMtdec).  Account before refilling the CPU
+    // budget: the elapsed cycles belong to the slice that just finished.
+    // A real expiry switches cpu->pc to the guest handler; the next
+    // run_blocks call below will execute that handler before normal work.
+    interrupt::advance_decrementer(cpu, cpu->timebase - timebaseBefore);
     cpu->downcount = cycles;
     rebase_guest_timebase(cpu);
 }
@@ -674,6 +682,7 @@ bool boot_game(CPUState *cpu)
     install_host_calls(cpu);
     install_external_memory(cpu);
     interrupt::install();
+    interrupt::install_decrementer(cpu);
     cpu->instruction_fallback = &handle_instruction_fallback;
     // PPC_VECTOR_SYSTEM_CALL (sc) is handled directly in step_game(), not
     // through this table - see its own comment for why registering it
@@ -726,6 +735,20 @@ bool boot_game(CPUState *cpu)
     };
     card::register_known_card_calls(kKnownCardCalls, std::size(kKnownCardCalls));
 
+    // PAD is bridged at the API boundary instead of emulating the SI command
+    // DMA below it.  Aurora already owns SDL controller/keyboard input and
+    // returns its portable PADStatus; recomp_pad copies its documented
+    // 11-byte GameCube prefix back into guest RAM.
+    static const pad::NamedAddress kKnownPadCalls[] = {
+        { "PADInit", DOLRECOMP_SYMBOL_PADInit },
+        { "PADRead", DOLRECOMP_SYMBOL_PADRead },
+        { "PADReset", DOLRECOMP_SYMBOL_PADReset },
+        { "PADRecalibrate", DOLRECOMP_SYMBOL_PADRecalibrate },
+        { "PADControlMotor", DOLRECOMP_SYMBOL_PADControlMotor },
+        { "PADSetAnalogMode", DOLRECOMP_SYMBOL_PADSetAnalogMode },
+    };
+    pad::register_known_pad_calls(kKnownPadCalls, std::size(kKnownPadCalls));
+
     // GX FIFO: register-level write-gather-pipe forwarding plus the
     // control-plane calls that configure it - see
     // include/port/recomp_gx_fifo.h. GXSetDrawDoneCallback isn't in this
@@ -744,6 +767,12 @@ bool boot_game(CPUState *cpu)
         // Must be bridged, not forwarded: it carries a pointer - see
         // recomp_gx_fifo.cpp's host_call_gx_set_array.
         { "GXSetArray", DOLRECOMP_SYMBOL_GXSetArray },
+        // The guest object encodes a GameCube RAM pointer whereas Aurora's
+        // texture decoder needs a native pointer. The bridge emits that
+        // metadata but deliberately lets the original GX body update gxData.
+        { "GXLoadTexObj", DOLRECOMP_SYMBOL_GXLoadTexObj },
+        { "GXLoadTexObjPreLoaded", DOLRECOMP_SYMBOL_GXLoadTexObjPreLoaded },
+        { "GXInvalidateTexAll", DOLRECOMP_SYMBOL_GXInvalidateTexAll },
     };
     gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
 

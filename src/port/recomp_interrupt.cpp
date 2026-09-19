@@ -160,6 +160,61 @@ constexpr u16 kContextStateException = 0x0002u;
 // critical section.
 constexpr u32 kMsrExternalInterruptEnable = 0x00008000u;
 
+// OS.c:13.  OSExceptionInit maps this physical address through
+// OSPhysicalToCached(), so its guest-visible address is 0x80003000.  The
+// table holds one handler pointer per OSException; OSAlarm installs its
+// DecrementerExceptionHandler at index 8 (OS_EXCEPTION_DECREMENTER).
+constexpr u32 kOsExceptionTable = 0x80003000u;
+constexpr u32 kExceptionDecrementer = 8u;
+constexpr u32 kDecrementerHandlerOffset = kExceptionDecrementer * 4u;
+
+// DEC (SPR 22) decrements at the timebase rate.  OSAlarm's SetTimer passes
+// its OSTime delta straight to PPCMtdec, which is direct evidence that the
+// units are the same.  Keep it signed: hardware asserts the exception when
+// the counter passes through zero and continues below it until reprogrammed.
+s64 g_decrementer = 0;
+bool g_decrementerArmed = false;
+bool g_decrementerPending = false;
+// Installing cpu->spr_read/spr_write takes over *every* SPR dr_cpu routes
+// through them, not just DEC, so anything not handled here has to be given back
+// exactly the behaviour it had when the hooks were null:
+//
+//   - SPR 287 (PVR) has its own case in ppc_mfspr and falls back to
+//     PPC_GEKKO_PVR when there is no hook (extern/dolrecomp/src/cpu/cpu.c:488).
+//     Absorbing it made the guest read a processor version of 0.
+//   - Everything else reached `ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL,
+//     cia)` (cpu.c:506), which step_game surfaces as a loud RunStop::Exception.
+//
+// An earlier version of this hook stored every SPR in a 1024-entry array and
+// read it back, which silently swallowed HID0, WPAR, L2CR and GQR writes that
+// used to be visible failures. Taking over a whole dispatch mechanism to
+// implement one register of it is how a diagnostic goes quiet.
+u32 decrementer_spr_read(CPUState *cpu, u16 spr, u32 cia)
+{
+    if (spr == 22) {
+        return static_cast<u32>(g_decrementer);
+    }
+    if (spr == 287) {
+        return PPC_GEKKO_PVR;
+    }
+    ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
+    return 0;
+}
+
+void decrementer_spr_write(CPUState *cpu, u16 spr, u32 value, u32 cia)
+{
+    if (spr != 22) {
+        ppc_program_exception(cpu, PPC_PROGRAM_ILLEGAL, cia);
+        return;
+    }
+    g_decrementer = static_cast<s32>(value);
+    g_decrementerArmed = true;
+    // A DEC write acknowledges the previous expiry and arms the next timer.
+    // SetTimer() in OSAlarm does this both after a handled alarm and when a
+    // nearer alarm is inserted, so this mirrors the SDK's actual protocol.
+    g_decrementerPending = false;
+}
+
 void write_f64_bits(CPUState *cpu, u32 addr, f64 value)
 {
     u64 bits;
@@ -315,6 +370,63 @@ bool dispatch(CPUState *cpu)
     return true;
 }
 
+bool advance_decrementer(CPUState *cpu, u64 elapsedTicks)
+{
+    if (!g_decrementerArmed || g_decrementerPending || elapsedTicks == 0) {
+        return false;
+    }
+
+    const s64 elapsed = elapsedTicks > static_cast<u64>(INT64_MAX) ? INT64_MAX : static_cast<s64>(elapsedTicks);
+    const s64 before = g_decrementer;
+    g_decrementer = before <= INT64_MIN + elapsed ? INT64_MIN : before - elapsed;
+    if (before > 0 && g_decrementer > 0) {
+        return false;
+    }
+
+    const u32 context = mem_read32(cpu, kOSCurrentContextAddress);
+    if (context < GC_RAM_BASE || context - GC_RAM_BASE >= cpu->ram_size) {
+        // Before OSInit has established a current context there is no safe
+        // place to save an asynchronous exception.  Leave DEC pending; the
+        // first later boundary with a valid context will deliver it.
+        return false;
+    }
+
+    const u32 handler = mem_read32(cpu, kOsExceptionTable + kDecrementerHandlerOffset);
+    if (handler < GC_RAM_BASE || handler - GC_RAM_BASE >= cpu->ram_size) {
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            Log.warn("decrementer expired before OSInitAlarm installed a usable handler ({:#010x})", handler);
+        }
+        return false;
+    }
+
+    // The low-memory vector normally saves this state then looks up the
+    // table entry above.  Those vectors are copied by OSExceptionInit at
+    // runtime and are not present in a statically recompiled DOL, so perform
+    // that tiny mechanical part here and execute the registered guest handler
+    // itself.  DecrementerExceptionHandler saves the remaining volatile GPRs
+    // before entering DecrementerExceptionCallback.
+    save_context(cpu, context);
+    cpu->msr &= ~kMsrExternalInterruptEnable;
+    cpu->gpr[3] = kExceptionDecrementer;
+    cpu->gpr[4] = context;
+    cpu->pc = handler;
+    g_decrementerPending = true;
+    // Hard-capped, not throttled. Once the SDK's alarms actually run this fires
+    // at their rate - tens to hundreds of times a second, indefinitely - and
+    // this project has produced five runaway logs already. The first few
+    // expiries are what answers "does DEC ever fire in a real run"; after that
+    // the line says nothing new.
+    static unsigned logged = 0;
+    if (logged < 8) {
+        ++logged;
+        Log.info("decrementer: expired (remaining={}) -> handler={:#010x}{}", g_decrementer, handler,
+            logged == 8 ? " [further expiries are not logged]" : "");
+    }
+    return true;
+}
+
 #else
 
 bool dispatch(CPUState *)
@@ -322,6 +434,70 @@ bool dispatch(CPUState *)
     return false;
 }
 
+bool advance_decrementer(CPUState *, u64)
+{
+    return false;
+}
+
 #endif // DOLPHINJET_HAVE_RECOMPILED_GAME
+
+void install_decrementer(CPUState *cpu)
+{
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+    g_decrementer = 0;
+    g_decrementerArmed = false;
+    g_decrementerPending = false;
+    cpu->spr_read = &decrementer_spr_read;
+    cpu->spr_write = &decrementer_spr_write;
+#else
+    (void)cpu;
+#endif
+}
+
+bool run_decrementer_self_test()
+{
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+    CPUState cpu {};
+    if (!cpu_init(&cpu)) {
+        Log.error("decrementer self-test: cpu_init failed");
+        return false;
+    }
+
+    install_decrementer(&cpu);
+    constexpr u32 kContext = GC_RAM_BASE + 0x4000u;
+    constexpr u32 kHandler = GC_RAM_BASE + 0x1000u;
+    constexpr u32 kOriginalPc = GC_RAM_BASE + 0x2000u;
+    constexpr u32 kOriginalMsr = kMsrExternalInterruptEnable | 0x00002000u;
+    mem_write32(&cpu, kOSCurrentContextAddress, kContext);
+    mem_write32(&cpu, kOsExceptionTable + kDecrementerHandlerOffset, kHandler);
+    cpu.pc = kOriginalPc;
+    cpu.msr = kOriginalMsr;
+
+    // Route through dr_cpu's public SPR operation rather than calling our
+    // callback directly: this catches a mismatch between the CPU access table
+    // and the port hook as well as testing the countdown itself.
+    ppc_mtspr(&cpu, 22, 10, cpu.pc);
+    const bool firedEarly = advance_decrementer(&cpu, 9);
+    const u32 remaining = ppc_mfspr(&cpu, 22, cpu.pc);
+    const bool fired = advance_decrementer(&cpu, 1);
+
+    const bool contextSaved = mem_read32(&cpu, kContext + kContextSrr0) == kOriginalPc &&
+                              mem_read32(&cpu, kContext + kContextSrr1) == kOriginalMsr;
+    const bool passed = !firedEarly && remaining == 1 && fired && cpu.pc == kHandler &&
+                        cpu.gpr[3] == kExceptionDecrementer && cpu.gpr[4] == kContext &&
+                        contextSaved && (cpu.msr & kMsrExternalInterruptEnable) == 0;
+    cpu_free(&cpu);
+
+    if (!passed) {
+        Log.error("decrementer self-test: DEC did not preserve countdown/context or enter the registered handler");
+        return false;
+    }
+    Log.info("decrementer self-test: DEC countdown and guest exception handoff work");
+    return true;
+#else
+    Log.error("decrementer self-test requires generated game code");
+    return false;
+#endif
+}
 
 } // namespace sms::recomp::interrupt
