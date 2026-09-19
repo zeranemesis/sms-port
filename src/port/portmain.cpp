@@ -29,6 +29,7 @@
 #include <port/settings.h>
 
 #include <SDL3/SDL_filesystem.h>
+#include <SDL3/SDL_timer.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -72,7 +73,14 @@ static void aurora_log_callback(AuroraLogLevel level, const char *module, const 
     }
     std::fprintf(out, "[%s] %s: %.*s\n", levelStr, module, static_cast<int>(len), message);
     if (level == LOG_FATAL) {
-        std::fflush(out);
+        // Flush BOTH streams, not just the one this message went to. INFO and
+        // WARNING go to stdout, which is fully buffered when redirected to a
+        // file, so aborting after flushing stderr alone threw away every
+        // buffered line leading up to the failure - the exact history needed
+        // to explain it. Measured: a fatal that followed ~1500 log lines left
+        // a zero-byte stdout capture behind.
+        std::fflush(stdout);
+        std::fflush(stderr);
         std::abort();
     }
 }
@@ -153,15 +161,51 @@ static bool run_menu_loop()
             event++;
         }
 
-        if (!aurora_begin_frame()) {
-            continue;
-        }
+        const bool frameBegun = aurora_begin_frame();
 
 #ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
-        if (g_gameRunning) {
-            g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
+        // Liveness heartbeat, deliberately *outside* the begin_frame guard and
+        // the g_gameRunning check: a stall shows up as "no new log lines", and
+        // that looks identical whether the guest is spinning, the guest has
+        // halted, or the frame loop itself is the thing that stopped
+        // (aurora_begin_frame() returning false skips the step entirely).
+        // Counting frames and steps separately tells those three apart, and
+        // the pc alongside them says *where* a spinning guest is spinning.
+        //
+        // Kept rather than removed: one line per second is bounded by
+        // construction, and this has been the single most useful diagnostic in
+        // the whole bring-up - every boot blocker so far was first located by
+        // reading a pc out of this line.
+        {
+            static Uint64 lastHeartbeat = 0;
+            static u64 frames = 0;
+            static u64 steps = 0;
+            static u64 framesReported = 0;
+            static u64 stepsReported = 0;
+            ++frames;
+            const Uint64 now = SDL_GetTicks();
+            if (now - lastHeartbeat >= 1000) {
+                lastHeartbeat = now;
+                // Deltas as well as totals: "is it still advancing, and how
+                // fast" is a different question from "how far has it got", and
+                // the totals alone make the first one arithmetic homework.
+                SmsMainLog.info("heartbeat: frames={} (+{}) steps={} (+{}) begun={} running={} pc={:#010x} lr={:#010x} downcount={} r3={:#010x} r4={:#010x}",
+                    frames, frames - framesReported, steps, steps - stepsReported, frameBegun, g_gameRunning,
+                    g_gameCpu.pc, g_gameCpu.lr, g_gameCpu.downcount,
+                    g_gameCpu.gpr[3], g_gameCpu.gpr[4]);
+                framesReported = frames;
+                stepsReported = steps;
+            }
+            if (frameBegun && g_gameRunning) {
+                ++steps;
+                g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
+            }
         }
 #endif
+
+        if (!frameBegun) {
+            continue;
+        }
 
         sms::ui::update();
 
