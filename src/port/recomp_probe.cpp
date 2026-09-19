@@ -52,6 +52,29 @@ constexpr u32 kAlarmQueue = 0x80405E58u; // {head, tail}
 constexpr u32 kActiveThreadQueue = 0x800000DCu; // {head, tail}
 constexpr u32 kCurrentThread = 0x800000E4u;
 
+// THPPlayer globals and worker threads, all verified in
+// config/GMSP01/symbols.txt. These observations distinguish an empty decoded
+// image from a renderer defect without changing THPPlayer itself.
+constexpr u32 kActivePlayer = 0x803E3B20u;
+constexpr u32 kReadThread = 0x803E4FF8u;
+constexpr u32 kVideoDecodeThread = 0x803E6308u;
+constexpr u32 kDecodedTextureSetQueue = 0x803E7638u;
+constexpr u32 kActivePlayerOpen = kActivePlayer + 0xA0u;
+constexpr u32 kActivePlayerState = kActivePlayer + 0xA4u;
+constexpr u32 kActivePlayerInternalState = kActivePlayer + 0xA5u;
+constexpr u32 kActivePlayerAudioExist = kActivePlayer + 0xA7u;
+constexpr u32 kActivePlayerDvdError = kActivePlayer + 0xA8u;
+constexpr u32 kActivePlayerVideoError = kActivePlayer + 0xACu;
+constexpr u32 kActivePlayerVideoDecodeCount = kActivePlayer + 0xD8u;
+// THPPlayer.h has curAudioTrack immediately before these fields.  The offsets
+// are also independently visible in THPPlayerPrepare's recompiled accesses:
+// it writes initOffset/initReadSize/initReadFrame at 0xB8/0xBC/0xC0, leaving
+// curField at 0xC4 and the later counters at the offsets below.
+constexpr u32 kActivePlayerCurrentVideo = kActivePlayer + 0xF0u;
+constexpr u32 kActivePlayerCurrentAudio = kActivePlayer + 0xF4u;
+constexpr u32 kActivePlayerDisplayTexture = kActivePlayer + 0xF8u;
+constexpr u32 kMessageQueueUsedCount = 0x1Cu;
+
 // OSThread field offsets - include/dolphin/os/OSThread.h:36-52. The embedded
 // OSContext's own offsets are include/dolphin/os/OSContext.h's OS_CONTEXT_*.
 constexpr u32 kThreadContextSp = 0x004u;   // context.gpr[1]
@@ -87,6 +110,8 @@ constexpr Named kThreadNames[] = {
     { 0x803FA248u, "DefaultThread" }, // symbols.txt:28752
     { 0x803F9F38u, "IdleThread" },    // symbols.txt:28751
     { kSetupThread, "gSetupThread" }, // symbols.txt:28551
+    { kReadThread, "THP ReadThread" }, // symbols.txt:25173
+    { kVideoDecodeThread, "THP VideoDecodeThread" }, // symbols.txt:25176
 };
 
 constexpr Named kQueueNames[] = {
@@ -263,6 +288,26 @@ void report_threads(CPUState *cpu)
     }
 }
 
+void report_thp(CPUState *cpu)
+{
+    const u32 display = mem_read32(cpu, kActivePlayerDisplayTexture);
+    Log.info("thp: open={} state={} internal={} audio={} dvdError={} videoError={} decodeCount={} v/a={}/{} display={:#010x} "
+             "decodedQueue={} | read={} pc={:#010x} video={} pc={:#010x}",
+        mem_read32(cpu, kActivePlayerOpen), mem_read8(cpu, kActivePlayerState),
+        mem_read8(cpu, kActivePlayerInternalState), mem_read8(cpu, kActivePlayerAudioExist),
+        static_cast<s32>(mem_read32(cpu, kActivePlayerDvdError)),
+        static_cast<s32>(mem_read32(cpu, kActivePlayerVideoError)),
+        static_cast<s32>(mem_read32(cpu, kActivePlayerVideoDecodeCount)),
+        static_cast<s32>(mem_read32(cpu, kActivePlayerCurrentVideo)),
+        static_cast<s32>(mem_read32(cpu, kActivePlayerCurrentAudio)),
+        display,
+        static_cast<s32>(mem_read32(cpu, kDecodedTextureSetQueue + kMessageQueueUsedCount)),
+        thread_state_name(mem_read16(cpu, kReadThread + kThreadState)),
+        mem_read32(cpu, kReadThread + kThreadContextSrr0),
+        thread_state_name(mem_read16(cpu, kVideoDecodeThread + kThreadState)),
+        mem_read32(cpu, kVideoDecodeThread + kThreadContextSrr0));
+}
+
 } // namespace
 
 void report(CPUState *cpu)
@@ -288,6 +333,7 @@ void report(CPUState *cpu)
     report_gates(cpu);
     report_dvd(cpu);
     report_threads(cpu);
+    report_thp(cpu);
 }
 
 } // namespace sms::recomp::probe
