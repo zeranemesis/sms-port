@@ -34,6 +34,7 @@ extern "C" {
 #include "generated_symbols.h"
 }
 
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <iterator>
@@ -73,6 +74,128 @@ std::unordered_map<u32, u32> &unmodeled_spr_storage()
     return storage;
 }
 
+// --- Gekko locked cache -------------------------------------------------------
+//
+// The Gekko can lock half of its L1 data cache and map it at 0xE0000000 as a
+// 16KB scratchpad (LC_BASE, include/dolphin/os/OSCache.h:19-21). It is not
+// backed by main memory: data is moved in and out explicitly by a small DMA
+// engine programmed through two SPRs.
+//
+// The THP video decoder depends on both. It refuses to run at all unless the
+// locked cache is enabled - `if (!(PPCMfhid2() & 0x10000000)) goto
+// _err_lc_not_enabled;` (src/dolphin/thp/THPDec.c:49) - does its IDCT into LC
+// scratch buffers, and then moves each decoded macroblock row out with
+// LCStoreData -> LCStoreBlocks (src/dolphin/os/OSCache.c).
+//
+// Neither existed here. Writes to 0xE0000000 fell through to the unmapped-MMIO
+// path and were dropped, and `mtspr 922/923` landed in the SPR storage below
+// and did nothing. So the decoder wrote its output into the void and the DMA
+// that should have rescued it was a no-op - measured as decoded Y/U/V planes
+// that were *entirely* zero (nonZero=0 over all 286,720 bytes) while
+// THPVideoDecode reported success and the player's frame counters advanced.
+constexpr u32 kLockedCacheBase = 0xE0000000u;
+constexpr u32 kLockedCacheSize = 16u * 1024u;
+std::array<u8, kLockedCacheSize> g_lockedCache {};
+
+bool locked_cache_offset(u32 addr, u8 size, u32 *offsetOut)
+{
+    if (addr < kLockedCacheBase) {
+        return false;
+    }
+    const u32 offset = addr - kLockedCacheBase;
+    if (u64(offset) + size > kLockedCacheSize) {
+        return false;
+    }
+    *offsetOut = offset;
+    return true;
+}
+
+// Big-endian, like guest RAM: this is ordinary storage the guest addresses
+// with ordinary loads and stores, not a register block.
+u64 locked_cache_read(CPUState *, u32 addr, u8 size)
+{
+    u32 offset = 0;
+    if (!locked_cache_offset(addr, size, &offset)) {
+        return 0;
+    }
+    u64 value = 0;
+    for (u8 i = 0; i < size; ++i) {
+        value = (value << 8) | g_lockedCache[offset + i];
+    }
+    return value;
+}
+
+void locked_cache_write(CPUState *, u32 addr, u64 value, u8 size)
+{
+    u32 offset = 0;
+    if (!locked_cache_offset(addr, size, &offset)) {
+        return;
+    }
+    for (u8 i = 0; i < size; ++i) {
+        g_lockedCache[offset + (size - 1 - i)] = static_cast<u8>(value >> (i * 8));
+    }
+}
+
+// DMA_U (SPR 922) and DMA_L (SPR 923). The encoding is read straight out of
+// LCStoreBlocks/LCLoadBlocks (src/dolphin/os/OSCache.c), which are the only
+// writers:
+//
+//     DMA_U = (mainAddress & 0x0FFFFFFF) | (numBlocks >> 2)
+//     DMA_L = (lcAddress & ~0x1F) | ((numBlocks & 3) << 2) | trigger | direction
+//
+// so the 7-bit block count is split across the two registers' low bits, which
+// the 32-byte alignment of both addresses leaves free. The trigger is bit 1,
+// and bit 4 selects the direction: LCLoadBlocks ORs in 0x12 (load, main -> LC)
+// where LCStoreBlocks ORs in 0x2 (store, LC -> main). A count of 0 means 128,
+// which is how LCStoreData asks for a full 4KB transaction.
+constexpr u32 kSprDmaUpper = 922;
+constexpr u32 kSprDmaLower = 923;
+constexpr u32 kDmaTriggerBit = 0x2u;
+constexpr u32 kDmaLoadBit = 0x10u;
+u32 g_dmaUpper = 0;
+
+void perform_locked_cache_dma(CPUState *cpu, u32 lower)
+{
+    const u32 mainOffset = g_dmaUpper & 0x0FFFFFE0u;
+    const u32 lcAddress = lower & 0xFFFFFFE0u;
+    u32 blocks = ((g_dmaUpper & 0x1Fu) << 2) | ((lower >> 2) & 0x3u);
+    if (blocks == 0) {
+        blocks = 128;
+    }
+    const u32 bytes = blocks * 32u;
+    const bool load = (lower & kDmaLoadBit) != 0;
+
+    u32 lcOffset = 0;
+    if (!locked_cache_offset(lcAddress, 1, &lcOffset) || u64(lcOffset) + bytes > kLockedCacheSize
+        || u64(mainOffset) + bytes > cpu->ram_size) {
+        static unsigned warned = 0;
+        if (warned < 8) {
+            ++warned;
+            Log.warn("locked-cache DMA out of range: lc={:#010x} main={:#010x} bytes={:#x} {}", lcAddress, mainOffset,
+                bytes, load ? "load" : "store");
+        }
+        return;
+    }
+
+    // Byte-wise both ways: this is opaque payload, not words, and must not be
+    // byte-swapped in either direction.
+    const u32 guestBase = mainOffset | GC_RAM_BASE;
+    for (u32 i = 0; i < bytes; ++i) {
+        if (load) {
+            g_lockedCache[lcOffset + i] = mem_read8(cpu, guestBase + i);
+        } else {
+            mem_write8(cpu, guestBase + i, g_lockedCache[lcOffset + i]);
+        }
+    }
+
+    static unsigned logged = 0;
+    if (logged < 4) {
+        ++logged;
+        Log.info("locked-cache DMA {}: lc={:#010x} main={:#010x} bytes={:#x}{}", load ? "load" : "store", lcAddress,
+            guestBase, bytes, logged == 4 ? " [further transfers are not logged]" : "");
+    }
+}
+
 // Decodes only what's needed to tell mfspr/mtspr apart from every other
 // instruction that might reach this fallback (see the PowerPC ISA's
 // XFX-form encoding: primary opcode 31, spr split across bits 11-20 with
@@ -99,7 +222,16 @@ void handle_instruction_fallback(CPUState *cpu, u32 raw, u32 cia)
     }
     if (primaryOp == 31 && secondaryOp == 467) { // mtspr
         const u32 spr = (rB << 5) | rA;
-        unmodeled_spr_storage()[spr] = cpu->gpr[rD_rS];
+        const u32 value = cpu->gpr[rD_rS];
+        unmodeled_spr_storage()[spr] = value;
+        // The locked-cache DMA is the one SPR pair here that has to *do*
+        // something rather than just be remembered. DMA_L's trigger bit is
+        // written last, which is what starts the transfer.
+        if (spr == kSprDmaUpper) {
+            g_dmaUpper = value;
+        } else if (spr == kSprDmaLower && (value & kDmaTriggerBit) != 0) {
+            perform_locked_cache_dma(cpu, value);
+        }
         cpu->pc = cia + 4;
         return;
     }
@@ -681,6 +813,18 @@ bool boot_game(CPUState *cpu)
 
     install_host_calls(cpu);
     install_external_memory(cpu);
+    // The Gekko locked cache is plain storage the guest addresses directly, so
+    // it is registered as an MMIO range only because it lives outside guest
+    // RAM - see kLockedCacheBase.
+    g_lockedCache.fill(0);
+    g_dmaUpper = 0;
+    register_mmio_range({
+        .base = kLockedCacheBase,
+        .end = kLockedCacheBase + kLockedCacheSize,
+        .name = "locked cache",
+        .read = &locked_cache_read,
+        .write = &locked_cache_write,
+    });
     interrupt::install();
     interrupt::install_decrementer(cpu);
     cpu->instruction_fallback = &handle_instruction_fallback;
