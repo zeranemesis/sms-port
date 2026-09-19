@@ -1,5 +1,5 @@
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..04b2633 100644
+index 9748556..9e20a60 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -11,9 +11,12 @@
@@ -53,7 +53,7 @@ index 9748556..04b2633 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1608,6 +1635,79 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1608,6 +1635,114 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    u16 vtxCount = read_u16(data + pos, bigEndian);
    pos += 2;
  
@@ -130,7 +130,132 @@ index 9748556..04b2633 100644
 +    }
 +  }
 +
++  // One-shot dump of THPPlayer's video quad, decoded from the raw FIFO bytes.
++  // Aurora pushes vertex data straight to the GPU without parsing it, so the
++  // only way to see what geometry actually arrived is to decode it here.
++  //
++  // THPGXYuv2RgbSetup programs GX_VA_POS as XYZ/s16 and GX_VA_TEX0 as ST/u16
++  // (src/THPPlayer/THPDraw.c), so the stride is 6 + 4 = 10 bytes. The raw
++  // bytes are printed alongside the decode so a wrong stride is visible rather
++  // than silently producing plausible nonsense.
++  //
++  // The discriminator is four vertices with the four-stage TEV combine, which
++  // only the YUV draw uses.
++  if (vtxCount == 4 && g_gxState.numTevStages == 4 && pos + 40 <= size) {
++    static bool dumped = false;
++    if (!dumped) {
++      dumped = true;
++      std::string raw;
++      for (u32 i = 0; i < 40; ++i) {
++        raw += fmt::format("{:02x}", data[pos + i]);
++        if ((i % 10) == 9) {
++          raw += ' ';
++        }
++      }
++      Log.info("THP quad raw (stride 10 assumed): {}", raw);
++      for (u32 v = 0; v < 4; ++v) {
++        const u8* p = data + pos + v * 10;
++        const auto s16at = [&](u32 o) { return static_cast<s16>((u32(p[o]) << 8) | p[o + 1]); };
++        const auto u16at = [&](u32 o) { return static_cast<u16>((u32(p[o]) << 8) | p[o + 1]); };
++        Log.info("THP quad v{}: pos=({}, {}, {}) st=({}, {})", v, s16at(0), s16at(2), s16at(4), u16at(6), u16at(8));
++      }
++      Log.info("THP quad: renderViewport {}x{} logicalViewport {}x{} projType {}", g_gxState.renderViewport.width,
++               g_gxState.renderViewport.height, g_gxState.logicalViewport.width, g_gxState.logicalViewport.height,
++               static_cast<u32>(g_gxState.projType));
++    }
++  }
++
    draw_prim(prim, fmt, vtxCount, data, pos, size);
+ }
+ 
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index 9ca9036..83883de 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -445,35 +445,70 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
+ 
+     GXTexObj_ obj = g_gxState.loadedTextures[i];
+     auto& textureBind = g_gxState.textures[i];
++
++    const auto copyIt = g_gxState.copyTextures.find(obj.data);
++    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
++
++    // The texture object alone does not determine the pixels we resolve to. A
++    // palettised texture is decoded through whichever TLUT currently sits in its
++    // slot, and the game is free to load a different palette there without ever
++    // touching the texture object -- that is how palette animation works. Fold the
++    // palette's identity, and the source revision of a palettised EFB copy, into the
++    // early-out below, or such a texture keeps the first frame's colours forever.
++    u32 tlutObjId = 0;
++    u32 tlutDataVersion = 0;
++    const GXTlutObj_* tlut = nullptr;
++    if (is_palette_format(obj.format())) {
++      const auto tlutIdx = static_cast<size_t>(obj.tlut);
++      if (tlutIdx < g_gxState.loadedTluts.size() && g_gxState.loadedTluts[tlutIdx].data != nullptr) {
++        tlut = &g_gxState.loadedTluts[tlutIdx];
++        tlutObjId = tlut->tlutObjId;
++        tlutDataVersion = tlut->tlutDataVersion;
++      }
++    }
++    // Only a palettised copy re-reads its source here; a plain copy hands back the
++    // same handle whose contents update in place, so its revision is not a dependency.
++    const u32 copyRevision = (tlut != nullptr && copyRef != nullptr) ? copyRef->revision : 0;
++
+     if (obj.texObjId != 0 && obj.texObjId == textureBind.texObj.texObjId &&
+-        obj.texDataVersion == textureBind.texObj.texDataVersion) {
++        obj.texDataVersion == textureBind.texObj.texDataVersion && tlutObjId == textureBind.tlutObjId &&
++        tlutDataVersion == textureBind.tlutDataVersion && copyRevision == textureBind.copyRevision) {
+       // Texture bind unchanged
+       continue;
+     }
+ 
+     gfx::TextureHandle handle;
+-    const auto copyIt = g_gxState.copyTextures.find(obj.data);
+-    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
+-    if (is_palette_format(obj.format())) {
+-      const auto tlutIdx = static_cast<size_t>(obj.tlut);
+-      if (tlutIdx < g_gxState.loadedTluts.size()) {
+-        const auto& tlut = g_gxState.loadedTluts[tlutIdx];
+-        if (tlut.data != nullptr) {
+-          if (copyRef != nullptr) {
+-            handle = resolve_dynamic_palette_texture(obj, *copyRef, tlut);
+-          } else {
+-            handle = resolve_static_palette_texture(obj, tlut);
+-          }
+-        }
++    if (tlut != nullptr) {
++      if (copyRef != nullptr) {
++        handle = resolve_dynamic_palette_texture(obj, *copyRef, *tlut);
++      } else {
++        handle = resolve_static_palette_texture(obj, *tlut);
+       }
++    } else if (is_palette_format(obj.format())) {
++      // No palette loaded in the slot yet: leave the bind empty rather than decoding
++      // the indices as if they were colours.
+     } else if (copyRef != nullptr) {
+       handle = copyRef->handle;
+     } else if (obj.data != nullptr) {
+       handle = resolve_static_texture(obj);
+     }
+ 
++    // One-shot: whether the THP YUV planes actually resolve to a texture. If
++    // obj.data is null, or no handle comes back, the bind is left empty and
++    // the sampler reads zero - which looks exactly like a correct shader fed
++    // correct uniforms drawing a correct quad, and produces black.
++    if (info.sampledTextures.count() >= 3) {
++      static u32 dumped = 0;
++      if (dumped < 3) {
++        ++dumped;
++        Log.info("THP texture map={}: data={} {}x{} fmt={} texObjId={:#x} version={} -> handle {}", i,
++                 static_cast<const void*>(obj.data), obj.width(), obj.height(), static_cast<u32>(obj.format()),
++                 obj.texObjId, obj.texDataVersion, handle ? "VALID" : "EMPTY");
++      }
++    }
++
+     obj.mFormat = resolved_format_for_handle(handle);
+-    textureBind = gfx::TextureBind{obj, std::move(handle)};
++    textureBind = gfx::TextureBind{obj, std::move(handle), tlutObjId, tlutDataVersion, copyRevision};
+   }
  }
  
 diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
@@ -175,3 +300,46 @@ index 3671ed5..4079cf9 100644
      if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
        if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
          vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
+diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
+index bb9ddec..1ed2cc9 100644
+--- a/lib/gx/shader_info.cpp
++++ b/lib/gx/shader_info.cpp
+@@ -371,6 +371,38 @@ static u32 line_texcoord_mask() noexcept {
+ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRanges& ranges) noexcept {
+   ZoneScoped;
+ 
++  // One-shot dump of the values that actually reach the shader for THPPlayer's
++  // YUV combine. The whole build path has been verified by reading - the TEV
++  // stage config, the BP decode of GXSetTevColorS10, the loadsTevReg and
++  // sampledKColors gating - so what is left is whether the *numbers* are right
++  // at draw time, and that cannot be read, only measured.
++  //
++  // Expected, derived from src/THPPlayer/THPDraw.c and the 11-bit signed BP
++  // encoding in src/dolphin/gx/GXTev.c:
++  //   colorRegs[0] (TEVREG0, GXSetTevColorS10 {65446, 0, 65422, 135})
++  //                         -> (-90, 0, -114, 135) / 255
++  //   kcolors[0] = (0, 0, 226, 88) / 255
++  //   kcolors[1] = (179, 0, 0, 182) / 255
++  //   kcolors[2] = (255, 0, 255, 128) / 255
++  //
++  // The signature of that draw is three sampled textures plus TEVREG0 loaded.
++  if (info.sampledTextures.count() >= 3 && info.loadsTevReg.test(GX_TEVREG0)) {
++    static bool dumped = false;
++    if (!dumped) {
++      dumped = true;
++      const auto& cr = g_gxState.colorRegs[GX_TEVREG0];
++      Log.info("THP uniforms: colorRegs[0] = ({}, {}, {}, {}) i.e. ({}, {}, {}, {}) x255", cr[0], cr[1], cr[2], cr[3],
++               cr[0] * 255.f, cr[1] * 255.f, cr[2] * 255.f, cr[3] * 255.f);
++      for (int i = 0; i < 3; ++i) {
++        const auto& kc = g_gxState.kcolors[i];
++        Log.info("THP uniforms: kcolors[{}] = ({}, {}, {}, {}) x255, sampled={}", i, kc[0] * 255.f, kc[1] * 255.f,
++                 kc[2] * 255.f, kc[3] * 255.f, info.sampledKColors.test(i));
++      }
++      Log.info("THP uniforms: renderViewport {}x{} logicalViewport {}x{}", g_gxState.renderViewport.width,
++               g_gxState.renderViewport.height, g_gxState.logicalViewport.width, g_gxState.logicalViewport.height);
++    }
++  }
++
+   static ByteBuffer buf;
+   buf.clear();
+   buf.reserve_extra(info.uniformSize);

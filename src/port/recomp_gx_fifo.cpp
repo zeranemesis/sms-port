@@ -230,26 +230,26 @@ bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
         // that produced it, and the caller is already throttled to that rate.
         const u8 *plane = cpu->ram + imageOffset;
         u64 nonZero = 0;
+        u64 sum = 0;
         u8 minByte = 0xFFu;
         u8 maxByte = 0;
-        u64 firstNonZero = 0;
-        bool haveFirst = false;
         for (u64 i = 0; i < sourceBytes; ++i) {
             const u8 value = plane[i];
             if (value != 0) {
                 ++nonZero;
-                if (!haveFirst) {
-                    haveFirst = true;
-                    firstNonZero = i;
-                }
             }
+            sum += value;
             minByte = value < minByte ? value : minByte;
             maxByte = value > maxByte ? value : maxByte;
         }
-        Log.info("THP plane: map={} image={:#010x} {}x{} bytes={:#x} nonZero={} ({:.1f}%) min={} max={} firstNonZero={:#x} revision={}",
-            textureMap, imageAddress, width, height, sourceBytes, nonZero,
-            sourceBytes == 0 ? 0.0 : (100.0 * double(nonZero) / double(sourceBytes)), minByte, maxByte,
-            haveFirst ? firstNonZero : 0, revisionIt->second.version);
+        // The mean is what distinguishes "the renderer is broken" from "the
+        // movie opens on a dark frame". A non-zero count alone cannot: a plane
+        // that is 90% non-zero can still be almost entirely near-black.
+        const double mean = sourceBytes == 0 ? 0.0 : double(sum) / double(sourceBytes);
+        Log.info("THP plane: map={} image={:#010x} {}x{} bytes={:#x} nonZero={:.1f}% mean={:.1f} min={} max={} revision={}",
+            textureMap, imageAddress, width, height, sourceBytes,
+            sourceBytes == 0 ? 0.0 : (100.0 * double(nonZero) / double(sourceBytes)), mean, minByte, maxByte,
+            revisionIt->second.version);
         revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
     }
 
