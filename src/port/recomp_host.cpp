@@ -42,10 +42,65 @@ bool dispatch(CPUState *cpu, u32 address)
         }
         return false;
     }
-    return it->second.fn(cpu, address);
+    if (!it->second.fn(cpu, address)) {
+        return false;
+    }
+    // A bridge stands in for a whole guest subroutine, so it has to finish
+    // the way that subroutine would: with the `blr` that puts the return
+    // address back in pc. Nothing else does this for us - generated.h's
+    // dolrecomp_call() sets `ctx->pc = address` on the way in and then
+    // returns 1 as soon as ppc_host_call() reports the call handled, and
+    // dolrecomp_run_blocks() re-reads ctx->pc for the very next iteration:
+    //
+    //     while (blocks < max_blocks) {
+    //         if (!dolrecomp_call(ctx, ctx->pc)) return 0;
+    //         blocks++;
+    //     }
+    //
+    // so leaving pc pointing at the bridged address re-enters the same
+    // bridge forever, burning the whole per-frame block budget without
+    // advancing a single guest instruction. That is exactly what the
+    // long-standing "DVDInit loops calling OSReport(\"bootrom\")" symptom
+    // was: not a retry loop in the game at all, but this dispatcher
+    // spinning on its own OSReport trampoline, with the repeat messages
+    // invisible because they dedupe.
+    cpu->pc = cpu->lr;
+    return true;
 }
 
+// The guest clock's state. Kept here rather than in CPUState so no dr_cpu
+// patch is needed: the baseline is simply the downcount value the last
+// accounting ran against, and anything below it has been executed since.
+// See recomp_host.h for why guest time is derived from cycles at all.
+s64 g_timebaseBaselineDowncount = 0;
+s64 g_timebaseCycleRemainder = 0;
+
+// 486MHz core / 40.5MHz OS_TIMER_CLOCK. Both constants are the decomp's own
+// (include/dolphin/os.h: OS_BUS_CLOCK 162,000,000, timer = bus / 4, core =
+// bus * 3), not round numbers chosen here.
+constexpr s64 kCoreCyclesPerTimebaseTick = 12;
+
 } // namespace
+
+void sync_guest_timebase(CPUState *cpu)
+{
+    const s64 consumed = g_timebaseBaselineDowncount - cpu->downcount;
+    if (consumed <= 0) {
+        // Not execution: a refill or a restored CPUState raised the
+        // downcount. rebase_guest_timebase() is what the caller owes us
+        // there; silently re-baselining here would hide a missing call.
+        return;
+    }
+    const s64 total = consumed + g_timebaseCycleRemainder;
+    cpu->timebase += static_cast<u64>(total / kCoreCyclesPerTimebaseTick);
+    g_timebaseCycleRemainder = total % kCoreCyclesPerTimebaseTick;
+    g_timebaseBaselineDowncount = cpu->downcount;
+}
+
+void rebase_guest_timebase(CPUState *cpu)
+{
+    g_timebaseBaselineDowncount = cpu->downcount;
+}
 
 void register_host_calls(const HostCallEntry *entries, size_t count)
 {
@@ -95,11 +150,57 @@ const MmioRangeHandler *find_range(u32 addr)
     return nullptr;
 }
 
+// An unmapped register is very often one the guest polls in a spin loop, which
+// makes "log every access" a log bomb rather than a diagnostic. Measured: a
+// 45-second run produced 987 MB, essentially all of it one line repeated -
+// `unmapped external read at 0xcc006c08` from a single pc, the AI sample
+// counter the guest waits on. The same class of runaway had already been fixed
+// three times elsewhere in this port (host-call misses, OSReport, the DSP/EXI/
+// DI registers), each time by deduplicating rather than by silencing, so do
+// the same here: the first access to a given address still says everything
+// needed to go and model that register, and the repeats say nothing new.
+//
+// Keyed on the address alone, not on (address, pc): a register is modelled or
+// not, and a second caller polling the same unmapped register is the same
+// defect.
+//
+// Deduplication alone is not enough, and assuming it was cost another 377MB
+// log. It bounds the "tight poll of one register" case it was written for, but
+// a wild pointer writes to a different address every time, so every write is a
+// first. Measured: a run walking 0xA82F9508 upwards in 4-byte steps, one new
+// warning line each. So the number of *distinct* addresses is capped too: past
+// that point the port is not learning about one more unmodelled register, it
+// is watching memory corruption, and the cap is what says so.
+constexpr size_t kMaxDistinctUnmappedAddresses = 256;
+
+bool first_unmapped_access(u32 addr)
+{
+    static std::unordered_set<u32> seen;
+    static bool capReported = false;
+    if (seen.size() >= kMaxDistinctUnmappedAddresses) {
+        if (!capReported) {
+            capReported = true;
+            Log.warn("more than {} distinct unmapped external addresses have been touched - this is no longer a "
+                     "missing register but a pointer running away; no further unmapped accesses will be logged",
+                kMaxDistinctUnmappedAddresses);
+        }
+        return false;
+    }
+    return seen.insert(addr).second;
+}
+
 u64 mmio_read(CPUState *cpu, u32 addr, u8 size)
 {
+    // A hardware register read is the guest observing the world, so this is
+    // the moment its clock has to be current - see sync_guest_timebase's
+    // comment in recomp_host.h.
+    sync_guest_timebase(cpu);
     const MmioRangeHandler *handler = find_range(addr);
     if (!handler || !handler->read) {
-        Log.warn("unmapped external read at {:#010x} (size={}) from pc={:#010x}", addr, size, cpu->pc);
+        if (first_unmapped_access(addr)) {
+            Log.warn("unmapped external read at {:#010x} (size={}) from pc={:#010x} - reads as 0, further accesses to this address are not logged",
+                addr, size, cpu->pc);
+        }
         return 0;
     }
     return handler->read(cpu, addr, size);
@@ -107,9 +208,13 @@ u64 mmio_read(CPUState *cpu, u32 addr, u8 size)
 
 void mmio_write(CPUState *cpu, u32 addr, u64 value, u8 size)
 {
+    sync_guest_timebase(cpu);
     const MmioRangeHandler *handler = find_range(addr);
     if (!handler || !handler->write) {
-        Log.warn("unmapped external write at {:#010x} (size={} value={:#x}) from pc={:#010x}", addr, size, value, cpu->pc);
+        if (first_unmapped_access(addr)) {
+            Log.warn("unmapped external write at {:#010x} (size={} value={:#x}) from pc={:#010x} - discarded, further accesses to this address are not logged",
+                addr, size, value, cpu->pc);
+        }
         return;
     }
     handler->write(cpu, addr, value, size);

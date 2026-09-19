@@ -103,6 +103,37 @@ void install_external_memory(CPUState *cpu);
 // module owns - no generated game code or disc image needed.
 bool run_mmio_self_test();
 
+// --- guest clock ------------------------------------------------------------
+//
+// CPUState::timebase is what the guest's OSGetTime()/mftb reads, and dr_cpu
+// never advances it on its own (extern/dolrecomp/src/cpu/cpu.c's ppc_mftb
+// just returns the field). It used to be advanced once per host frame from
+// the host's wall clock, which gets the long-run rate right and the
+// resolution catastrophically wrong: inside a frame guest time stood still,
+// and between frames it jumped ~16.6ms.
+//
+// That is fatal to the SDK's hardware-calibration loops, which poll a
+// register and time the gap with OSGetTime() in microseconds.
+// __AI_SRC_INIT (src/dolphin/ai/ai.c) is the one that caught it: it accepts
+// a gap below 28.5us or between 34.5us and 39.0us and spins forever on
+// anything else, so a frame-granular clock could only ever report ~16.6ms
+// and could never finish.
+//
+// So guest time is derived from guest execution instead: the core runs at 12
+// timebase ticks' worth of cycles per tick (486MHz core, 40.5MHz
+// OS_TIMER_CLOCK), and CPUState::downcount is the cycle counter generated
+// code already decrements. sync_guest_timebase() converts whatever has been
+// consumed since the last call into ticks, keeping the sub-tick remainder so
+// nothing is lost to truncation, and is called at every MMIO access - which
+// is exactly where a polling loop observes the world, so the timebase the
+// guest reads a few instructions later is accurate to those instructions.
+//
+// rebase_guest_timebase() declares "downcount just changed for a reason that
+// is not execution" (a budget refill, a restored CPUState) so that the jump
+// is not mistaken for consumed cycles.
+void sync_guest_timebase(CPUState *cpu);
+void rebase_guest_timebase(CPUState *cpu);
+
 // Reads a NUL-terminated string out of guest memory, shared by every
 // trampoline that takes a guest `const char*` (OSReport's %s, CARDInit's
 // game/maker strings, ...) - factored out of recomp_dolphin_sdk.cpp, which
