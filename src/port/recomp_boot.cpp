@@ -822,6 +822,9 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
 
     for (unsigned slice = 0; slice < kSlicesPerFrame; ++slice) {
         refill_slice_budget(cpu, kCyclesPerFrame / kSlicesPerFrame);
+        // Time-driven device work before delivery, so a completion raised here
+        // is taken in this same slice rather than waiting for the next one.
+        exi::tick(cpu);
         deliver_pending_interrupts(cpu);
 
         switch (run_blocks(cpu, blocksPerSlice)) {

@@ -100,6 +100,49 @@ constexpr u32 kDspDmaHighMask = 0x03FFu;
 constexpr u32 kDspInterruptStatusBit = 0x0080u;
 constexpr u32 kDspAramInterruptStatusBit = 0x0020u;
 constexpr u32 kDspAiInterruptStatusBit = 0x0008u;
+
+// --- AI DMA -----------------------------------------------------------------
+//
+// The audio DMA engine lives in the DSP register block, not in the AI block
+// this file models further down. src/dolphin/ai/ai.c:51-64:
+//
+//     void AIInitDMA(u32 start_addr, u32 length) {
+//         __DSPRegs[24] = (__DSPRegs[24] & 0xFFFFFC00) | (start_addr >> 16);
+//         __DSPRegs[25] = (__DSPRegs[25] & 0xFFFF001F) | (start_addr & 0xFFFF);
+//         __DSPRegs[27] = (__DSPRegs[27] & 0xFFFF8000) | ((length >> 5) & 0xFFFF);
+//     }
+//     void AIStartDMA(void) { __DSPRegs[27] = __DSPRegs[27] | 0x8000; }
+//
+// __DSPRegs is a u16*, so index 27 is the halfword at 0xCC005036 - the low half
+// of word 13 of this file's shadow. Bits 0-14 are the transfer length in
+// 32-byte blocks and bit 15 starts it.
+//
+// Nothing here ever completed that transfer, and that single omission is what
+// froze the intro movie. The chain, every link of it read out of the decomp:
+//
+//     no AI DMA completion interrupt
+//       -> __AIDHandler never runs                  (ai.c:234)
+//       -> syncAudio never posts its message        (JASAudioThread.cpp:39-51)
+//       -> Kernel::updateDac() never runs           (JASAudioThread.cpp:77)
+//       -> MixAudio never runs                      (THPPlayer.c:705)
+//       -> curAudioNumber stays 0
+//       -> PlayControl's `curVideoNumber - curAudioNumber <= 1` is false
+//          forever                                  (THPPlayer.c:524-526)
+//       -> dispTextureSet never advances, and the three THP worker threads
+//          deadlock in a ring waiting on each other's buffers.
+//
+// Measured before the fix: v/a = 2/0, one decoded frame stranded in the queue,
+// both workers WAITING, and exactly one 4-vertex quad drawn per frame - the
+// screen fader, not the movie.
+constexpr size_t kDspWordAiDmaControl = 13;
+constexpr u32 kAiDmaEnableBit = 0x8000u;
+constexpr u32 kAiDmaBlockCountMask = 0x7FFFu;
+constexpr u32 kAiDmaBytesPerBlock = 32u;
+
+// Defined further down, next to the AI block whose sample rate sets the
+// transfer's duration. Declared here because the DSP write handler above it is
+// what notices the enable bit going up.
+void ai_dma_control_written(CPUState *cpu, u32 controlWord);
 constexpr u32 kDspAllInterruptStatusBits
     = kDspInterruptStatusBit | kDspAramInterruptStatusBit | kDspAiInterruptStatusBit;
 
@@ -436,6 +479,12 @@ void write(CPUState *cpu, u32 addr, u64 value, u8 size)
             // reporting it - all three share one cause bit.
             interrupt::clear(interrupt::kCauseDsp);
         }
+    }
+
+    // AIStartDMA sets the enable bit in this register; AIInitDMA sets the
+    // length in the same one. Either write can be the one that arms a transfer.
+    if (index == kDspWordAiDmaControl) {
+        ai_dma_control_written(cpu, word);
     }
 
     // DSPAssertInt: the command count has just been sent, the command mails
@@ -905,6 +954,55 @@ void ai_advance_sample_count(const CPUState *cpu)
     lastTickTimebase = cpu->timebase;
 }
 
+// --- AI DMA completion -------------------------------------------------------
+
+bool g_aiDmaRunning = false;
+u64 g_aiDmaCompletionTimebase = 0;
+
+// How long the programmed buffer takes to play, derived from the hardware
+// rather than chosen: block count x 32 bytes, at the DSP sample rate, stereo
+// 16-bit so four bytes per frame. AIGetDSPSampleRate is
+// `GET_REG_FIELD(__AIRegs[0], 1, 6) ^ 1` with AI_SAMPLERATE_32KHZ == 0
+// (src/dolphin/ai/ai.c:131), so bit 6 set means 32kHz.
+u64 ai_dma_duration_ticks()
+{
+    const u32 blocks = g_shadow[kDspWordAiDmaControl] & kAiDmaBlockCountMask;
+    if (blocks == 0) {
+        return 0;
+    }
+    constexpr u32 kAiDspSampleRateBit = 0x0040u;
+    const u64 rate = (g_aiShadow[kAiControlOffset / 4] & kAiDspSampleRateBit) ? 32000ull : 48000ull;
+    const u64 bytes = u64(blocks) * kAiDmaBytesPerBlock;
+    return bytes * kTimerClockHz / (rate * 4ull);
+}
+
+void ai_dma_control_written(CPUState *cpu, u32 controlWord)
+{
+    const bool enabled = (controlWord & kAiDmaEnableBit) != 0;
+    if (!enabled) {
+        g_aiDmaRunning = false;
+        return;
+    }
+    if (g_aiDmaRunning) {
+        // Already playing; AIInitDMA just swapped the buffer for the next one.
+        // The completion instant stays where it is - the DAC does not restart.
+        return;
+    }
+    const u64 duration = ai_dma_duration_ticks();
+    if (duration == 0) {
+        return;
+    }
+    g_aiDmaRunning = true;
+    g_aiDmaCompletionTimebase = cpu->timebase + duration;
+
+    static bool announced = false;
+    if (!announced) {
+        announced = true;
+        Log.info("AI DMA started: {} blocks, one completion every {} ticks",
+            g_shadow[kDspWordAiDmaControl] & kAiDmaBlockCountMask, duration);
+    }
+}
+
 u64 ai_read(CPUState *cpu, u32 addr, u8 size)
 {
     const u32 wordAddr = addr & ~3u;
@@ -962,6 +1060,41 @@ void ai_write(CPUState *cpu, u32 addr, u64 value, u8 size)
 }
 
 } // namespace
+
+void tick(CPUState *cpu)
+{
+    if (!g_aiDmaRunning || cpu->timebase < g_aiDmaCompletionTimebase) {
+        return;
+    }
+
+    // Same two steps every device in this block uses: raise the device's own
+    // status bit, then PI's shared DSP cause. __OSDispatchInterrupt turns
+    // DSPCR bit 0x8 into OS_INTERRUPTMASK_DSP_AI, and __AIDHandler
+    // acknowledges by writing that bit back set, which the write-one-to-clear
+    // path above already handles.
+    g_shadow[kDspWordControlStatus] |= kDspAiInterruptStatusBit;
+    interrupt::raise(interrupt::kCauseDsp);
+
+    const u64 duration = ai_dma_duration_ticks();
+    if (duration == 0) {
+        g_aiDmaRunning = false;
+        return;
+    }
+    // Schedule from the previous deadline rather than from now, so the
+    // completion rate stays locked to the sample rate instead of drifting by
+    // however late this slice boundary happened to be. If we have fallen more
+    // than a whole buffer behind, resynchronise rather than firing a burst.
+    g_aiDmaCompletionTimebase += duration;
+    if (g_aiDmaCompletionTimebase <= cpu->timebase) {
+        g_aiDmaCompletionTimebase = cpu->timebase + duration;
+    }
+
+    static unsigned logged = 0;
+    if (logged < 4) {
+        ++logged;
+        Log.info("AI DMA completion raised{}", logged == 4 ? " [further completions are not logged]" : "");
+    }
+}
 
 void install()
 {

@@ -31,6 +31,18 @@ namespace sms::recomp::exi {
 // run's log shows exactly which offsets are touched.
 void install();
 
+// Advances the time-driven parts of this block and raises their interrupts.
+// Today that is the audio DMA: AIStartDMA arms a transfer whose completion is
+// what drives the SDK's whole audio path (__AIDHandler -> syncAudio ->
+// Kernel::updateDac -> MixAudio), and THPPlayer's video pacing is gated on
+// that audio actually advancing.
+//
+// Call once per slice boundary, before interrupts are delivered, so a
+// completion raised here is taken in the same slice. Nothing here transfers
+// audio samples - there is no host audio output yet; this models only the
+// engine's timing, which is what the guest waits on.
+void tick(CPUState *cpu);
+
 // The starting set of EXI SDK entry points safe to stub unconditionally
 // (see include/port/recomp_dolphin_sdk.h's NamedAddress for the shape this
 // mirrors). Cheap, harmless coverage independent of install() above - only
