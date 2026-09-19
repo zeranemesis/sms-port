@@ -1,0 +1,9 @@
+[submodule "extern/aurora"]
+	path = extern/aurora
+	url = https://github.com/encounter/aurora.git
+[submodule "extern/libco"]
+	path = extern/libco
+	url = https://github.com/higan-emu/libco.git
+[submodule "extern/dolrecomp"]
+	path = extern/dolrecomp
+	url = https://github.com/ExpansionPak/DolRecomp.git
