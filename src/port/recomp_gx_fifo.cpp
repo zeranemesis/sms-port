@@ -3,13 +3,17 @@
 
 #include "aurora/lib/logging.hpp"
 #include "aurora/lib/gx/fifo.hpp"
+#include "aurora/lib/gx/gx.hpp"
 
 #include <dolphin/gx/GXFifo.h>
+#include <dolphin/gx/GXAurora.h>
+#include <dolphin/gx/GXCommandList.h>
 #include <dolphin/gx/GXFrameBuffer.h>
 #include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXManage.h>
 
 #include <cstring>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -89,6 +93,155 @@ namespace {
 // fabricated sentinel instead and translate it back here.
 GXFifoObj *g_realFifoObj = nullptr;
 
+// The GameCube GXTexObj is a 32-byte big-endian object. Its image pointer is
+// encoded in image3 as a physical address divided by 32. Aurora's
+// GX_LOAD_AURORA_TEXOBJ carries a native host pointer instead, so the raw BP
+// writes emitted by the guest's GXLoadTexObj alone cannot make its texture
+// resolver see game RAM.
+struct GuestTextureRevision {
+    u64 signature = 0;
+    u32 version = 1;
+    u64 lastDiagnosticTimebase = 0;
+};
+
+std::unordered_map<u32, GuestTextureRevision> g_guestTextureRevisions;
+
+// Bytes the base mip level occupies for a given GX texture format. Factored
+// out because the *bounds check* needs it as much as the hash does: Aurora is
+// handed a raw host pointer and will read width x height x bpp from it, so
+// validating only the start address lets it run off the end of guest RAM.
+u64 texture_source_bytes(u32 width, u32 height, u32 format)
+{
+    const u64 pixels = u64(width) * height;
+    switch (format & 0x0Fu) {
+    case 0: // I4
+    case 8: // C4
+        return (pixels + 1) / 2;
+    case 2: // IA4
+    case 9: // C8
+        return pixels;
+    case 3:  // IA8
+    case 4:  // RGB565
+    case 5:  // RGB5A3
+    case 10: // C14X2
+        return pixels * 2;
+    case 6: // RGBA8
+        return pixels * 4;
+    default: // I8 and unknown extended formats: one byte is the safest base.
+        return pixels;
+    }
+}
+
+u64 sampled_texture_content_signature(const u8 *data, u32 availableBytes, u32 width, u32 height, u32 format)
+{
+    // Aurora caches decoded textures by (object ID, data revision), while a
+    // GameCube GXTexObj has no matching revision field. Sample the base level
+    // so writes into a reused movie/render buffer advance that revision without
+    // needlessly re-uploading ordinary immutable textures.
+    const u32 bytes = static_cast<u32>(std::min<u64>(texture_source_bytes(width, height, format), availableBytes));
+    if (bytes == 0) {
+        return 0;
+    }
+
+    u64 hash = 1469598103934665603ull;
+    constexpr u32 kSampleCount = 64;
+    for (u32 i = 0; i < kSampleCount; ++i) {
+        const u32 index = static_cast<u32>((u64(i) * (bytes - 1)) / (kSampleCount - 1));
+        hash ^= data[index];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
+{
+    constexpr u32 kGuestTexObjSize = 0x20;
+    constexpr u32 kGuestImage0Offset = 0x08;
+    constexpr u32 kGuestImage3Offset = 0x0C;
+    constexpr u32 kGuestFormatOffset = 0x14;
+    constexpr u32 kGuestTlutOffset = 0x18;
+    constexpr u32 kGuestFlagsOffset = 0x1F;
+    constexpr u32 kTextureMapCount = 8;
+
+    const u32 objectAddress = cpu->gpr[3];
+    const u32 objectOffset = objectAddress & 0x03FFFFFFu;
+    if (textureMap >= kTextureMapCount || objectOffset > cpu->ram_size || kGuestTexObjSize > cpu->ram_size - objectOffset) {
+        return false;
+    }
+
+    const u32 image0 = mem_read32(cpu, objectAddress + kGuestImage0Offset);
+    const u32 image3 = mem_read32(cpu, objectAddress + kGuestImage3Offset);
+    const u32 format = mem_read32(cpu, objectAddress + kGuestFormatOffset);
+    const u32 tlut = mem_read32(cpu, objectAddress + kGuestTlutOffset);
+    const u8 flags = mem_read8(cpu, objectAddress + kGuestFlagsOffset);
+
+    const u32 width = (image0 & 0x3FFu) + 1;
+    const u32 height = ((image0 >> 10) & 0x3FFu) + 1;
+    const u32 imageAddress = (image3 & 0x001FFFFFu) << 5;
+    const u32 imageOffset = imageAddress & 0x03FFFFFFu;
+    // Validate the whole extent, not just the start. Aurora receives a bare
+    // host pointer and decodes width x height x bpp bytes from it, so an
+    // address that is merely *inside* RAM is not enough - a texture starting
+    // near the top would be read past the end of the guest's memory.
+    const u64 sourceBytes = texture_source_bytes(width, height, format);
+    if (imageOffset >= cpu->ram_size || sourceBytes > cpu->ram_size - imageOffset) {
+        // Capped by count as well as deduplicated: imageAddress comes from a
+        // 21-bit field shifted left by 5, so up to two million distinct keys
+        // are reachable. Deduplication alone bounds neither the log nor the
+        // set - the exact mistake already corrected in recomp_host.cpp.
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(imageAddress).second) {
+            Log.warn("GXLoadTexObj image {:#010x} + {:#x} bytes runs past guest RAM - Aurora texture metadata not emitted",
+                imageAddress, sourceBytes);
+        }
+        return false;
+    }
+
+    // A stable ID lets Aurora retain decoded static textures. Bump the
+    // revision whenever the guest object describes different source data.
+    const u64 contentSignature = sampled_texture_content_signature(
+        cpu->ram + imageOffset, cpu->ram_size - imageOffset, width, height, format);
+    const u64 signature = (u64(image0) << 32) ^ u64(image3) ^ (u64(format) << 17) ^ (u64(tlut) << 1) ^ flags ^ contentSignature;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(objectAddress, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) {
+            revisionIt->second.version = 1;
+        }
+    }
+    if (inserted && g_guestTextureRevisions.size() <= 8) {
+        Log.info("GXLoadTexObj bridge: map={} object={:#010x} image={:#010x} {}x{} format={:#x}",
+            textureMap, objectAddress, imageAddress, width, height, format);
+    }
+    // THPPlayer converts its decoded Y/U/V planes into exactly these I8
+    // dimensions. One bounded diagnostic per second tells us whether their
+    // bytes actually evolve before they reach Aurora's TEV combiner.
+    const bool thpPlane = format == 1u
+        && ((width == 640u && height == 448u) || (width == 320u && height == 224u));
+    if (thpPlane && cpu->timebase - revisionIt->second.lastDiagnosticTimebase >= 40500000ull) {
+        Log.info("THP plane: map={} image={:#010x} content={:#018x} revision={}",
+            textureMap, imageAddress, contentSignature, revisionIt->second.version);
+        revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
+    }
+
+    // Emit Aurora's documented software-FIFO metadata first, then return
+    // false so DolRecomp runs the original GXLoadTexObj. That retains the
+    // guest GX shadow-state updates and the normal BP register sequence.
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TEXOBJ);
+    aurora::gx::fifo::write_u8(static_cast<u8>(textureMap));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + imageOffset));
+    aurora::gx::fifo::write_u32(width);
+    aurora::gx::fifo::write_u32(height);
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u32(tlut);
+    aurora::gx::fifo::write_u8((flags & 1u) != 0);
+    aurora::gx::fifo::write_u32(objectAddress);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return true;
+}
+
 bool host_call_gx_init(CPUState *, u32)
 {
     // Aurora's GXInit is a faithful reimplementation - it runs
@@ -152,26 +305,23 @@ bool host_call_gx_set_draw_done(CPUState *, u32)
     // Aurora's real GXSetDrawDone() just synchronously invokes whatever
     // callback GXSetDrawDoneCallback registered (extern/aurora/lib/
     // dolphin/gx/GXManage.cpp) - none has been registered through this
-    // bridge, so today this is a safe no-op plus a log line.
+    // bridge, so today this is a safe no-op.
     // GXWaitDrawDone (real address 0x80355CBC per generated_symbols.h)
     // has no Aurora implementation at all and isn't bridged yet - expect
     // it to show up as an unresolved-call log miss if/when reached.
     GXSetDrawDone();
-    Log.info("GXSetDrawDone");
     return true;
 }
 
 bool host_call_gx_draw_done(CPUState *, u32)
 {
     GXDrawDone();
-    Log.info("GXDrawDone");
     return true;
 }
 
 bool host_call_gx_flush(CPUState *, u32)
 {
     GXFlush();
-    Log.info("GXFlush");
     return true;
 }
 
@@ -220,6 +370,33 @@ bool host_call_gx_set_array(CPUState *cpu, u32)
     return true;
 }
 
+bool host_call_gx_load_tex_obj(CPUState *cpu, u32)
+{
+    emit_guest_texture_metadata(cpu, cpu->gpr[4]);
+    // Keep the original GameCube SDK body: it updates guest gxData as well
+    // as emitting BP state that Aurora's FIFO decoder still consumes.
+    return false;
+}
+
+bool host_call_gx_load_tex_obj_preloaded(CPUState *cpu, u32)
+{
+    // GXLoadTexObjPreLoaded(obj, region, id) puts the texture-map ID in r5,
+    // unlike GXLoadTexObj(obj, id), which puts it in r4. Some game paths
+    // call this lower-level API directly, so bridge both entry points.
+    emit_guest_texture_metadata(cpu, cpu->gpr[5]);
+    return false;
+}
+
+bool host_call_gx_invalidate_tex_all(CPUState *, u32)
+{
+    // The guest routine only writes GameCube texture-cache invalidation BP
+    // registers. Aurora has a host-side decoded-texture cache as well, which
+    // those raw registers cannot invalidate. This is crucial for THP video
+    // frames: the same GXTexObj points at pixels overwritten every frame.
+    aurora::gx::clear_static_texture_cache();
+    return false;
+}
+
 bool host_call_gx_copy_disp(CPUState *cpu, u32)
 {
     // dest (r3) is a guest framebuffer address - not forwarded, since
@@ -228,7 +405,6 @@ bool host_call_gx_copy_disp(CPUState *cpu, u32)
     // (r4) is scalar and safe to pass through.
     const GXBool clear = static_cast<GXBool>(cpu->gpr[4]);
     GXCopyDisp(nullptr, clear);
-    Log.info("GXCopyDisp(clear={})", static_cast<int>(clear));
     return true;
 }
 
@@ -256,6 +432,12 @@ void register_known_gx_calls(const NamedAddress *addresses, size_t count)
             fn = &host_call_gx_copy_disp;
         } else if (std::strcmp(name, "GXSetArray") == 0) {
             fn = &host_call_gx_set_array;
+        } else if (std::strcmp(name, "GXLoadTexObj") == 0) {
+            fn = &host_call_gx_load_tex_obj;
+        } else if (std::strcmp(name, "GXLoadTexObjPreLoaded") == 0) {
+            fn = &host_call_gx_load_tex_obj_preloaded;
+        } else if (std::strcmp(name, "GXInvalidateTexAll") == 0) {
+            fn = &host_call_gx_invalidate_tex_all;
         }
         if (fn) {
             entries.push_back({ addresses[i].address, name, fn });

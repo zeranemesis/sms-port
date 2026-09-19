@@ -30,9 +30,11 @@ namespace sms::recomp::gx_fifo {
 void install();
 
 // Bridges GXInit/GXSetCPUFifo/GXSetGPFifo/GXSetDrawDone/GXDrawDone/
-// GXFlush/GXCopyDisp - the starting set discovered to matter so far, not a
-// claimed-complete enumeration (see include/port/recomp_dolphin_sdk.h's
-// NamedAddress for the shape this mirrors).
+// GXFlush/GXCopyDisp/GXSetArray/GXLoadTexObj/GXLoadTexObjPreLoaded/
+// GXInvalidateTexAll - the starting set discovered
+// to matter so far, not a claimed-complete enumeration (see
+// include/port/recomp_dolphin_sdk.h's NamedAddress for the shape this
+// mirrors).
 struct NamedAddress {
     const char *name;
     u32 address;
