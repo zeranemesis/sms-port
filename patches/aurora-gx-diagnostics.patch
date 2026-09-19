@@ -1,16 +1,17 @@
 diff --git a/lib/gfx/texture_convert.cpp b/lib/gfx/texture_convert.cpp
-index d1ed04c..7b714cf 100644
+index d1ed04c..c59ad9d 100644
 --- a/lib/gfx/texture_convert.cpp
 +++ b/lib/gfx/texture_convert.cpp
-@@ -1,5 +1,7 @@
+@@ -1,5 +1,8 @@
  #include "texture_convert.hpp"
  
++#include <chrono>
 +#include <cstdio>
 +
  #include "../internal.hpp"
  #include "../gx/gx_fmt.hpp"
  
-@@ -634,6 +636,36 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
+@@ -634,6 +637,58 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
    if (!is_pc_texture_format(format) && wgpuFormat == wgpu::TextureFormat::RGBA8Unorm && mips > 1) {
      hasArbitraryMips = arb_mip_check(width, height, mips, converted);
    }
@@ -42,6 +43,28 @@ index d1ed04c..7b714cf 100644
 +      Log.info("THP I8 decode: src {} bytes [{}] -> {} bytes, mean={:.1f} min={} max={}", data.size(), srcHead, size,
 +               size == 0 ? 0.0 : double(sum) / double(size), lo, hi);
 +
++    }
++
++    // Is the luminance decode good EVERY time, or only the first? The
++    // one-shot probe above cannot tell: it measured the first decode, which
++    // was correct. Forcing this plane to a constant made the movie appear, so
++    // the upload, bind and sampling all work and only this plane's *contents*
++    // are suspect. Throttled to once a second, hard-capped.
++    {
++      static auto lastReport = std::chrono::steady_clock::now();
++      static unsigned reports = 0;
++      const auto now = std::chrono::steady_clock::now();
++      if (reports < 30 && now - lastReport >= std::chrono::seconds(1)) {
++        lastReport = now;
++        ++reports;
++        const auto* b = converted.data();
++        u64 s2 = 0;
++        for (size_t i = 0; i < converted.size(); ++i) {
++          s2 += b[i];
++        }
++        Log.info("THP Y decode #{}: {} bytes mean={:.1f}", reports, converted.size(),
++                 converted.empty() ? 0.0 : double(s2) / double(converted.size()));
++      }
 +    }
 +  }
    return {
