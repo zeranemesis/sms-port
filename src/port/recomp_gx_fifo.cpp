@@ -220,8 +220,36 @@ bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
     const bool thpPlane = format == 1u
         && ((width == 640u && height == 448u) || (width == 320u && height == 224u));
     if (thpPlane && cpu->timebase - revisionIt->second.lastDiagnosticTimebase >= 40500000ull) {
-        Log.info("THP plane: map={} image={:#010x} content={:#018x} revision={}",
-            textureMap, imageAddress, contentSignature, revisionIt->second.version);
+        // Scan the WHOLE plane, not a sample of it. The 64-point signature
+        // above is a change detector, not a content detector: 64 bytes out of
+        // a 286,720-byte plane is 0.02%, so "all sampled bytes are zero" does
+        // not distinguish a decoder that wrote nothing from a sample that
+        // happened to miss everything. This is the measurement that does.
+        //
+        // One full pass per plane per second is nothing next to the decode
+        // that produced it, and the caller is already throttled to that rate.
+        const u8 *plane = cpu->ram + imageOffset;
+        u64 nonZero = 0;
+        u8 minByte = 0xFFu;
+        u8 maxByte = 0;
+        u64 firstNonZero = 0;
+        bool haveFirst = false;
+        for (u64 i = 0; i < sourceBytes; ++i) {
+            const u8 value = plane[i];
+            if (value != 0) {
+                ++nonZero;
+                if (!haveFirst) {
+                    haveFirst = true;
+                    firstNonZero = i;
+                }
+            }
+            minByte = value < minByte ? value : minByte;
+            maxByte = value > maxByte ? value : maxByte;
+        }
+        Log.info("THP plane: map={} image={:#010x} {}x{} bytes={:#x} nonZero={} ({:.1f}%) min={} max={} firstNonZero={:#x} revision={}",
+            textureMap, imageAddress, width, height, sourceBytes, nonZero,
+            sourceBytes == 0 ? 0.0 : (100.0 * double(nonZero) / double(sourceBytes)), minByte, maxByte,
+            haveFirst ? firstNonZero : 0, revisionIt->second.version);
         revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
     }
 
