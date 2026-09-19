@@ -39,7 +39,21 @@ MenuBar::MenuBar()
             .onClose = [this] { hide(false); },
             .autoSelect = false,
         });
-    mTabBar->add_tab(ui_translate("Settings"), [this] { push(std::make_unique<SettingsWindow>()); });
+    // `prelaunch=true` is what actually shows the Prelaunch tab (disc image
+    // path, language, graphics backend) - the default-constructed
+    // SettingsWindow() used here before defaulted it to false, so F1 could
+    // never reach it: there was no way through the UI to set or change
+    // which disc image boots. That default made sense for a genuine
+    // in-game pause menu, but there is no such state yet - port_main()
+    // calls try_boot_game() unconditionally and immediately on startup
+    // (portmain.cpp), before any menu interaction is possible, so by the
+    // time F1 can be pressed the game has already tried to boot with
+    // whatever discPath was already configured. Revisit this once boot is
+    // gated behind an explicit action (see the disk-usage finding in
+    // docs/port_bootstrap.md) rather than firing on process start - at that
+    // point this should reflect whether a game is actually running instead
+    // of being hardcoded.
+    mTabBar->add_tab(ui_translate("Settings"), [this] { push(std::make_unique<SettingsWindow>(true)); });
 
     mTabBar->add_tab(ui_translate("Quit"), [this] {
         mTabBar->set_active_tab(-1);

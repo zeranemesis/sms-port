@@ -616,3 +616,41 @@ it worse. Cleaned up ~4.9GB of this session's own reproducible scratch data
 recipe) to bring it to 6.6GB free - still tight, worth Valentin's own
 attention on what else is using the other ~470GB, since that's pre-existing
 data on his machine, not this session's to decide about.
+
+## F1 menu: the Prelaunch tab existed in code but was never reachable
+
+Requested follow-up to the above: continue building out the F1 menu now
+that it's confirmed to actually run. `settings.cpp`'s `SettingsWindow` has
+always had three tabs - `Prelaunch` (disc image path, language, graphics
+backend), `Video`, `Input` - but `Prelaunch` is only added when constructed
+with `prelaunch=true`, and `SettingsWindow`'s default argument is `false`.
+`menu_bar.cpp`'s F1 tab bar constructed it with no argument at all, so every
+run through the actual menu (not just reading the code) landed on Video as
+the first tab, with no way to see or change the disc path from the UI -
+confirmed by screenshot before and after the fix, not just inferred from
+the source.
+
+The honest reason this default was wrong rather than just unlucky:
+`prelaunch=true` is clearly meant to distinguish "configuring before a game
+is running" from "a live in-game pause menu" (it also gates whether
+resolution changes in `GraphicsTuner` apply immediately or need a restart,
+and suppresses one nav-fallback path). But `port_main()`
+(`portmain.cpp`) calls `try_boot_game()` unconditionally and immediately on
+process start, before any menu interaction is possible - there is currently
+no window in the app's actual lifetime where "before the game boots" and
+"F1 is reachable" overlap. So the `false` default was never correct for the
+one call site that exists; it just silently ate the Prelaunch tab. Fixed by
+passing `true` from `menu_bar.cpp` for now, with a comment there pointing at
+this section: once boot is gated behind an explicit action instead of
+firing on startup, this should reflect real game-running state instead of
+being hardcoded true. Checked that this doesn't regress the pause-menu
+"Cancel closes the window" path - that's handled unconditionally in
+`Window::handle_nav_command` before the `mSuppressNavFallback` check that
+`prelaunch` also affects, so it's unaffected either way.
+
+Verified end to end after rebuilding: F1 -> Settings now opens on
+**Prelaunch** by default, showing the real configured values (`Disc Image:
+D:\dolphin\Super Mario Sunshine [GMSP01].iso`, `Language: English`,
+`Graphics Backend: Auto`) - not placeholders, the actual `config.json`
+content - with Video and Input as the next two tabs, exactly matching what
+this section already described before it was actually run.
