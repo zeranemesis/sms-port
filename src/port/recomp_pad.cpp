@@ -64,7 +64,28 @@ void write_guest_status(CPUState *cpu, u32 address, const PADStatus &status)
 
 bool host_call_pad_init(CPUState *cpu, u32)
 {
-    cpu->gpr[3] = PADInit() ? 1u : 0u;
+    const bool ok = PADInit();
+
+    // Without this the port is unplayable on a machine with no gamepad, which
+    // is the machine it is developed on. Aurora's PADRead reports
+    // PAD_ERR_NO_CONTROLLER for a port with no physical controller, no virtual
+    // pad and no keyboard bindings (extern/aurora/lib/dolphin/pad/pad.cpp:694),
+    // and the game then sees four dead ports - the on-screen "NO CONTROLLER
+    // ASSIGNED" notice.
+    //
+    // Activating alone is not enough: PADKeyboardState's mappings are
+    // value-initialised, not defaulted, so an active port with an all-zero
+    // table reports PAD_ERR_NONE and no buttons. PADClearKeyBindings is what
+    // installs g_defaultKeys/g_defaultKeyAxis, so it has to come first.
+    //
+    // This does not overwrite a configuration the player made: Aurora loads
+    // keyboard_bindings.dat lazily inside PADRead (pad.cpp:678), which runs
+    // after PADInit, so a saved file still wins over these defaults.
+    constexpr u32 kKeyboardPort = 0;
+    PADClearKeyBindings(kKeyboardPort);
+    PADSetKeyboardActive(kKeyboardPort, TRUE);
+
+    cpu->gpr[3] = ok ? 1u : 0u;
     return true;
 }
 
