@@ -654,3 +654,152 @@ D:\dolphin\Super Mario Sunshine [GMSP01].iso`, `Language: English`,
 `Graphics Backend: Auto`) - not placeholders, the actual `config.json`
 content - with Video and Input as the next two tabs, exactly matching what
 this section already described before it was actually run.
+
+## 2026-09-19: the boot actually comes up - and three of this document's own conclusions were wrong
+
+The longest bring-up session so far. It took the port from "parked in `PPCHalt`
+on frame 0" to "the game runs its own main loop, streams data off the disc, and
+reaches its intro movie". Recorded in the order the defects were found, because
+the order is the argument: each one was only visible once the previous was gone.
+
+### The `sc` off-by-one - and what it says about the "bootrom loop"
+
+`handle_system_call` added 4 to `srr0` on the stated premise that it pointed AT
+the `sc` instruction. It does not. `ppc_system_call_exception`
+(`extern/dolrecomp/src/cpu/cpu.c`) raises the exception with `cia + 4u`, which
+is what the architecture specifies for System Call - unlike traps, which do
+leave SRR0 on the faulting instruction. The extra bump skipped exactly one
+instruction after *every* `sc` in the game.
+
+That is invisible almost everywhere and fatal in one place: `PPCSync()` is
+`sc; blr` at 0x80339C38, and `PPCHalt` - an unconditional infinite loop -
+starts four bytes later at 0x80339C40. Skipping `PPCSync`'s `blr` fell straight
+into `PPCHalt`. Measured as `pc=0x80339C44`, with `lr` pointing back into
+`__ARChecksize`, which contains no `PPCHalt` call of its own.
+
+### Interrupts, and the defect that hid behind them
+
+Nothing in this port ever raised an interrupt, because the DOL contains no
+exception-vector code - the SDK copies its low-memory stubs into place at
+runtime, so a static recompiler never translated anything at 0x500. That
+blocked the boot twice in unrelated subsystems: the scheduler idling in
+`SelectThread`'s `while (RunQueueBits == 0) ;`, and later the game's own audio
+driver busy-waiting in `DSPSendCommands2`.
+
+The second one is why a narrow workaround was not enough - a busy-wait in game
+code is not a scheduler idle point, so there is no safe moment to special-case.
+`recomp_interrupt.cpp` now does what the hardware does: save the interrupted
+register file into the guest `OSContext` at `__OSCurrentContext` and jump to
+`__OSDispatchInterrupt` (0x8033DF04). No return path is needed - every path
+through that function ends in `OSLoadContext(context)`, and it brackets the
+handler with `OSDisableScheduler`/`OSEnableScheduler`/`__OSReschedule` itself.
+
+Once delivery existed, it exposed a much worse defect underneath. The
+FP-unavailable handler re-enabled FP and resumed at `srr0` **without an rfi**,
+so `exception_msr()`'s clearing of EE, IR, DR and RI was never undone: the
+first floating-point instruction a thread ever executed disabled its interrupts
+permanently. Measured at 172,801 out of 172,801 sampled slice boundaries with
+`msr=0x00003000` - exactly FP|ME, an exception-entry MSR with FP added back. A
+guest stack back-chain walk put the blocked thread in JAudio's audio thread.
+This defect had been latent since the first boot attempt and was unobservable
+without interrupts to notice it.
+
+### Guest time had no sub-frame resolution
+
+`CPUState::timebase` was advanced once per host frame from the host's wall
+clock. That gets the long-run rate right and the resolution exactly backwards:
+inside a frame guest time stood still, and between frames it jumped ~16.6ms.
+The SDK's hardware-calibration loops measure *microseconds* - `__AI_SRC_INIT`
+accepts a gap below 28.5us or between 34.5us and 39.0us and spins forever on
+anything else. Guest time is now derived from consumed cycles and synced at
+every MMIO access, which is where a polling loop observes the world.
+
+### This port was supposed to be the apploader, and was not
+
+**The `OSReport("bootrom")` message this document has speculated about for
+several sections is not a disc check and not a BS2 version check.** It is
+`DVDInit` (`src/dolphin/dvd/dvd.c:82`) branching on `bootInfo->magic`: neither
+0xE5207C22 (booted via JTAG) nor 0xD15EA5E (booted from bootrom) means
+"first time in bootrom", and that third branch is what prints it.
+
+`OSBootInfo` lives at 0x80000000 and is written by the IPL/apploader, never by
+the DOL. A calloc'd guest RAM answered 0, so the SDK took that branch, ran the
+full drive bring-up, was answered with zeros, and shut the drive down.
+
+The same class of gap explained the audio hang: `OS_BUS_CLOCK` is
+`__OSBusClock`, a *variable* at 0x800000F8, so with it at zero every
+`OSNanosecondsToTicks` in the SDK collapsed to 0 and `__AI_SRC_INIT` could
+never satisfy bounds that were all zero. The interval it was measuring had been
+correct the whole time - traced at 1271 ticks at 32kHz and 843 at 48kHz,
+exactly the two sample periods.
+
+`install_boot_info` now writes what the apploader writes: the disc ID, the
+magic, and the file system table read off the disc, with `arenaHi` lowered to
+protect it. The log line changed from `bootrom` to `app booted from bootrom`.
+
+### The DVD had never transferred a byte
+
+The DI registers were only shadowed, which let the guest believe transfers
+completed while nothing moved - so the game ran on zeros, and
+`JAIData::initData` looped forever on a count read out of a sound-info file
+that never arrived. Two details had to be read rather than assumed:
+
+- **DISR's transfer-complete bit is bit 4, not bit 2.**
+  `__DVDInterruptHandler` maps `intr & 0x10` to cause 1 and `intr & 4` to cause
+  2, and `cbForStateBusy` treats `intType & 1` as success and `& 2` as error.
+  Setting bit 2 announced a drive failure on every successful transfer -
+  measured as `DVDLowStopMotor` being issued immediately after the inquiry.
+- **`DILENGTH` must count down to zero**, because `cbForStateBusy` computes
+  `transferredSize += currTransferSize - __DIRegs[6]`.
+
+### Vertex arrays carry pointers, which cannot be forwarded
+
+`GXSetArray` is the one GX call that cannot work by forwarding FIFO bytes: what
+it puts in the FIFO is a *pointer*. Aurora has no guest RAM to walk, rejects
+the CP array-base registers outright, and offers `GX_LOAD_AURORA_ARRAYBASE`
+carrying a host pointer instead. Until it was bridged, every indexed vertex
+attribute was dropped - which is essentially all geometry. The texture path
+plausibly has the same shape and is **not** bridged; that is the open question
+at the time of writing, not a verified conclusion.
+
+### Three measurement errors, recorded because they cost real time
+
+1. **A probe rate-limited by its own subject.** The draw counter logged one in
+   every 20,000 draws, and 11,730 frames x 1 quad falls under that threshold,
+   so the second report never came and the result read as "one draw in 90
+   seconds". Nothing rate-limited by the thing it measures can tell "rare"
+   apart from "just below the threshold". It is wall-clock gated now.
+2. **An inference reported as a finding.** "Stuck in `APP_STATE_BOOT`" was
+   derived from a flat screen and a sleeping scheduler, and written up as fact.
+   The guest-state probe (`src/port/recomp_probe.cpp`) then showed `appState`
+   reaching NLOGO and then DONE, with the setup thread terminated,
+   `arcBufNLogo` loaded and the DVD layer healthy. The game is in its intro
+   movie. A screenshot taken at 45s showed the post-logo state; the logo phase
+   is over by ~3s, and the draw burst recorded during it - 1180 quads in one
+   second - was the logo being drawn all along.
+3. **Five runaway logs, two of them after "fixing" it.** Deduplicating the
+   unmapped-access warning by address bounded the spin-loop case it was written
+   for, but a wild pointer writes to a *different* address every time, so every
+   write is a first - 377MB. The number of distinct addresses is capped now,
+   and past that point the message says plainly that this is memory corruption
+   rather than a missing register.
+
+### Where it actually stands
+
+The game runs its own main loop, presents a frame every frame, performs real
+disc reads, reaches `APP_STATE_DONE` and creates a `TMovieDirector`. `stderr`
+is clean. Still open, and labelled rather than glossed:
+
+- **The intro movie is stalled** - `ReadThread`, `VideoDecodeThread` and
+  `AudioDecodeThread` are all WAITING. The AI DMA completion interrupt, which
+  this port does not raise, is the leading suspect. **UNTESTED.**
+- **No geometry is visible yet.** Textures are the next thing to check.
+- **Alarms never fire.** `OSAlarm` is driven solely by the decrementer, and
+  `mtspr 22` is not translated - it lands in the instruction fallback and is
+  stored in a plain cell. Not what stalled the DVD, but it will bite.
+- **Audio is not implemented.** The DSP mailbox handshake is simulated from the
+  protocol's CPU side; no microcode runs.
+- **SI (0xCC006400) is unmapped**, so the guest's PAD path reports
+  `PAD_ERR_NO_CONTROLLER` on all four ports. `PADRead`/`PADInit` remain
+  unbridged - the "Deliberately not attempted yet" note earlier in this
+  document still stands.
