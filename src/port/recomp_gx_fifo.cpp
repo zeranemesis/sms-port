@@ -6,9 +6,11 @@
 
 #include <dolphin/gx/GXFifo.h>
 #include <dolphin/gx/GXFrameBuffer.h>
+#include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXManage.h>
 
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 namespace sms::recomp::gx_fifo {
@@ -87,25 +89,49 @@ namespace {
 // fabricated sentinel instead and translate it back here.
 GXFifoObj *g_realFifoObj = nullptr;
 
-// Not a valid guest RAM address (see GC_RAM_BASE/GC_MAIN_RAM_SIZE,
-// extern/dolrecomp/src/cpu/cpu.h) - deliberately, so if anything ever did
-// try to dereference it as a guest pointer, it would be caught immediately
-// as out of range rather than silently reading garbage.
-constexpr u32 kFakeFifoHandle = 0xFEEDF1F0u;
-
-bool host_call_gx_init(CPUState *cpu, u32)
+bool host_call_gx_init(CPUState *, u32)
 {
-    g_realFifoObj = GXInit(nullptr, 0);
-    cpu->gpr[3] = kFakeFifoHandle;
-    Log.info("GXInit -> fifo initialized (fake guest handle {:#010x})", kFakeFifoHandle);
-    return true;
+    // Aurora's GXInit is a faithful reimplementation - it runs
+    // aurora::gx::fifo::init() and then replays the whole default register
+    // block (GXSetTexCoordGen x8, GXSetNumTexGens(1), GXSetTevOrder x16,
+    // GXSetNumTevStages(1), GXSetTevOp(GX_REPLACE), ...) through that fifo,
+    // which is what brings g_gxState up out of its struct defaults. So it
+    // still has to run, and it has to run first, to prepare the host side.
+    static bool auroraInitDone = false;
+    if (!auroraInitDone) {
+        auroraInitDone = true;
+        g_realFifoObj = GXInit(nullptr, 0);
+        Log.info("GXInit -> aurora fifo initialized, deferring to the guest's own GXInit");
+    }
+
+    // ...but replacing the guest's GXInit outright was wrong, and measurably
+    // so. The guest's GX library keeps its own shadow state (`gxData`,
+    // src/dolphin/gx/GXInit.c) whose *register address* bytes are installed
+    // by that very function - SET_REG_FIELD(..., 8, 24, 0xC0 + i * 2) and
+    // friends. Skipping it leaves gxData zeroed in BSS, so the first time the
+    // game flushes its dirty state it emits genMode (BP register 0x00) as a
+    // plain zero: ntex=0, nchan=0, ntevstages=0+1=1. That silently clobbered
+    // Aurora's numTexGens back to 0 while leaving the TEV orders intact, and
+    // the first textured draw then died in the shader builder with
+    // "unhandled tcg src 21" (GX_MAX_TEXGENSRC, TcgConfig's never-configured
+    // sentinel) on a state dump that matched a zero genMode exactly.
+    //
+    // Returning false hands control back to dolrecomp_call, which falls
+    // through to dolrecomp_call_original and runs the real GXInit. It
+    // initializes gxData properly and re-emits the same defaults through the
+    // write-gather pipe, so Aurora's state is rewritten with identical values
+    // rather than corrupted ones. It also returns the guest's own &FifoObj in
+    // r3, which is a genuine guest address - no fabricated handle needed.
+    return false;
 }
 
 bool host_call_gx_set_cpu_fifo(CPUState *, u32)
 {
     // The guest-supplied handle (r3) is intentionally ignored - see
-    // g_realFifoObj's comment. Even a guest value that isn't
-    // kFakeFifoHandle is safe, since it's never dereferenced either way.
+    // g_realFifoObj's comment. It is now the guest's real &FifoObj, since
+    // the guest runs its own GXInit, but Aurora's GXSetCPUFifo never
+    // dereferences what it is handed (`CPUFifo = fifo;` is a plain pointer
+    // store), so forwarding the host object instead stays safe.
     GXSetCPUFifo(g_realFifoObj);
     Log.info("GXSetCPUFifo (real fifo object)");
     return true;
@@ -149,6 +175,51 @@ bool host_call_gx_flush(CPUState *, u32)
     return true;
 }
 
+// GXSetArray is the one GX call that cannot work by simply forwarding FIFO
+// bytes, because what it puts in the FIFO is a *pointer*.
+//
+// On hardware the CP array-base registers hold a guest physical address and
+// the GP walks guest RAM itself. Aurora has no guest RAM to walk: it rejects
+// those registers outright ("CP_REG_ARRAYBASE_ID is not supported on Aurora.
+// Use GX_LOAD_AURORA_ARRAYBASE instead.", lib/gx/command_processor.cpp) and
+// offers its own command carrying a 64-bit *host* pointer instead.
+//
+// So every indexed vertex attribute the game set up was dropped, and with
+// it every piece of geometry drawn from an array - which is essentially all
+// of them. Measured: the render loop ran and presented 6613 frames in 6791,
+// and every one of them was a flat clear colour.
+//
+// Translating guest pointer to host pointer is exactly this bridge's job.
+bool host_call_gx_set_array(CPUState *cpu, u32)
+{
+    const auto attr = static_cast<GXAttr>(cpu->gpr[3]);
+    const u32 guestPointer = cpu->gpr[4];
+    const auto stride = static_cast<u8>(cpu->gpr[5]);
+
+    // Cached (0x8...), uncached (0xC...) and physical all name the same bytes;
+    // masking off the region nibble is what the real DMA engines do too, and
+    // matches how the ARAM and DI transfers in recomp_exi.cpp resolve theirs.
+    const u32 offset = guestPointer & 0x03FFFFFFu;
+    if (offset >= cpu->ram_size) {
+        static std::unordered_set<u32> warned;
+        if (warned.insert(guestPointer).second) {
+            Log.warn("GXSetArray(attr={}) base {:#010x} is outside guest RAM - array not forwarded",
+                static_cast<int>(attr), guestPointer);
+        }
+        return true;
+    }
+
+    // The SDK's GXSetArray has no size argument; the hardware has no size
+    // register either, only a stride. Aurora wants one for its own upload
+    // bookkeeping, so it gets the only bound that is actually known: the array
+    // cannot run past the end of guest RAM.
+    const u32 size = cpu->ram_size - offset;
+
+    // GameCube vertex data is big-endian, hence le = false.
+    GXSetArray(attr, cpu->ram + offset, size, stride, false);
+    return true;
+}
+
 bool host_call_gx_copy_disp(CPUState *cpu, u32)
 {
     // dest (r3) is a guest framebuffer address - not forwarded, since
@@ -183,6 +254,8 @@ void register_known_gx_calls(const NamedAddress *addresses, size_t count)
             fn = &host_call_gx_flush;
         } else if (std::strcmp(name, "GXCopyDisp") == 0) {
             fn = &host_call_gx_copy_disp;
+        } else if (std::strcmp(name, "GXSetArray") == 0) {
+            fn = &host_call_gx_set_array;
         }
         if (fn) {
             entries.push_back({ addresses[i].address, name, fn });
