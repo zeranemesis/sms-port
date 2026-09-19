@@ -97,6 +97,13 @@ constexpr u32 kLockedCacheBase = 0xE0000000u;
 constexpr u32 kLockedCacheSize = 16u * 1024u;
 std::array<u8, kLockedCacheSize> g_lockedCache {};
 
+// Writes the guest has made to each 32-byte line since that line was last
+// carried out by a store DMA. This is what tells a locked cache full of noise
+// that the decoder *put* there apart from one the decoder never wrote at all,
+// and those two have completely different causes.
+constexpr size_t kLockedCacheLines = kLockedCacheSize / 32u;
+std::array<u32, kLockedCacheLines> g_lcWritesSinceStore {};
+
 bool locked_cache_offset(u32 addr, u8 size, u32 *offsetOut)
 {
     if (addr < kLockedCacheBase) {
@@ -134,6 +141,9 @@ void locked_cache_write(CPUState *, u32 addr, u64 value, u8 size)
     for (u8 i = 0; i < size; ++i) {
         g_lockedCache[offset + (size - 1 - i)] = static_cast<u8>(value >> (i * 8));
     }
+    // Count both ends: a store of up to 8 bytes can straddle two lines.
+    ++g_lcWritesSinceStore[offset / 32u];
+    ++g_lcWritesSinceStore[(offset + size - 1u) / 32u];
 }
 
 // DMA_U (SPR 922) and DMA_L (SPR 923). The encoding is read straight out of
@@ -153,6 +163,28 @@ constexpr u32 kSprDmaLower = 923;
 constexpr u32 kDmaTriggerBit = 0x2u;
 constexpr u32 kDmaLoadBit = 0x10u;
 u32 g_dmaUpper = 0;
+
+// Recent store DMAs (locked cache -> main memory), newest last. Sized to hold
+// well over one decoded THP frame: the decoder issues five LCStoreBlocks per
+// macroblock row (LCStoreData splits a 320-block Y row into 128+128+64, plus
+// one each for U and V) and a 640x448 frame is 28 macroblock rows, so ~140
+// entries per frame. 2048 covers roughly fourteen frames, which is more than
+// the triple-buffered texture sets can be behind.
+struct LockedCacheStore {
+    u32 guestBase;
+    u32 bytes;
+};
+constexpr size_t kLockedCacheStoreRing = 2048;
+std::array<LockedCacheStore, kLockedCacheStoreRing> g_lcStores {};
+size_t g_lcStoreNext = 0;
+u64 g_lcStoreTotal = 0;
+
+void record_locked_cache_store(u32 guestBase, u32 bytes)
+{
+    g_lcStores[g_lcStoreNext] = LockedCacheStore { guestBase, bytes };
+    g_lcStoreNext = (g_lcStoreNext + 1) % kLockedCacheStoreRing;
+    ++g_lcStoreTotal;
+}
 
 void perform_locked_cache_dma(CPUState *cpu, u32 lower)
 {
@@ -185,6 +217,62 @@ void perform_locked_cache_dma(CPUState *cpu, u32 lower)
             g_lockedCache[lcOffset + i] = mem_read8(cpu, guestBase + i);
         } else {
             mem_write8(cpu, guestBase + i, g_lockedCache[lcOffset + i]);
+        }
+    }
+
+    if (!load) {
+        record_locked_cache_store(guestBase, bytes);
+
+        // The bands are already noise in the plane in guest RAM, and the store
+        // that delivered the noisy row did happen (measured: covered=true for
+        // the noisy row and for a control row of real picture alike). So the
+        // transfer is not dropping anything - either the locked cache already
+        // held noise, or this copy corrupts it. Measuring the SOURCE separates
+        // those two, and nothing else can.
+        //
+        // Same roughness statistic as the plane probe: mean |b[i+1]-b[i]| over
+        // horizontal neighbours inside each 8-byte tile run. Real picture sits
+        // in the single digits, uniform random bytes average 85.3.
+        u64 diffSum = 0;
+        u32 diffCount = 0;
+        for (u32 i = 0; i + 1 < bytes; ++i) {
+            if ((i & 7u) == 7u) {
+                continue;
+            }
+            const int a = g_lockedCache[lcOffset + i];
+            const int b = g_lockedCache[lcOffset + i + 1];
+            diffSum += u32(b > a ? b - a : a - b);
+            ++diffCount;
+        }
+        const double roughness = diffCount == 0 ? 0.0 : double(diffSum) / double(diffCount);
+        // Rate-limited to a handful per second, so it cannot become the sixth
+        // runaway log. 60 is far above any real frame and far below noise.
+        static u64 lastReport = 0;
+        static unsigned reportsThisSecond = 0;
+        if (cpu->timebase - lastReport >= 40500000ull) {
+            lastReport = cpu->timebase;
+            reportsThisSecond = 0;
+        }
+        // Which of the lines about to leave were actually written by the
+        // guest since they last left? If none were, the decoder's output never
+        // reached this scratchpad and we are shipping stale bytes; if all were,
+        // the decoder itself computed noise. Nothing else distinguishes those.
+        u32 unwrittenLines = 0;
+        const u32 firstLine = lcOffset / 32u;
+        const u32 lineCount = bytes / 32u;
+        for (u32 line = firstLine; line < firstLine + lineCount && line < kLockedCacheLines; ++line) {
+            if (g_lcWritesSinceStore[line] == 0) {
+                ++unwrittenLines;
+            }
+        }
+        if (roughness > 60.0 && reportsThisSecond < 4) {
+            ++reportsThisSecond;
+            Log.warn("locked-cache store carries noise: lc={:#010x} main={:#010x} bytes={:#x} roughness={:.1f} "
+                     "unwrittenLines={}/{} pc={:#010x}",
+                lcAddress, guestBase, bytes, roughness, unwrittenLines, lineCount, cpu->pc);
+        }
+        for (u32 line = firstLine; line < firstLine + lineCount && line < kLockedCacheLines; ++line) {
+            g_lcWritesSinceStore[line] = 0;
         }
     }
 
@@ -817,6 +905,7 @@ bool boot_game(CPUState *cpu)
     // it is registered as an MMIO range only because it lives outside guest
     // RAM - see kLockedCacheBase.
     g_lockedCache.fill(0);
+    g_lcWritesSinceStore.fill(0);
     g_dmaUpper = 0;
     register_mmio_range({
         .base = kLockedCacheBase,
@@ -989,6 +1078,43 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     return true;
 }
 
+bool locked_cache_store_covered(u32 guestAddr, u32 bytes, bool *recentEnough)
+{
+    if (recentEnough != nullptr) {
+        *recentEnough = g_lcStoreTotal <= kLockedCacheStoreRing;
+    }
+    if (bytes == 0) {
+        return true;
+    }
+
+    // Every locked-cache transfer is a whole number of 32-byte blocks at a
+    // 32-byte-aligned address, so tracking coverage at block granularity is
+    // exact rather than approximate.
+    const u32 firstBlock = guestAddr / 32u;
+    const u32 lastBlock = (guestAddr + bytes + 31u) / 32u;
+    std::vector<bool> covered(lastBlock - firstBlock, false);
+
+    for (const auto &store : g_lcStores) {
+        if (store.bytes == 0) {
+            continue;
+        }
+        const u32 storeFirst = store.guestBase / 32u;
+        const u32 storeLast = (store.guestBase + store.bytes + 31u) / 32u;
+        const u32 from = storeFirst > firstBlock ? storeFirst : firstBlock;
+        const u32 to = storeLast < lastBlock ? storeLast : lastBlock;
+        for (u32 block = from; block < to; ++block) {
+            covered[block - firstBlock] = true;
+        }
+    }
+
+    for (const bool bit : covered) {
+        if (!bit) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace sms::recomp
 
 #else // !DOLPHINJET_HAVE_RECOMPILED_GAME
@@ -1002,6 +1128,14 @@ bool boot_game(CPUState *)
 
 bool step_game(CPUState *, unsigned)
 {
+    return false;
+}
+
+bool locked_cache_store_covered(u32, u32, bool *recentEnough)
+{
+    if (recentEnough != nullptr) {
+        *recentEnough = false;
+    }
     return false;
 }
 

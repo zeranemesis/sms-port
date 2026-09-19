@@ -858,3 +858,73 @@ letterbox rows - they cut through Mario and the cabin. The locked-cache DMA
 added the same day is the first suspect, since it is what moves each decoded
 macroblock row into main memory, and per-row corruption is exactly the shape a
 partially-wrong block count would produce.
+
+## 2026-09-19 (later still): the noise bands, traced back three stages
+
+The bands are thin horizontal strips of full-saturation random RGB that cut
+through the picture. Each one begins at an arbitrary x and runs to the right
+edge, and they sit at different heights from frame to frame. Four measurements,
+each one narrowing the previous, and the first of them was wrong.
+
+### 1. A mean per tile row said guest RAM was clean. It was the wrong statistic.
+
+An I8 texture is tiled 8x4, so one tile row is `width*4` bytes covering
+scanlines 4r..4r+3 - the same granularity the locked-cache DMA works at.
+Profiling tile-row means found only the expected `zeroRows=4`, which is
+448-432=16 scanlines of padding: the texture is 640x448, the movie is 640x432.
+
+That reading was too strong, and it was recorded in a commit before it was
+checked. Random bytes average 128, and this movie's own tile rows average
+100-150. **A mean cannot see noise whose mean matches the picture.** Fifth
+sampling error of this session, same family as the other four.
+
+### 2. Roughness sees it immediately, in all three planes at once.
+
+Mean `|b[i+1]-b[i]|` over horizontal neighbours inside each tile: a natural
+image sits in the single digits, uniform random bytes average 85.3. Measured on
+every frame: average 7-18, **maximum 84-139 on exactly one tile row**.
+
+And the rows line up across planes - Y row 49 with U row 25 and V row 24, Y row
+95 with U 46 and V 47, Y 38 with U 19 and V 19. The same picture region is
+garbage in Y, U and V simultaneously, which is why the bands are full-saturation
+colour rather than a luminance artefact.
+
+### 3. The locked-cache DMA did deliver those rows.
+
+A ring of recent store transfers, queried for the noisy row and for a control
+row of real picture (the row whose roughness is closest to the frame average -
+the *smoothest* row is a constant-coloured border and proves nothing):
+`covered=true` for both, every time. The transfer is not dropping anything.
+
+Its block-count encoding was also re-derived instruction by instruction from
+`LCLoadBlocks`/`LCStoreBlocks` (`OSCache.c:513-545`) and matches.
+
+### 4. The locked cache already held the noise, and the guest wrote it there.
+
+Measuring roughness of the DMA *source* before each copy: 72 stores in 40
+seconds carrying roughness 60-125, at `lc=0xE0000000/0xE0001000/0xE0002000`
+(the Y work buffer) and `0xE0002800/0xE0003200` (U and V) - the
+`__THPLCWork640` layout. Whole buffers, not tails.
+
+Counting guest writes per 32-byte line since that line last left:
+**`unwrittenLines=0` in all 72 cases.** Every byte was written by the guest.
+
+### Where that leaves it
+
+The decoder wrote noise. This is not a memory-plumbing defect in the port's
+locked cache, its DMA, or the texture bridge - all three are now measured to be
+faithful. It is the decode itself producing garbage.
+
+The shape points at the Huffman bitstream. `__THPHuffDecodeMCU640`
+(`THPDec.c:1570-1584`) counts MCUs down to a restart marker and resets the three
+`predDC` values there. A bitstream desync therefore corrupts everything from the
+error to the next restart marker and then recovers by itself - which is exactly
+"one band, bounded, at a different height each frame". The decoder's inner loops
+are hand-written PowerPC asm, so the next step is to find which instruction's
+semantics differ under recompilation, not to add more probes around memory.
+
+### Recorded as FAIL, not yet investigated
+
+A 75-second run ended at ~60s with `aurora::gx::fifo: draw vertex data overrun:
+need 80 bytes at pos 854, have 854`. Shorter runs (40-45s) have not reproduced
+it. It is a separate defect from the bands and it is not cleared.

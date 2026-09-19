@@ -40,4 +40,21 @@ bool boot_game(CPUState *cpu);
 // stays free to keep presenting the menu/overlay on top.
 bool step_game(CPUState *cpu, unsigned maxBlocks);
 
+// Diagnostic for the horizontal noise bands: reports whether every byte of
+// [guestAddr, guestAddr + bytes) was written by a locked-cache store DMA that
+// is still in the recent-transfer ring (see perform_locked_cache_dma).
+//
+// The THP decoder's only route out of the locked cache is LCStoreData, one
+// call per macroblock row (THPDec.c:1587-1592), so a plane row that no store
+// ever covered was never delivered and still holds whatever the buffer had
+// before - which is exactly what a band of random-byte noise is. Asking this
+// about a rough row AND a clean row in the same frame is what separates "the
+// DMA missed it" from "the DMA delivered garbage", and only the second would
+// put the fault upstream in the IDCT.
+//
+// The ring is finite, so a false answer for an old plane means "not recently
+// covered", not "never covered"; recentEnough says whether the ring still
+// reaches back past the plane at all.
+bool locked_cache_store_covered(u32 guestAddr, u32 bytes, bool *recentEnough);
+
 } // namespace sms::recomp

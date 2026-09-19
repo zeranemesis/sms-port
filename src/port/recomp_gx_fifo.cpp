@@ -1,4 +1,5 @@
 #include "port/recomp_gx_fifo.h"
+#include "port/recomp_boot.h"
 #include "port/recomp_host.h"
 
 #include "aurora/lib/logging.hpp"
@@ -301,11 +302,83 @@ bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
                     worstRow = r;
                 }
             }
+            // The mean above cannot see the defect that is actually on screen,
+            // and assuming it could was wrong. The bands are random-byte noise,
+            // whose mean is ~128 - indistinguishable from this movie's own
+            // 100-150. A mean per tile row is simply the wrong statistic for
+            // noise; roughness is the right one.
+            //
+            // Adjacent bytes inside an I8 tile are adjacent pixels horizontally
+            // in groups of 8, so the mean absolute difference between them
+            // measures high-frequency energy. A natural image at this scale
+            // sits in the single digits; uniform random bytes average 85.3
+            // (the mean of |x-y| over two independent uniforms on 0..255).
+            // Nothing in a real frame comes close, so this separates cleanly.
+            std::vector<double> roughness(tileRows, 0.0);
+            u32 roughestRow = 0;
+            double roughestValue = 0.0;
+            double roughnessSum = 0.0;
+            for (u32 r = 0; r < tileRows; ++r) {
+                const u8 *row = plane + u64(r) * tileRowBytes;
+                u64 diffSum = 0;
+                u32 diffCount = 0;
+                for (u32 i = 0; i + 1 < tileRowBytes; ++i) {
+                    if ((i & 7u) == 7u) {
+                        continue; // tile edge: not a horizontal neighbour
+                    }
+                    diffSum += u32(std::abs(int(row[i + 1]) - int(row[i])));
+                    ++diffCount;
+                }
+                roughness[r] = diffCount == 0 ? 0.0 : double(diffSum) / double(diffCount);
+                roughnessSum += roughness[r];
+                if (roughness[r] > roughestValue) {
+                    roughestValue = roughness[r];
+                    roughestRow = r;
+                }
+            }
+            const double roughnessAvg = roughnessSum / double(tileRows);
             Log.info("THP plane rows: map={} tileRows={} zeroRows={} worstBand=row{} (scanlines {}-{}) score={:.1f} "
-                     "neighbours={:.1f}/{:.1f}/{:.1f}",
+                     "neighbours={:.1f}/{:.1f}/{:.1f} | roughness avg={:.1f} max={:.1f} at row{} (scanlines {}-{})",
                 textureMap, tileRows, zeroRows, worstRow, worstRow * 4u, worstRow * 4u + 3u, worstScore,
                 worstRow > 0 ? rowMean[worstRow - 1] : 0.0, rowMean[worstRow],
-                worstRow + 1 < tileRows ? rowMean[worstRow + 1] : 0.0);
+                worstRow + 1 < tileRows ? rowMean[worstRow + 1] : 0.0,
+                roughnessAvg, roughestValue, roughestRow, roughestRow * 4u, roughestRow * 4u + 3u);
+
+            // The roughest row alone proves nothing about the DMA: it has to be
+            // asked against a control, and the control has to be a row of real
+            // picture. The SMOOTHEST row is not that - it is whichever row is
+            // flattest, which for this movie is a constant-coloured border with
+            // roughness 0.0, and a border proves nothing about a decoded row.
+            // The row whose roughness is closest to the frame average is a
+            // typical decoded row, so that is the control.
+            u32 controlRow = 0;
+            double controlDistance = 1e9;
+            for (u32 r = 0; r < tileRows; ++r) {
+                if (rowMean[r] <= 1.0) {
+                    continue; // padding: never written, not evidence either way
+                }
+                const double distance = std::abs(roughness[r] - roughnessAvg);
+                if (distance < controlDistance) {
+                    controlDistance = distance;
+                    controlRow = r;
+                }
+            }
+            bool ringDeep = false;
+            // GX texture pointers are physical offsets (image3 is the address
+            // shifted right by 5, with no region base), while the locked-cache
+            // DMA records the cached guest address it wrote through. Comparing
+            // them without adding the base compares two different things and
+            // answers "not covered" for every row, control included - which is
+            // exactly what the first run of this probe reported.
+            const u32 planeGuestBase = GC_RAM_BASE | imageOffset;
+            const bool roughCovered = locked_cache_store_covered(
+                planeGuestBase + roughestRow * tileRowBytes, tileRowBytes, &ringDeep);
+            const bool controlCovered = locked_cache_store_covered(
+                planeGuestBase + controlRow * tileRowBytes, tileRowBytes, nullptr);
+            Log.info("THP plane dma: map={} plane={:#010x} roughRow{} (roughness {:.1f}) covered={} | "
+                     "controlRow{} (roughness {:.1f}) covered={} | ringStillComplete={}",
+                textureMap, planeGuestBase, roughestRow, roughestValue, roughCovered, controlRow,
+                roughness[controlRow], controlCovered, ringDeep);
         }
         revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
     }
