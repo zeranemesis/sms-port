@@ -1,0 +1,108 @@
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 9748556..ff74401 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -566,6 +566,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+   switch (regId) {
+   // genMode (0x00)
+   case 0x00: {
++    // genMode is the register a zeroed guest GX shadow would land on, and it
++    // carries numTexGens - trace every distinct value, capped, so a clobber is
++    // visible with its ordering relative to the XF texgen writes.
++    {
++      static u32 lastGenMode = 0xFFFFFFFFu;
++      static u32 genModeLogged = 0;
++      if (value != lastGenMode && genModeLogged < 32) {
++        lastGenMode = value;
++        ++genModeLogged;
++        Log.info("genMode = 0x{:08X} (numTexGens={} numChans={} numTevStages={})", value, bp_get(value, 4, 0),
++                 bp_get(value, 3, 4), bp_get(value, 4, 10) + 1);
++      }
++    }
+     g_gxState.numTexGens = bp_get(value, 4, 0);
+     g_gxState.numChans = bp_get(value, 3, 4);
+     g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
+@@ -1282,6 +1295,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       u32 reg = xfAddr + i;
+       u32 val = read_u32(xfData + i * 4, bigEndian);
+ 
++      // Trace each XF register the first time it is ever written, so a missing
++      // texgen/numTexGens setup is visible as an absence rather than guessed at.
++      // One line per register, so this cannot run away.
++      {
++        static std::array<bool, 0x100> seenXfReg{};
++        if (reg < seenXfReg.size() && !seenXfReg[reg]) {
++          seenXfReg[reg] = true;
++          Log.info("first XF write: reg 0x{:02X} = 0x{:08X}", reg, val);
++        }
++      }
++
+       // Skip scalar register writes that haven't changed (viewport/projection handled below)
+       if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
+         continue;
+@@ -1608,6 +1632,23 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+   u16 vtxCount = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
++  // "The screen is one flat colour" is equally consistent with the game not
++  // having drawn anything yet and with it drawing into nowhere. This counts
++  // what actually arrives, periodically and capped, so the two can be told
++  // apart instead of guessed at.
++  {
++    static u64 draws = 0;
++    static u64 vertices = 0;
++    static unsigned reported = 0;
++    ++draws;
++    vertices += vtxCount;
++    if ((draws % 20000ull) == 1ull && reported < 20) {
++      ++reported;
++      Log.info("draw #{}: prim={:#04x} fmt={} vtxCount={} (total vertices {})", draws, static_cast<u32>(prim),
++               static_cast<u32>(fmt), vtxCount, vertices);
++    }
++  }
++
+   draw_prim(prim, fmt, vtxCount, data, pos, size);
+ }
+ 
+diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
+index 3671ed5..4079cf9 100644
+--- a/lib/gx/shader.cpp
++++ b/lib/gx/shader.cpp
+@@ -1194,8 +1194,35 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, nbt_slice_local(NbtSlice::B));
+     } else if (tcg.src == GX_TG_TANGENT) {
+       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, nbt_slice_local(NbtSlice::T));
+-    } else
+-      UNLIKELY FATAL("unhandled tcg src {}", underlying(tcg.src));
++    } else {
++      // GX_MAX_TEXGENSRC is TcgConfig's "never configured" sentinel, and build_shader_config only
++      // copies tcgs[0..numTexGens), so hitting it here means a TEV stage sampled a texcoord the
++      // game never generated. Dump the whole picture once - the index alone does not say whether
++      // the game really referenced an ungenerated coord or whether numTexGens arrived wrong.
++      {
++        Log.error("texgen {} is sampled but was never configured (src={})", i, underlying(tcg.src));
++        Log.error("  sampledTexCoords = {}", info.sampledTexCoords.to_string());
++        for (int j = 0; j < config.tcgs.size(); ++j) {
++          const auto& t = config.tcgs[j];
++          Log.error("  tcgs[{}]: src={} type={} mtx={} post={} norm={} embossSrc={}", j, underlying(t.src),
++                    underlying(t.type), underlying(t.mtx), underlying(t.postMtx), t.normalize, t.embossSrc);
++        }
++        Log.error("  tevStageCount = {}", config.tevStageCount);
++        for (u32 j = 0; j < config.tevStageCount && j < config.tevStages.size(); ++j) {
++          const auto& s = config.tevStages[j];
++          Log.error("  tevStages[{}]: texCoordId={} texMapId={} channelId={} indTexMtxId={}", j,
++                    underlying(s.texCoordId), underlying(s.texMapId), underlying(s.channelId),
++                    underlying(s.indTexMtxId));
++        }
++        Log.error("  numIndStages = {}", config.numIndStages);
++        for (u32 j = 0; j < config.numIndStages && j < config.indStages.size(); ++j) {
++          const auto& s = config.indStages[j];
++          Log.error("  indStages[{}]: texCoordId={} texMapId={}", j, underlying(s.texCoordId),
++                    underlying(s.texMapId));
++        }
++        FATAL("unhandled tcg src {}", underlying(tcg.src));
++      }
++    }
+     if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
+       if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
+         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
