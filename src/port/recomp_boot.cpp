@@ -14,6 +14,7 @@
 #include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
 #include "port/recomp_interrupt.h"
+#include "port/recomp_probe.h"
 
 #include "aurora/lib/logging.hpp"
 
@@ -770,6 +771,11 @@ bool boot_game(CPUState *cpu)
 
 bool step_game(CPUState *cpu, unsigned maxBlocks)
 {
+    // Read-only window into the guest's own OS state - see recomp_probe.h. It
+    // throttles and caps itself; calling it unconditionally here keeps the
+    // decision about *when* to report in one place.
+    probe::report(cpu);
+
     // One host frame is one guest frame, so this is the vertical retrace. It
     // only raises the hardware line; when the guest actually takes it is up to
     // MSR[EE] and PI's mask, exactly as on real hardware.

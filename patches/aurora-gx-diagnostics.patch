@@ -1,8 +1,21 @@
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..ff74401 100644
+index 9748556..04b2633 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
-@@ -566,6 +566,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+@@ -11,9 +11,12 @@
+ #include <absl/container/flat_hash_map.h>
+ #include <tracy/Tracy.hpp>
+ 
++#include <array>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <optional>
++#include <string>
+ 
+ namespace aurora::gx::fifo {
+ static Module Log("aurora::gx::fifo");
+@@ -566,6 +569,19 @@ static void handle_bp(u32 value, bool bigEndian) {
    switch (regId) {
    // genMode (0x00)
    case 0x00: {
@@ -22,7 +35,7 @@ index 9748556..ff74401 100644
      g_gxState.numTexGens = bp_get(value, 4, 0);
      g_gxState.numChans = bp_get(value, 3, 4);
      g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
-@@ -1282,6 +1295,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1282,6 +1298,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
        u32 reg = xfAddr + i;
        u32 val = read_u32(xfData + i * 4, bigEndian);
  
@@ -40,24 +53,80 @@ index 9748556..ff74401 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1608,6 +1632,23 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1608,6 +1635,79 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    u16 vtxCount = read_u16(data + pos, bigEndian);
    pos += 2;
  
 +  // "The screen is one flat colour" is equally consistent with the game not
 +  // having drawn anything yet and with it drawing into nowhere. This counts
-+  // what actually arrives, periodically and capped, so the two can be told
-+  // apart instead of guessed at.
++  // what actually arrives so the two can be told apart instead of guessed at.
++  //
++  // The gate is wall-clock, NOT every-Nth-draw. A 1-in-20000 gate was tried
++  // first and produced a measurement that read as "one draw in 90 seconds",
++  // which was simply wrong: 11,730 frames x 1 quad = 11,730 draws, under the
++  // threshold, so the second report never came. Anything rate-limited by its
++  // own subject cannot distinguish "rare" from "just below the threshold".
++  //
++  // What the shape of the output means, against src/System/Application.cpp:
++  //   GX_QUADS (0x80) / 4 verts, once per frame  -> only TSMSFader::draw is
++  //     running, i.e. APP_STATE_BOOT with no director created.
++  //   GX_TRIANGLES (0x90) / 6 verts, once per frame -> drawDVDErr() is
++  //     returning non-zero every frame (Application.cpp:609), which skips both
++  //     the state machine and all director rendering.
 +  {
 +    static u64 draws = 0;
 +    static u64 vertices = 0;
-+    static unsigned reported = 0;
++    static u64 drawsReported = 0;
++    static u64 verticesReported = 0;
++    static unsigned reports = 0;
++    static auto lastReport = std::chrono::steady_clock::now();
++
++    // Per-interval tally of the distinct {primitive, vertex count} pairs seen.
++    // Fixed size: first eight distinct kinds win and the rest are counted as
++    // overflow, so a pathological frame cannot grow this.
++    struct Kind {
++      u32 prim;
++      u16 vtxCount;
++      u32 count;
++    };
++    static std::array<Kind, 8> kinds{};
++    static u32 kindsUsed = 0;
++    static u32 kindOverflow = 0;
++
 +    ++draws;
 +    vertices += vtxCount;
-+    if ((draws % 20000ull) == 1ull && reported < 20) {
-+      ++reported;
-+      Log.info("draw #{}: prim={:#04x} fmt={} vtxCount={} (total vertices {})", draws, static_cast<u32>(prim),
-+               static_cast<u32>(fmt), vtxCount, vertices);
++
++    bool counted = false;
++    for (u32 i = 0; i < kindsUsed; ++i) {
++      if (kinds[i].prim == static_cast<u32>(prim) && kinds[i].vtxCount == vtxCount) {
++        ++kinds[i].count;
++        counted = true;
++        break;
++      }
++    }
++    if (!counted) {
++      if (kindsUsed < kinds.size()) {
++        kinds[kindsUsed++] = {static_cast<u32>(prim), vtxCount, 1};
++      } else {
++        ++kindOverflow;
++      }
++    }
++
++    const auto now = std::chrono::steady_clock::now();
++    if (reports < 120 && now - lastReport >= std::chrono::seconds(1)) {
++      lastReport = now;
++      ++reports;
++      std::string breakdown;
++      for (u32 i = 0; i < kindsUsed; ++i) {
++        breakdown += fmt::format("{}{:#04x}/{} x{}", i == 0 ? "" : " ", kinds[i].prim, kinds[i].vtxCount,
++                                 kinds[i].count);
++      }
++      Log.info("draw 1s: total={} (+{}) verts={} (+{}) prims=[{}] overflow={}", draws, draws - drawsReported, vertices,
++               vertices - verticesReported, breakdown, kindOverflow);
++      drawsReported = draws;
++      verticesReported = vertices;
++      kindsUsed = 0;
++      kindOverflow = 0;
 +    }
 +  }
 +
