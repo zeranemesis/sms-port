@@ -803,3 +803,58 @@ is clean. Still open, and labelled rather than glossed:
   `PAD_ERR_NO_CONTROLLER` on all four ports. `PADRead`/`PADInit` remain
   unbridged - the "Deliberately not attempted yet" note earlier in this
   document still stands.
+
+## 2026-09-19 (later): the intro movie renders - and four sampling errors
+
+The movie plays. Mario and Toadsworth, aboard the plane, in colour, drawn from
+the game's own recompiled code. Getting there took two real fixes and exposed a
+habit worth naming.
+
+### The two fixes
+
+**AI DMA completion.** The audio DMA engine lives in the DSP register block
+(`__DSPRegs[24]/[25]` for the address, `[27]` for the length in 32-byte blocks
+and its enable bit - `src/dolphin/ai/ai.c:51-64`), and nothing ever completed
+its transfers. That froze everything downstream: `__AIDHandler` never ran, so
+`syncAudio` never posted, so `Kernel::updateDac` and `MixAudio` never ran, so
+`curAudioNumber` stayed at 0, so `PlayControl`'s
+`curVideoNumber - curAudioNumber <= 1` (`THPPlayer.c:524`) was false forever and
+the three THP worker threads deadlocked in a ring. The completion interval is
+derived from the hardware - block count x 32 bytes at the DSP sample rate,
+stereo 16-bit - and measures 708,750 timebase ticks for a 70-block buffer,
+which is exactly 560 frames at 32kHz.
+
+**The Gekko locked cache.** The THP decoder refuses to run without it
+(`if (!(PPCMfhid2() & 0x10000000)) goto _err_lc_not_enabled;`,
+`src/dolphin/thp/THPDec.c:49`), does its IDCT into a 16KB scratchpad at
+0xE0000000, and moves each decoded row out with a DMA programmed through
+`mtspr 922/923`. Neither the scratchpad nor the DMA existed: writes to
+0xE0000000 hit the unmapped-MMIO path and were dropped, and the SPR writes were
+filed in a storage map. The decoder wrote into the void while reporting
+success. Decoded planes went from `nonZero=0` to a mean luminance of 122-164.
+
+### Four sampling errors, all the same shape
+
+Worth recording together, because each one cost real time and each looked like
+a finding rather than an artefact:
+
+1. The draw probe logged one in every 20,000 draws. 11,730 frames x 1 quad is
+   under that threshold, so it reported "one draw in 90 seconds".
+2. The plane probe hashed 64 of 286,720 bytes and reported empty planes when
+   they were merely empty *at those 64 points*.
+3. The texture content signature samples those same 64 points, which is not a
+   sound change detector for a video frame.
+4. A single screenshot per run reported a black screen for a movie that had
+   been rendering all along. The run does not reach the same point at the same
+   wall-clock time twice, so one sample per run measures nothing.
+
+The lesson is the same in all four: a probe rate-limited by, or sparser than,
+the thing it measures cannot distinguish absence from a gap between samples.
+
+### Still open
+
+Horizontal bands of corrupted pixels cross every frame. They are **not**
+letterbox rows - they cut through Mario and the cabin. The locked-cache DMA
+added the same day is the first suspect, since it is what moves each decoded
+macroblock row into main memory, and per-row corruption is exactly the shape a
+partially-wrong block count would produce.
