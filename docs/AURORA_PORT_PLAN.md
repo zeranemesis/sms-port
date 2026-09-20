@@ -34,6 +34,14 @@ La cadence cible est 50 Hz PAL avec VSync activée.
 
 Les observations détaillées et les commandes de build restent dans `docs/port_bootstrap.md` et `docs/recompilation.md`.
 
+## Avancement vérifié le 2026-09-20
+
+- La sortie audio hôte est active : les buffers AI DMA invités sont envoyés à SDL en PCM stéréo S16BE, à 32 ou 48 kHz, avec une file limitée à 250 ms pour éviter toute dérive lorsque le jeu s'exécute plus vite que le temps réel.
+- Le décodeur THP progresse avec vidéo et audio (`v/a=238/236` pendant le run contrôlé). La corruption horizontale ne venait ni de GX, ni de la DMA du cache verrouillé : l'émulation sautait le changement d'état FPU paresseux opéré par l'exception GameCube `FP unavailable` lors des bascules de threads.
+- Le port reproduit maintenant ce changement d'état dans son gestionnaire d'exception : FPR, valeurs paired-single, FPSCR et indicateur `FPSAVED` sont sauvegardés/restaurés par `OSContext`. Le run RVZ passe d'une rugosité YUV moyenne d'environ 16 avec des pics à 140 (bruit) à environ 0,8 avec des pics à 2,9. Les plans U et V sont entièrement non nuls.
+- Des auto-tests couvrent le cache verrouillé, son chemin `psq_st` avec GQR6, et le transfert FPU entre deux contextes invités. Tous les tests du runtime passent avec la build `RelWithDebInfo`.
+- La validation reste de niveau `SCRIPTED` : une inspection humaine de l'image, du son, des menus, de la création/relecture de sauvegarde et du gameplay reste nécessaire avant de déclarer un jalon jouable.
+
 ## Ordre d'exécution
 
 | Jalon | Résultat livrable | Critère de sortie mesurable |
@@ -53,9 +61,9 @@ Les observations détaillées et les commandes de build restent dans `docs/port_
 
 2. Faire un playtest avec une manette réelle et une image PAL configurée : vérifier marche, caméra, FLUDD et vibration via le pont PAD.
 
-3. Émuler les complétions AI DMA nécessaires à la sortie de veille des threads audio et THP.
+3. Vérifier au casque la synchronisation et la qualité de la sortie AI DMA dans l'intro, puis dans trois niveaux ; la plomberie est active mais l'écoute humaine reste à faire.
 
-4. Débloquer les files THP à partir du run RVZ : les trois plans YUV arrivent mais sont nuls ; les workers lecture/décodage attendent. Examiner l'ordonnancement OS, les files de messages, les retraces VI et le déclencheur audio qui doit promouvoir un frame décodé vers `dispTextureSet`. Les traces par image de `GXCopyDisp`/`GXFlush`/`GXDrawDone` ont été supprimées car elles masquaient les diagnostics utiles.
+4. Produire des captures de référence de l'intro THP et comparer le TEV/Aurora à la console : les plans YUV sont maintenant cohérents, donc le prochain écart visuel éventuel se situe dans GX/TEV ou la présentation.
 
 5. Construire un playtest reproductible du titre jusqu'à l'aéroport, puis remplacer progressivement l'automatisation par une manette réelle.
 

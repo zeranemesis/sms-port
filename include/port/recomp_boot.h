@@ -57,4 +57,13 @@ bool step_game(CPUState *cpu, unsigned maxBlocks);
 // reaches back past the plane at all.
 bool locked_cache_store_covered(u32 guestAddr, u32 bytes, bool *recentEnough);
 
+// Exercises the emulated 16 KiB Gekko locked cache and its two DMA directions
+// without a disc image or generated game code.  THP relies on this exact path
+// to move decoded YUV rows from 0xE0000000 into guest RAM.
+bool run_locked_cache_self_test();
+
+// Verifies the port-side lazy floating-point context handoff used when guest
+// OS threads first execute an FP or paired-single instruction.
+bool run_fpu_context_self_test();
+
 } // namespace sms::recomp

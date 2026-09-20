@@ -5,6 +5,8 @@
 #include "aurora/lib/logging.hpp"
 
 #include <dolphin/dvd.h>
+#include <SDL3/SDL_audio.h>
+#include <SDL3/SDL_init.h>
 
 #include <array>
 #include <cstring>
@@ -958,6 +960,105 @@ void ai_advance_sample_count(const CPUState *cpu)
 
 bool g_aiDmaRunning = false;
 u64 g_aiDmaCompletionTimebase = 0;
+SDL_AudioStream *g_aiAudioStream = nullptr;
+u32 g_aiAudioRate = 0;
+bool g_aiAudioInitAttempted = false;
+bool g_aiAudioUnavailable = false;
+
+bool ensure_ai_audio_stream(u32 rate)
+{
+    if (!g_aiAudioInitAttempted) {
+        g_aiAudioInitAttempted = true;
+        if (!SDL_InitSubSystem(SDL_INIT_AUDIO)) {
+            g_aiAudioUnavailable = true;
+            Log.error("AI audio: could not initialize SDL audio: {}", SDL_GetError());
+        }
+    }
+    if (g_aiAudioUnavailable) {
+        return false;
+    }
+    if (g_aiAudioStream != nullptr && g_aiAudioRate == rate) {
+        return true;
+    }
+    if (g_aiAudioStream != nullptr) {
+        SDL_DestroyAudioStream(g_aiAudioStream);
+        g_aiAudioStream = nullptr;
+    }
+    const SDL_AudioSpec spec {
+        .format = SDL_AUDIO_S16BE,
+        .channels = 2,
+        .freq = static_cast<int>(rate),
+    };
+    g_aiAudioStream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    if (g_aiAudioStream == nullptr) {
+        g_aiAudioUnavailable = true;
+        Log.error("AI audio: could not open {}Hz playback stream: {}", rate, SDL_GetError());
+        return false;
+    }
+    if (!SDL_ResumeAudioStreamDevice(g_aiAudioStream)) {
+        Log.error("AI audio: could not start playback stream: {}", SDL_GetError());
+        SDL_DestroyAudioStream(g_aiAudioStream);
+        g_aiAudioStream = nullptr;
+        // This is a host/device failure, not a transient DMA condition.  Do
+        // not reopen a device on every guest audio buffer and flood the log.
+        g_aiAudioUnavailable = true;
+        return false;
+    }
+    g_aiAudioRate = rate;
+    Log.info("AI audio: opened {}Hz stereo S16BE playback stream", rate);
+    return true;
+}
+
+void submit_ai_dma_audio(CPUState *cpu)
+{
+    const u32 blocks = g_shadow[kDspWordAiDmaControl] & kAiDmaBlockCountMask;
+    const u32 bytes = blocks * kAiDmaBytesPerBlock;
+    // AIInitDMA writes DSP registers 24/25 (the two halves of word 12).
+    // The high half exposes physical-address bits 16..25; hardware DMA is
+    // 32-byte aligned, so the low five bits are zero.
+    const u32 physicalAddress = (((g_shadow[kDspWordAiDmaControl - 1] >> 16) & 0x03FFu) << 16)
+        | (g_shadow[kDspWordAiDmaControl - 1] & 0xFFFFu);
+    const u32 guestAddress = (physicalAddress & 0x03FFFFFFu) | GC_RAM_BASE;
+    if (bytes == 0 || guestAddress < GC_RAM_BASE
+        || static_cast<u64>(guestAddress - GC_RAM_BASE) + bytes > cpu->ram_size) {
+        Log.warn("AI audio: invalid DMA buffer {:#010x}, {} bytes", guestAddress, bytes);
+        return;
+    }
+
+    constexpr u32 kAiDspSampleRateBit = 0x0040u;
+    const u32 rate = (g_aiShadow[kAiControlOffset / 4] & kAiDspSampleRateBit) ? 32000u : 48000u;
+    if (!ensure_ai_audio_stream(rate)) {
+        return;
+    }
+
+    // DolphinJet is not yet frame-paced to real time (the intro can run
+    // faster than 60 Hz), while the physical device always consumes at wall
+    // clock speed.  Keep only a short latency budget rather than letting an
+    // accelerated guest accumulate seconds of stale audio.
+    const int queued = SDL_GetAudioStreamQueued(g_aiAudioStream);
+    const int maxQueued = static_cast<int>(rate); // 250 ms, 2 channels x S16
+    if (queued > maxQueued) {
+        SDL_ClearAudioStream(g_aiAudioStream);
+        static unsigned dropped = 0;
+        if (dropped++ < 4) {
+            Log.warn("AI audio: dropped {} queued bytes to bound latency", queued);
+        }
+    }
+
+    // SDL's S16BE source format performs the endian conversion demanded by
+    // the host device.  Guest RAM itself already stores GameCube PCM as big
+    // endian bytes, so passing it verbatim is both lossless and allocation-free.
+    if (!SDL_PutAudioStreamData(g_aiAudioStream, cpu->ram + (guestAddress - GC_RAM_BASE), static_cast<int>(bytes))) {
+        Log.warn("AI audio: rejected {} byte DMA buffer: {}", bytes, SDL_GetError());
+        return;
+    }
+    static unsigned logged = 0;
+    if (logged < 4) {
+        ++logged;
+        Log.info("AI audio: queued {} bytes from {:#010x}{}", bytes, guestAddress,
+            logged == 4 ? " [further buffers are not logged]" : "");
+    }
+}
 
 // How long the programmed buffer takes to play, derived from the hardware
 // rather than chosen: block count x 32 bytes, at the DSP sample rate, stereo
@@ -983,6 +1084,10 @@ void ai_dma_control_written(CPUState *cpu, u32 controlWord)
         g_aiDmaRunning = false;
         return;
     }
+    // A new AIInitDMA/AIStartDMA pair provides the next PCM buffer even if
+    // the preceding one is still playing.  Queue it before handling the
+    // completion timer so real audio and guest timing follow the same DMA.
+    submit_ai_dma_audio(cpu);
     if (g_aiDmaRunning) {
         // Already playing; AIInitDMA just swapped the buffer for the next one.
         // The completion instant stays where it is - the DAC does not restart.

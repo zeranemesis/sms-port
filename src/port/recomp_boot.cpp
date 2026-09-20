@@ -97,6 +97,76 @@ constexpr u32 kLockedCacheBase = 0xE0000000u;
 constexpr u32 kLockedCacheSize = 16u * 1024u;
 std::array<u8, kLockedCacheSize> g_lockedCache {};
 
+// `OSLoadContext` deliberately turns MSR[FP] off.  On hardware the following
+// FP-unavailable exception enters the SDK's lazy-FPU handler, which saves the
+// previous owner and restores the current OSContext.  The static recompilation
+// has no translated exception vector at 0x800, so this port must reproduce the
+// handler's observable state transition before resuming the faulting opcode.
+//
+// Without it every GameCube thread shares CPUState::fpr/ps1.  This is
+// especially visible in THP: its decoder runs in a dedicated thread and is
+// preempted between IDCT operations, turning otherwise-valid coefficients into
+// noisy image bands when another thread borrows the FPU.
+constexpr u32 kOsCurrentContextAddress = GC_RAM_BASE + 0xD4u;
+constexpr u32 kOsFpuContextAddress = GC_RAM_BASE + 0xD8u;
+constexpr u32 kOsContextFprOffset = 0x90u;
+constexpr u32 kOsContextFpscrOffset = 0x190u;
+constexpr u32 kOsContextStateOffset = 0x1A2u;
+constexpr u32 kOsContextPsfOffset = 0x1C8u;
+constexpr u32 kOsContextSize = 0x2C8u;
+constexpr u16 kOsContextStateFpSaved = 0x01u;
+constexpr u64 kMffsPayloadPrefix = 0xFFF8000000000000ull;
+
+bool is_guest_context(CPUState *cpu, u32 address)
+{
+    return address >= GC_RAM_BASE
+        && static_cast<u64>(address - GC_RAM_BASE) + kOsContextSize <= cpu->ram_size;
+}
+
+void save_fpu_context(CPUState *cpu, u32 context)
+{
+    u16 state = mem_read16(cpu, context + kOsContextStateOffset);
+    mem_write16(cpu, context + kOsContextStateOffset, state | kOsContextStateFpSaved);
+    for (u32 index = 0; index < 32; ++index) {
+        mem_write64(cpu, context + kOsContextFprOffset + index * 8u,
+            dolrecomp_f64_to_bits(cpu->fpr[index]));
+        mem_write64(cpu, context + kOsContextPsfOffset + index * 8u,
+            dolrecomp_f64_to_bits(cpu->ps1[index]));
+    }
+    mem_write64(cpu, context + kOsContextFpscrOffset, kMffsPayloadPrefix | cpu->fpscr);
+}
+
+void load_fpu_context(CPUState *cpu, u32 context)
+{
+    if ((mem_read16(cpu, context + kOsContextStateOffset) & kOsContextStateFpSaved) == 0) {
+        return;
+    }
+    for (u32 index = 0; index < 32; ++index) {
+        cpu->fpr[index] = dolrecomp_f64_from_bits(mem_read64(cpu, context + kOsContextFprOffset + index * 8u));
+        cpu->ps1[index] = dolrecomp_f64_from_bits(mem_read64(cpu, context + kOsContextPsfOffset + index * 8u));
+    }
+    cpu->fpscr = static_cast<u32>(mem_read64(cpu, context + kOsContextFpscrOffset));
+}
+
+bool handle_fp_unavailable(CPUState *cpu)
+{
+    const u32 current = mem_read32(cpu, kOsCurrentContextAddress);
+    const u32 owner = mem_read32(cpu, kOsFpuContextAddress);
+    if (!is_guest_context(cpu, current)) {
+        // FP can be used during the early boot sequence, before OSInit has
+        // published a context. The old behavior is the only valid fallback.
+        return false;
+    }
+    if (owner != current && is_guest_context(cpu, owner)) {
+        save_fpu_context(cpu, owner);
+    }
+    if (owner != current) {
+        load_fpu_context(cpu, current);
+        mem_write32(cpu, kOsFpuContextAddress, current);
+    }
+    return true;
+}
+
 // Writes the guest has made to each 32-byte line since that line was last
 // carried out by a store DMA. This is what tells a locked cache full of noise
 // that the decoder *put* there apart from one the decoder never wrote at all,
@@ -431,15 +501,13 @@ RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
         // same trap still fires) precisely because the guest clears it again
         // itself.
         //
-        // So do here what that handler's *net effect* is: enable FP and
-        // resume at the faulting instruction. What this deliberately does
-        // NOT do is the FPU context swap the real handler also performs, so
-        // floating-point registers are not saved/restored across the guest's
-        // own thread switches - a real correctness gap to close (by giving
-        // the vector real translated code to jump to) before anything that
-        // depends on per-thread FP state can be trusted.
+        // Reproduce the handler's lazy ownership transfer before enabling FP
+        // and resuming at the faulting instruction. This keeps each guest
+        // thread's FPR/paired-single state isolated even though the vector
+        // itself is not part of the statically recompiled DOL.
         if (cpu->exception == PPC_EXC_FP_UNAVAILABLE) {
             cpu->exception = 0;
+            handle_fp_unavailable(cpu);
             // Return the way the real handler does - through rfi, which
             // restores BOTH pc (from srr0) and msr (from srr1).
             //
@@ -965,6 +1033,21 @@ bool boot_game(CPUState *cpu)
         { "CARDMount", DOLRECOMP_SYMBOL_CARDMount },
         { "CARDMountAsync", DOLRECOMP_SYMBOL_CARDMountAsync },
         { "CARDProbeEx", DOLRECOMP_SYMBOL_CARDProbeEx },
+        { "CARDCheckExAsync", DOLRECOMP_SYMBOL_CARDCheckExAsync },
+        { "CARDCheck", DOLRECOMP_SYMBOL_CARDCheck },
+        { "CARDFreeBlocks", DOLRECOMP_SYMBOL_CARDFreeBlocks },
+        { "CARDFormat", DOLRECOMP_SYMBOL_CARDFormat },
+        { "CARDOpen", DOLRECOMP_SYMBOL_CARDOpen },
+        { "CARDClose", DOLRECOMP_SYMBOL_CARDClose },
+        { "CARDCreateAsync", DOLRECOMP_SYMBOL_CARDCreateAsync },
+        { "CARDCreate", DOLRECOMP_SYMBOL_CARDCreate },
+        { "CARDReadAsync", DOLRECOMP_SYMBOL_CARDReadAsync },
+        { "CARDRead", DOLRECOMP_SYMBOL_CARDRead },
+        { "CARDWriteAsync", DOLRECOMP_SYMBOL_CARDWriteAsync },
+        { "CARDWrite", DOLRECOMP_SYMBOL_CARDWrite },
+        { "CARDGetStatus", DOLRECOMP_SYMBOL_CARDGetStatus },
+        { "CARDSetStatusAsync", DOLRECOMP_SYMBOL_CARDSetStatusAsync },
+        { "CARDSetStatus", DOLRECOMP_SYMBOL_CARDSetStatus },
     };
     card::register_known_card_calls(kKnownCardCalls, std::size(kKnownCardCalls));
 
@@ -1115,6 +1198,158 @@ bool locked_cache_store_covered(u32 guestAddr, u32 bytes, bool *recentEnough)
     return true;
 }
 
+bool run_locked_cache_self_test()
+{
+    CPUState cpu {};
+    if (!cpu_init(&cpu)) {
+        Log.error("locked-cache self-test: cpu_init failed");
+        return false;
+    }
+
+    g_lockedCache.fill(0);
+    g_lcWritesSinceStore.fill(0);
+    g_lcStores.fill({});
+    g_lcStoreNext = 0;
+    g_lcStoreTotal = 0;
+
+    // The cache is guest-visible big-endian storage.  Exercise an unaligned
+    // 32-bit write as well as byte reads before involving DMA, so a byte-order
+    // regression cannot hide behind a symmetric copy.
+    locked_cache_write(&cpu, kLockedCacheBase + 3u, 0x11223344u, 4);
+    if (locked_cache_read(&cpu, kLockedCacheBase + 3u, 4) != 0x11223344u
+        || locked_cache_read(&cpu, kLockedCacheBase + 4u, 1) != 0x22u) {
+        Log.error("locked-cache self-test: guest byte order mismatch");
+        cpu_free(&cpu);
+        return false;
+    }
+
+    // THP's IDCT does not write its pixels one byte at a time.  It uses
+    // psq_st with GQR6 (unsigned-byte quantisation, scale -3) directly into
+    // the locked-cache address range.  Exercise that exact route through
+    // dr_cpu's external-memory callbacks: this catches a regression where
+    // normal cache reads/writes work but paired-single output is silently
+    // routed to unmapped memory or byte-swapped.
+    cpu.external_read = [](CPUState *state, u32 address, u8 size) -> u64 {
+        return locked_cache_read(state, address, size);
+    };
+    cpu.external_write = [](CPUState *state, u32 address, u64 value, u8 size) {
+        locked_cache_write(state, address, value, size);
+    };
+    cpu.hid2 = PPC_HID2_PSE | PPC_HID2_LSQE;
+    cpu.fpr[0] = 12.0;
+    cpu.ps1[0] = 200.0;
+    // GQR6's load/store fields are both type U8 with signed scale -3, the
+    // value installed by __THPGQRSetup in the real decoder.
+    cpu.gqr[6] = 0x3D043D04u;
+    if (!ppc_psq_store(&cpu, 0, kLockedCacheBase + 0x80u, false, 6, false, 0)
+        || locked_cache_read(&cpu, kLockedCacheBase + 0x80u, 1) != 1u
+        || locked_cache_read(&cpu, kLockedCacheBase + 0x81u, 1) != 25u) {
+        Log.error("locked-cache self-test: GQR6 paired-single store mismatch");
+        cpu_free(&cpu);
+        return false;
+    }
+    if (!ppc_psq_load(&cpu, 1, kLockedCacheBase + 0x80u, false, 6, false, 0)
+        || cpu.fpr[1] != 8.0 || cpu.ps1[1] != 200.0) {
+        Log.error("locked-cache self-test: GQR6 paired-single load mismatch");
+        cpu_free(&cpu);
+        return false;
+    }
+
+    constexpr u32 kStoreMainOffset = 0x1000u;
+    constexpr u32 kStoreLcOffset = 0x200u;
+    constexpr u32 kBlocks = 2u;
+    constexpr u32 kBytes = kBlocks * 32u;
+    for (u32 i = 0; i < kBytes; ++i) {
+        locked_cache_write(&cpu, kLockedCacheBase + kStoreLcOffset + i, static_cast<u8>(i ^ 0xA5u), 1);
+    }
+    g_dmaUpper = kStoreMainOffset | (kBlocks >> 2);
+    perform_locked_cache_dma(&cpu, kLockedCacheBase + kStoreLcOffset | ((kBlocks & 3u) << 2));
+    for (u32 i = 0; i < kBytes; ++i) {
+        if (mem_read8(&cpu, GC_RAM_BASE + kStoreMainOffset + i) != static_cast<u8>(i ^ 0xA5u)) {
+            Log.error("locked-cache self-test: store DMA mismatch at byte {}", i);
+            cpu_free(&cpu);
+            return false;
+        }
+    }
+    bool recentEnough = false;
+    if (!locked_cache_store_covered(GC_RAM_BASE + kStoreMainOffset, kBytes, &recentEnough) || !recentEnough) {
+        Log.error("locked-cache self-test: store coverage was not recorded");
+        cpu_free(&cpu);
+        return false;
+    }
+
+    constexpr u32 kLoadMainOffset = 0x1800u;
+    constexpr u32 kLoadLcOffset = 0x400u;
+    for (u32 i = 0; i < kBytes; ++i) {
+        mem_write8(&cpu, GC_RAM_BASE + kLoadMainOffset + i, static_cast<u8>(0x5Au - i));
+    }
+    g_dmaUpper = kLoadMainOffset | (kBlocks >> 2);
+    perform_locked_cache_dma(&cpu, kLockedCacheBase + kLoadLcOffset | ((kBlocks & 3u) << 2) | kDmaLoadBit);
+    for (u32 i = 0; i < kBytes; ++i) {
+        if (locked_cache_read(&cpu, kLockedCacheBase + kLoadLcOffset + i, 1) != static_cast<u8>(0x5Au - i)) {
+            Log.error("locked-cache self-test: load DMA mismatch at byte {}", i);
+            cpu_free(&cpu);
+            return false;
+        }
+    }
+
+    cpu_free(&cpu);
+    Log.info("locked-cache self-test: guest storage plus load/store DMA paths passed");
+    return true;
+}
+
+bool run_fpu_context_self_test()
+{
+    CPUState cpu {};
+    if (!cpu_init(&cpu)) {
+        Log.error("FPU context self-test: cpu_init failed");
+        return false;
+    }
+
+    constexpr u32 kContextA = GC_RAM_BASE + 0x1000u;
+    constexpr u32 kContextB = GC_RAM_BASE + 0x1400u;
+    mem_write32(&cpu, kOsCurrentContextAddress, kContextB);
+    mem_write32(&cpu, kOsFpuContextAddress, kContextA);
+    cpu.fpr[3] = 12.5;
+    cpu.ps1[3] = -7.25;
+    cpu.fpscr = 0x12345678u;
+
+    // B has not used FP before. Moving ownership saves A but intentionally
+    // leaves the architectural FP register file alone, matching
+    // __OSLoadFPUContext's no-op for a context without FPSAVED.
+    if (!handle_fp_unavailable(&cpu)
+        || (mem_read16(&cpu, kContextA + kOsContextStateOffset) & kOsContextStateFpSaved) == 0
+        || mem_read64(&cpu, kContextA + kOsContextFprOffset + 3u * 8u)
+            != dolrecomp_f64_to_bits(12.5)
+        || mem_read64(&cpu, kContextA + kOsContextPsfOffset + 3u * 8u)
+            != dolrecomp_f64_to_bits(-7.25)
+        || static_cast<u32>(mem_read64(&cpu, kContextA + kOsContextFpscrOffset)) != 0x12345678u) {
+        Log.error("FPU context self-test: saving the prior owner failed");
+        cpu_free(&cpu);
+        return false;
+    }
+
+    cpu.fpr[3] = -3.0;
+    cpu.ps1[3] = 42.0;
+    cpu.fpscr = 0x89ABCDEFu;
+    mem_write32(&cpu, kOsCurrentContextAddress, kContextA);
+    if (!handle_fp_unavailable(&cpu)
+        || cpu.fpr[3] != 12.5 || cpu.ps1[3] != -7.25 || cpu.fpscr != 0x12345678u
+        || mem_read32(&cpu, kOsFpuContextAddress) != kContextA
+        || mem_read64(&cpu, kContextB + kOsContextFprOffset + 3u * 8u)
+            != dolrecomp_f64_to_bits(-3.0)
+        || mem_read64(&cpu, kContextB + kOsContextPsfOffset + 3u * 8u)
+            != dolrecomp_f64_to_bits(42.0)) {
+        Log.error("FPU context self-test: restoring the next owner failed");
+        cpu_free(&cpu);
+        return false;
+    }
+
+    cpu_free(&cpu);
+    Log.info("FPU context self-test: lazy per-thread FPR/PS/FPSCR handoff passed");
+    return true;
+}
+
 } // namespace sms::recomp
 
 #else // !DOLPHINJET_HAVE_RECOMPILED_GAME
@@ -1136,6 +1371,16 @@ bool locked_cache_store_covered(u32, u32, bool *recentEnough)
     if (recentEnough != nullptr) {
         *recentEnough = false;
     }
+    return false;
+}
+
+bool run_locked_cache_self_test()
+{
+    return false;
+}
+
+bool run_fpu_context_self_test()
+{
     return false;
 }
 

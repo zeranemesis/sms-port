@@ -29,7 +29,11 @@ struct NamedAddress {
 // Same shape as sms::recomp::dolphin_sdk::register_known_dolphin_sdk_calls
 // (include/port/recomp_dolphin_sdk.h) - one host_call_<Name> per bridged
 // CARD function, matched by name against generated/generated_symbols.h's
-// real addresses.
+// real addresses.  APIs with a real Aurora bridge are handled; the other
+// supplied names are registered as observation-only entries, which log their
+// first real call and return false so the generated SDK implementation still
+// runs unchanged.  This lets us discover the actual save path before
+// committing to guest/host structure marshalling.
 void register_known_card_calls(const NamedAddress *addresses, size_t count);
 
 } // namespace sms::recomp::card

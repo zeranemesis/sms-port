@@ -5,6 +5,7 @@
 #include "aurora/lib/logging.hpp"
 
 #include <dolphin/pad.h>
+#include <SDL3/SDL_scancode.h>
 
 #include <array>
 #include <cstring>
@@ -34,6 +35,46 @@ constexpr u32 kGuestPadStatusSize = 12;
 constexpr u32 kGuestPadStatusCount = 4;
 constexpr u32 kGuestOutputSize = kGuestPadStatusSize * kGuestPadStatusCount;
 static_assert(kGuestOutputSize == 0x30u, "must match mPadStatus__10JUTGamePad's size:0x30");
+
+void install_keyboard_fallback(u32 port)
+{
+    // Aurora intentionally starts keyboard bindings unassigned.  A port
+    // without a saved keyboard_bindings.dat therefore needs an explicit,
+    // conventional fallback before it is useful as GameCube port 1.
+    const PADKeyButtonBinding buttons[] = {
+        { SDL_SCANCODE_Z, PAD_BUTTON_A },
+        { SDL_SCANCODE_X, PAD_BUTTON_B },
+        { SDL_SCANCODE_A, PAD_BUTTON_X },
+        { SDL_SCANCODE_S, PAD_BUTTON_Y },
+        { SDL_SCANCODE_RETURN, PAD_BUTTON_START },
+        { SDL_SCANCODE_C, PAD_TRIGGER_Z },
+        { SDL_SCANCODE_Q, PAD_TRIGGER_L },
+        { SDL_SCANCODE_E, PAD_TRIGGER_R },
+        { SDL_SCANCODE_UP, PAD_BUTTON_UP },
+        { SDL_SCANCODE_DOWN, PAD_BUTTON_DOWN },
+        { SDL_SCANCODE_LEFT, PAD_BUTTON_LEFT },
+        { SDL_SCANCODE_RIGHT, PAD_BUTTON_RIGHT },
+    };
+    for (const PADKeyButtonBinding &binding : buttons) {
+        PADSetKeyButtonBinding(port, binding);
+    }
+
+    const PADKeyAxisBinding axes[] = {
+        { SDL_SCANCODE_D, PAD_AXIS_LEFT_X_POS, 0 },
+        { SDL_SCANCODE_A, PAD_AXIS_LEFT_X_NEG, 0 },
+        { SDL_SCANCODE_W, PAD_AXIS_LEFT_Y_POS, 0 },
+        { SDL_SCANCODE_S, PAD_AXIS_LEFT_Y_NEG, 0 },
+        { SDL_SCANCODE_L, PAD_AXIS_RIGHT_X_POS, 0 },
+        { SDL_SCANCODE_J, PAD_AXIS_RIGHT_X_NEG, 0 },
+        { SDL_SCANCODE_I, PAD_AXIS_RIGHT_Y_POS, 0 },
+        { SDL_SCANCODE_K, PAD_AXIS_RIGHT_Y_NEG, 0 },
+        { SDL_SCANCODE_Q, PAD_AXIS_TRIGGER_L, 0 },
+        { SDL_SCANCODE_E, PAD_AXIS_TRIGGER_R, 0 },
+    };
+    for (const PADKeyAxisBinding &binding : axes) {
+        PADSetKeyAxisBinding(port, binding);
+    }
+}
 
 bool guest_range_writable(const CPUState *cpu, u32 address, u32 size)
 {
@@ -73,16 +114,16 @@ bool host_call_pad_init(CPUState *cpu, u32)
     // and the game then sees four dead ports - the on-screen "NO CONTROLLER
     // ASSIGNED" notice.
     //
-    // Activating alone is not enough: PADKeyboardState's mappings are
-    // value-initialised, not defaulted, so an active port with an all-zero
-    // table reports PAD_ERR_NONE and no buttons. PADClearKeyBindings is what
-    // installs g_defaultKeys/g_defaultKeyAxis, so it has to come first.
+    // Activating alone is not enough: Aurora's default mappings deliberately
+    // contain PAD_KEY_INVALID, so an active port otherwise reports
+    // PAD_ERR_NONE and no buttons.  Install our fallback after clearing.
     //
     // This does not overwrite a configuration the player made: Aurora loads
     // keyboard_bindings.dat lazily inside PADRead (pad.cpp:678), which runs
     // after PADInit, so a saved file still wins over these defaults.
     constexpr u32 kKeyboardPort = 0;
     PADClearKeyBindings(kKeyboardPort);
+    install_keyboard_fallback(kKeyboardPort);
     PADSetKeyboardActive(kKeyboardPort, TRUE);
 
     cpu->gpr[3] = ok ? 1u : 0u;
