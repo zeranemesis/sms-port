@@ -1604,3 +1604,50 @@ registers itself from its own shadow state, so the bridge alone never covered
 this path.
 
 Recorded as **FAIL**, reproducible in about twenty seconds.
+
+### Two more in the same handler, and the array bases
+
+Fixing the parse made indexed loads actually execute, which exposed the rest of
+the same handler.
+
+**An out-of-bounds array index.** `GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08))`
+puts the division on the constant instead of the difference: for opcode `0x20`
+that is `21 + (0x20 - 4)` = **49**, indexing a 26-element array. It read a
+garbage base pointer and stride and dereferenced them - a hard crash with no
+FATAL line, which is what the run showed. It should be
+`GX_POS_MTX_ARRAY + ((opcode - CP_CMD_LOAD_INDX_A) / 0x08)`, giving 0-3 for the
+PosMtx, NrmMtx, TexMtx and Light arrays. An array with no base is now reported
+once instead of dereferenced.
+
+**The array bases themselves.** Aurora refused CP registers 0xA0-0xAF outright
+because they hold a guest physical address it cannot read. Bridging `GXSetArray`
+does not cover that path: the guest re-sends those registers from its own shadow
+state on every dirty-state flush. Measured in one 70-second gameplay run:
+**351,846 rejections**, unbounded - the sixth runaway log this project would
+have had.
+
+Aurora now asks the host to translate, through a resolver the port installs
+(`install_array_base_resolver`), and the mapping lands correctly on the matrix
+arrays too: `GX_VA_POS + 12` is `GX_POS_MTX_ARRAY`, +13 NRM, +14 TEX, +15 LIGHT.
+The remaining complaint is bounded to 32 distinct addresses.
+
+### Where that leaves gameplay
+
+| | before | after |
+| --- | --- | --- |
+| FIFO desyncs | every run | **0** |
+| array-base rejections | 351,846 | **0** |
+| crash | hard crash, no FATAL | **none over 70 s** |
+| guest steps/s | 44 | **60** |
+
+`appState=5 (GAMEPLAY)`, full speed, no errors left in stderr beyond two
+memory-card lines. **And the screen is still black.** Three real defects are
+gone and the frame still renders nothing, so the cause is further along and is
+not yet identified. Recorded as such rather than as progress that looks like a
+conclusion.
+
+One thing worth knowing for the next step: the 15,510 "unresolved host call"
+warnings are **not** failures. `dispatch()` logs a miss and returns false, and
+`dolrecomp_call` then falls through to `dolrecomp_call_original`, which handles
+the address normally. Every unbridged address produces one, so the count is
+noise, not a signal.

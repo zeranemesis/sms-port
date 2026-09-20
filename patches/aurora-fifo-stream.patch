@@ -1,8 +1,18 @@
 diff --git a/lib/gx/command_processor.hpp b/lib/gx/command_processor.hpp
-index 93feba1..74f4022 100644
+index 93feba1..9c9e6a2 100644
 --- a/lib/gx/command_processor.hpp
 +++ b/lib/gx/command_processor.hpp
-@@ -7,4 +7,10 @@ namespace aurora::gx::fifo {
+@@ -4,7 +4,20 @@
+ 
+ namespace aurora::gx::fifo {
+ 
++// Turns a guest physical address from a CP array-base register into a host
++// pointer, reporting how many bytes are readable from it. Returns nullptr when
++// the address cannot be resolved. Installed by the host; without it the CP
++// array-base registers cannot be honoured at all.
++using ArrayBaseResolver = void* (*)(uint32_t guestAddress, uint32_t* sizeOut);
++extern ArrayBaseResolver g_arrayBaseResolver;
++
  // Process a buffer of GX FIFO commands
  void process(const uint8_t* data, uint32_t size, bool bigEndian);
  

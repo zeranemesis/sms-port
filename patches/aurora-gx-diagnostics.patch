@@ -71,10 +71,18 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..b3f8375 100644
+index 9748556..1faafde 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
-@@ -11,9 +11,12 @@
+@@ -1,5 +1,7 @@
+ #include "command_processor.hpp"
+ 
++#include <unordered_set>
++
+ #include "../gfx/common.hpp"
+ #include "dolphin/gx/GXAurora.h"
+ #include "gx.hpp"
+@@ -11,9 +13,12 @@
  #include <absl/container/flat_hash_map.h>
  #include <tracy/Tracy.hpp>
  
@@ -87,7 +95,7 @@ index 9748556..b3f8375 100644
  
  namespace aurora::gx::fifo {
  static Module Log("aurora::gx::fifo");
-@@ -365,6 +368,64 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+@@ -365,6 +370,68 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
    return false;
  }
  
@@ -134,6 +142,10 @@ index 9748556..b3f8375 100644
 +  Log.error("  commands leading here:{}", trail);
 +}
 +
++// Installed by the host so guest physical addresses in the CP array-base
++// registers can be turned into something Aurora can actually read.
++ArrayBaseResolver g_arrayBaseResolver = nullptr;
++
 +static bool s_streamMode = false;
 +static bool s_streamTruncated = false;
 +static u32 s_streamCmdStart = 0;
@@ -152,7 +164,7 @@ index 9748556..b3f8375 100644
  // Forward declarations for register handlers
  static void handle_bp(u32 value, bool bigEndian);
  static void handle_cp(u8 addr, u32 value, bool bigEndian);
-@@ -377,15 +438,27 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -377,15 +444,27 @@ void process(const u8* data, u32 size, bool bigEndian) {
    u32 pos = 0;
  
    while (pos < size) {
@@ -180,7 +192,7 @@ index 9748556..b3f8375 100644
        CHECK(pos + 4 <= size, "BP reg read overrun");
        u32 value = read_u32(data + pos, bigEndian);
        pos += 4;
-@@ -394,6 +467,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -394,6 +473,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
      }
  
      case CP_CMD_LOAD_CP_REG: {
@@ -190,7 +202,7 @@ index 9748556..b3f8375 100644
        CHECK(pos + 5 <= size, "CP reg read overrun");
        u8 addr = data[pos++];
        u32 value = read_u32(data + pos, bigEndian);
-@@ -413,25 +489,47 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -413,25 +495,69 @@ void process(const u8* data, u32 size, bool bigEndian) {
      case CP_CMD_LOAD_INDX_D: {
        ZoneScopedN("LOAD_INDX");
        // Indexed XF load: 4 bytes of data
@@ -198,8 +210,19 @@ index 9748556..b3f8375 100644
 +        return;
 +      }
        CHECK(pos + 4 <= size, "indexed XF read overrun");
-       u32 arrayType = GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08));
+-      u32 arrayType = GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08));
 -      u8 srcArrayIdx = data[pos++];
++      // The division belongs on the DIFFERENCE, not on the constant alone.
++      // As written this was GX_POS_MTX_ARRAY + (0x20 - 4) = 21 + 28 = 49,
++      // indexing a 26-element array, so it read a garbage base pointer and
++      // stride and then dereferenced them - a hard crash with no FATAL line,
++      // which is exactly what the run showed once the parse above was fixed
++      // and indexed loads started being executed at all.
++      //
++      // 0x20/0x28/0x30/0x38 select the PosMtx, NrmMtx, TexMtx and Light
++      // arrays in that order.
++      const u32 arrayType = GX_POS_MTX_ARRAY + ((opcode - CP_CMD_LOAD_INDX_A) / 0x08);
++      CHECK(arrayType < GX_VA_MAX_ATTR, "indexed XF load: array index {} out of range", arrayType);
 +      // One opcode byte and ONE u32, per the game's own emitter:
 +      //
 +      //     GX_WRITE_U8(0x20);
@@ -220,6 +243,18 @@ index 9748556..b3f8375 100644
 +      pos += 4;
 +      const u16 srcArrayIdx = static_cast<u16>(indexed >> 16);
        auto const& array = g_gxState.arrays[arrayType];
++      if (array.data == nullptr) {
++        // Say so once per array rather than dereferencing null plus an offset.
++        // A missing base means GXSetArray was never forwarded for this array,
++        // which is a fixable gap in the port, not something to crash on.
++        static std::array<bool, GX_VA_MAX_ATTR> warnedArray {};
++        if (!warnedArray[arrayType]) {
++          warnedArray[arrayType] = true;
++          Log.error("indexed XF load: array {} has no base address - GXSetArray was never forwarded for it",
++                    arrayType);
++        }
++        break;
++      }
        u8* srcData = ((u8*)array.data) + srcArrayIdx * array.stride;
 -      u16 addrLen = read_u16(data + pos, bigEndian);
 -      u16 len = (addrLen >> 12) + 1;
@@ -243,7 +278,7 @@ index 9748556..b3f8375 100644
        CHECK(pos + 8 <= size, "call DL read overrun");
        Log.warn("Ignoring nested GX_CMD_CALL_DL");
        pos += 8;
-@@ -482,6 +580,11 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -482,6 +608,11 @@ void process(const u8* data, u32 size, bool bigEndian) {
        }
        break;
      }
@@ -255,7 +290,7 @@ index 9748556..b3f8375 100644
    }
  }
  
-@@ -566,6 +669,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+@@ -566,6 +697,19 @@ static void handle_bp(u32 value, bool bigEndian) {
    switch (regId) {
    // genMode (0x00)
    case 0x00: {
@@ -275,7 +310,52 @@ index 9748556..b3f8375 100644
      g_gxState.numTexGens = bp_get(value, 4, 0);
      g_gxState.numChans = bp_get(value, 3, 4);
      g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
-@@ -1261,6 +1377,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+@@ -1241,7 +1385,43 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+     }
+     // Array base addresses (0xA0-0xAF)
+     else if (addr >= 0xA0 && addr <= 0xAF) {
+-      Log.error("CP_REG_ARRAYBASE_ID is not supported on Aurora. Use GX_LOAD_AURORA_ARRAYBASE instead.");
++      // These registers hold a GUEST physical address, which Aurora has no way
++      // to turn into anything it can read - hence the flat refusal this used to
++      // be. A host that does have guest memory can supply the translation, so
++      // ask it, and only complain when nobody can.
++      //
++      // Refusing outright is not a safe default here: the guest re-sends these
++      // registers from its own shadow state on every dirty-state flush, so a
++      // bridged GXSetArray does not cover the path. Measured in one 70-second
++      // gameplay run: 351,846 rejections, and every piece of indexed geometry
++      // silently without vertex data.
++      //
++      // The mapping is the same one the stride registers at 0xB0-0xBF use, and
++      // it lands correctly on the matrix arrays too: GX_VA_POS + 12 is
++      // GX_POS_MTX_ARRAY, +13 NRM, +14 TEX, +15 LIGHT.
++      const u32 attrIdx = addr - 0xA0 + GX_VA_POS;
++      void* hostBase = nullptr;
++      u32 hostSize = 0;
++      if (attrIdx < GX_VA_MAX_ATTR && g_arrayBaseResolver != nullptr) {
++        hostBase = g_arrayBaseResolver(value, &hostSize);
++      }
++      if (hostBase != nullptr) {
++        auto& array = g_gxState.arrays[attrIdx];
++        if (array.data != hostBase || array.size != hostSize) {
++          array.data = hostBase;
++          array.size = hostSize;
++          array.le = false; // GameCube vertex data is big-endian
++          g_gxState.stateDirty = true;
++        }
++      } else {
++        // Bounded: this fires once per guest address, and an unbounded version
++        // of exactly this line produced 351,846 entries in one run.
++        static std::unordered_set<u32> warnedBases;
++        if (warnedBases.size() < 32 && warnedBases.insert(value).second) {
++          Log.error("CP array base {:#010x} for attribute {} could not be resolved to a host pointer", value,
++                    attrIdx);
++        }
++      }
+     }
+     // Array strides (0xB0-0xBF)
+     else if (addr >= 0xB0 && addr <= 0xBF) {
+@@ -1261,6 +1441,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
  
  // XF register handler - decodes XF (transform unit) register writes and updates g_gxState
  static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -285,7 +365,7 @@ index 9748556..b3f8375 100644
    CHECK(pos + 4 <= size, "XF header read overrun");
    u32 header = read_u32(data + pos, bigEndian);
    pos += 4;
-@@ -1269,6 +1388,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1269,6 +1452,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
    u32 addr = header & 0xFFFF;
    u32 dataBytes = count * 4;
    // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
@@ -295,7 +375,7 @@ index 9748556..b3f8375 100644
    CHECK(pos + dataBytes <= size, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
  
    const u8* xfData = data + pos;
-@@ -1282,6 +1404,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1282,6 +1468,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
        u32 reg = xfAddr + i;
        u32 val = read_u32(xfData + i * 4, bigEndian);
  
@@ -313,7 +393,7 @@ index 9748556..b3f8375 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1551,6 +1684,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+@@ -1551,6 +1748,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
      UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
  
    u32 totalVtxBytes = vtxCount * vtxSize;
@@ -323,7 +403,7 @@ index 9748556..b3f8375 100644
    if (pos + totalVtxBytes > size)
      UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
  
-@@ -1604,10 +1740,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1604,10 +1804,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
    GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
  
@@ -477,7 +557,7 @@ index 9748556..b3f8375 100644
    draw_prim(prim, fmt, vtxCount, data, pos, size);
  }
  
-@@ -1671,10 +1950,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1671,10 +2014,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
  }
  
  std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -494,7 +574,7 @@ index 9748556..b3f8375 100644
    CHECK(pos + length <= size, "Aurora string read overrun");
    std::string str(reinterpret_cast<const char*>(data) + pos, length);
    pos += length;
-@@ -1683,12 +1968,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1683,12 +2032,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
  
  void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    ZoneScoped;
@@ -513,7 +593,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
      const f32 left = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1711,6 +2002,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1711,6 +2066,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
          .zfar = farZ,
      });
    } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
@@ -523,7 +603,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
      const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
      pos += 4;
-@@ -1722,6 +2016,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1722,6 +2080,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      set_render_scissor({left, top, width, height});
    } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
@@ -533,7 +613,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
      u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
  
-@@ -1743,6 +2040,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1743,6 +2104,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
        g_gxState.stateDirty = true;
      }
    } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
@@ -543,7 +623,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
      const auto texMapId = data[pos];
      pos += 1;
-@@ -1771,6 +2071,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1771,6 +2135,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_TLUT) {
@@ -553,7 +633,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
      const auto idx = data[pos];
      pos += 1;
-@@ -1789,6 +2092,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1789,6 +2156,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
@@ -563,7 +643,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
      g_gxState.frontOffset = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1802,18 +2108,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1802,18 +2172,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
@@ -594,7 +674,7 @@ index 9748556..b3f8375 100644
      CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
      u8 cmd = data[pos];
      pos += 1;
-@@ -1849,4 +2167,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1849,4 +2231,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    }
  }
  

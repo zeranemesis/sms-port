@@ -70,6 +70,32 @@ void write(CPUState *, u32 /*addr*/, u64 value, u8 size)
     }
 }
 
+// The CPUState whose RAM the CP array-base resolver reads. Set once, before any
+// guest code runs.
+CPUState *g_resolverCpu = nullptr;
+
+// Aurora cannot turn a guest physical address into anything it can read, so it
+// used to refuse the CP array-base registers outright. This is the translation
+// it was missing.
+void *resolve_guest_array_base(u32 guestAddress, u32 *sizeOut)
+{
+    if (g_resolverCpu == nullptr) {
+        return nullptr;
+    }
+    // Cached (0x8...), uncached (0xC...) and physical all name the same bytes,
+    // exactly as the GXSetArray bridge and the ARAM/DI transfers resolve theirs.
+    const u32 offset = guestAddress & 0x03FFFFFFu;
+    if (offset >= g_resolverCpu->ram_size) {
+        return nullptr;
+    }
+    // The hardware has no size register for an array, only a stride, so the
+    // only bound that is actually known is the end of guest RAM.
+    if (sizeOut != nullptr) {
+        *sizeOut = g_resolverCpu->ram_size - offset;
+    }
+    return g_resolverCpu->ram + offset;
+}
+
 } // namespace
 
 void install()
@@ -83,6 +109,12 @@ void install()
                           // the generic dispatcher's miss-log path catch it
         .write = &write,
     });
+}
+
+void install_array_base_resolver(CPUState *cpu)
+{
+    g_resolverCpu = cpu;
+    aurora::gx::fifo::g_arrayBaseResolver = &resolve_guest_array_base;
 }
 
 namespace {

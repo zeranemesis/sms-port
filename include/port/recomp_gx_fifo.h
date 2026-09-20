@@ -29,6 +29,15 @@ namespace sms::recomp::gx_fifo {
 // here needs to drive draining itself.
 void install();
 
+// Gives Aurora the guest-memory translation it needs for the CP array-base
+// registers (0xA0-0xAF), which hold a guest physical address it has no way to
+// read. Without it those registers are refused outright and every piece of
+// indexed geometry is drawn with no vertex data - measured as 351,846
+// rejections in one 70-second gameplay run. Bridging GXSetArray is not enough
+// on its own, because the guest re-sends these registers from its own shadow
+// state on every dirty-state flush.
+void install_array_base_resolver(CPUState *cpu);
+
 // Bridges GXInit/GXSetCPUFifo/GXSetGPFifo/GXSetDrawDone/GXDrawDone/
 // GXFlush/GXCopyDisp/GXSetArray/GXLoadTexObj/GXLoadTexObjPreLoaded/
 // GXInvalidateTexAll - the starting set discovered
