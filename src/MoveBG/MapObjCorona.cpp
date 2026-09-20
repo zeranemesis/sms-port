@@ -10,6 +10,7 @@
 
 extern "C" u8 allowsLaunch__6TKoopaCFv(void*);
 extern "C" void getDown__6TKoopaFv(void*);
+extern "C" void stagger__6TKoopaFb(void*, bool);
 
 static bool bathtubKoopaAllowsLaunch()
 {
@@ -24,7 +25,27 @@ void TBathtub::loadAfter()
 	SMS_LoadParticle("/scene/map/map/ms_kp_break_b.jpa", 0x0F7);
 }
 
-void TBathtub::hipdrop(const JGeometry::TVec3<f32>&) { }
+void TBathtub::hipdrop(const JGeometry::TVec3<f32>& position)
+{
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+		return;
+
+	u8* params = reinterpret_cast<u8*>(unk16C);
+	if (unk250 > *reinterpret_cast<int*>(params + 0x7C))
+		return;
+
+	f32 dx = position.x - *reinterpret_cast<f32*>(reinterpret_cast<u8*>(this) + 0x10C);
+	f32 dz = position.z - *reinterpret_cast<f32*>(reinterpret_cast<u8*>(this) + 0x114);
+	f32 distance = dz * dz + (dx * dx + 0.0f);
+	if (distance > 0.0000038146973f)
+		JGeometry::TUtil<f32>::inv_sqrt(distance);
+
+	unk250 = *reinterpret_cast<int*>(params + 0x7C);
+	unk258 = *reinterpret_cast<int*>(params + 0x90);
+	unk25C = *reinterpret_cast<int*>(params + 0x90);
+	unk254 = *reinterpret_cast<u32*>(params + 0x7C);
+	stagger__6TKoopaFb(JDrama::TNameRefGen::search("クッパ"), false);
+}
 
 void TBathtub::quake(const JGeometry::TVec3<f32>& position)
 {
