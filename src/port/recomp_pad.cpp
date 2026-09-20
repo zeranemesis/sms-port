@@ -154,6 +154,38 @@ bool host_call_pad_read(CPUState *cpu, u32)
 
     std::array<PADStatus, kGuestPadStatusCount> hostStatus {};
     const u32 result = PADRead(hostStatus.data());
+
+    // Does a keypress actually reach the guest? Everything the player will ever
+    // do depends on it, and nothing so far has proved it end to end: the port
+    // stopped reporting PAD_ERR_NO_CONTROLLER, which says Aurora is willing to
+    // answer, not that a key travels from the keyboard into the game's own
+    // PADStatus. Pressing A at the intro changed nothing, and "the key never
+    // arrived" and "the game ignores A there" look identical from outside.
+    //
+    // Bounded like every probe here: the first few distinct button masks, and a
+    // hard cap, because this runs once per guest frame.
+    // Log the first few calls unconditionally, not just the ones with a button
+    // set. Zero button lines is equally consistent with "the game never calls
+    // PADRead", "Aurora still answers PAD_ERR_NO_CONTROLLER" and "the key never
+    // arrived", and those have completely different causes.
+    static unsigned firstCalls = 0;
+    if (firstCalls < 3) {
+        ++firstCalls;
+        Log.info("PADRead: called, port 1 err={} button={:#06x} (call {} of the first 3 logged)",
+            static_cast<int>(hostStatus[0].err), hostStatus[0].button, firstCalls);
+    }
+
+    static unsigned reported = 0;
+    static u16 lastButton = 0;
+    if (hostStatus[0].err == PAD_ERR_NONE && hostStatus[0].button != lastButton) {
+        lastButton = hostStatus[0].button;
+        if (hostStatus[0].button != 0 && reported < 12) {
+            ++reported;
+            Log.info("PADRead: port 1 buttons {:#06x} err={} - a key reached the guest{}",
+                hostStatus[0].button, static_cast<int>(hostStatus[0].err),
+                reported == 12 ? " [no further button changes are logged]" : "");
+        }
+    }
     for (u32 i = 0; i < kGuestPadStatusCount; ++i) {
         write_guest_status(cpu, guestStatus + i * kGuestPadStatusSize, hostStatus[i]);
     }

@@ -1423,3 +1423,68 @@ needs roughly three minutes of wall clock to finish. Every measurement run so
 far has been 40-150 seconds. **No run has ever reached the far side of the
 title sequence**, so what happens after it is entirely untested - not working,
 not broken, untested.
+
+## 2026-09-20: input works, the intro is skippable, and gameplay is a black screen
+
+### First, a correction
+
+The previous section said no run had ever reached the far side of the title
+sequence, and a reading of one run's final log lines was taken as a deadlock:
+the movie frozen at frame 1704 of 2816 with 97% of cycles in `SelectThread`'s
+idle spin. **That was wrong.** Those were the last lines of a process being shut
+down by the harness, not a hang. Plotting the movie's frame counter across the
+whole run shows it advancing steadily throughout - 0, 202, 370, 528, 687, 828,
+986, 1164, 1350, 1536, 1626, 1704 - with no plateau anywhere. The run simply
+ended before the movie did.
+
+### The intro is skippable, and A reaches the guest
+
+Pressing A skips it, and three attempts failed before one worked - each failure
+for a different reason in the *harness*, not in the port:
+
+1. `SendKeys` posts `WM_CHAR`, which SDL does not read. Replaced with
+   `keybd_event`.
+2. Windows refuses `SetForegroundWindow` from a background process, so the
+   keys went to whatever had focus. Aurora reads the keyboard through
+   `SDL_GetKeyboardState`, which is only fed by window messages, so focus is
+   not optional. Fixed with the `AttachThreadInput` sequence, and the harness
+   now *says* whether it got focus - a negative result without focus proves
+   nothing.
+3. The key still never arrived, because `keybd_event` with a virtual-key code
+   is logical and `SDL_SCANCODE_Z` is physical. On this machine's French AZERTY
+   layout Windows maps `VK_Z` to the key that types "z", which sits where QWERTY
+   has W, so SDL saw `SDL_SCANCODE_W` and the binding never matched. Sending the
+   set-1 scancode `0x2C` with `KEYEVENTF_SCANCODE` names the physical key and
+   makes the layout irrelevant.
+
+With that, `PADRead: port 1 buttons 0x0100 err=0` - `PAD_BUTTON_A` in the
+guest's own `PADStatus`. **Input is proven end to end for the first time**:
+keyboard to SDL to Aurora to the recompiled game. Worth stating plainly because
+every earlier signal was indirect: the notice disappearing only said Aurora was
+willing to answer, not that a key travelled.
+
+The harness is kept as `tools/port/dolphinjet_skip_intro.ps1`.
+
+### Which reaches gameplay, and a new frontier
+
+On the A press the THP player closes (`open=0`) and the app state becomes
+**`appState=5 (GAMEPLAY)`**. The guest runs at a full 60 steps per second and
+the host presents at 144.
+
+And the screen is black. A profile taken in that state, over 130 seconds:
+
+| share | function |
+| --- | --- |
+| 51.1% | `SelectThread+0x138` |
+| 45.8% | `SelectThread+0x134` |
+| 1.5% | `mixDSP__Q28JASystem6DSPBufFl` |
+| 1.0% | `vframeWork__Q28JASystem6KernelFv` |
+
+**96.9% idle spin, 61 distinct block entries in the whole window**, every thread
+`WAITING`, no DVD command executing, `piCause=0`, no errors. Only the audio
+kernel is doing anything at all. The game enters gameplay and then does nothing.
+
+This is the frontier now, and unlike everything before it, it is reachable in
+about twenty seconds and reproducible on demand. It is **untested territory
+turned into a testable defect**, which is the whole point of being able to press
+A.
