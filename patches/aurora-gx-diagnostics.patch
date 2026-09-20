@@ -1055,7 +1055,7 @@ index 9748556..4d07419 100644
 +
  } // namespace aurora::gx::fifo
 diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
-index 9ca9036..0095dc6 100644
+index 9ca9036..987c166 100644
 --- a/lib/gx/gx.cpp
 +++ b/lib/gx/gx.cpp
 @@ -1,5 +1,7 @@
@@ -1152,10 +1152,28 @@ index 9ca9036..0095dc6 100644
    }
  }
  
-@@ -879,6 +916,36 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
+@@ -879,6 +916,54 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
        .alphaUpdate = g_gxState.alphaUpdate,
        .colorUpdate = g_gxState.colorUpdate,
    };
++
++  // The fog actually in force, one line per distinct setting.
++  //
++  // The scene is still brighter than the real game after the depth remap, and
++  // fog is the term that mixes towards a flat colour. A wrong type, a white
++  // fog colour, or an a/b/c triple that saturates would each wash the picture
++  // out while leaving every other state valid - and the shader applies fog
++  // unconditionally once the type is not GX_FOG_NONE.
++  if (g_gxState.projType == GX_PERSPECTIVE) {
++    static std::unordered_set<u64> seenFog;
++    const auto& f = g_gxState.fog;
++    const u64 key = (u64(f.type) << 56) ^ (u64(std::bit_cast<u32>(f.a)) << 24) ^ u64(std::bit_cast<u32>(f.b)) ^
++                    (u64(std::bit_cast<u32>(f.c)) << 12);
++    if (seenFog.size() < 16 && seenFog.insert(key).second) {
++      Log.info("fog: type={} a={:.4f} b={:.4f} c={:.4f} colour=({:.3f} {:.3f} {:.3f} {:.3f})",
++               static_cast<u32>(f.type), f.a, f.b, f.c, f.color.x(), f.color.y(), f.color.z(), f.color.w());
++    }
++  }
 +
 +  // One line per distinct raster configuration the 3D scene uses.
 +  //

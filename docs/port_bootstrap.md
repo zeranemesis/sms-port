@@ -2225,3 +2225,28 @@ inverted.
 **Not finished.** The airstrip is still brighter than the real game - the sand
 and sky clip towards white - so something in the fog or lighting path is still
 off. That is measured next rather than assumed to be gone.
+
+### Fog: measured, correct, and not the cause
+
+The remaining over-brightness looked like fog, so the fog state in force was
+dumped per distinct setting:
+
+```
+fog: type=2 a=10.0000 b=1.0000 c=199936.0000 colour=(1.000 0.000 0.502 1.000)
+fog: type=0 a=0.0000 b=0.5000 c=0.0000 colour=(1.000 1.000 1.000 1.000)
+```
+
+A `c` of 199,936 and a magenta fog colour look like a broken decode, and the
+decoder was about to be "fixed". Checking it against the SDK's own encoder
+first - `GXSetFog` in `src/dolphin/gx/GXPixel.c` - shows Aurora's decode matches
+it exactly: c's mantissa in bits 0-10, exponent in 11-18, sign in 19, type in
+21-23, and b/g/r in the low three bytes of FOGCLR.
+
+So those are the values the game really set. `C = startz / (endz - startz)`
+explodes when the two are close, and a huge `c` clamps `fogF` to zero - it is
+how the game turns fog off. The magenta colour is then simply unused.
+
+Fog is correctly decoded and genuinely disabled, and is not the cause. Recorded
+because the alternative was patching a correct decoder into a broken one, which
+would have been the first instrument-induced error here to introduce a defect
+rather than merely mislead.
