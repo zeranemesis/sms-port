@@ -143,14 +143,39 @@ void TBathtub::removeCollisions_() { } // Unused
 
 void TBathtub::startDemo() { }
 
-bool TBathtub::allowsTumble() const { return false; }
+bool TBathtub::allowsTumble() const
+{
+	f32 gripY = 0.0f;
+	if (gpMarioPos == nullptr || !getNearGrip(*gpMarioPos, 18.0f, &gripY))
+		return false;
+
+	const u8* self = reinterpret_cast<const u8*>(this);
+	f32 dx = gpMarioPos->x - *reinterpret_cast<const f32*>(self + 0x170);
+	f32 dy = gpMarioPos->y - *reinterpret_cast<const f32*>(self + 0x174);
+	f32 dz = gpMarioPos->z - *reinterpret_cast<const f32*>(self + 0x178);
+	f32 x = *reinterpret_cast<const f32*>(self + 0x188) * dx
+	       + *reinterpret_cast<const f32*>(self + 0x18C) * dy
+	       + *reinterpret_cast<const f32*>(self + 0x190) * dz;
+	f32 y = *reinterpret_cast<const f32*>(self + 0x194) * dx
+	       + *reinterpret_cast<const f32*>(self + 0x198) * dy
+	       + *reinterpret_cast<const f32*>(self + 0x19C) * dz;
+	f32 z = *reinterpret_cast<const f32*>(self + 0x1A0) * dx
+	       + *reinterpret_cast<const f32*>(self + 0x1A4) * dy
+	       + *reinterpret_cast<const f32*>(self + 0x1A8) * dz;
+	f32 magnitude = x * x + y * y + z * z;
+	if (magnitude < 4200.0f || magnitude > 4700.0f)
+		return false;
+	return true;
+}
 
 void TBathtub::calcRootMatrix() { }
 
+#pragma dont_inline on
 bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>&, f32, f32*) const
 {
 	return false;
 }
+#pragma dont_inline off
 
 u8 TBathtub::getNextJuncture(const JGeometry::TVec3<f32>&,
                              const JGeometry::TVec3<f32>&) const
