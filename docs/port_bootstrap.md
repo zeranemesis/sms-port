@@ -169,7 +169,23 @@ git -C extern/aurora apply --check ../../patches/aurora-render-fixes.patch
 git -C extern/aurora apply ../../patches/aurora-render-fixes.patch
 git -C extern/aurora apply --check ../../patches/aurora-dvd-os-link.patch
 git -C extern/aurora apply ../../patches/aurora-dvd-os-link.patch
+git -C extern/aurora apply --check ../../patches/aurora-fifo-stream.patch
+git -C extern/aurora apply ../../patches/aurora-fifo-stream.patch
+git -C extern/aurora apply --check ../../patches/aurora-gx-diagnostics.patch
+git -C extern/aurora apply ../../patches/aurora-gx-diagnostics.patch
 ```
+
+Two more have been added since that list was first written:
+
+- `patches/aurora-fifo-stream.patch` - `lib/gx/fifo.cpp` and
+  `lib/gx/command_processor.hpp`: `drain()` carries an incomplete trailing
+  command over to the next buffer instead of discarding it, because this port
+  cuts the FIFO mid-command by construction (see the FIFO section below).
+- `patches/aurora-gx-diagnostics.patch` - the GX/THP measurement probes, and
+  now also the command processor's half of the same FIFO fix. The fix and the
+  probes share `lib/gx/command_processor.cpp`, and these patches are per-file
+  diffs, so they cannot be separated without hand-splitting hunks; the split
+  is by file, not by purpose.
 
 `git -C <dir> apply <patch>` resolves `<patch>` relative to `<dir>`, not to
 the caller's cwd - verified on this Windows checkout, where `patches/...`
@@ -971,3 +987,74 @@ max 255, texture revision climbing. The frames sampled are simply smooth ones
 of texture detail - is clean too.
 
 Screenshots are the criterion here, not the counters, and they agree.
+
+## 2026-09-20: the FIFO overrun is a cut, not corruption
+
+`draw vertex data overrun: need 80 bytes at pos N, have N` killed two runs. It
+is not random, and the second occurrence is what showed that.
+
+### The two crashes carry the same signature
+
+```
+run 1  pos  835- 853: 5e b7 70 09 08 80 b9 dc ee f5 08 90 3b 9d ce e7 [80] 00 04
+run 2  pos 13184-13202: 5e b7 70 09 08 80 b9 dc ee f5 08 90 3b 9d ce e7 [80] 00 04
+```
+
+Byte for byte identical, at two unrelated FIFO positions. Decoded, the tail is
+`08 80 <u32>` = LOAD_CP_REG VAT_B[0], `08 90 <u32>` = LOAD_CP_REG VAT_C[0], then
+`80 00 04` = draw quads, vertex format 0, four vertices - 4 x 20 = 80 bytes of
+vertex data. `have N` is the position where those 80 bytes should start, so the
+buffer ended **exactly** on the draw header. That is a cut, not corruption.
+
+### Why the port cuts there
+
+`portmain.cpp` runs `step_game(&g_gameCpu, kGameBlocksPerFrame)` and then
+`aurora_end_frame()`. The guest is stepped for a fixed budget of *translated
+blocks*, so the budget expires at an arbitrary guest instruction - including one
+between the store that writes a draw's opcode into the write-gather pipe and the
+stores that write its vertices. `aurora_end_frame()` then calls
+`gx::fifo::drain()`, which did:
+
+```cpp
+process(detail::sBufferData, detail::sBufferSize, true);
+detail::sBufferSize = 0;
+```
+
+- process the buffer whole, abort on a short command, and discard the rest.
+
+Real hardware never sees this. The GP reads the FIFO as a stream and waits for
+the remainder; there is no end of buffer to run off. Aurora's software FIFO is a
+buffer that is consumed wholesale once per frame, and that difference is the
+entire defect.
+
+### The fix is to make it a stream again
+
+`process_stream()` runs the same processing but, when a command runs past the
+end of the buffer, stops at that command's first byte and reports the position.
+`drain()` keeps those bytes and hands them to the next drain:
+
+```cpp
+const uint32_t consumed = process_stream(data, size, true);
+if (consumed < size) { memmove(data, data + consumed, size - consumed); }
+```
+
+Every truncation guard in the command processor is unchanged outside stream
+mode, so display lists - which are complete by construction - still assert
+exactly as before.
+
+A tail that never completes would grow without bound and silently swallow every
+later command, so that is warned about once rather than left to look like a
+rendering bug.
+
+### The regression test
+
+`dolphinjet --recomp-fifo-stream-self-test` is deterministic, unlike the crash
+it stands in for: it feeds `process_stream` three NOPs followed by a LOAD_BP_REG
+missing half its payload and checks that exactly 3 bytes are consumed, that
+completing the command consumes all of it, and that a buffer holding nothing but
+an incomplete command consumes nothing at all.
+
+It exercises the carry-over mechanism rather than the draw path specifically. A
+draw needs live GX and graphics state that a headless test cannot stand up
+honestly, and pretending otherwise would make the test prove less than it looks
+like it proves.

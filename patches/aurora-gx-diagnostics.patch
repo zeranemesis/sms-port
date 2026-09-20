@@ -71,7 +71,7 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..9e20a60 100644
+index 9748556..f9d079a 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -11,9 +11,12 @@
@@ -87,7 +87,98 @@ index 9748556..9e20a60 100644
  
  namespace aurora::gx::fifo {
  static Module Log("aurora::gx::fifo");
-@@ -566,6 +569,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+@@ -365,6 +368,36 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+   return false;
+ }
+ 
++// Stream mode: the host frame boundary can cut this FIFO between a command's
++// opcode and its payload, because the guest is stepped for a fixed budget of
++// translated blocks and that budget expires at an arbitrary instruction.  Real
++// hardware never sees this - the GP reads a stream and simply waits for the
++// rest - so aborting on a short tail turns a normal cut into a fatal error.
++//
++// Measured twice: "draw vertex data overrun: need 80 bytes at pos N, have N",
++// at two completely different FIFO positions but with byte-identical preceding
++// commands (LOAD_CP_REG VAT_B0, LOAD_CP_REG VAT_C0, then draw quads x4).  The
++// buffer ended exactly on the draw header, which is a cut, not corruption.
++//
++// In stream mode a truncated command stops processing at that command's first
++// byte and reports the position, so drain() can carry the tail into the next
++// buffer.  Outside stream mode - display lists, which are complete by
++// construction - every CHECK below still fires exactly as before.
++static bool s_streamMode = false;
++static bool s_streamTruncated = false;
++static u32 s_streamCmdStart = 0;
++
++static bool fifo_truncated(u32 pos, u32 need, u32 size) {
++  if (static_cast<u64>(pos) + need <= size) {
++    return false;
++  }
++  if (!s_streamMode) {
++    return false; // let the caller's CHECK report it, as before
++  }
++  s_streamTruncated = true;
++  return true;
++}
++
+ // Forward declarations for register handlers
+ static void handle_bp(u32 value, bool bigEndian);
+ static void handle_cp(u8 addr, u32 value, bool bigEndian);
+@@ -377,6 +410,13 @@ void process(const u8* data, u32 size, bool bigEndian) {
+   u32 pos = 0;
+ 
+   while (pos < size) {
++    if (s_streamTruncated) {
++      // A helper bailed out of a command that runs past the end of this
++      // buffer. Its first byte is already recorded; stop before the loop
++      // mistakes that byte for the next opcode.
++      break;
++    }
++    s_streamCmdStart = pos;
+     u8 cmd = data[pos++];
+     u8 opcode = cmd & CP_OPCODE_MASK;
+     // Log.warn("Processing opcode {:02x} at pos {} (size {})", opcode, pos - 1, size);
+@@ -386,6 +426,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+       continue;
+ 
+     case CP_CMD_LOAD_BP_REG: {
++      if (fifo_truncated(pos, 4, size)) {
++        return;
++      }
+       CHECK(pos + 4 <= size, "BP reg read overrun");
+       u32 value = read_u32(data + pos, bigEndian);
+       pos += 4;
+@@ -394,6 +437,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+     }
+ 
+     case CP_CMD_LOAD_CP_REG: {
++      if (fifo_truncated(pos, 5, size)) {
++        return;
++      }
+       CHECK(pos + 5 <= size, "CP reg read overrun");
+       u8 addr = data[pos++];
+       u32 value = read_u32(data + pos, bigEndian);
+@@ -413,6 +459,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+     case CP_CMD_LOAD_INDX_D: {
+       ZoneScopedN("LOAD_INDX");
+       // Indexed XF load: 4 bytes of data
++      if (fifo_truncated(pos, 4, size)) {
++        return;
++      }
+       CHECK(pos + 4 <= size, "indexed XF read overrun");
+       u32 arrayType = GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08));
+       u8 srcArrayIdx = data[pos++];
+@@ -432,6 +481,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+ 
+     case CP_CMD_CALL_DL: {
+       // Call display list: 8 bytes (address + size)
++      if (fifo_truncated(pos, 8, size)) {
++        return;
++      }
+       CHECK(pos + 8 <= size, "call DL read overrun");
+       Log.warn("Ignoring nested GX_CMD_CALL_DL");
+       pos += 8;
+@@ -566,6 +618,19 @@ static void handle_bp(u32 value, bool bigEndian) {
    switch (regId) {
    // genMode (0x00)
    case 0x00: {
@@ -107,7 +198,27 @@ index 9748556..9e20a60 100644
      g_gxState.numTexGens = bp_get(value, 4, 0);
      g_gxState.numChans = bp_get(value, 3, 4);
      g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
-@@ -1282,6 +1298,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1261,6 +1326,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+ 
+ // XF register handler - decodes XF (transform unit) register writes and updates g_gxState
+ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
++  if (fifo_truncated(pos, 4, size)) {
++    return;
++  }
+   CHECK(pos + 4 <= size, "XF header read overrun");
+   u32 header = read_u32(data + pos, bigEndian);
+   pos += 4;
+@@ -1269,6 +1337,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   u32 addr = header & 0xFFFF;
+   u32 dataBytes = count * 4;
+   // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
++  if (fifo_truncated(pos, dataBytes, size)) {
++    return;
++  }
+   CHECK(pos + dataBytes <= size, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
+ 
+   const u8* xfData = data + pos;
+@@ -1282,6 +1353,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
        u32 reg = xfAddr + i;
        u32 val = read_u32(xfData + i * 4, bigEndian);
  
@@ -125,7 +236,27 @@ index 9748556..9e20a60 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1608,6 +1635,114 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1551,6 +1633,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+     UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
+ 
+   u32 totalVtxBytes = vtxCount * vtxSize;
++  if (fifo_truncated(pos, totalVtxBytes, size)) {
++    return;
++  }
+   if (pos + totalVtxBytes > size)
+     UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
+ 
+@@ -1604,10 +1689,124 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
+   GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
+ 
++  if (fifo_truncated(pos, 2, size)) {
++
++    return;
++
++  }
++
+   CHECK(pos + 2 <= size, "draw vtxCount read overrun");
    u16 vtxCount = read_u16(data + pos, bigEndian);
    pos += 2;
  
@@ -240,6 +371,143 @@ index 9748556..9e20a60 100644
    draw_prim(prim, fmt, vtxCount, data, pos, size);
  }
  
+@@ -1671,10 +1870,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+ }
+ 
+ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
++  if (fifo_truncated(pos, 2, size)) {
++    return {};
++  }
+   CHECK(pos + 2 <= size, "Aurora string length read overrun");
+   const u16 length = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
++  if (fifo_truncated(pos, length, size)) {
++    return {};
++  }
+   CHECK(pos + length <= size, "Aurora string read overrun");
+   std::string str(reinterpret_cast<const char*>(data) + pos, length);
+   pos += length;
+@@ -1683,12 +1888,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+ 
+ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   ZoneScoped;
++  if (fifo_truncated(pos, 2, size)) {
++    return;
++  }
+   CHECK(pos + 2 <= size, "Aurora cmd read overrun");
+   u16 subCmd = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
+   // Setting of vertex array bases.
+   if (subCmd == GX_LOAD_AURORA_VIEWPORT_RENDER) {
++    if (fifo_truncated(pos, 24, size)) {
++      return;
++    }
+     CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
+     const f32 left = read_f32(data + pos, bigEndian);
+     pos += 4;
+@@ -1711,6 +1922,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+         .zfar = farZ,
+     });
+   } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
++    if (fifo_truncated(pos, 16, size)) {
++      return;
++    }
+     CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
+     const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
+     pos += 4;
+@@ -1722,6 +1936,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     pos += 4;
+     set_render_scissor({left, top, width, height});
+   } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
++    if (fifo_truncated(pos, 13, size)) {
++      return;
++    }
+     CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
+     u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
+ 
+@@ -1743,6 +1960,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       g_gxState.stateDirty = true;
+     }
+   } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
++    if (fifo_truncated(pos, 34, size)) {
++      return;
++    }
+     CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
+     const auto texMapId = data[pos];
+     pos += 1;
+@@ -1771,6 +1991,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     slot.set_no_cache(false); // Reset no-cache flag
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX_LOAD_AURORA_TLUT) {
++    if (fifo_truncated(pos, 23, size)) {
++      return;
++    }
+     CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
+     const auto idx = data[pos];
+     pos += 1;
+@@ -1789,6 +2012,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     slot.set_no_cache(false); // Reset no-cache flag
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
++    if (fifo_truncated(pos, 20, size)) {
++      return;
++    }
+     CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
+     g_gxState.frontOffset = read_f32(data + pos, bigEndian);
+     pos += 4;
+@@ -1802,18 +2028,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     pos += 4;
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
++    if (fifo_truncated(pos, 4, size)) {
++      return;
++    }
+     CHECK(pos + 4 <= size, "GX_LOAD_AURORA_DESTROY_TEXOBJ read overrun");
+     evict_texture_object(read_u32(data + pos, bigEndian));
+     pos += 4;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_TLUT) {
++    if (fifo_truncated(pos, 4, size)) {
++      return;
++    }
+     CHECK(pos + 4 <= size, "GX_LOAD_AURORA_DESTROY_TLUT read overrun");
+     evict_tlut_object(read_u32(data + pos, bigEndian));
+     pos += 4;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_COPY_TEX) {
++    if (fifo_truncated(pos, 8, size)) {
++      return;
++    }
+     CHECK(pos + 8 <= size, "GX_LOAD_AURORA_DESTROY_COPY_TEX read overrun");
+     evict_copy_texture(reinterpret_cast<const void*>(read_u64(data + pos, bigEndian)));
+     pos += 8;
+   } else if (subCmd == GX_LOAD_AURORA_DRAW_SIZED) {
++    if (fifo_truncated(pos, 5, size)) {
++      return;
++    }
+     CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
+     u8 cmd = data[pos];
+     pos += 1;
+@@ -1849,4 +2087,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   }
+ }
+ 
++
++// Same processing, but for a buffer that may have been cut mid-command by the
++// host frame boundary. Returns how many bytes were actually consumed: anything
++// after that is the first bytes of a command whose rest has not arrived yet,
++// and the caller must keep it rather than discard it.
++u32 process_stream(const u8* data, u32 size, bool bigEndian) {
++  s_streamMode = true;
++  s_streamTruncated = false;
++  s_streamCmdStart = size;
++  process(data, size, bigEndian);
++  s_streamMode = false;
++  return s_streamTruncated ? s_streamCmdStart : size;
++}
++
++
+ } // namespace aurora::gx::fifo
 diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
 index 9ca9036..83883de 100644
 --- a/lib/gx/gx.cpp

@@ -3,6 +3,7 @@
 #include "port/recomp_host.h"
 
 #include "aurora/lib/logging.hpp"
+#include "aurora/lib/gx/command_processor.hpp"
 #include "aurora/lib/gx/fifo.hpp"
 #include "aurora/lib/gx/gx.hpp"
 
@@ -13,6 +14,7 @@
 #include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXManage.h>
 
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <unordered_map>
@@ -608,6 +610,45 @@ void register_known_gx_calls(const NamedAddress *addresses, size_t count)
     if (!entries.empty()) {
         register_host_calls(entries.data(), entries.size());
     }
+}
+
+
+bool run_fifo_stream_self_test()
+{
+    // Three NOPs (one byte each, no side effects) then a LOAD_BP_REG whose
+    // 4-byte payload is only half present. BP register 0xFF is unassigned, so
+    // even the completed write lands in the processor's unhandled branch and
+    // changes no graphics state.
+    constexpr u8 kNop = 0x00;
+    constexpr u8 kLoadBpReg = 0x61;
+    const std::array<u8, 6> cut { kNop, kNop, kNop, kLoadBpReg, 0xFFu, 0x00u };
+
+    const u32 consumed = aurora::gx::fifo::process_stream(cut.data(), u32(cut.size()), true);
+    if (consumed != 3) {
+        Log.error("fifo stream self-test: expected 3 bytes consumed before the cut command, got {}", consumed);
+        return false;
+    }
+
+    // Now the rest arrives, exactly as it does on the next host frame.
+    const std::array<u8, 5> completed { kLoadBpReg, 0xFFu, 0x00u, 0x00u, 0x00u };
+    const u32 consumedWhole = aurora::gx::fifo::process_stream(completed.data(), u32(completed.size()), true);
+    if (consumedWhole != completed.size()) {
+        Log.error("fifo stream self-test: completed command should consume all {} bytes, got {}", completed.size(),
+            consumedWhole);
+        return false;
+    }
+
+    // A buffer that is entirely one incomplete command must consume nothing at
+    // all, rather than half-executing it.
+    const std::array<u8, 2> onlyCut { kLoadBpReg, 0xFFu };
+    const u32 consumedNone = aurora::gx::fifo::process_stream(onlyCut.data(), u32(onlyCut.size()), true);
+    if (consumedNone != 0) {
+        Log.error("fifo stream self-test: a lone incomplete command should consume 0 bytes, got {}", consumedNone);
+        return false;
+    }
+
+    Log.info("fifo stream self-test: an incomplete trailing command is carried over instead of aborting");
+    return true;
 }
 
 } // namespace sms::recomp::gx_fifo

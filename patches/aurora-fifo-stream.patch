@@ -1,0 +1,46 @@
+diff --git a/lib/gx/command_processor.hpp b/lib/gx/command_processor.hpp
+index 93feba1..74f4022 100644
+--- a/lib/gx/command_processor.hpp
++++ b/lib/gx/command_processor.hpp
+@@ -7,4 +7,10 @@ namespace aurora::gx::fifo {
+ // Process a buffer of GX FIFO commands
+ void process(const uint8_t* data, uint32_t size, bool bigEndian);
+ 
++// Process a buffer that may have been cut mid-command, and report how many
++// bytes were usable. The remainder is the start of a command whose payload has
++// not arrived yet and must be carried over, exactly as the real GP waits for
++// the rest of a stream rather than treating a short read as an error.
++uint32_t process_stream(const uint8_t* data, uint32_t size, bool bigEndian);
++
+ } // namespace aurora::gx::fifo
+diff --git a/lib/gx/fifo.cpp b/lib/gx/fifo.cpp
+index 1e986e9..0afbc19 100644
+--- a/lib/gx/fifo.cpp
++++ b/lib/gx/fifo.cpp
+@@ -72,8 +72,24 @@ void drain() {
+   if (detail::sBufferSize == 0) {
+     return;
+   }
+-  process(detail::sBufferData, detail::sBufferSize, true);
+-  detail::sBufferSize = 0;
++  const uint32_t consumed = process_stream(detail::sBufferData, detail::sBufferSize, true);
++  if (consumed >= detail::sBufferSize) {
++    detail::sBufferSize = 0;
++    return;
++  }
++  // The host cut the stream inside a command. Keep that command's first bytes
++  // so the next drain sees it whole, instead of discarding them and aborting.
++  const uint32_t tail = detail::sBufferSize - consumed;
++  std::memmove(detail::sBufferData, detail::sBufferData + consumed, tail);
++  detail::sBufferSize = tail;
++  // A tail that never completes would grow without bound and silently stop
++  // every later command from being drawn, so say so once rather than let it
++  // look like a rendering bug.
++  static bool warned = false;
++  if (!warned && tail > 64 * 1024) {
++    warned = true;
++    Log.warn("fifo: {} bytes have been carried over without completing a command", tail);
++  }
+ }
+ 
+ const uint8_t* get_buffer_data() { return detail::sBufferData; }

@@ -41,4 +41,22 @@ struct NamedAddress {
 };
 void register_known_gx_calls(const NamedAddress *addresses, size_t count);
 
+// Regression test for the FIFO cut this port produces by construction.
+//
+// step_game() runs the guest for a fixed budget of translated blocks and stops
+// at whatever instruction that budget expires on, which can fall between a GX
+// command's opcode and its payload. Aurora's drain() then used to process that
+// buffer whole and abort - measured twice as "draw vertex data overrun: need 80
+// bytes at pos N, have N", at two unrelated FIFO positions but with
+// byte-identical preceding commands, so a cut rather than corruption.
+//
+// Deterministic, unlike the crash it stands in for: it feeds process_stream a
+// buffer that ends mid-command and checks the incomplete tail is reported
+// rather than consumed, then that completing it processes the whole thing.
+//
+// It exercises the carry-over mechanism, not the draw path specifically -
+// a draw needs live GX and graphics state that a headless test has no way to
+// stand up honestly.
+bool run_fifo_stream_self_test();
+
 } // namespace sms::recomp::gx_fifo
