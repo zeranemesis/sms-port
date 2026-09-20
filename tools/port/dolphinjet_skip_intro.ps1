@@ -33,6 +33,8 @@ public class Win32Input {
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hWnd, IntPtr hdcBlt, uint nFlags);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
@@ -47,7 +49,10 @@ public class Win32Input {
         uint fgThread = GetWindowThreadProcessId(fg, IntPtr.Zero);
         uint thisThread = GetCurrentThreadId();
         AttachThreadInput(thisThread, fgThread, true);
-        ShowWindow(hWnd, 9); // SW_RESTORE
+        // SW_SHOW, not SW_RESTORE: restoring un-maximises a maximised window,
+        // which silently resized the game mid-run and made captures of a
+        // window that no longer had the size it started with.
+        ShowWindow(hWnd, 5); // SW_SHOW
         BringWindowToTop(hWnd);
         bool ok = SetForegroundWindow(hWnd);
         AttachThreadInput(thisThread, fgThread, false);
@@ -135,16 +140,30 @@ while ((Get-Date) -lt $deadline) {
         [Win32Input]::keybd_event(0, $SCAN_Z, $KEYEVENTF_SCANCODE -bor $KEYEVENTF_KEYUP, [UIntPtr]::Zero)
     }
     if ($ShotEvery -gt 0 -and ($shot % $ShotEvery) -eq 0) {
+        # PrintWindow renders the window's own content into a bitmap instead of
+        # photographing the screen. It does not care what is in front, so it
+        # cannot capture the developer's other windows - which has already
+        # happened twice, once with private content and once producing a
+        # convincing false positive - and it needs no focus stealing.
+        #
+        # PW_RENDERFULLCONTENT (2) is required for a GPU-composited window;
+        # without it a hardware-accelerated surface comes back blank.
         $proc.Refresh()
         $rect = New-Object Win32Input+RECT
-        if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and [Win32Input]::GetWindowRect($proc.MainWindowHandle, [ref]$rect)) {
+        if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and [Win32Input]::GetClientRect($proc.MainWindowHandle, [ref]$rect)) {
             $w = $rect.Right - $rect.Left
             $h = $rect.Bottom - $rect.Top
             if ($w -gt 0 -and $h -gt 0) {
                 $bmp = New-Object System.Drawing.Bitmap($w, $h)
                 $g = [System.Drawing.Graphics]::FromImage($bmp)
-                $g.CopyFromScreen((New-Object System.Drawing.Point($rect.Left, $rect.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $h)))
-                $bmp.Save((Join-Path $OutDir ("skip_{0:d2}.png" -f $shot)), [System.Drawing.Imaging.ImageFormat]::Png)
+                $hdc = $g.GetHdc()
+                $ok = [Win32Input]::PrintWindow($proc.MainWindowHandle, $hdc, 2)
+                $g.ReleaseHdc($hdc)
+                if ($ok) {
+                    $bmp.Save((Join-Path $OutDir ("skip_{0:d2}.png" -f $shot)), [System.Drawing.Imaging.ImageFormat]::Png)
+                } else {
+                    Write-Host "[shots] PrintWindow a echoue pour la capture $shot"
+                }
                 $g.Dispose(); $bmp.Dispose()
             }
         }

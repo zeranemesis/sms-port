@@ -2126,3 +2126,41 @@ Nothing in the generated vertex shader remaps depth: it is
 draw landing at ndc z = -0.015 with a projection whose z row makes that constant.
 What is not yet measured is whether every 3D draw shares that projection, and
 why the 2D paths - which do render - survive it.
+
+## 2026-09-20: the game renders
+
+The depth convention was the cause. Comparing the two projection types with the
+same CPU-side recomputation settles it:
+
+| | ndc z | outcome |
+| --- | --- | --- |
+| orthographic (rendered) | **0.000** | exactly on the edge of [0, 1], survives |
+| perspective (did not) | **-0.015** | outside [0, 1], clipped |
+
+GX puts normalised depth in **[-1, 0]** - near at 0, far at -1 - which OpenGL
+accepts. **WebGPU clips to [0, 1].** Every perspective vertex was therefore
+discarded before rasterisation, and the 2D paths only ever rendered because
+they sit at exactly z = 0. Negating the projection's z column on the uploaded
+copy maps [-1, 0] onto [0, 1]; `g_gxState.proj` itself is untouched, so
+`GXGetProjectionv` still returns what the guest set.
+
+Mario stands on the Delfino Airstrip with FLUDD, the scaffolding, the brick
+tower, shadows and the full HUD. **Super Mario Sunshine renders.**
+
+### Two captures that were not what they looked like
+
+A capture taken right after the fix showed 311,728 non-black pixels and
+hundreds of colours - and was a photograph of the conversation window, because
+`CopyFromScreen` records whatever occupies those coordinates and the game was
+not in front. Its statistics were indistinguishable from a successful render.
+That would have been the eleventh false reading, and it was caught only by
+looking at the image instead of trusting the numbers.
+
+The harness now uses `PrintWindow` with `PW_RENDERFULLCONTENT`, which renders
+the window's own content. It cannot capture anything else, needs no focus
+stealing, and removes the privacy problem at the root rather than narrowing the
+rectangle. It was validated on the intro before being believed.
+
+`ShowWindow(SW_RESTORE)` was also un-maximising the game window mid-run, so
+some captures were of a window that no longer had the size it started with.
+It uses `SW_SHOW` now.
