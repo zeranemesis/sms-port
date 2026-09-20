@@ -2164,3 +2164,34 @@ rectangle. It was validated on the intro before being believed.
 `ShowWindow(SW_RESTORE)` was also un-maximising the game window mid-run, so
 some captures were of a window that no longer had the size it started with.
 It uses `SW_SHOW` now.
+
+## 2026-09-20: the flicker was empty frames between real ones
+
+Reported from actually watching the game run, which no counter here had said
+anything about.
+
+`aurora_begin_frame()` clears the EFB and everything the guest emits is drained
+into it at `end_frame`. The host loop ran at the display's refresh rate while
+the guest produced 60 frames a second, so on a 144Hz display **84 iterations a
+second cleared the EFB and presented it empty** - a black frame between every
+pair of real ones.
+
+This was predicted from the loop's shape during an earlier exploration and
+written down as "structural, not hypothetical", and then not acted on because
+nothing was measuring it. Someone looking at the screen found it immediately.
+
+The pacing decision now happens **before** `aurora_begin_frame()`: when no guest
+frame is due the loop sleeps a millisecond and continues without drawing, so
+the window keeps showing the last complete image - which is what a console does
+between retraces. Sleeping rather than spinning matters, because these are the
+majority of iterations on a high-refresh display and a spin would take host time
+away from the guest.
+
+| | before | after |
+| --- | --- | --- |
+| host frames presented/s | 144 | **60** |
+| guest steps/s | 60 | 60 |
+| empty frames/s | **84** | **0** |
+
+The menu-only path is untouched: with no game running there is no guest frame
+to wait for and every iteration presents as before.

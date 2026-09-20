@@ -150,6 +150,15 @@ void try_boot_game()
 // otherwise this is exactly the menu-only loop it always was.
 static bool run_menu_loop()
 {
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+    // Guest frame pacing, read before every present - see the block inside the
+    // loop for why the decision has to precede aurora_begin_frame().
+    constexpr double kGuestFrameSeconds = 1.0 / 60.0;
+    constexpr unsigned kMaxCatchUpFrames = 4;
+    double guestFrameDebt = 0.0;
+    Uint64 lastStepTicks = SDL_GetTicks();
+#endif
+
     while (sms::IsRunning) {
         const AuroraEvent *event = aurora_update();
         while (event != nullptr && event->type != AURORA_NONE) {
@@ -164,6 +173,42 @@ static bool run_menu_loop()
             }
             event++;
         }
+
+#ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
+        // Do not present a frame the guest did not draw.
+        //
+        // aurora_begin_frame() clears the EFB, and everything the guest emits
+        // is drained into it at end_frame. On a 144Hz display with a 60Hz
+        // guest, most host iterations have no guest step behind them, so they
+        // cleared the EFB and presented it empty - a black frame between every
+        // pair of real ones. That is the flicker, and it is structural rather
+        // than a glitch: it was predicted from the loop's shape before it was
+        // ever seen.
+        //
+        // The debt is accumulated here, ahead of begin_frame, so the decision
+        // can be made before anything is cleared. When no guest frame is due
+        // the loop yields instead of drawing; the window keeps showing the
+        // last complete image, which is what a real console does between
+        // retraces.
+        //
+        // The menu-only path is unaffected: with no game running there is no
+        // guest frame to wait for and every iteration presents as before.
+        {
+            const Uint64 nowTicks = SDL_GetTicks();
+            guestFrameDebt += double(nowTicks - lastStepTicks) / 1000.0;
+            lastStepTicks = nowTicks;
+            if (guestFrameDebt > kMaxCatchUpFrames * kGuestFrameSeconds) {
+                guestFrameDebt = kMaxCatchUpFrames * kGuestFrameSeconds;
+            }
+            if (g_gameRunning && guestFrameDebt < kGuestFrameSeconds) {
+                // Sleep rather than spin: this is the majority of iterations
+                // on a high-refresh display, and burning a core on them would
+                // take host time away from the guest.
+                SDL_Delay(1);
+                continue;
+            }
+        }
+#endif
 
         const bool frameBegun = aurora_begin_frame();
 
@@ -230,21 +275,11 @@ static bool run_menu_loop()
             // retrace rate is whatever the guest programs into VI; deriving both
             // this and kCyclesPerFrame from the VI registers rather than from a
             // constant is a separate, unmeasured question and is NOT settled here.
-            constexpr double kGuestFrameSeconds = 1.0 / 60.0;
+            // (declared at function scope - see the pacing block above)
             // Never run more than a few guest frames per host frame. Without a
             // cap, one long hitch (a shader compile, a disc read) makes the next
             // iteration try to catch up over the whole gap, which takes even
             // longer and never recovers.
-            constexpr unsigned kMaxCatchUpFrames = 4;
-            static double guestFrameDebt = 0.0;
-            static Uint64 lastStepTicks = SDL_GetTicks();
-
-            const Uint64 nowTicks = SDL_GetTicks();
-            guestFrameDebt += double(nowTicks - lastStepTicks) / 1000.0;
-            lastStepTicks = nowTicks;
-            if (guestFrameDebt > kMaxCatchUpFrames * kGuestFrameSeconds) {
-                guestFrameDebt = kMaxCatchUpFrames * kGuestFrameSeconds;
-            }
 
             // Where the host second actually goes. The port sits at ~101% of
             // one core, and "the guest is slow" and "the host loop around it is
