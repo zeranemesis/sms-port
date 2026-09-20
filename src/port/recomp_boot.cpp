@@ -1278,10 +1278,10 @@ bool boot_game(CPUState *cpu)
         // The guest TLUT contains a GameCube address; expose the equivalent
         // native palette pointer to Aurora before the original SDK loads it.
         { "GXLoadTlut", DOLRECOMP_SYMBOL_GXLoadTlut },
-        // Aurora cannot compile TEV alpha compare operations yet. The bridge
-        // keeps the SDK routine but substitutes its unsupported op safely.
-        { "GXSetTevAlphaOp", DOLRECOMP_SYMBOL_GXSetTevAlphaOp },
         { "GXInvalidateTexAll", DOLRECOMP_SYMBOL_GXInvalidateTexAll },
+        // J3D encodes material state in display lists. The bridge only
+        // observes the command prefix and lets the recompiled SDK submit it.
+        { "GXCallDisplayList", DOLRECOMP_SYMBOL_GXCallDisplayList },
     };
     gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
 

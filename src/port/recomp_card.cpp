@@ -103,8 +103,16 @@ bool host_call_card_probe_ex(CPUState *cpu, u32)
     // memSizeAddr/sectorSizeAddr are guest addresses, not valid host
     // pointers - write the results back through guest memory rather than
     // handing Aurora's real out-params directly to the guest.
-    mem_write32(cpu, memSizeAddr, static_cast<u32>(memSize));
-    mem_write32(cpu, sectorSizeAddr, static_cast<u32>(sectorSize));
+    // CARDProbeEx permits either output pointer to be null.  Sunshine uses a
+    // null mem-size pointer while asking only for the sector size during its
+    // mount probe; address zero is not guest storage and must not be written
+    // merely because the host API used a local temporary.
+    if (memSizeAddr != 0) {
+        mem_write32(cpu, memSizeAddr, static_cast<u32>(memSize));
+    }
+    if (sectorSizeAddr != 0) {
+        mem_write32(cpu, sectorSizeAddr, static_cast<u32>(sectorSize));
+    }
     cpu->gpr[3] = static_cast<u32>(result);
     Log.info("CARDProbeEx(chan={}) -> {} (memSize={} sectorSize={})", chan, result, memSize, sectorSize);
     return true;

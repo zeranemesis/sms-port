@@ -435,6 +435,64 @@ bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
     return true;
 }
 
+// J3D materials do not use GXLoadTexObj.  They write TEXIMAGE0/TEXIMAGE3
+// directly into a display list, which is valid on the GameCube but leaves
+// Aurora with a guest physical address and no host pointer.  Translate that
+// raw pair into Aurora's metadata command before the guest submits the list.
+bool emit_display_list_texture_metadata(CPUState *cpu, u32 textureMap, u32 image0,
+                                        u32 image3, u32 mode1)
+{
+    constexpr u32 kTextureMapCount = 8;
+    if (textureMap >= kTextureMapCount) return false;
+
+    const u32 width = (image0 & 0x3FFu) + 1;
+    const u32 height = ((image0 >> 10) & 0x3FFu) + 1;
+    const u32 format = (image0 >> 20) & 0xFu;
+    const u32 imageAddress = (image3 & 0x001FFFFFu) << 5;
+    const u32 imageOffset = imageAddress & 0x03FFFFFFu;
+    const u64 sourceBytes = texture_source_bytes(width, height, format);
+    if (imageOffset >= cpu->ram_size || sourceBytes > cpu->ram_size - imageOffset) {
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(imageAddress).second) {
+            Log.warn("J3D display-list texture {:#010x} + {:#x} bytes runs past guest RAM", imageAddress,
+                sourceBytes);
+        }
+        return false;
+    }
+
+    // Keep this identity disjoint from real guest GXTexObj addresses (which
+    // use the cached/uncached GameCube regions).  A source address is a stable
+    // identity for a direct J3D load; the signature still advances the
+    // revision if a mutable buffer is reused.
+    const u32 textureId = 0x40000000u | imageOffset;
+    const u64 contentSignature = sampled_texture_content_signature(
+        cpu->ram + imageOffset, cpu->ram_size - imageOffset, width, height, format);
+    const u64 signature = (u64(image0) << 32) ^ u64(image3) ^ u64(mode1)
+        ^ (u64(textureMap) << 56) ^ contentSignature;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(
+        textureId, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) revisionIt->second.version = 1;
+    }
+
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TEXOBJ);
+    aurora::gx::fifo::write_u8(static_cast<u8>(textureMap));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + imageOffset));
+    aurora::gx::fifo::write_u32(width);
+    aurora::gx::fifo::write_u32(height);
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u32(0);
+    // J3D's direct path has no GXTexObj flags.  A non-zero max LOD is the
+    // observable indication that the material can select a mip level.
+    aurora::gx::fifo::write_u8(((mode1 >> 8) & 0xFFu) != 0);
+    aurora::gx::fifo::write_u32(textureId);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return true;
+}
+
 bool host_call_gx_init(CPUState *, u32)
 {
     // Aurora's GXInit is a faithful reimplementation - it runs
@@ -617,6 +675,68 @@ bool host_call_gx_load_tex_obj_preloaded(CPUState *cpu, u32)
     return false;
 }
 
+bool host_call_gx_load_tlut(CPUState *cpu, u32)
+{
+    // GXTlutObj is a 12-byte big-endian guest object:
+    //   +0x00: TLUT format/register state, +0x04: BP 0x64 source address,
+    //   +0x08: palette entry count.  The recompiled SDK must still run after
+    // this observer to preserve its GX shadow-state and BP register writes.
+    constexpr u32 kGuestTlutObjSize = 0x0C;
+    constexpr u32 kGuestLoadTlut0Offset = 0x04;
+    constexpr u32 kGuestNumEntriesOffset = 0x08;
+    constexpr u32 kTlutCount = 20;
+
+    const u32 objectAddress = cpu->gpr[3];
+    const u32 tlutIndex = cpu->gpr[4];
+    const u32 objectOffset = objectAddress & 0x03FFFFFFu;
+    if (tlutIndex >= kTlutCount || objectOffset > cpu->ram_size
+        || kGuestTlutObjSize > cpu->ram_size - objectOffset) {
+        return false;
+    }
+
+    const u32 tlut = mem_read32(cpu, objectAddress);
+    const u32 loadTlut0 = mem_read32(cpu, objectAddress + kGuestLoadTlut0Offset);
+    const u16 numEntries = mem_read16(cpu, objectAddress + kGuestNumEntriesOffset);
+    const u32 paletteAddress = (loadTlut0 & 0x001FFFFFu) << 5;
+    const u32 paletteOffset = paletteAddress & 0x03FFFFFFu;
+    const u64 paletteBytes = u64(numEntries) * 2u;
+    if (numEntries == 0 || paletteOffset >= cpu->ram_size
+        || paletteBytes > cpu->ram_size - paletteOffset) {
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(paletteAddress).second) {
+            Log.warn("GXLoadTlut palette {:#010x} + {:#x} bytes is outside guest RAM", paletteAddress,
+                paletteBytes);
+        }
+        return false;
+    }
+
+    // Aurora caches a TLUT by object ID and revision just like it caches a
+    // texture.  Guest GX objects do not carry either, so use their stable RAM
+    // address and advance the revision when the palette contents change.
+    const u32 objectId = 0x60000000u | objectOffset;
+    const u32 format = (tlut >> 10) & 0x3u;
+    const u64 signature = sampled_texture_content_signature(
+        cpu->ram + paletteOffset, cpu->ram_size - paletteOffset, numEntries, 1, 5)
+        ^ (u64(format) << 48) ^ (u64(numEntries) << 32) ^ paletteAddress;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(
+        objectId, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) revisionIt->second.version = 1;
+    }
+
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TLUT);
+    aurora::gx::fifo::write_u8(static_cast<u8>(tlutIndex));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + paletteOffset));
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u16(numEntries);
+    aurora::gx::fifo::write_u32(objectId);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return false;
+}
+
 bool host_call_gx_invalidate_tex_all(CPUState *, u32)
 {
     // The guest routine only writes GameCube texture-cache invalidation BP
@@ -627,15 +747,126 @@ bool host_call_gx_invalidate_tex_all(CPUState *, u32)
     return false;
 }
 
-bool host_call_gx_copy_disp(CPUState *cpu, u32)
+// GXCallDisplayList has to run in the recompiled SDK: besides emitting the
+// CALL_DL packet, its body flushes the guest's dirty GX state first.  Returning
+// false below keeps precisely that behaviour.  This observer only reads the
+// material list before it is submitted, so it can answer a narrow but important
+// question about the black 3D scene: did J3D's GDSetGenMode2 actually write a
+// multi-stage TEV genMode into a list the game is about to call?
+//
+// The scan intentionally stops at the first primitive.  Material display
+// lists are command-only; beyond a draw command the byte count depends on the
+// live vertex descriptor and attempting to parse it here would manufacture a
+// second FIFO parser.  A list that does not have a safely readable command
+// prefix is simply not reported.
+bool host_call_gx_call_display_list(CPUState *cpu, u32)
 {
-    // dest (r3) is a guest framebuffer address - not forwarded, since
-    // Aurora's real GXCopyDisp is currently an empty stub regardless
-    // (verified reading GXFrameBuffer.cpp) and never touches it. clear
-    // (r4) is scalar and safe to pass through.
-    const GXBool clear = static_cast<GXBool>(cpu->gpr[4]);
-    GXCopyDisp(nullptr, clear);
-    return true;
+    const u32 guestAddress = cpu->gpr[3];
+    const u32 bytes = cpu->gpr[4];
+    const u32 offset = guestAddress & 0x03FFFFFFu;
+    if (bytes == 0 || offset >= cpu->ram_size || bytes > cpu->ram_size - offset) {
+        return false;
+    }
+
+    const u8 *const data = cpu->ram + offset;
+    u32 pos = 0;
+    u32 bpWrites = 0;
+    bool hasGenMode = false;
+    u32 genMode = 0;
+    struct RawTexture {
+        u32 image0 = 0;
+        u32 image3 = 0;
+        u32 mode1 = 0;
+        bool hasImage0 = false;
+        bool hasImage3 = false;
+    };
+    std::array<RawTexture, 8> textures {};
+
+    const auto textureMapForRegister = [](u32 reg, u32 low, u32 high) -> int {
+        if (reg >= low && reg < low + 4) return static_cast<int>(reg - low);
+        if (reg >= high && reg < high + 4) return static_cast<int>(reg - high + 4);
+        return -1;
+    };
+
+    while (pos < bytes) {
+        const u8 opcode = data[pos++];
+        if (opcode == 0x00) {
+            continue;
+        }
+        // Draw commands contain a descriptor-dependent vertex payload.  The
+        // preceding command prefix is all a J3D material list needs for this
+        // diagnostic, and is the only part we can parse independently.
+        if (opcode >= 0x80 && opcode <= 0xBF) {
+            break;
+        }
+        if (opcode == 0x61) { // CP_CMD_LOAD_BP_REG
+            if (bytes - pos < 4) break;
+            const u32 value = (u32(data[pos]) << 24) | (u32(data[pos + 1]) << 16)
+                | (u32(data[pos + 2]) << 8) | u32(data[pos + 3]);
+            pos += 4;
+            ++bpWrites;
+            if ((value >> 24) == 0x00u) {
+                hasGenMode = true;
+                genMode = value;
+            }
+            const u32 reg = value >> 24;
+            if (const int map = textureMapForRegister(reg, 0x88u, 0xA8u); map >= 0) {
+                textures[static_cast<size_t>(map)].image0 = value;
+                textures[static_cast<size_t>(map)].hasImage0 = true;
+            } else if (const int map = textureMapForRegister(reg, 0x94u, 0xB4u); map >= 0) {
+                textures[static_cast<size_t>(map)].image3 = value;
+                textures[static_cast<size_t>(map)].hasImage3 = true;
+            } else if (const int map = textureMapForRegister(reg, 0x84u, 0xA4u); map >= 0) {
+                textures[static_cast<size_t>(map)].mode1 = value;
+            }
+            continue;
+        }
+        if (opcode == 0x08) { // LOAD_CP_REG
+            if (bytes - pos < 5) break;
+            pos += 5;
+            continue;
+        }
+        if (opcode >= 0x20 && opcode <= 0x38 && (opcode & 7u) == 0) { // indexed XF
+            if (bytes - pos < 4) break;
+            pos += 4;
+            continue;
+        }
+        if (opcode == 0x40) { // CALL_DL
+            if (bytes - pos < 8) break;
+            pos += 8;
+            continue;
+        }
+        if (opcode == 0x10) { // LOAD_XF_REG: header plus `count` words
+            if (bytes - pos < 4) break;
+            const u16 countMinusOne = static_cast<u16>((u16(data[pos]) << 8) | data[pos + 1]);
+            const u64 payload = 4u + (u64(countMinusOne) + 1u) * 4u;
+            if (payload > bytes - pos) break;
+            pos += static_cast<u32>(payload);
+            continue;
+        }
+        // Unknown command: do not make any claim about this list.
+        return false;
+    }
+
+    for (u32 map = 0; map < textures.size(); ++map) {
+        const RawTexture &texture = textures[map];
+        if (texture.hasImage0 && texture.hasImage3) {
+            emit_display_list_texture_metadata(cpu, map, texture.image0, texture.image3, texture.mode1);
+        }
+    }
+
+    if (hasGenMode) {
+        static std::unordered_set<u64> reported;
+        constexpr size_t kMaxReports = 48;
+        const u64 key = (u64(offset) << 32) | genMode;
+        if (reported.size() < kMaxReports && reported.insert(key).second) {
+            Log.info("GXCallDisplayList material candidate at {:#010x}, {} bytes: {} BP writes, "
+                     "genMode={:#010x} (texgens={} channels={} TEV stages={})",
+                guestAddress, bytes, bpWrites, genMode, genMode & 0xFu,
+                (genMode >> 4) & 0x7u, ((genMode >> 10) & 0xFu) + 1u);
+        }
+    }
+    return false;
 }
 
 } // namespace
@@ -658,16 +889,18 @@ void register_known_gx_calls(const NamedAddress *addresses, size_t count)
             fn = &host_call_gx_draw_done;
         } else if (std::strcmp(name, "GXFlush") == 0) {
             fn = &host_call_gx_flush;
-        } else if (std::strcmp(name, "GXCopyDisp") == 0) {
-            fn = &host_call_gx_copy_disp;
         } else if (std::strcmp(name, "GXSetArray") == 0) {
             fn = &host_call_gx_set_array;
         } else if (std::strcmp(name, "GXLoadTexObj") == 0) {
             fn = &host_call_gx_load_tex_obj;
         } else if (std::strcmp(name, "GXLoadTexObjPreLoaded") == 0) {
             fn = &host_call_gx_load_tex_obj_preloaded;
+        } else if (std::strcmp(name, "GXLoadTlut") == 0) {
+            fn = &host_call_gx_load_tlut;
         } else if (std::strcmp(name, "GXInvalidateTexAll") == 0) {
             fn = &host_call_gx_invalidate_tex_all;
+        } else if (std::strcmp(name, "GXCallDisplayList") == 0) {
+            fn = &host_call_gx_call_display_list;
         }
         if (fn) {
             entries.push_back({ addresses[i].address, name, fn });

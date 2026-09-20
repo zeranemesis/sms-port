@@ -42,6 +42,77 @@ Les observations détaillées et les commandes de build restent dans `docs/port_
 - Des auto-tests couvrent le cache verrouillé, son chemin `psq_st` avec GQR6, et le transfert FPU entre deux contextes invités. Tous les tests du runtime passent avec la build `RelWithDebInfo`.
 - La validation reste de niveau `SCRIPTED` : une inspection humaine de l'image, du son, des menus, de la création/relecture de sauvegarde et du gameplay reste nécessaire avant de déclarer un jalon jouable.
 
+## État fonctionnel vérifié le 2026-09-20 (suite)
+
+- L'entrée clavier atteint réellement le jeu : `Z` est mappé à `PAD_BUTTON_A`,
+  permet de sauter l'intro et le journal invité confirme l'état
+  `APP_STATE_GAMEPLAY`. Ce résultat dépend d'une fenêtre SDL au premier plan ;
+  il prouve le trajet clavier → SDL → Aurora → `PADRead` → jeu, mais ne
+  remplace pas un test à la manette.
+- Le blocage initial de gameplay était `GXWaitDrawDone` : la tâche principale
+  attendait indéfiniment le signal PE_FINISH absent. Le pont `GXSetDrawDone`
+  marque maintenant le drapeau invité terminé après le rendu synchrone Aurora.
+  Les callbacks PE et le modèle complet d'interruption restent à faire.
+- Le FIFO GX exécute désormais les listes d'affichage invitées et résout les
+  bases de tableaux CP dans la RAM recompilée. Les désynchronisations de FIFO,
+  les rejets de bases de tableaux et le crash d'upload des tableaux indexés ne
+  se reproduisent plus dans un run de gameplay de 70 s.
+- Le menu de fichiers/options est visiblement rendu. Après validation du menu,
+  la boucle de jeu soumet environ 80 000 draws et 640 000 sommets par seconde,
+  sans crash pendant 70 s, mais la scène 3D demeure noire. C'est le bloqueur
+  actuel : les compteurs montrent que la géométrie arrive ; l'état de matériaux
+  (TEV/BP) des listes J3D doit être mesuré puis corrigé, pas remplacé par un
+  état artificiel.
+- Le pont de textures couvre également les matériaux J3D qui écrivent
+  `TEXIMAGE0`/`TEXIMAGE3` directement dans une liste d'affichage au lieu
+  d'appeler `GXLoadTexObj`. Aurora reçoit maintenant le pointeur hôte de ces
+  pixels avant l'exécution de la liste. La validation visuelle atteint une
+  scène de gameplay 3D : Mario, FLUDD, HUD, eau, ombres, terrain et textures
+  sont visibles. Ce jalon valide le rendu de base ; il ne valide pas encore
+  toutes les zones, effets, palettes ni le parcours complet.
+- `GXLoadTlut` est maintenant observé par le port : la palette GameCube est
+  traduite en pointeur hôte et en révision Aurora, tout en laissant le SDK
+  recompilé émettre ses registres BP. Cette correction cible les artéfacts
+  d'objets et d'effets indexés vus en gameplay. La build, l'intro THP et une
+  cinématique en moteur (Peach, Toads et sous-titres) sont validées avec ce
+  chemin. Les plans très saturés suivants sont l'effet de goop de la scène,
+  pas une palette globalement corrompue.
+- La build `RelWithDebInfo` est reproductible et les auto-tests host-call,
+  MMIO, SDK, décrémenteur, PAD, cache verrouillé et contexte FPU passent.
+- La carte mémoire dispose des ponts synchrones init/mount/open/create/
+  read/write/statut, mais la création puis le rechargement d'une sauvegarde
+  par un humain ne sont pas encore validés. Les API CARD asynchrones restent
+  volontairement observées par le SDK recompilé, sans callback invité forgé.
+- La création est néanmoins confirmée au niveau du support hôte : le jeu a
+  produit `EUR/Card A/01-GMSP-super_mario_sunshine.gci` (57 408 octets) dans
+  le profil DolphinJet. La relecture après redémarrage est maintenant
+  confirmée par un run séparé : `CARDOpen`, `CARDGetStatus`, `CARDRead` (8
+  192 octets) et `CARDClose` retournent tous `CARD_RESULT_READY`.
+- Le pont ne détourne plus `GXCopyDisp` vers l'entrée publique Aurora, qui est
+  un stub. Le corps recompilé du SDK est à nouveau exécuté : il émet les
+  registres BP de copie EFB → XFB directement dans le FIFO, y compris le
+  déclencheur de copie. Une exécution reconstruite affiche l'intro THP, le
+  plan de vol et la carte animée avec ce chemin. Les écrans noirs initiaux
+  restent des transitions à mesurer ; ils ne sont plus masqués par un appel
+  de copie vide.
+- Une séquence propre atteint ensuite un vrai gameplay 3D : niveau, Mario,
+  FLUDD, HUD, pièces, transparences, géométrie dense et éclairage sont
+  visibles. L'écran noir vu juste avant s'est résorbé durant la transition ;
+  il est désormais classé comme chargement à mesurer (durée bornée), et non
+  comme une panne de rendu permanente.
+- Le crash de pipeline qui interrompait certaines cinématiques et matériaux a
+  été corrigé dans Aurora. `GX_TEV_COMP_A8_*` partage les valeurs numériques
+  de `GX_TEV_COMP_RGB8_*`, mais les opérandes alpha sont scalaires : le
+  générateur WGSL produisait donc à tort un accès `.r` sur un `f32`. Le chemin
+  alpha génère désormais sa comparaison scalaire et la version du cache de
+  pipelines est passée à 14 afin qu'aucun shader WGSL défectueux préexistant
+  ne soit réutilisé.
+- Validation graphique manuelle du correctif : un run Direct3D 12 a dépassé
+  30 000 draws/s sans erreur WGSL ni arrêt du processus ; un second run Vulkan
+  a franchi le boot, la cinématique avec Mario/Peach/Toad, les panoramas 3D
+  d'Isle Delfino et les séquences suivantes avec modèles, textures et couleurs
+  cohérents. Le réglage utilisateur a été remis sur `Auto` après ces essais.
+
 ## Ordre d'exécution
 
 | Jalon | Résultat livrable | Critère de sortie mesurable |
@@ -57,15 +128,33 @@ Les observations détaillées et les commandes de build restent dans `docs/port_
 
 ## Travail prioritaire immédiat
 
-1. Valider le décrémenteur pendant un démarrage réel : l'alarme doit entrer dans `DecrementerExceptionHandler` puis reprendre le contexte sans boucle.
+1. Atteindre la sélection de fichier et lancer explicitement le GCI existant,
+   puis couvrir une entrée et une sortie de niveau. Mesurer la durée des
+   écrans noirs de chargement ; ne les traiter comme un défaut que si le jeu
+   cesse de progresser ou si le délai est anormalement long.
+   La première cinématique ne peut pas être court-circuitée par une simple
+   touche A : le code de `TMovieDirector` ne l'accepte qu'après que le drapeau
+   « déjà vue » a été enregistré. Le test doit donc attendre la fin de la
+   démo, ou repartir d'un état de titre réel ; il ne doit pas confondre cette
+   règle du jeu avec une perte d'entrée clavier.
 
-2. Faire un playtest avec une manette réelle et une image PAL configurée : vérifier marche, caméra, FLUDD et vibration via le pont PAD.
+2. Étendre la validation graphique à la sélection de sauvegarde, l'aéroport
+   jouable et la place Delfino. Les cinématiques et panoramas d'Isle Delfino
+   sont désormais validés sur Direct3D 12 et Vulkan ; les textures à palette,
+   les effets EFB/XFB et la caméra de jeu restent à contrôler dans une scène
+   interactive.
 
-3. Vérifier au casque la synchronisation et la qualité de la sortie AI DMA dans l'intro, puis dans trois niveaux ; la plomberie est active mais l'écoute humaine reste à faire.
+3. Une fois la scène 3D visible, faire un playtest à la manette : marche,
+   caméra, FLUDD, pause, mort et changement de zone.
 
-4. Produire des captures de référence de l'intro THP et comparer le TEV/Aurora à la console : les plans YUV sont maintenant cohérents, donc le prochain écart visuel éventuel se situe dans GX/TEV ou la présentation.
+4. Vérifier au casque la synchronisation et la qualité de la sortie AI DMA dans
+   l'intro puis dans trois niveaux ; le transport est actif, l'écoute humaine
+   manque.
 
-5. Construire un playtest reproductible du titre jusqu'à l'aéroport, puis remplacer progressivement l'automatisation par une manette réelle.
+5. La création puis la relecture du GCI sont validées. Vérifier maintenant
+   une mise à jour de progression et sa relecture, sans formater ni écraser la
+   carte. Les API asynchrones CARD ne seront bridgées que lorsqu'un appel réel
+   le nécessitera et avec un chemin de callback invité vérifiable.
 
 Ces actions sont ordonnées par dépendance : sans horloge, interruptions et entrée, une image fixe ne permet pas de conclure sur le rendu ni sur la jouabilité.
 
