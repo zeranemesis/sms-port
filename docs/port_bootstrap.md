@@ -1101,3 +1101,43 @@ frames per *real* second, which is the same 4.8 per *guest* second - so this is
 a pre-existing defect the speed bug was hiding, not something introduced here.
 A THP intro is not a 5fps movie. Not yet investigated; the movie's own header
 frame rate is the thing to read first.
+
+### The movie's rate, measured rather than guessed at
+
+Reading `ActivePlayer.header` out of guest memory (`ActivePlayer` at
+`0x803E3B20` per `config/GMSP01/symbols.txt:25160`, `THPHeader` after the 0x3C
+`DVDFileInfo`, so `frameRate` at +0x4C and `numFrames` at +0x50): the intro is
+**29.97fps, 2816 frames** - 94 seconds of NTSC video.
+
+It was advancing at 5.4 frames per guest second, i.e. 18% speed.
+
+The data already contained its own discriminator: `decodedQueue` sat at 0-1 out
+of three texture sets. A consumer starved of decoded frames means the decoder is
+behind, not that `PlayControl`'s audio gate is holding frames back - if the gate
+were the limit, the queue would be full and waiting. With the process using only
+38% of one core, the port was not compute-limited; it was limited by the budget
+it gives the guest.
+
+`kGameBlocksPerFrame` was 4096, described in its own comment as "a conservative
+starting guess, not a tuned constant... expect to revisit once this has actually
+been run once". Changing only that constant:
+
+| blocks/frame | movie fps | guest steps/s | CPU (1 core) | audio drops |
+| --- | --- | --- | --- | --- |
+| 4096 | 5.4 | 60 | 38% | 0 |
+| 16384 | **15.4** | 55-63 | 93% | 0 |
+| 32768 | 14.6 | 44-60 | 98% | 0 |
+
+16384 gives the same decode throughput as 32768 without letting the guest fall
+behind real time, so that is what is set. Interrupt latency is unaffected: the
+per-slice *cycle* budget is `kCyclesPerFrame / 64` either way, only the block
+count per slice changes.
+
+**This is not solved, and the constant is not the fix.** 15.4fps against a
+declared 29.97 means the guest still does not finish a frame's work inside its
+budget, and the honest answer is not a bigger number - it is to stop stepping
+when the guest has *finished*, i.e. when it blocks in the scheduler's idle path
+waiting for the next retrace, with the block count demoted to a safety cap. The
+heartbeat already shows that idle pc. That is the next piece of work, and until
+it is done the movie runs at about half speed and the right constant is
+machine-specific, which is its own argument against keeping one.

@@ -113,7 +113,7 @@ bool g_gameRunning = false;
 // enough that a stuck/looping region can't wedge the host's own render
 // loop for long, logged loudly if it turns out too small to make
 // progress. Expect to revisit once this has actually been run once.
-constexpr unsigned kGameBlocksPerFrame = 4096;
+constexpr unsigned kGameBlocksPerFrame = 16384;
 
 // Opens the configured disc image and boots the recompiled game. Called
 // once, before the first frame - see port_main(). Logs and leaves

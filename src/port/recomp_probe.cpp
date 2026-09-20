@@ -10,6 +10,8 @@
 #include <chrono>
 #include <string>
 
+#include <cstring>
+
 namespace sms::recomp::probe {
 namespace {
 
@@ -59,6 +61,18 @@ constexpr u32 kActivePlayer = 0x803E3B20u;
 constexpr u32 kReadThread = 0x803E4FF8u;
 constexpr u32 kVideoDecodeThread = 0x803E6308u;
 constexpr u32 kDecodedTextureSetQueue = 0x803E7638u;
+// THPHeader sits right after DVDFileInfo, which is 0x3C bytes (DVDCommandBlock
+// 0x30 + startAddr/length/callback - include/dolphin/dvd.h:19-41). Inside the
+// header, frameRate is the fifth u32-sized field and numFrames the sixth
+// (include/THPPlayer/THPFile.h:10-23), so +0x4C and +0x50. Cross-checks against
+// `open` at +0xA0 above: 0x3C + 0x30 of header lands at 0x6C, leaving 0x30 for
+// compInfo/videoInfo/audioInfo plus 4 for thpWork.
+//
+// Read because the movie was measured advancing about 5 frames per guest
+// second, and no THP intro is a 5fps movie. Its own declared rate is the first
+// thing to know before guessing at why.
+constexpr u32 kActivePlayerFrameRate = kActivePlayer + 0x4Cu;
+constexpr u32 kActivePlayerNumFrames = kActivePlayer + 0x50u;
 constexpr u32 kActivePlayerOpen = kActivePlayer + 0xA0u;
 constexpr u32 kActivePlayerState = kActivePlayer + 0xA4u;
 constexpr u32 kActivePlayerInternalState = kActivePlayer + 0xA5u;
@@ -291,8 +305,11 @@ void report_threads(CPUState *cpu)
 void report_thp(CPUState *cpu)
 {
     const u32 display = mem_read32(cpu, kActivePlayerDisplayTexture);
+    const u32 frameRateBits = mem_read32(cpu, kActivePlayerFrameRate);
+    float frameRate = 0.0f;
+    std::memcpy(&frameRate, &frameRateBits, sizeof(frameRate));
     Log.info("thp: open={} state={} internal={} audio={} dvdError={} videoError={} decodeCount={} v/a={}/{} display={:#010x} "
-             "decodedQueue={} | read={} pc={:#010x} video={} pc={:#010x}",
+             "decodedQueue={} rate={:.2f}fps numFrames={} | read={} pc={:#010x} video={} pc={:#010x}",
         mem_read32(cpu, kActivePlayerOpen), mem_read8(cpu, kActivePlayerState),
         mem_read8(cpu, kActivePlayerInternalState), mem_read8(cpu, kActivePlayerAudioExist),
         static_cast<s32>(mem_read32(cpu, kActivePlayerDvdError)),
@@ -301,7 +318,8 @@ void report_thp(CPUState *cpu)
         static_cast<s32>(mem_read32(cpu, kActivePlayerCurrentVideo)),
         static_cast<s32>(mem_read32(cpu, kActivePlayerCurrentAudio)),
         display,
-        static_cast<s32>(mem_read32(cpu, kDecodedTextureSetQueue + kMessageQueueUsedCount)),
+        static_cast<s32>(mem_read32(cpu, kDecodedTextureSetQueue + kMessageQueueUsedCount)), frameRate,
+        mem_read32(cpu, kActivePlayerNumFrames),
         thread_state_name(mem_read16(cpu, kReadThread + kThreadState)),
         mem_read32(cpu, kReadThread + kThreadContextSrr0),
         thread_state_name(mem_read16(cpu, kVideoDecodeThread + kThreadState)),
