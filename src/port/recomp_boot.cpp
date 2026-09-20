@@ -34,6 +34,7 @@ extern "C" {
 #include "generated_symbols.h"
 }
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstring>
@@ -520,6 +521,32 @@ bool g_lastSliceHitBlockCap = false;
 // are short that lookup is a large fraction of the work.
 u64 g_blocksThisFrame = 0;
 
+// Guest cycles attributed to each block entry point. Addresses are resolved
+// against config/GMSP01/symbols.txt offline rather than at runtime, which keeps
+// the hot path to a single hash update.
+std::unordered_map<u32, u64> g_blockCycles;
+bool g_profileBlocks = true;
+
+void report_block_profile()
+{
+    u64 total = 0;
+    for (const auto &[pc, cycles] : g_blockCycles) {
+        total += cycles;
+    }
+    if (total == 0) {
+        return;
+    }
+    std::vector<std::pair<u32, u64>> sorted(g_blockCycles.begin(), g_blockCycles.end());
+    std::partial_sort(sorted.begin(), sorted.begin() + std::min<size_t>(12, sorted.size()), sorted.end(),
+        [](const auto &a, const auto &b) { return a.second > b.second; });
+    Log.info("block profile: {} distinct block entries, {} cycles total", sorted.size(), total);
+    for (size_t i = 0; i < std::min<size_t>(12, sorted.size()); ++i) {
+        Log.info("block profile:   {:#010x} {:>12} cycles ({:.1f}%)", sorted[i].first, sorted[i].second,
+            100.0 * double(sorted[i].second) / double(total));
+    }
+    g_blockCycles.clear();
+}
+
 bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
 {
     g_lastSliceHitBlockCap = false;
@@ -541,6 +568,26 @@ bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
         }
         if (cpu->exception) {
             return false;
+        }
+        // Time-weighted profile of the translated code, which is the only part
+        // of the frame still unaccounted for: budgeting, scheduling and
+        // per-block dispatch have all been measured and ruled out.
+        //
+        // Keyed on the block's entry pc and weighted by the cycles that block
+        // actually spent, so this is a profile of time rather than of block
+        // counts - sampling at slice boundaries would have been biased towards
+        // whatever happens to be running when a budget runs out, and counting
+        // blocks would have weighted a 3-instruction block the same as a
+        // 3000-cycle loop.
+        //
+        // It costs one hash update per block, which is the same ~1% class of
+        // overhead the dispatch lookup was measured at, so it perturbs what it
+        // measures slightly. Diagnostic only.
+        if (g_profileBlocks) {
+            const s64 spent = downcountBefore - cpu->downcount;
+            if (spent > 0) {
+                g_blockCycles[calledPc] += static_cast<u64>(spent);
+            }
         }
         if (cpu->downcount == downcountBefore) {
             // Bounded the way every probe in this port is bounded: one line per
@@ -1334,6 +1381,12 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
             lastReport = cpu->timebase;
             const u64 advanced = cpu->timebase - frameTimebaseStart;
             const u64 blocks = g_blocksThisFrame - frameBlocksStart;
+            // Every ~10 seconds, not every second: twelve lines is a lot, and
+            // the question is the steady state, not the per-second jitter.
+            static unsigned profileTicks = 0;
+            if (g_profileBlocks && ++profileTicks % 10 == 0) {
+                report_block_profile();
+            }
             Log.info("frame budget: guest time advanced {} of {} ticks ({:.0f}%) | {} of {} slices stopped on the "
                      "block cap rather than on cycles | {} slices idle-skipped | blocksPerSlice={} | {} blocks, "
                      "{:.1f} guest cycles per block",

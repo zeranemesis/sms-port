@@ -1370,3 +1370,56 @@ exactly once, none dropped and none presented twice.
 The game is still in slow motion - 32 guest frames per second against 60 - but
 it is now smooth slow motion rather than a picture updating four times less
 often than the guest produces it.
+
+## 2026-09-20: profiling the translated code, and what the profile does not say
+
+Budgeting, scheduling and per-block dispatch have all been measured and ruled
+out, which leaves the translated code itself. Profiling it needed care about
+*what* is being weighted: sampling at slice boundaries would favour whatever
+runs when a budget expires, and counting blocks would weight a three-instruction
+block the same as a three-thousand-cycle loop. So the profile is keyed on each
+block's entry pc and weighted by the guest cycles that block actually spent -
+a profile of time. Addresses are resolved against `config/GMSP01/symbols.txt`
+offline, keeping the hot path to one hash update.
+
+Over 80 seconds, 1025 distinct block entries, 2.28 billion guest cycles:
+
+| share | function |
+| --- | --- |
+| 36.0% | `__THPDecompressiMCURowNxN+0xB0` |
+| 25.9% | `__THPHuffDecodeDCTCompY` |
+| 4.9% | `__THPHuffDecodeDCTCompU` |
+| 4.3% | `SelectThread+0x134` |
+| 3.9% | `__THPHuffDecodeDCTCompV` |
+| 3.4% | `__THPDecompressiMCURowNxN+0x17A8` |
+| 2.4% | `getFontType__10JUTResFontCFv` |
+| 1.3% | `GXBegin` |
+
+**About 74% of every guest cycle is the THP video decoder.** That is not a
+defect - a software JPEG-ish decoder is why THP needs the locked cache and
+paired singles on real hardware too.
+
+### The caveat matters more than the numbers
+
+This is a profile of **the intro movie**, which is 2816 frames at 29.97fps: 94
+seconds of a game that is meant to last many hours. Optimising against it would
+be optimising the title sequence. A gameplay profile will look nothing like
+this, and nothing here justifies work on the THP path until that profile exists.
+
+Two smaller things are worth noting because they are *not* movie-specific:
+
+- `SelectThread+0x134` still takes 4.3%. The idle fast-forward only decides at
+  slice boundaries, so up to a slice of spin survives each time.
+- `getFontType`, `getAscent` and `getDescent` together take 4.7%. They are
+  one-line accessors, and at that size the cost is the per-block machinery
+  around them rather than the work they do - which is the shape of overhead a
+  recompiler leaves behind, and the one place this profile hints at something
+  general.
+
+### Which exposes that nothing has ever run past the intro
+
+The movie is 94 seconds of content and the port runs at about half speed, so it
+needs roughly three minutes of wall clock to finish. Every measurement run so
+far has been 40-150 seconds. **No run has ever reached the far side of the
+title sequence**, so what happens after it is entirely untested - not working,
+not broken, untested.
