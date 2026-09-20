@@ -1,3 +1,25 @@
+diff --git a/lib/card/CardGciFolder.cpp b/lib/card/CardGciFolder.cpp
+index ec4f379..f9b3ad3 100644
+--- a/lib/card/CardGciFolder.cpp
++++ b/lib/card/CardGciFolder.cpp
+@@ -121,7 +121,16 @@ ECardResult CardGciFolder::createFile(const char* filename, size_t size, FileHan
+   }
+ 
+   gciFileHeader->swapEndian();
+-  m_files.push_back({*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), false}); // push non-endian swapped header first
++  // The last field is `opened`, and it has to be true: this function hands
++  // back a usable FileHandle, and getFile() returns nothing for an entry that
++  // is not marked open, so every write and close through that handle failed.
++  // openFile() already sets opened = true for exactly this reason.
++  //
++  // Measured before the fix: the game created its save, then wrote nothing.
++  // The .gci had a valid header and 57,344 zero data bytes, and the calls
++  // reported result -3 (NOCARD) on write and -4 (NOFILE) on close - both the
++  // null return from getFile. The game read back zeros and showed "Corrupt".
++  m_files.push_back({*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), true}); // push non-endian swapped header first
+   handleOut = FileHandle(m_files.size() - 1, 0);
+ 
+   return ECardResult::READY;
 diff --git a/lib/dolphin/card.cpp b/lib/dolphin/card.cpp
 index 626ce4f..f0c0a68 100644
 --- a/lib/dolphin/card.cpp

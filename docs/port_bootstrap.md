@@ -1833,3 +1833,29 @@ and both come from that same null `getFile`. The freshly created file is all
 zeros again, so this reproduces on demand rather than being a one-off.
 
 Recorded before the fix, which lands separately.
+
+### The fix, and what it measures
+
+`createFile()` now pushes its entry with `opened = true`, the same thing
+`openFile()` already does, because it hands back a usable handle.
+
+| | before | after |
+| --- | --- | --- |
+| non-zero data bytes | **0** of 57,344 | **4,236** (7.39%) |
+| block 0 | 0 | 4,224 |
+| blocks 1-6 | 0 each | 2 each |
+| write result | -3 (NOCARD) | no error |
+| close result | -4 (NOFILE) | no error |
+
+The two remaining `Failed to open file` lines are the expected first-open before
+a create: `CARDOpen` returns -4 (NOFILE), which is what makes the game enter its
+save-creation flow, and the bridge normalises Aurora's NOCARD to NOFILE for
+exactly that reason.
+
+### A harness problem worth recording
+
+The screenshot harness captured the **whole screen**, not the game window, so a
+run photographed unrelated things the developer had open. That is a privacy
+defect in the tooling regardless of what happens to be on screen. It now
+captures only the DolphinJet window rectangle via `GetWindowRect`, and the
+full-screen captures from these runs were deleted.

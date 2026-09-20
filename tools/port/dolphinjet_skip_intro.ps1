@@ -32,6 +32,10 @@ public class Win32Input {
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
 
     // Windows refuses SetForegroundWindow from a process that is not already
     // in the foreground. Attaching to the current foreground window's input
@@ -106,7 +110,12 @@ Write-Host "[skip] $SkipPresses appuis sur A envoyes"
 $deadline = (Get-Date).AddSeconds($RunSeconds)
 $shot = 0
 $tick = 0
-$bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+# Capture the game window ONLY, never the whole screen.
+#
+# A full-screen grab photographs whatever else the machine is showing, which is
+# the developer's private desktop - it has already picked up unrelated content
+# that had no business in a build log. The window rectangle is the only part
+# this harness has any reason to look at.
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 10
     if ($proc.HasExited) {
@@ -126,11 +135,19 @@ while ((Get-Date) -lt $deadline) {
         [Win32Input]::keybd_event(0, $SCAN_Z, $KEYEVENTF_SCANCODE -bor $KEYEVENTF_KEYUP, [UIntPtr]::Zero)
     }
     if ($ShotEvery -gt 0 -and ($shot % $ShotEvery) -eq 0) {
-        $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
-        $g = [System.Drawing.Graphics]::FromImage($bmp)
-        $g.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
-        $bmp.Save((Join-Path $OutDir ("skip_{0:d2}.png" -f $shot)), [System.Drawing.Imaging.ImageFormat]::Png)
-        $g.Dispose(); $bmp.Dispose()
+        $proc.Refresh()
+        $rect = New-Object Win32Input+RECT
+        if ($proc.MainWindowHandle -ne [IntPtr]::Zero -and [Win32Input]::GetWindowRect($proc.MainWindowHandle, [ref]$rect)) {
+            $w = $rect.Right - $rect.Left
+            $h = $rect.Bottom - $rect.Top
+            if ($w -gt 0 -and $h -gt 0) {
+                $bmp = New-Object System.Drawing.Bitmap($w, $h)
+                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.CopyFromScreen((New-Object System.Drawing.Point($rect.Left, $rect.Top)), [System.Drawing.Point]::Empty, (New-Object System.Drawing.Size($w, $h)))
+                $bmp.Save((Join-Path $OutDir ("skip_{0:d2}.png" -f $shot)), [System.Drawing.Imaging.ImageFormat]::Png)
+                $g.Dispose(); $bmp.Dispose()
+            }
+        }
     }
     $shot++
 }
