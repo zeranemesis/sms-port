@@ -8,7 +8,21 @@ void TBathtub::hipdrop(const JGeometry::TVec3<f32>&) { }
 
 void TBathtub::quake(const JGeometry::TVec3<f32>&) { }
 
-int TBathtub::getNumGripsDead() const { return 0; }
+int TBathtub::getNumGripsDead() const
+{
+	int count = 0;
+	if (reinterpret_cast<const u8*>(unk168[0])[0x249] == 0)
+		count = 1;
+	if (reinterpret_cast<const u8*>(unk168[1])[0x249] == 0)
+		count += 1;
+	if (reinterpret_cast<const u8*>(unk168[2])[0x249] == 0)
+		count += 1;
+	if (reinterpret_cast<const u8*>(unk168[3])[0x249] == 0)
+		count += 1;
+	if (reinterpret_cast<const u8*>(unk168[4])[0x249] == 0)
+		count += 1;
+	return count;
+}
 
 void TBathtub::tumble(f32, f32) { }
 
