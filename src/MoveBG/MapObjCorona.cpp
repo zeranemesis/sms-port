@@ -124,8 +124,8 @@ void TBathtub::load(JSUMemoryInputStream&) { }
 
 u8 TBathtub::getNumKillerLaunchable() const
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0 || unk248 > 0
-	    || !bathtubKoopaAllowsLaunch())
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0
+	    || !bathtubKoopaAllowsLaunch() || unk248 > 0)
 		return 0;
 
 	int count = getNumGripsDead() + 1;
