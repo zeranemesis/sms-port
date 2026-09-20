@@ -139,6 +139,15 @@ while ((Get-Date) -lt $deadline) {
                 $g.Dispose(); $bmp.Dispose()
             }
         }
+        # Record where the game's log stood when this frame was taken. Without
+        # it a screenshot cannot be attributed to a layer, and a THP video, an
+        # in-engine cutscene and real gameplay look alike on screen while
+        # proving completely different things. Three conclusions were drawn
+        # from the wrong layer before this line existed.
+        $logPath = Join-Path $OutDir "play_out.log"
+        $logLen = if (Test-Path $logPath) { (Get-Item $logPath).Length } else { 0 }
+        Add-Content -Path (Join-Path $OutDir "capture_index.txt") -Encoding utf8 `
+            -Value ("play_{0:d3}.png`t{1:o}`tlogBytes={2}" -f $shot, (Get-Date), $logLen)
         $shot++
         Write-Host ("[play] {0,4}s  capture {1}" -f [int]((Get-Date) - $start).TotalSeconds, $shot)
     }
