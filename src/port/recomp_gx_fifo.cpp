@@ -75,9 +75,9 @@ void write(CPUState *, u32 /*addr*/, u64 value, u8 size)
 CPUState *g_resolverCpu = nullptr;
 
 // Aurora cannot turn a guest physical address into anything it can read, so it
-// used to refuse the CP array-base registers outright. This is the translation
-// it was missing.
-void *resolve_guest_array_base(u32 guestAddress, u32 *sizeOut)
+// used to refuse both the CP array-base registers and GX_CMD_CALL_DL outright.
+// This is the translation both were missing.
+void *resolve_guest_memory(u32 guestAddress, u32 *sizeOut)
 {
     if (g_resolverCpu == nullptr) {
         return nullptr;
@@ -88,8 +88,9 @@ void *resolve_guest_array_base(u32 guestAddress, u32 *sizeOut)
     if (offset >= g_resolverCpu->ram_size) {
         return nullptr;
     }
-    // The hardware has no size register for an array, only a stride, so the
-    // only bound that is actually known is the end of guest RAM.
+    // Neither an array nor a display list carries a length the hardware could
+    // check, so the only bound that is actually known is the end of guest RAM.
+    // A display list's own byte count is validated against this by the caller.
     if (sizeOut != nullptr) {
         *sizeOut = g_resolverCpu->ram_size - offset;
     }
@@ -111,10 +112,10 @@ void install()
     });
 }
 
-void install_array_base_resolver(CPUState *cpu)
+void install_guest_memory_resolver(CPUState *cpu)
 {
     g_resolverCpu = cpu;
-    aurora::gx::fifo::g_arrayBaseResolver = &resolve_guest_array_base;
+    aurora::gx::fifo::g_guestMemoryResolver = &resolve_guest_memory;
 }
 
 namespace {

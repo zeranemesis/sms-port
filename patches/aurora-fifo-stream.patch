@@ -1,17 +1,20 @@
 diff --git a/lib/gx/command_processor.hpp b/lib/gx/command_processor.hpp
-index 93feba1..9c9e6a2 100644
+index 93feba1..9e2fb1b 100644
 --- a/lib/gx/command_processor.hpp
 +++ b/lib/gx/command_processor.hpp
-@@ -4,7 +4,20 @@
+@@ -4,7 +4,23 @@
  
  namespace aurora::gx::fifo {
  
-+// Turns a guest physical address from a CP array-base register into a host
-+// pointer, reporting how many bytes are readable from it. Returns nullptr when
-+// the address cannot be resolved. Installed by the host; without it the CP
-+// array-base registers cannot be honoured at all.
-+using ArrayBaseResolver = void* (*)(uint32_t guestAddress, uint32_t* sizeOut);
-+extern ArrayBaseResolver g_arrayBaseResolver;
++// Turns a guest physical address into a host pointer, reporting how many bytes
++// are readable from it, or nullptr when it cannot be resolved. Installed by the
++// host, which is the only party that has guest memory to read.
++//
++// Two commands in the FIFO carry a guest pointer rather than data: the CP
++// array-base registers (0xA0-0xAF) and GX_CMD_CALL_DL (0x40). Neither can be
++// honoured without this, and both were previously refused outright.
++using GuestMemoryResolver = void* (*)(uint32_t guestAddress, uint32_t* sizeOut);
++extern GuestMemoryResolver g_guestMemoryResolver;
 +
  // Process a buffer of GX FIFO commands
  void process(const uint8_t* data, uint32_t size, bool bigEndian);

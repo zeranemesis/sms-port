@@ -1651,3 +1651,79 @@ warnings are **not** failures. `dispatch()` logs a miss and returns false, and
 `dolrecomp_call` then falls through to `dolrecomp_call_original`, which handles
 the address normally. Every unbridged address produces one, so the count is
 noise, not a signal.
+
+## 2026-09-20: the screen is not black any more
+
+`GX_CMD_CALL_DL` is now executed the way the GP executes it — the pointer is
+followed and the list runs in place — through the same host resolver the CP
+array-base registers use, generalised rather than duplicated.
+`GXCallDisplayList` is deliberately **not** bridged: the guest body has to keep
+running, because it does `__GXSetDirtyState()` and `__GXSendFlushPrim()` before
+emitting the opcode, and bridging it away is exactly the mistake already made
+on `GXSetDrawDone`.
+
+A display list is complete by construction, so it is processed outside stream
+mode with the stream flags saved and restored around the call - otherwise a
+truncation inside a list would tell the outer FIFO it had been cut and make it
+carry over bytes that were never its own. Depth is bounded at two.
+
+### Getting there needed a crash reporter, because guessing had run out
+
+Following display lists brought back a crash that left no message at all, and
+no command-line debugger is installed on this machine (`cdb`, `windbg`, `ntsd`
+all absent). Three fixes were attempted on hypotheses and none was the cause,
+which is three more than this project's rules allow.
+
+`src/port/recomp_crash.cpp` now reports faults in-process: a vectored exception
+handler with DbgHelp symbolisation on Windows, POSIX signals with `backtrace()`
+elsewhere, plus `SetUnhandledExceptionFilter`, `SIGABRT` and `std::set_terminate`
+- the last three matter because the actual failure was an `abort()`, which a
+vectored handler never sees. Release builds now carry `/Zi` so the stack has
+names. It **reports and does not recover**: continuing after a fault turns a
+located crash into an unlocated one later.
+
+It named the cause on the first run:
+
+```
+#4  aurora::gfx::push+0x89          (lib/gfx/common.cpp:1474)
+#5  aurora::gx::fifo::handle_draw_unmerged  (command_processor.cpp:2077)
+#6  aurora::gx::fifo::draw_prim
+#9  aurora::gx::fifo::call_display_list
+#12 aurora::gx::fifo::drain
+```
+
+### The cause was mine
+
+`command_processor.cpp:2077` is `push_storage(array.data, array.size)` - Aurora
+uploads a whole vertex array. And `array.size` is what my own resolver reports:
+a vertex array has no length register on the hardware, so it returned
+*everything from the base to the end of guest RAM*, up to 24MB. The storage
+staging buffer is 8MB, and `ByteBuffer::resize()` calls `abort()` when a
+non-owned buffer is asked to grow (`lib/gfx/common.hpp:143-156`). It only ever
+fired once display lists executed, because until then no indexed array was used
+to draw.
+
+The derivable bound was sitting right there: the vertex descriptor says whether
+the attribute is indexed with 8 or 16 bits, so the highest byte the GP could
+reach is `(maxIndex + 1) * stride`. That is what is uploaded now, and a clamp is
+reported once per attribute.
+
+Two further latent faults were fixed on the way, neither of them the cause:
+`get_last_draw_command()` called `back()` on a possibly-empty vector — undefined
+behaviour reached by the first draw of a pass once the state stops being dirty,
+which only real geometry causes — and the indexed XF load could name a byte
+16MB past its base.
+
+### Measured
+
+| | before | after |
+| --- | --- | --- |
+| display lists discarded | 512,094 | **0** |
+| draws submitted | 3,731/s | **79,387/s** |
+| vertices submitted | 59,444/s | **628,858/s** |
+| crash over 70 s | yes, silent | **none** |
+| screen | black | **the file-select / options menu, rendered** |
+
+The screenshot is the acceptance criterion and it is met: blue menu panels, the
+word "Corrupt" on a save slot, "OPTIONS", the arrow. "Corrupt" is consistent
+with the memory card not working, which is Phase 4 of the plan.

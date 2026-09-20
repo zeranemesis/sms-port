@@ -1221,7 +1221,7 @@ bool boot_game(CPUState *cpu)
     // instead (bridged below); GXWaitDrawDone has no Aurora
     // implementation and isn't bridged yet.
     gx_fifo::install();
-    gx_fifo::install_array_base_resolver(cpu);
+    gx_fifo::install_guest_memory_resolver(cpu);
     static const gx_fifo::NamedAddress kKnownGxCalls[] = {
         { "GXInit", DOLRECOMP_SYMBOL_GXInit },
         { "GXSetCPUFifo", DOLRECOMP_SYMBOL_GXSetCPUFifo },

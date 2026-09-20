@@ -3,6 +3,7 @@
 
 #include "port/main.h"
 #include "port/recomp_boot.h"
+#include "port/recomp_crash.h"
 #include "port/recomp_dolphin_sdk.h"
 #include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
@@ -13,6 +14,7 @@
 
 int main(int argc, char *argv[])
 {
+    sms::recomp::crash::install();
     if (argc == 2 && std::strcmp(argv[1], "--recomp-hostcall-self-test") == 0) {
         return sms::recomp::run_self_test() ? 0 : 1;
     }

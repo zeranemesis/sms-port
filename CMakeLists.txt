@@ -40,6 +40,20 @@ set(AURORA_ENABLE_RMLUI ON CACHE BOOL "Enable RmlUi UI support" FORCE)
 # patches/aurora-render-fixes.patch - see docs/port_bootstrap.md for why they
 # are not committed into the submodule itself). CI must apply them at
 # checkout, the same way Marioparty4's build.yml does for its own patches.
+# Debug info in Release builds.
+#
+# Not for debugging in the usual sense - there is no debugger installed on the
+# development machine (cdb, windbg and ntsd are all absent) - but so the
+# in-process crash reporter (src/port/recomp_crash.cpp) can put a function name
+# and a line number on a fault instead of a bare address. Two investigations
+# have already been spent guessing at crash locations that left no message at
+# all. /DEBUG does not change code generation; /OPT:REF and /OPT:ICF are
+# restored because /DEBUG otherwise turns them off and would change what ships.
+if (MSVC)
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+endif ()
+
 add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
 
 # The DolRecomp host tool (build-time code generator, not linked into
@@ -90,6 +104,11 @@ target_compile_definitions(dolphinjet PRIVATE TARGET_PC NON_MATCHING)
 # path at all for include/port/*.h (config.hpp, main.h, settings.h,
 # recomp_*.h), which is PORT_FILES' own code, not decomp headers.
 target_include_directories(dolphinjet PRIVATE extern/aurora/include extern/aurora/include/dolphin include extern extern/dolrecomp/src)
+if (WIN32)
+    # DbgHelp symbolises the crash reporter's stack (src/port/recomp_crash.cpp).
+    target_link_libraries(dolphinjet PRIVATE dbghelp)
+endif ()
+
 target_link_libraries(dolphinjet PRIVATE
         # aurora::os must precede any other aurora:: static lib that calls
         # OSPanic/OSReport (dvd does, at least) - verified as real MSVC
