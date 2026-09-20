@@ -71,7 +71,7 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..352b6b1 100644
+index 9748556..a26c5d6 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -1,5 +1,7 @@
@@ -860,7 +860,7 @@ index 9748556..352b6b1 100644
    } else if (prim == GX_POINTS) {
      instanceCount = vtxCount;
    }
-+  note_draw_submitted();
++  note_draw_submitted(g_gxState.colorUpdate);
    gfx::push_draw_command(DrawData{
        .pipeline = pipeline,
        .vertRange = vertRange,

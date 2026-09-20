@@ -1,5 +1,5 @@
 diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
-index a5088fd..37b2aa1 100644
+index a5088fd..2bb0b10 100644
 --- a/lib/gx/pipeline.cpp
 +++ b/lib/gx/pipeline.cpp
 @@ -5,6 +5,8 @@
@@ -11,7 +11,7 @@ index a5088fd..37b2aa1 100644
  namespace aurora::gx {
  static Module Log("aurora::gx");
  
-@@ -14,8 +16,71 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
+@@ -14,8 +16,82 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
    return build_pipeline(config, {}, shader, "GX Pipeline");
  }
  
@@ -22,6 +22,7 @@ index a5088fd..37b2aa1 100644
 +u64 g_issued = 0;
 +u64 g_issuedWithoutTexture = 0;
 +u64 g_issuedEmpty = 0;
++u64 g_issuedNoColorWrite = 0;
 +
 +void report_draw_fate() {
 +  static auto lastReport = std::chrono::steady_clock::now();
@@ -45,6 +46,7 @@ index a5088fd..37b2aa1 100644
 +  const u64 issued = g_issued - lastIssued;
 +  const u64 noTexture = g_issuedWithoutTexture - lastNoTexture;
 +  const u64 empty = g_issuedEmpty;
++  const u64 noColor = g_issuedNoColorWrite;
 +  lastSubmitted = g_submitted;
 +  lastReached = g_reachedRender;
 +  lastNotReady = g_pipelineNotReady;
@@ -64,13 +66,22 @@ index a5088fd..37b2aa1 100644
 +  // issued, and that is exact over the totals.
 +  const bool consistent = g_pipelineNotReady + g_issued == g_reachedRender;
 +  Log.info("draw fate 1s: submitted={} reached_render={} (dropped_before_render={}) | pipeline_not_ready={} "
-+           "issued={} of which without_texture={} empty_total={}{}",
++           "issued={} of which without_texture={} empty_total={} no_color_write_total={}{}",
 +           submitted, reached, submitted >= reached ? submitted - reached : 0, notReady, issued, noTexture, empty,
-+           consistent ? "" : "  <-- COUNTER INCONSISTENT, do not trust this line");
++           noColor, consistent ? "" : "  <-- COUNTER INCONSISTENT, do not trust this line");
 +}
 +} // namespace
 +
-+void note_draw_submitted() { ++g_submitted; }
++void note_draw_submitted(bool colorUpdate) {
++  ++g_submitted;
++  // A draw whose colour write mask is off writes no pixel whatever the shader
++  // returns - which is why forcing the fragment shader to solid magenta left
++  // the screen black and read as "nothing rasterises at all". This separates
++  // "never drawn" from "drawn into a closed write mask".
++  if (!colorUpdate) {
++    ++g_issuedNoColorWrite;
++  }
++}
 +
  void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
 +  ++g_reachedRender;
@@ -83,7 +94,7 @@ index a5088fd..37b2aa1 100644
      return;
    }
  
-@@ -29,10 +94,24 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+@@ -29,10 +105,24 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
      const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
      pass.SetBlendConstant(&color);
    }
@@ -109,7 +120,7 @@ index a5088fd..37b2aa1 100644
  }
  } // namespace aurora::gx
 diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
-index 474c85c..bdb7ef3 100644
+index 474c85c..2d71b99 100644
 --- a/lib/gx/pipeline.hpp
 +++ b/lib/gx/pipeline.hpp
 @@ -4,6 +4,20 @@
@@ -128,7 +139,7 @@ index 474c85c..bdb7ef3 100644
 +//
 +// Called from command_processor.cpp when a draw is pushed; the rest is counted
 +// inside render(), which reports once per second.
-+void note_draw_submitted();
++void note_draw_submitted(bool colorUpdate);
 +
  struct DrawData {
    gfx::PipelineRef pipeline;

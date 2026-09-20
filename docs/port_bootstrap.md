@@ -2044,3 +2044,50 @@ draw passes 1s: ... | scissor=(0,0 512x512)  viewport=(4,4 512x512)
 reported as onscreen with one pass per frame. A viewport offset of (4,4) is odd
 too. That is where to look next - not at another piece of per-draw state, all
 of which is now measured.
+
+## 2026-09-20: proving the "nothing rasterises" result, and nearly not proving it
+
+The previous section claimed no fragment is rasterised, on the strength of a
+forced-magenta fragment shader leaving the screen black. That claim was made
+**without a positive control**, and it nearly rested on a false premise.
+
+### The cache the deletions never touched
+
+Before each shader test the pipeline cache was deleted from
+`%APPDATA%\dolphinjet\DolphinJet\`. That path does not exist. The game writes
+its caches to
+`AppData\Local\Packages\OpenAI.Codex_.../LocalCache\Roaming\dolphinjet\`, a
+store-redirected path inherited from the environment it is launched in, and
+`dawn_cache.db` there was being updated during the runs. Dawn caches compiled
+shaders, so every shader-level test could have been measuring the *previous*
+build.
+
+Deleting both caches at the real path and repeating: still zero magenta.
+
+### The control that actually settles it
+
+Running the same magenta build with **no input at all**, so the intro movie
+plays:
+
+| | magenta pixels |
+| --- | --- |
+| intro (no input) | **1,130,038** |
+| after pressing A past the menu | **0** |
+
+The instrument is proven to work by the first row, and the second row is
+therefore a real measurement rather than an assumption. Tenth false reading
+avoided, and the first one caught by asking "does my instrument do anything at
+all?" before believing its silence.
+
+### What is now established
+
+The same pipeline that renders the intro entirely renders **not one fragment**
+after the game leaves the file-select menu, while submitting ~3,800 draws a
+second whose pipelines are ready, whose matrices, projection, viewport, raster
+state, vertex data and render pass are all verified, none of which are empty
+and only 12% of which have their colour write mask closed.
+
+Draws are issued and nothing is rasterised. That is the shape of a transform
+producing degenerate or out-of-range clip coordinates for every vertex, and the
+next measurement is the clip-space output itself rather than its inputs - all
+of which have now been checked one at a time and are individually valid.
