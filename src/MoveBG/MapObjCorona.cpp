@@ -48,7 +48,12 @@ MtxPtr TBathtub::getKoopaJrMtxInDemo()
 
 BOOL TBathtub::receiveMessage(THitActor* sender, u32 message) { return false; }
 
-Mtx* TBathtub::getRootJointMtx() const { return nullptr; }
+Mtx* TBathtub::getRootJointMtx() const
+{
+    if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+        return *reinterpret_cast<Mtx**>(reinterpret_cast<u8*>(getModel()) + 0x58);
+    return reinterpret_cast<Mtx*>(reinterpret_cast<u8*>(getModel()) + 0x20);
+}
 
 void TBathtub::perform(u32 cue, JDrama::TGraphics* graphics) { }
 
