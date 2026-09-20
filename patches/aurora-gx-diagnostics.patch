@@ -954,10 +954,18 @@ index 9748556..558e38e 100644
 +
  } // namespace aurora::gx::fifo
 diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
-index 9ca9036..83883de 100644
+index 9ca9036..0095dc6 100644
 --- a/lib/gx/gx.cpp
 +++ b/lib/gx/gx.cpp
-@@ -445,35 +445,70 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
+@@ -1,5 +1,7 @@
+ #include "gx.hpp"
+ 
++#include <unordered_set>
++
+ #include "pipeline.hpp"
+ #include "../dolphin/vi/vi_internal.hpp"
+ #include "../webgpu/gpu.hpp"
+@@ -445,35 +447,70 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
  
      GXTexObj_ obj = g_gxState.loadedTextures[i];
      auto& textureBind = g_gxState.textures[i];
@@ -1043,6 +1051,43 @@ index 9ca9036..83883de 100644
    }
  }
  
+@@ -879,6 +916,36 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
+       .alphaUpdate = g_gxState.alphaUpdate,
+       .colorUpdate = g_gxState.colorUpdate,
+   };
++
++  // One line per distinct raster configuration the 3D scene uses.
++  //
++  // Draws reach the GPU and are issued, the projection, viewport and
++  // model-view matrices are all verified correct, and the screen is still
++  // black - so what is left is the per-draw state that decides whether an
++  // issued draw writes any pixel. colorUpdate false writes no colour at all;
++  // depthCompare with a depth func that never passes rejects everything; a
++  // cull mode that removes both faces does the same.
++  //
++  // Keyed on the combination, not sampled: a rate-limited dump would show
++  // whichever configuration happened to be current, and the one that matters
++  // may be rare. Perspective only, because the 2D menu already renders and its
++  // state is not in question.
++  if (g_gxState.projType == GX_PERSPECTIVE) {
++    static std::unordered_set<u64> seen;
++    const u64 key = (u64(config.depthCompare) << 0) | (u64(config.depthUpdate) << 1) |
++                    (u64(config.colorUpdate) << 2) | (u64(config.alphaUpdate) << 3) |
++                    (u64(config.depthFunc) << 8) | (u64(config.cullMode) << 16) |
++                    (u64(config.blendMode) << 24) | (u64(g_gxState.alphaCompare.comp0) << 32) | (u64(g_gxState.alphaCompare.comp1) << 36) |
++                    (u64(g_gxState.numTevStages) << 40) | (u64(g_gxState.numTexGens) << 48);
++    if (seen.size() < 24 && seen.insert(key).second) {
++      Log.info("3D raster state: colorUpdate={} depthCompare={} depthUpdate={} depthFunc={} cull={} blend={} "
++               "alphaComp0={} alphaComp1={} tevStages={} texGens={}",
++               config.colorUpdate, config.depthCompare, config.depthUpdate, static_cast<u32>(config.depthFunc),
++               static_cast<u32>(config.cullMode), static_cast<u32>(config.blendMode),
++               static_cast<u32>(g_gxState.alphaCompare.comp0), static_cast<u32>(g_gxState.alphaCompare.comp1),
++               static_cast<u32>(g_gxState.numTevStages), static_cast<u32>(g_gxState.numTexGens));
++    }
++  }
+ }
+ 
+ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
 diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
 index 3671ed5..4079cf9 100644
 --- a/lib/gx/shader.cpp

@@ -1,5 +1,5 @@
 diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
-index eff0c65..603d988 100644
+index eff0c65..6d1902d 100644
 --- a/lib/gfx/common.cpp
 +++ b/lib/gfx/common.cpp
 @@ -515,7 +515,16 @@ gx::DrawData* get_last_draw_command() {
@@ -20,3 +20,38 @@ index eff0c65..603d988 100644
    if (last.type != CommandType::Draw || last.data.draw.type != ShaderType::GX) {
      return nullptr;
    }
+@@ -523,6 +532,34 @@ gx::DrawData* get_last_draw_command() {
+ }
+ 
+ static void push_draw_command(ShaderDrawCommand data) {
++  // Which render pass a draw lands in, and whether that pass is offscreen.
++  //
++  // Everything else about these draws has now been measured and is healthy -
++  // they reach the GPU, their pipelines are ready, their matrices, projection
++  // and viewport are correct, and their raster state is rich and sane - and
++  // the screen is still black. A draw recorded into an offscreen pass that is
++  // never resolved back is invisible no matter how correct it is, and this
++  // port does not bridge GXCopyTex, so that resolve may simply not happen.
++  {
++    static u64 onscreen = 0, offscreen = 0, noPass = 0;
++    static auto lastReport = std::chrono::steady_clock::now();
++    static unsigned reports = 0;
++    if (g_currentRenderPass >= current_render_passes().size()) {
++      ++noPass;
++    } else if (current_render_passes()[g_currentRenderPass].offscreen) {
++      ++offscreen;
++    } else {
++      ++onscreen;
++    }
++    const auto now = std::chrono::steady_clock::now();
++    if (now - lastReport >= std::chrono::seconds(1) && reports < 600) {
++      lastReport = now;
++      ++reports;
++      Log.info("draw passes 1s: onscreen={} offscreen={} no_pass={} | passes this frame={}", onscreen, offscreen,
++               noPass, current_render_passes().size());
++      onscreen = offscreen = noPass = 0;
++    }
++  }
+   push_command(CommandType::Draw, Command::Data{.draw = data});
+   ++g_drawCallCount;
+ }

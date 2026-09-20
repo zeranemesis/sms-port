@@ -1943,3 +1943,49 @@ now rules out: the pipeline cache, draws failing to reach the GPU, the
 projection, the viewport, and the model-view matrices. What remains untested is
 the per-draw raster state - depth, alpha, culling, blending, scissor - and
 which render pass the draws land in.
+
+## 2026-09-20: the 3D state is healthy, and the screen is still black
+
+### Correcting an earlier claim
+
+"`numTevStages` never exceeds 1" was **wrong**. It came from the `genMode`
+probe, which only ever captured the early 2D values. Dumping each distinct
+raster configuration the perspective draws actually use gives **24 of them**,
+with up to **5 TEV stages and 4 texgens**. Eighth false reading in this project,
+and the third caused by the instrument rather than the thing measured.
+
+### What the 3D draws look like
+
+```
+3D raster state: colorUpdate=true depthCompare=true depthUpdate=true depthFunc=3
+                 cull=2 blend=1 alphaComp0=7 alphaComp1=7 tevStages=5 texGens=4
+```
+
+`colorUpdate` true, a normal depth function, alpha compare ALWAYS on the bulk of
+them, real multi-stage materials. A handful have `colorUpdate=false`, which is
+what a depth-only pass looks like and is expected. Nothing here rejects a draw.
+
+### And the passes
+
+```
+draw passes 1s: onscreen=3861 offscreen=0 no_pass=0 | passes this frame=1
+```
+
+Every draw lands in the single onscreen pass. No offscreen pass is ever
+created, so the "rendered into a target that is never resolved" theory - which
+`GXCopyTex` not being bridged made plausible - does not apply.
+
+### Where that leaves it
+
+Ruled out **by measurement**, not by argument: the pipeline cache, draws failing
+to reach the GPU, the projection, the viewport, the model-view matrices, the
+per-draw raster state, and the render pass. The window is genuinely black -
+four captures over 70 seconds are byte-identical, the window is frontmost, and
+the capture is now window-only.
+
+Everything the port can see about these draws is healthy. What has **not** been
+looked at is the vertex data itself: the positions the shader reads out of the
+indexed arrays. The arrays are resolved through this port's own resolver and
+indexed by the guest's indices, so a wrong base or stride would place every
+vertex somewhere impossible while leaving every piece of state above perfectly
+valid. That is the next measurement.
