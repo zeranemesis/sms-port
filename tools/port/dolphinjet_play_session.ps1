@@ -70,16 +70,18 @@ $script:LostFocus = 0
 
 # keybd_event goes to whatever window has focus. If the user clicks away mid
 # session, every movement key would be typed into whatever they switched to.
-# So the target is checked before each press, refocused once, and the press is
-# dropped rather than sent somewhere it does not belong.
+# So the target is checked before each press and the press is dropped rather
+# than sent somewhere it does not belong.
+#
+# The check is GetForegroundWindow alone. Refocusing here, through Focus()'s
+# AttachThreadInput, is not worth the risk: attaching to another process's
+# input queue on every keypress can block, and a harness that blocks reads
+# exactly like a game that has frozen.
 function Send-Key([int]$scan, [int]$holdMs) {
     if ([PlayInput]::GetForegroundWindow() -ne $script:GameWindow) {
-        [PlayInput]::Focus($script:GameWindow) | Out-Null
-        Start-Sleep -Milliseconds 120
-        if ([PlayInput]::GetForegroundWindow() -ne $script:GameWindow) {
-            $script:LostFocus++
-            return
-        }
+        $script:LostFocus++
+        Start-Sleep -Milliseconds $holdMs
+        return
     }
     [PlayInput]::keybd_event(0, $scan, $SCANCODE, [UIntPtr]::Zero)
     Start-Sleep -Milliseconds $holdMs

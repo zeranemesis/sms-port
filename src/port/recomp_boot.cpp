@@ -628,10 +628,31 @@ RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
     // handle_system_call. Capped retry count, not the block budget itself,
     // guards against a hypothetical sc-in-a-tight-loop from stalling a
     // frame - each retry already ran up to maxBlocks real blocks first.
-    for (int retry = 0; retry < 64; ++retry) {
+    //
+    // Bounded by progress, not by a retry count. `sc` is neither an error nor
+    // rare: DCStoreRange ends in one (0x8033B86C, right before its blr), and
+    // J3DModel::viewCalc flushes a model's matrices through DCStoreRange for
+    // every model it draws. A fixed cap of 64 was ample for the intro video,
+    // which draws a single quad per frame, and was exhausted by the first
+    // frame of real 3D: a 12-minute session had the guest killed outright at
+    // DCStoreRange+0x30, called from viewCalc+0x218, 145 seconds in, with
+    // running=false and no way back. The trap itself was handled correctly -
+    // the reported pc was the blr *after* the sc - so the port threw the game
+    // away for doing exactly what it is supposed to do.
+    //
+    // What actually needs guarding is a trap that makes no progress, so that
+    // is what is counted: an iteration that handles an exception without the
+    // pc moving and without spending a cycle. Everything else is ordinary work
+    // and ends where it should, on the slice's cycle budget.
+    constexpr unsigned kMaxTrapsWithoutProgress = 64;
+    unsigned stuck = 0;
+    for (;;) {
+        const u32 pcBefore = cpu->pc;
+        const s64 downcountBefore = cpu->downcount;
         if (run_blocks_until_budget_spent(cpu, maxBlocks)) {
             return RunStop::BudgetExhausted;
         }
+        const u32 exceptionTaken = cpu->exception;
         // The SDK runs with MSR[FP] deliberately off and switches the FPU in
         // on demand: the first floating-point instruction a thread executes
         // traps to the 0x800 vector, whose handler enables FP (swapping the
@@ -672,16 +693,29 @@ RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
             // interrupt could ever set.
             ppc_rfi(cpu, cpu->pc);
             cpu->msr |= 0x00002000u; // MSR[FP], PPC bit 18 - the handler's actual job
-            continue;
-        }
-        if (cpu->exception == PPC_EXC_SYSTEM_CALL) {
+        } else if (cpu->exception == PPC_EXC_SYSTEM_CALL) {
             cpu->exception = 0;
             handle_system_call(cpu, cpu->pc);
-            continue;
+        } else {
+            return cpu->exception ? RunStop::Exception : RunStop::Halted;
         }
-        return cpu->exception ? RunStop::Exception : RunStop::Halted;
+
+        if (cpu->pc == pcBefore && cpu->downcount == downcountBefore) {
+            if (++stuck >= kMaxTrapsWithoutProgress) {
+                // Says which exception and proves the lack of progress, rather
+                // than naming one of the two possible causes and leaving the
+                // reader to guess - the previous message said "system-call
+                // traps" for a condition that may equally have been the FP
+                // handler.
+                Log.warn("step_game: {} traps at pc={:#010x} (exception {:#x}) with the pc and the cycle budget "
+                         "both unchanged - giving up",
+                    stuck, cpu->pc, exceptionTaken);
+                return RunStop::RepeatedSystemCalls;
+            }
+        } else {
+            stuck = 0;
+        }
     }
-    return RunStop::RepeatedSystemCalls;
 }
 
 // --- interrupt delivery -----------------------------------------------------

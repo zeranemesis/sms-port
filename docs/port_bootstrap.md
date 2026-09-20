@@ -2345,3 +2345,51 @@ the current context, PI cause and mask, plus one guest backtrace.
 missing: it reports the frame-to-frame difference between captures, so
 bit-identical consecutive frames are named as FROZEN. A process that has
 stopped drawing but not crashed passes every other check this project has.
+
+## `sc` is not an error, and the port was killing the game for it
+
+With the idle livelock fixed, the next session got past the freeze, played its
+whole intro video, reached the first frame of real 3D - and the guest was
+killed outright:
+
+```
+step_game: gave up after repeated system-call traps near pc=0x8033b870
+heartbeat: ... steps=8692 (+0) running=false pc=0x8033b870 lr=0x802d7278
+```
+
+`0x8033B870` is `DCStoreRange+0x30` and `0x802D7278` is
+`J3DModel::viewCalc+0x218`. Disassembling the callee settles it immediately:
+
+```
+8033b860: dcbst
+8033b864: addi r3, r3, 32
+8033b868: bdnz 0x8033b860
+8033b86c: sc                 <- every DCStoreRange ends in a system call
+8033b870: blr                <- the reported pc, i.e. the sc was handled fine
+```
+
+The pc being the instruction *after* the `sc` is the whole point: the trap was
+taken, handled and returned from correctly. Nothing was broken. The guest was
+thrown away for doing what the SDK does.
+
+`step_game`'s trap loop was capped at 64 retries, which its own comment
+described as a guard "against a hypothetical sc-in-a-tight-loop". The loop is
+not hypothetical and it is not tight: `J3DModel::viewCalc` flushes a model's
+matrices through `DCStoreRange` for every model it draws, so real 3D crosses
+64 traps inside a single slice on its first frame. The cap was never tested
+against 3D because until this session the port had never rendered a 3D frame
+for long enough to reach one - the intro video draws a single quad per frame
+and trips nothing.
+
+The cap is now on *progress* rather than on a count: an iteration that handles
+an exception while leaving both the pc and the cycle budget unchanged is the
+only thing worth giving up over. Ordinary traps end where they should, on the
+slice's cycle budget. The message also names the exception and states that
+neither pc nor budget moved, instead of asserting "system-call traps" for a
+condition that could equally have been the floating-point handler.
+
+Both of this session's defects have the same shape, and it is worth naming:
+**a guard sized against an imagined failure, which then fires on real work.**
+The idle skip guarded against wasting host cycles on a spin and froze the
+game; this cap guarded against a tight `sc` loop and killed it. Both were
+written before the port could reach the workload that would have tested them.
