@@ -2195,3 +2195,33 @@ away from the guest.
 
 The menu-only path is untouched: with no game running there is no guest frame
 to wait for and every iteration presents as before.
+
+## 2026-09-20: the depth remap was half wrong, and that was the white haze
+
+Reported by watching the game: the picture flickered and was washed out to the
+point of being unreadable. The flicker was empty frames (fixed separately). The
+haze was the depth fix from earlier the same day being the mirror image of what
+Aurora wants.
+
+`gx.hpp` sets **`UseReversedZ = true`**. Aurora therefore expects near at 1 and
+far at 0, clears depth to 0, and its fog term reads `(1.0 - in.pos.z)`.
+
+GX gives near at 0 and far at -1. Negating the projection's z column mapped that
+to near 0, far 1 - **forward** Z, the opposite of what the rest of Aurora
+assumes. Geometry appeared, because it was finally inside [0, 1] at all, but:
+
+- the depth order was inverted, and
+- the fog term was handed `1 - 0.015 = 0.985` instead of `0.015`, which is full
+  fog on every fragment. That was the white veil over the whole scene.
+
+The correct remap adds the w column to the z column: near (z = 0) becomes w, so
+ndc 1, and far (z = -w) becomes 0.
+
+Measured on the Delfino Airstrip: very pale pixels went from **57% of the frame
+to 4-12%**, and the title screen renders with correct saturated colours. Shadows
+and occlusion are right, which is the depth order being correct rather than
+inverted.
+
+**Not finished.** The airstrip is still brighter than the real game - the sand
+and sky clip towards white - so something in the fog or lighting path is still
+off. That is measured next rather than assumed to be gone.

@@ -1232,7 +1232,7 @@ index 3671ed5..4079cf9 100644
        if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
          vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
 diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
-index bb9ddec..b3919ac 100644
+index bb9ddec..dc77770 100644
 --- a/lib/gx/shader_info.cpp
 +++ b/lib/gx/shader_info.cpp
 @@ -371,6 +371,38 @@ static u32 line_texcoord_mask() noexcept {
@@ -1274,7 +1274,7 @@ index bb9ddec..b3919ac 100644
    static ByteBuffer buf;
    buf.clear();
    buf.reserve_extra(info.uniformSize);
-@@ -398,7 +430,28 @@ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRa
+@@ -398,7 +430,39 @@ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRa
        buf.append<u32>(line_texcoord_mask());
      }
    }
@@ -1291,14 +1291,25 @@ index bb9ddec..b3919ac 100644
 +    // - pipelines, matrices, projection, viewport, raster state, vertex data -
 +    // measuring valid.
 +    //
-+    // Negating the z column maps [-1, 0] onto [0, 1]: near stays at 0 and far
-+    // becomes 1. Done on the uploaded copy only, so GXGetProjectionv and
-+    // anything else reading g_gxState.proj still sees what the guest set.
++    // Aurora runs REVERSED Z (gx.hpp's UseReversedZ): it wants near at 1 and
++    // far at 0, clears depth to 0, and its fog term reads (1.0 - in.pos.z).
++    //
++    // So the remap is z + w, not -z. Negating alone produced near at 0 and far
++    // at 1 - forward Z, the mirror image of what the rest of Aurora assumes.
++    // Geometry appeared, because it was finally inside [0, 1] at all, but the
++    // depth order was inverted and the fog term was fed 1 - 0.015 = 0.985
++    // instead of 0.015, which is full fog on everything. That was the white
++    // haze over the whole scene.
++    //
++    // Adding the w column to the z column maps [-1, 0] onto [0, 1] the right
++    // way round: near (z = 0) becomes w, so ndc 1, and far (z = -w) becomes 0.
++    // Done on the uploaded copy only, so GXGetProjectionv and anything else
++    // reading g_gxState.proj still sees what the guest set.
 +    auto proj = g_gxState.proj;
-+    proj.m0[2] = -proj.m0[2];
-+    proj.m1[2] = -proj.m1[2];
-+    proj.m2[2] = -proj.m2[2];
-+    proj.m3[2] = -proj.m3[2];
++    proj.m0[2] += proj.m0[3];
++    proj.m1[2] += proj.m1[3];
++    proj.m2[2] += proj.m2[3];
++    proj.m3[2] += proj.m3[3];
 +    buf.append(proj);
 +  }
  
