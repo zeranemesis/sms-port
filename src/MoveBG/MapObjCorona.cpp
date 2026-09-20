@@ -27,7 +27,7 @@ int TBathtub::getNumGripsDead() const
 
 void TBathtub::tumble(f32 angle, f32 force)
 {
-	if (unk29A == 0) {
+	if (reinterpret_cast<const u8*>(this)[0x299] == 0) {
 		f32 amount = force * 0.0001f;
 		s32 index = static_cast<u16>(static_cast<s32>(182.04445f * angle)) >> jmaSinShift;
 		unk1E8 += amount * jmaCosTable[index];
