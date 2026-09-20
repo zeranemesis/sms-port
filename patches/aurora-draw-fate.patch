@@ -1,5 +1,5 @@
 diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
-index a5088fd..2cc9678 100644
+index a5088fd..37b2aa1 100644
 --- a/lib/gx/pipeline.cpp
 +++ b/lib/gx/pipeline.cpp
 @@ -5,6 +5,8 @@
@@ -11,7 +11,7 @@ index a5088fd..2cc9678 100644
  namespace aurora::gx {
  static Module Log("aurora::gx");
  
-@@ -14,8 +16,69 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
+@@ -14,8 +16,71 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
    return build_pipeline(config, {}, shader, "GX Pipeline");
  }
  
@@ -21,6 +21,7 @@ index a5088fd..2cc9678 100644
 +u64 g_pipelineNotReady = 0;
 +u64 g_issued = 0;
 +u64 g_issuedWithoutTexture = 0;
++u64 g_issuedEmpty = 0;
 +
 +void report_draw_fate() {
 +  static auto lastReport = std::chrono::steady_clock::now();
@@ -43,6 +44,7 @@ index a5088fd..2cc9678 100644
 +  const u64 notReady = g_pipelineNotReady - lastNotReady;
 +  const u64 issued = g_issued - lastIssued;
 +  const u64 noTexture = g_issuedWithoutTexture - lastNoTexture;
++  const u64 empty = g_issuedEmpty;
 +  lastSubmitted = g_submitted;
 +  lastReached = g_reachedRender;
 +  lastNotReady = g_pipelineNotReady;
@@ -62,8 +64,8 @@ index a5088fd..2cc9678 100644
 +  // issued, and that is exact over the totals.
 +  const bool consistent = g_pipelineNotReady + g_issued == g_reachedRender;
 +  Log.info("draw fate 1s: submitted={} reached_render={} (dropped_before_render={}) | pipeline_not_ready={} "
-+           "issued={} of which without_texture={}{}",
-+           submitted, reached, submitted >= reached ? submitted - reached : 0, notReady, issued, noTexture,
++           "issued={} of which without_texture={} empty_total={}{}",
++           submitted, reached, submitted >= reached ? submitted - reached : 0, notReady, issued, noTexture, empty,
 +           consistent ? "" : "  <-- COUNTER INCONSISTENT, do not trust this line");
 +}
 +} // namespace
@@ -72,16 +74,16 @@ index a5088fd..2cc9678 100644
 +
  void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
 +  ++g_reachedRender;
-+  report_draw_fate();
    if (!gfx::bind_pipeline(data.pipeline, pass)) {
 +    // Not an error state Aurora reports: find_pipeline_impl hands back a valid
 +    // reference for a pipeline that is only queued, so the draw is pushed and
 +    // then quietly discarded here until the build catches up.
 +    ++g_pipelineNotReady;
++    report_draw_fate();
      return;
    }
  
-@@ -29,6 +92,12 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+@@ -29,10 +94,24 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
      const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
      pass.SetBlendConstant(&color);
    }
@@ -91,9 +93,21 @@ index a5088fd..2cc9678 100644
 +    // indistinguishable from a correct shader without this count.
 +    ++g_issuedWithoutTexture;
 +  }
++  if (data.indexCount == 0 && data.vtxCount == 0) {
++    // Issued with nothing to draw. Counted rather than assumed away: a draw
++    // call with a zero count rasterises nothing and is invisible to every
++    // other counter here.
++    ++g_issuedEmpty;
++  }
    if (data.indexCount == 0) {
      pass.Draw(data.vtxCount, data.instanceCount);
    } else {
+     pass.DrawIndexed(data.indexCount, data.instanceCount);
+   }
++  // Now that this draw is classified, the invariant holds.
++  report_draw_fate();
+ }
+ } // namespace aurora::gx
 diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
 index 474c85c..bdb7ef3 100644
 --- a/lib/gx/pipeline.hpp

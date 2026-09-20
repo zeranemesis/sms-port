@@ -1,5 +1,5 @@
 diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
-index eff0c65..6d1902d 100644
+index eff0c65..70f05b2 100644
 --- a/lib/gfx/common.cpp
 +++ b/lib/gfx/common.cpp
 @@ -515,7 +515,16 @@ gx::DrawData* get_last_draw_command() {
@@ -20,7 +20,7 @@ index eff0c65..6d1902d 100644
    if (last.type != CommandType::Draw || last.data.draw.type != ShaderType::GX) {
      return nullptr;
    }
-@@ -523,6 +532,34 @@ gx::DrawData* get_last_draw_command() {
+@@ -523,6 +532,39 @@ gx::DrawData* get_last_draw_command() {
  }
  
  static void push_draw_command(ShaderDrawCommand data) {
@@ -47,8 +47,13 @@ index eff0c65..6d1902d 100644
 +    if (now - lastReport >= std::chrono::seconds(1) && reports < 600) {
 +      lastReport = now;
 +      ++reports;
-+      Log.info("draw passes 1s: onscreen={} offscreen={} no_pass={} | passes this frame={}", onscreen, offscreen,
-+               noPass, current_render_passes().size());
++        // An empty or tiny scissor rejects every fragment no matter how correct
++      // the geometry is, and nothing so far has looked at it.
++      Log.info("draw passes 1s: onscreen={} offscreen={} no_pass={} | passes this frame={} | scissor=({},{} {}x{}) "
++               "viewport=({},{} {}x{})",
++               onscreen, offscreen, noPass, current_render_passes().size(), g_cachedScissor.x, g_cachedScissor.y,
++               g_cachedScissor.width, g_cachedScissor.height, g_cachedViewport.left, g_cachedViewport.top,
++               g_cachedViewport.width, g_cachedViewport.height);
 +      onscreen = offscreen = noPass = 0;
 +    }
 +  }

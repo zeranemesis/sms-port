@@ -1989,3 +1989,58 @@ indexed arrays. The arrays are resolved through this port's own resolver and
 indexed by the guest's indices, so a wrong base or stride would place every
 vertex somewhere impossible while leaving every piece of state above perfectly
 valid. That is the next measurement.
+
+## 2026-09-20: nothing rasterises, and that changes the question
+
+### The vertex data is fine
+
+Dumped raw rather than decoded in-place, because a decoder written next to the
+thing it measures can be wrong in the same way:
+
+```
+3D vtx dump: prim=0x98 vtxCount=10 vtxSize=10 | POS desc=3 cnt=1 type=3 frac=8
+             | array stride=6
+array first 32 bytes: f7 54 fa ad 1a 0d  fa 94 fd be 12 5b ...
+```
+
+`desc=3` is GX_INDEX16, `cnt=1` XYZ, `type=3` s16, `frac=8`, and a stride of 6
+is exactly 3 x s16 - all consistent. Decoding the array's first vertex by hand:
+`0xf754, 0xfaad, 0x1a0d` over 256 gives **(-8.67, -5.32, 26.05)**, plausible
+model-space coordinates.
+
+### The decisive test
+
+With the fragment shader forced to return solid magenta, and separately with
+clip coordinates clamped into the visible volume, the window contains **zero
+non-black pixels** across every capture. Pipelines still compile and draws are
+still issued (`pipeline_not_ready=0`, `issued=3778`), so this is not a broken
+shader.
+
+**No fragment is rasterised at all.** Everything measured so far - pipelines,
+draws reaching the GPU, matrices, projection, viewport, raster state, render
+pass, vertex data - was necessary but not sufficient, and saying the geometry
+was "healthy" was reading a set of green lights as a conclusion.
+
+### Two things that are not the cause
+
+`empty_total=0`: no draw is issued with a zero vertex or index count.
+
+The counter's self-check fired on every line and was right to: `report_draw_fate`
+ran at the *top* of `render()`, counting the in-flight draw in `reached_render`
+before it had been classified as issued or dropped, so the invariant was off by
+exactly one for ever. Ninth false reading here, fourth from the instrument. It
+reports after classification now and is consistent.
+
+### The new lead
+
+The render target changes size mid-run:
+
+```
+draw passes 1s: ... | scissor=(0,0 1280x896) viewport=(4,4 1280x896)
+draw passes 1s: ... | scissor=(0,0 512x512)  viewport=(4,4 512x512)
+```
+
+512x512 is a render-to-texture size, not the framebuffer, and the pass is still
+reported as onscreen with one pass per frame. A viewport offset of (4,4) is odd
+too. That is where to look next - not at another piece of per-draw state, all
+of which is now measured.
