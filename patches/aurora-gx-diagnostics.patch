@@ -71,7 +71,7 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..a26c5d6 100644
+index 9748556..7ec6d02 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -1,5 +1,7 @@
@@ -613,7 +613,7 @@ index 9748556..a26c5d6 100644
    if (pos + totalVtxBytes > size)
      UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
  
-@@ -1558,6 +1925,47 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+@@ -1558,6 +1925,93 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
    const bool canMerge = lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
                          lastDraw->instanceCount == 1;
  
@@ -647,6 +647,52 @@ index 9748556..a26c5d6 100644
 +               static_cast<u32>(posFmt.cnt), static_cast<u32>(posFmt.type), static_cast<u32>(posFmt.frac),
 +               fmt::ptr(posArray.data), static_cast<u32>(posArray.stride), posArray.size);
 +      Log.info("3D vtx dump {}: first 32 bytes:{}", dumped, hex);
++      // Redo the shader's own transform on the CPU, both ways round.
++      //
++      // Every input to it is verified and valid, so the fault is in how they
++      // combine. WGSL's `vec4f(pos,1.0) * mtx` is a row-vector product; if the
++      // matrix is stored the other way round the result is finite, non-zero
++      // and geometrically meaningless - which is exactly what "draws issued,
++      // nothing rasterised" looks like. Doing it here needs no GPU readback.
++      if (posArray.data != nullptr && posArray.size >= 6) {
++        const auto* p16 = static_cast<const u8*>(posArray.data);
++        const auto s16at = [&](u32 o) { return static_cast<s16>((u32(p16[o]) << 8) | p16[o + 1]); };
++        const f32 scale = 1.0f / static_cast<f32>(1u << posFmt.frac);
++        const f32 vx = static_cast<f32>(s16at(0)) * scale;
++        const f32 vy = static_cast<f32>(s16at(2)) * scale;
++        const f32 vz = static_cast<f32>(s16at(4)) * scale;
++        const auto& mv = g_gxState.pnMtx[g_gxState.currentPnMtx].pos;
++        const auto& pr = g_gxState.proj;
++
++        // Row-vector: the convention the generated WGSL uses.
++        const f32 rx = vx * mv.m0[0] + vy * mv.m1[0] + vz * mv.m2[0];
++        const f32 ry = vx * mv.m0[1] + vy * mv.m1[1] + vz * mv.m2[1];
++        const f32 rz = vx * mv.m0[2] + vy * mv.m1[2] + vz * mv.m2[2];
++        const f32 rw = vx * mv.m0[3] + vy * mv.m1[3] + vz * mv.m2[3];
++        // Column-vector: each row dotted with the vertex, plus translation.
++        const f32 cx = mv.m0[0] * vx + mv.m0[1] * vy + mv.m0[2] * vz + mv.m0[3];
++        const f32 cy = mv.m1[0] * vx + mv.m1[1] * vy + mv.m1[2] * vz + mv.m1[3];
++        const f32 cz = mv.m2[0] * vx + mv.m2[1] * vy + mv.m2[2] * vz + mv.m2[3];
++
++        const auto clipRow = [&](f32 x, f32 y, f32 z) {
++          const f32 w = x * pr.m0[3] + y * pr.m1[3] + z * pr.m2[3] + pr.m3[3];
++          const f32 cxx = x * pr.m0[0] + y * pr.m1[0] + z * pr.m2[0] + pr.m3[0];
++          const f32 cyy = x * pr.m0[1] + y * pr.m1[1] + z * pr.m2[1] + pr.m3[1];
++          const f32 czz = x * pr.m0[2] + y * pr.m1[2] + z * pr.m2[2] + pr.m3[2];
++          Log.info("   clip(row) = ({:.3f} {:.3f} {:.3f} w={:.3f}) -> ndc ({:.3f} {:.3f} {:.3f})", cxx, cyy, czz, w,
++                   w != 0.f ? cxx / w : 0.f, w != 0.f ? cyy / w : 0.f, w != 0.f ? czz / w : 0.f);
++        };
++
++        Log.info("3D cpu transform: vtx0=({:.3f} {:.3f} {:.3f}) pnMtx={} | mv row-vec=({:.3f} {:.3f} {:.3f} w={:.3f})"
++                 " | mv col-vec=({:.3f} {:.3f} {:.3f})",
++                 vx, vy, vz, g_gxState.currentPnMtx, rx, ry, rz, rw, cx, cy, cz);
++        clipRow(rx, ry, rz);
++        clipRow(cx, cy, cz);
++        Log.info("   proj rows: ({:.3f} {:.3f} {:.3f} {:.3f}) ({:.3f} {:.3f} {:.3f} {:.3f}) ({:.3f} {:.3f} {:.3f} "
++                 "{:.3f}) ({:.3f} {:.3f} {:.3f} {:.3f})",
++                 pr.m0[0], pr.m0[1], pr.m0[2], pr.m0[3], pr.m1[0], pr.m1[1], pr.m1[2], pr.m1[3], pr.m2[0], pr.m2[1],
++                 pr.m2[2], pr.m2[3], pr.m3[0], pr.m3[1], pr.m3[2], pr.m3[3]);
++      }
 +      if (posArray.data != nullptr && posArray.size >= 32) {
 +        std::string arrHex;
 +        const auto* bytes = static_cast<const u8*>(posArray.data);
@@ -661,7 +707,7 @@ index 9748556..a26c5d6 100644
    // Push raw vertex data to buffer. Merged draws must remain byte-contiguous with the previous range.
    gfx::Range vertRange = gfx::push_verts(data + pos, totalVtxBytes, canMerge ? 0 : 4);
    pos += totalVtxBytes;
-@@ -1604,10 +2012,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1604,10 +2058,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
    GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
  
@@ -815,7 +861,7 @@ index 9748556..a26c5d6 100644
    draw_prim(prim, fmt, vtxCount, data, pos, size);
  }
  
-@@ -1633,10 +2184,39 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1633,10 +2230,39 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
        continue;
      }
      auto& array = g_gxState.arrays[i];
@@ -856,7 +902,7 @@ index 9748556..a26c5d6 100644
        ranges.vaRanges[i - GX_VA_POS] = range;
        array.cachedRange = range;
      }
-@@ -1657,6 +2237,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1657,6 +2283,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
    } else if (prim == GX_POINTS) {
      instanceCount = vtxCount;
    }
@@ -864,7 +910,7 @@ index 9748556..a26c5d6 100644
    gfx::push_draw_command(DrawData{
        .pipeline = pipeline,
        .vertRange = vertRange,
-@@ -1671,10 +2252,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1671,10 +2298,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
  }
  
  std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -881,7 +927,7 @@ index 9748556..a26c5d6 100644
    CHECK(pos + length <= size, "Aurora string read overrun");
    std::string str(reinterpret_cast<const char*>(data) + pos, length);
    pos += length;
-@@ -1683,12 +2270,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1683,12 +2316,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
  
  void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    ZoneScoped;
@@ -900,7 +946,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
      const f32 left = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1711,6 +2304,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1711,6 +2350,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
          .zfar = farZ,
      });
    } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
@@ -910,7 +956,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
      const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
      pos += 4;
-@@ -1722,6 +2318,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1722,6 +2364,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      set_render_scissor({left, top, width, height});
    } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
@@ -920,7 +966,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
      u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
  
-@@ -1743,6 +2342,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1743,6 +2388,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
        g_gxState.stateDirty = true;
      }
    } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
@@ -930,7 +976,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
      const auto texMapId = data[pos];
      pos += 1;
-@@ -1771,6 +2373,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1771,6 +2419,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_TLUT) {
@@ -940,7 +986,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
      const auto idx = data[pos];
      pos += 1;
-@@ -1789,6 +2394,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1789,6 +2440,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
@@ -950,7 +996,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
      g_gxState.frontOffset = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1802,18 +2410,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1802,18 +2456,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
@@ -981,7 +1027,7 @@ index 9748556..a26c5d6 100644
      CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
      u8 cmd = data[pos];
      pos += 1;
-@@ -1849,4 +2469,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1849,4 +2515,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    }
  }
  

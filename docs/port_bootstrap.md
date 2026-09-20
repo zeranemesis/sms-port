@@ -2091,3 +2091,38 @@ Draws are issued and nothing is rasterised. That is the shape of a transform
 producing degenerate or out-of-range clip coordinates for every vertex, and the
 next measurement is the clip-space output itself rather than its inputs - all
 of which have now been checked one at a time and are individually valid.
+
+## 2026-09-20: the clip-space depth is outside WebGPU's range
+
+Redoing the vertex shader's own transform on the CPU, with the same matrices
+and a known vertex, and in both multiplication conventions - no GPU readback
+needed, which is what made it worth doing before the heavier probe:
+
+```
+3D cpu transform: vtx0=(-8.672 -5.324 26.051) pnMtx=0
+   clip(row) = (-27.267 42.003 -1.000 w=64.967) -> ndc (-0.420 0.647 -0.015)
+   proj rows: (1.524 0 0 0) (0 2.050 0 0) (0 0 -0.000 -10.000) (0 0 -1.000 0)
+```
+
+The row-vector convention - the one the generated WGSL uses - gives a sane
+x and y: **ndc (-0.420, 0.647)** is comfortably inside the visible square. The
+column-vector alternative gives (0.012, -0.002), nearly degenerate, so the
+convention in the shader is the right one.
+
+**But ndc z is -0.015.** OpenGL and the GameCube clip depth to [-1, 1];
+**WebGPU clips to [0, 1]**. A vertex at z = -0.015 is outside the clip volume
+and is discarded before rasterisation.
+
+And it is not one unlucky vertex. In that projection `m2[2]` is zero, so clip z
+does not depend on the vertex at all - it is `m3[2]` = -1.0 for **every** vertex
+in the draw, giving a negative ndc z for all of them. That is precisely the
+shape of what has been measured all along: draws issued, pipelines ready, every
+input valid, and not one fragment rasterised.
+
+Nothing in the generated vertex shader remaps depth: it is
+`out.pos = vec4f(mv_pos, 1.0) * ubuf.proj;` and no more.
+
+**Stated as a lead, not a conclusion.** What is measured is one vertex of one
+draw landing at ndc z = -0.015 with a projection whose z row makes that constant.
+What is not yet measured is whether every 3D draw shares that projection, and
+why the 2D paths - which do render - survive it.
