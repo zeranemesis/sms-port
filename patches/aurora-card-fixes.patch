@@ -1,0 +1,27 @@
+diff --git a/lib/dolphin/card.cpp b/lib/dolphin/card.cpp
+index 626ce4f..f0c0a68 100644
+--- a/lib/dolphin/card.cpp
++++ b/lib/dolphin/card.cpp
+@@ -680,7 +680,7 @@ s32 CARDClose(CARDFileInfo* fileInfo) {
+   const auto res = card->closeFile(handle);
+ 
+   if (res != aurora::card::ECardResult::READY)
+-    Log.error("Failed to close file at idx: {}", fileInfo->fileNo);
++    Log.error("Failed to close file at idx: {} - result {}", fileInfo->fileNo, static_cast<int>(res));
+ 
+   return static_cast<s32>(res);
+ }
+@@ -725,7 +725,12 @@ s32 CARDWrite(const CARDFileInfo* fileInfo, const void* addr, const s32 length,
+   auto res = card->fileWrite(handle, addr, length);
+ 
+   if (res != aurora::card::ECardResult::READY) {
+-    Log.error("Failed to write {} bytes to card", length);
++    // Which failure it is matters: NOCARD means the handle named no open file,
++    // NOFILE that the backing .gci could not be opened, IOERROR that the write
++    // itself failed. They have completely different causes and the message
++    // used to distinguish none of them.
++    Log.error("Failed to write {} bytes to card at offset {} (fileNo {}): result {}", length, offset,
++              fileInfo->fileNo, static_cast<int>(res));
+   } else {
+     card->commit();
+   }

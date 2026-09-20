@@ -1773,3 +1773,63 @@ almost everything, and J3D sets them through material display lists which now
 execute - so either those particular lists are not being reached, or the BP
 genMode writes inside them are not landing. That is the next measurement, not a
 conclusion.
+
+## 2026-09-20: why the save says "Corrupt"
+
+The game shows "Corrupt" on its save slot, and the log said only:
+
+```
+Failed to open file: super_mario_sunshine
+Failed to write 8192 bytes to card
+Failed to close file at idx: 0
+```
+
+### What the file itself says
+
+`%APPDATA%\dolphinjet\DolphinJet\EUR\Card A\01-GMSP-super_mario_sunshine.gci`
+is 57,408 bytes with a **perfectly valid header** - `GMSP01`,
+`super_mario_sunshine`, seven blocks at offset 0x38, and 64 + 7 x 8192 = 57,408
+exactly - and **every one of its 57,344 data bytes is zero**. Looking at the
+size would have said the save was fine; only looking at the contents says it is
+empty. `tools/port/inspect_gci.py` now does that in one command.
+
+So `CARDCreate` succeeded and the write after it did not. The game then reads
+back zeros and calls the slot corrupt, which is correct of it.
+
+### The bridges were not at fault
+
+Both `host_call_card_open` and `host_call_card_write`
+(`src/port/recomp_card.cpp`) marshal correctly - host temporary, guest layout
+written back through `mem_write32`, guest buffer copied byte by byte. They were
+committed as "not verified"; they are now verified and they are sound.
+
+### The cause
+
+`CardGciFolder::getFile()` returns a file **only when it is marked open**
+(`extern/aurora/lib/card/CardGciFolder.cpp`):
+
+```cpp
+auto file = &m_files[idx];
+if (file->opened)
+  return file;
+return nullptr;
+```
+
+`openFile()` sets `gciFile.opened = true` before handing back a handle.
+`createFile()` does not - it pushes the new entry with `opened = false` and
+returns a handle to it anyway. Every later use of that handle therefore finds
+nothing.
+
+Exhibited by moving the empty save aside so a create would happen again, with
+the error messages taught to name their result:
+
+```
+Failed to write 8192 bytes to card at offset 0 (fileNo 0): result -3
+Failed to close file at idx: 0 - result -4
+```
+
+`-3` is `NOCARD` and `-4` is `NOFILE` (`extern/aurora/lib/card/Util.hpp:58-70`),
+and both come from that same null `getFile`. The freshly created file is all
+zeros again, so this reproduces on demand rather than being a one-off.
+
+Recorded before the fix, which lands separately.
