@@ -1903,3 +1903,43 @@ submitted in one frame is rendered in the next, so a one-second delta window can
 straddle that boundary. The invariant that actually holds - every draw reaching
 `render()` either loses its pipeline or is issued - is exact over cumulative
 totals, and the check now uses those.
+
+## 2026-09-20: the model-view matrices were never the problem
+
+The 2D menu renders and the 3D world does not, and the 3D world is the only
+thing that needs model-view matrices. They arrive through indexed XF loads, and
+a rejection there was reported only `#ifndef NDEBUG` - silent in every Release
+build these measurements are taken with. So it was counted.
+
+First reading:
+
+```
+indexed XF 1s: posMtx=0 texMtx=0 nrmMtx=8426 light=0 rejected=8426
+```
+
+`nrmMtx` and `rejected` identical, every second, and `posMtx` zero. Not a
+coincidence: `copy_xf_data`'s position-matrix branch **writes the matrix and
+then falls through the whole if-chain to the final `return false`** - it is the
+only branch missing its `return true`. Nothing broke, because the only consumer
+was a debug-only log, but a probe built on that return value counted every
+position matrix as rejected, which reads as "model-view matrices never arrive"
+when they always had. Seventh false reading of this project, and the second
+caused by the instrument rather than by the thing measured.
+
+With the `return true` restored:
+
+```
+indexed XF 1s: posMtx=7689 texMtx=0 nrmMtx=7689 light=0 rejected=0
+               | pnMtx[0] row0=(0.074 -0.091 0.993 -194.530)
+```
+
+One position and one normal matrix per draw, nothing rejected - and the line
+also prints the matrix the draws are actually using, because a count cannot
+tell a real view matrix from a zeroed one. It is a plausible view matrix with a
+real translation, and it changes every second.
+
+**So matrices are not the cause.** Together with the draw-fate counter, that
+now rules out: the pipeline cache, draws failing to reach the GPU, the
+projection, the viewport, and the model-view matrices. What remains untested is
+the per-draw raster state - depth, alpha, culling, blending, scissor - and
+which render pass the draws land in.
