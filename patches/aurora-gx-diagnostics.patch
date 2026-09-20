@@ -71,7 +71,7 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..cdea9f2 100644
+index 9748556..9e30f67 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -1,5 +1,7 @@
@@ -497,7 +497,63 @@ index 9748556..cdea9f2 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1551,6 +1841,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+@@ -1378,6 +1668,15 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       case 0x1F: {
+         // Viewport: sx, sy, sz, ox, oy, oz at XF 0x101A-0x101F
+         u32 vpOff = reg - 0x1A;
++        if (i == 0 && (vpOff != 0 || count < 6)) {
++          static std::unordered_set<u32> warnedVp;
++          const u32 key = (vpOff << 16) | count;
++          if (warnedVp.size() < 16 && warnedVp.insert(key).second) {
++            Log.warn("viewport write ignored: starts at register {} of 6, covers {} - only a full write from the "
++                     "first register is applied",
++                     vpOff, count);
++          }
++        }
+         if (vpOff == 0 && count >= 6) {
+           f32 sx = read_f32(xfData + 0, bigEndian);
+           f32 sy = read_f32(xfData + 4, bigEndian);
+@@ -1407,6 +1706,27 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       case 0x26: {
+         // Projection: 6 params + type at XF 0x1020-0x1026
+         u32 projOff = reg - 0x20;
++        // A projection write that does not start at the first register or does
++        // not cover all seven was silently ignored, with no log at all. That is
++        // indistinguishable from "the game never set a projection", and the
++        // measurement says projType is only ever 1 (orthographic) while the 3D
++        // scene submits 640,000 vertices a second - so whether a perspective
++        // write is arriving and being dropped is exactly the question.
++        // Only on the write's FIRST register. handle_xf loops over every
++        // register the write covers, so a perfectly normal 7-register write
++        // starting at 0x1020 enters this case seven times with projOff 0..6 -
++        // and a probe that did not account for that reported four "ignored"
++        // writes per frame that were nothing of the kind. A write is only
++        // genuinely partial when its first register is not the block's first.
++        if (i == 0 && (projOff != 0 || count < 7)) {
++          static std::unordered_set<u32> warnedProj;
++          const u32 key = (projOff << 16) | count;
++          if (warnedProj.size() < 16 && warnedProj.insert(key).second) {
++            Log.warn("projection write ignored: starts at register {} of 7, covers {} - only a full write from the "
++                     "first register is applied",
++                     projOff, count);
++          }
++        }
+         if (projOff == 0 && count >= 7) {
+           f32 p0 = read_f32(xfData + 0, bigEndian);
+           f32 p1 = read_f32(xfData + 4, bigEndian);
+@@ -1432,6 +1752,11 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+             proj.m1[2] = p3;
+             proj.m3[2] = -1.0f;
+           }
++          static std::unordered_set<u32> seenProjTypes;
++          if (seenProjTypes.insert(projType).second) {
++            Log.info("projection applied: type {} ({})", projType,
++                     projType == GX_ORTHOGRAPHIC ? "orthographic" : "perspective");
++          }
+           g_gxState.stateDirty = true;
+         }
+         break;
+@@ -1551,6 +1876,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
      UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
  
    u32 totalVtxBytes = vtxCount * vtxSize;
@@ -507,7 +563,7 @@ index 9748556..cdea9f2 100644
    if (pos + totalVtxBytes > size)
      UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
  
-@@ -1604,10 +1897,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1604,10 +1932,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
    GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
  
@@ -661,7 +717,7 @@ index 9748556..cdea9f2 100644
    draw_prim(prim, fmt, vtxCount, data, pos, size);
  }
  
-@@ -1633,10 +2069,39 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1633,10 +2104,39 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
        continue;
      }
      auto& array = g_gxState.arrays[i];
@@ -702,7 +758,7 @@ index 9748556..cdea9f2 100644
        ranges.vaRanges[i - GX_VA_POS] = range;
        array.cachedRange = range;
      }
-@@ -1671,10 +2136,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1671,10 +2171,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
  }
  
  std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -719,7 +775,7 @@ index 9748556..cdea9f2 100644
    CHECK(pos + length <= size, "Aurora string read overrun");
    std::string str(reinterpret_cast<const char*>(data) + pos, length);
    pos += length;
-@@ -1683,12 +2154,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1683,12 +2189,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
  
  void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    ZoneScoped;
@@ -738,7 +794,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
      const f32 left = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1711,6 +2188,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1711,6 +2223,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
          .zfar = farZ,
      });
    } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
@@ -748,7 +804,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
      const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
      pos += 4;
-@@ -1722,6 +2202,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1722,6 +2237,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      set_render_scissor({left, top, width, height});
    } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
@@ -758,7 +814,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
      u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
  
-@@ -1743,6 +2226,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1743,6 +2261,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
        g_gxState.stateDirty = true;
      }
    } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
@@ -768,7 +824,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
      const auto texMapId = data[pos];
      pos += 1;
-@@ -1771,6 +2257,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1771,6 +2292,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_TLUT) {
@@ -778,7 +834,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
      const auto idx = data[pos];
      pos += 1;
-@@ -1789,6 +2278,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1789,6 +2313,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
@@ -788,7 +844,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
      g_gxState.frontOffset = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1802,18 +2294,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1802,18 +2329,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
@@ -819,7 +875,7 @@ index 9748556..cdea9f2 100644
      CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
      u8 cmd = data[pos];
      pos += 1;
-@@ -1849,4 +2353,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1849,4 +2388,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    }
  }
  

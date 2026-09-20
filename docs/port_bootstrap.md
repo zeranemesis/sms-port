@@ -1727,3 +1727,49 @@ which only real geometry causes — and the indexed XF load could name a byte
 The screenshot is the acceptance criterion and it is met: blue menu panels, the
 word "Corrupt" on a save slot, "OPTIONS", the arrow. "Corrupt" is consistent
 with the memory card not working, which is Phase 4 of the plan.
+
+## 2026-09-20: what renders, what does not, and a probe that lied
+
+With display lists executing, the file-select menu renders. Pressing A past it
+gives a black screen again, with **80,000 draws and 640,000 vertices submitted
+per second** and no DVD activity - so it is not a loading screen and the
+geometry is arriving.
+
+### The projection was never the problem, and my probe said otherwise
+
+`projType` looked pinned at 1 (orthographic), which would explain a 3D scene
+projected into nothing. Aurora only applies a projection write when it starts at
+the block's first register and covers all seven (`command_processor.cpp`), and
+partial writes were dropped with no log, so a probe was added for them.
+
+It reported four ignored projection writes and four ignored viewport writes per
+frame - and every one was a **false positive of the probe itself**. `handle_xf`
+loops over every register a write covers (`for (i = 0; i < count; i++) { reg =
+xfAddr + i; switch (reg) }`), so one perfectly normal 7-register write enters the
+projection case seven times with offsets 0..6, and only offset 0 does the work.
+That is correct by design: the whole block is read at once when offset 0 is seen.
+
+Corrected to fire only on the write's first register:
+
+| | before correction | after |
+| --- | --- | --- |
+| projection writes ignored | 4 per frame | **0** |
+| viewport writes ignored | 4 per frame | **0** |
+
+And both projections are applied, perspective included:
+`projection applied: type 0 (perspective)`. The earlier "projType is always 1"
+reading came from the one-shot THP quad probe, not from the truth.
+
+**Recorded because it nearly caused a fix to the wrong thing.** A probe coarser
+or blunter than its subject has now produced a false reading six times in this
+project; this is the first time the false reading was an invented defect rather
+than a missed one.
+
+### What is left
+
+`numTevStages` never exceeds 1, across the whole run and every distinct
+`genMode` value. Super Mario Sunshine's materials use more than one stage for
+almost everything, and J3D sets them through material display lists which now
+execute - so either those particular lists are not being reached, or the BP
+genMode writes inside them are not landing. That is the next measurement, not a
+conclusion.

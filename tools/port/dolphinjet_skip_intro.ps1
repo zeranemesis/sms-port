@@ -11,7 +11,11 @@ param(
     [int]$SkipAfterSeconds = 25,
     [int]$SkipPresses = 12,
     [int]$RunSeconds = 200,
-    [int]$ShotEvery = 0
+    [int]$ShotEvery = 0,
+    # Presses A again every N seconds during the run. The intro skip only gets
+    # as far as the file-select screen, which waits for input like every other
+    # menu; without this the harness sits there for the rest of the run.
+    [int]$NudgeEvery = 0
 )
 
 Add-Type -AssemblyName System.Drawing
@@ -101,12 +105,25 @@ Write-Host "[skip] $SkipPresses appuis sur A envoyes"
 
 $deadline = (Get-Date).AddSeconds($RunSeconds)
 $shot = 0
+$tick = 0
 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 10
     if ($proc.HasExited) {
         Write-Host "[skip] CRASH pendant le run (code $($proc.ExitCode))"
         exit 1
+    }
+    $tick++
+    if ($NudgeEvery -gt 0 -and ($tick % $NudgeEvery) -eq 0) {
+        # Re-focus first: anything the user clicks steals it, and a keystroke
+        # sent to another window proves nothing.
+        $proc.Refresh()
+        if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [Win32Input]::ForceForeground($proc.MainWindowHandle) | Out-Null
+        }
+        [Win32Input]::keybd_event(0, $SCAN_Z, $KEYEVENTF_SCANCODE, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 150
+        [Win32Input]::keybd_event(0, $SCAN_Z, $KEYEVENTF_SCANCODE -bor $KEYEVENTF_KEYUP, [UIntPtr]::Zero)
     }
     if ($ShotEvery -gt 0 -and ($shot % $ShotEvery) -eq 0) {
         $bmp = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
