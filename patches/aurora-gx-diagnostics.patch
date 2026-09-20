@@ -1250,10 +1250,115 @@ index 3671ed5..4079cf9 100644
        if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
          vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
 diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
-index bb9ddec..dc77770 100644
+index bb9ddec..fa476a3 100644
 --- a/lib/gx/shader_info.cpp
 +++ b/lib/gx/shader_info.cpp
-@@ -371,6 +371,38 @@ static u32 line_texcoord_mask() noexcept {
+@@ -1,6 +1,8 @@
+ #include "shader_info.hpp"
+ 
+ #include <cmath>
++#include <set>
++#include <string_view>
+ 
+ #include <tracy/Tracy.hpp>
+ 
+@@ -27,6 +29,38 @@ Vec4<float> texture_size_bias(const gfx::TextureBind& tex) {
+   return {width, height, tex.texObj.lod_bias() + vpBias, 0.0f};
+ }
+ 
++// A TEV stage whose texture or texcoord id falls outside the eight the
++// hardware has used to kill the whole port: std::bitset<8>::set throws
++// std::out_of_range, nothing catches it, and std::terminate takes the process
++// down. That is what ended a 13-minute session at 272 seconds, in
++// color_arg_reg_info, reached from a display-list draw.
++//
++// GXSetTevOrder (src/dolphin/gx/GXTev.c) says what the hardware does with an
++// id it cannot represent:
++//
++//     tmap = map & ~0x100;                                 // strip GX_TEX_DISABLE
++//     tmap = (tmap >= GX_MAX_TEXMAP) ? GX_TEXMAP0 : tmap;  // clamp
++//
++// so the same rule is applied here rather than an invented one. This is not a
++// silent recovery: every distinct out-of-range id is reported once with where
++// it came from, because the id should never have got here and the report is
++// what says which decode produced it.
++template <size_t N>
++static void set_sampled_id(std::bitset<N>& bits, u32 id, const char* what) {
++  if (id < N) {
++    bits.set(id);
++    return;
++  }
++  const u32 clamped = (id & ~0x100u) < N ? (id & ~0x100u) : 0u;
++  static std::set<std::pair<u32, std::string_view>> reported;
++  if (reported.size() < 32 && reported.emplace(id, std::string_view(what)).second) {
++    Log.error("{} id {:#x} is outside the {} the hardware has; clamping to {} as GXSetTevOrder does. "
++              "The decode that produced this id is wrong.",
++              what, id, N, clamped);
++  }
++  bits.set(clamped);
++}
++
+ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, ShaderInfo& info) {
+   switch (arg) {
+   case GX_CC_CPREV:
+@@ -57,8 +91,8 @@ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CC_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    set_sampled_id(info.sampledTexCoords, stage.texCoordId, "tev stage texcoord");
++    set_sampled_id(info.sampledTextures, stage.texMapId, "tev stage texmap");
+     break;
+   case GX_CC_RASC:
+   case GX_CC_RASA:
+@@ -131,8 +165,8 @@ void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CA_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    set_sampled_id(info.sampledTexCoords, stage.texCoordId, "tev stage texcoord");
++    set_sampled_id(info.sampledTextures, stage.texMapId, "tev stage texmap");
+     break;
+   case GX_CA_RASA:
+     if (stage.channelId != GX_COLOR_NULL && stage.channelId != GX_COLOR_ZERO &&
+@@ -233,20 +267,20 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+     const bool usesTevTexCoord = stage.indTexMtxId != GX_ITM_OFF || stage.indTexWrapS != GX_ITW_OFF ||
+                                  stage.indTexWrapT != GX_ITW_OFF || stage.indTexAddPrev;
+     if (usesTevTexCoord && stage.texCoordId != GX_TEXCOORD_NULL) {
+-      info.sampledTexCoords.set(stage.texCoordId);
++      set_sampled_id(info.sampledTexCoords, stage.texCoordId, "indirect tev texcoord");
+     }
+     if (usesTevTexCoord && stage.texMapId != GX_TEXMAP_NULL &&
+         (stage.indTexMtxId != GX_ITM_OFF || stage.indTexAddPrev)) {
+-      info.sampledTextures.set(stage.texMapId);
++      set_sampled_id(info.sampledTextures, stage.texMapId, "indirect tev texmap");
+     }
+     if (!usesIndStage) {
+       continue;
+     }
+     info.usedIndStages.set(stage.indTexStage);
+     const auto& indStage = config.indStages[stage.indTexStage];
+-    info.sampledTextures.set(indStage.texMapId);
+-    info.sampledTexCoords.set(indStage.texCoordId);
+-    info.sampledIndTextures.set(indStage.texMapId);
++    set_sampled_id(info.sampledTextures, indStage.texMapId, "ind stage texmap");
++    set_sampled_id(info.sampledTexCoords, indStage.texCoordId, "ind stage texcoord");
++    set_sampled_id(info.sampledIndTextures, indStage.texMapId, "ind stage ind texmap");
+     // Track which indirect matrix is used
+     if (stage.indTexMtxId >= GX_ITM_0 && stage.indTexMtxId <= GX_ITM_2) {
+       info.usedIndTexMtxs.set(stage.indTexMtxId - GX_ITM_0);
+@@ -264,7 +298,7 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+     }
+     const auto& tcg = config.tcgs[i];
+     if (tcg.type >= GX_TG_BUMP0 && tcg.type <= GX_TG_BUMP7) {
+-      info.sampledTexCoords.set(tcg.embossSrc);
++      set_sampled_id(info.sampledTexCoords, tcg.embossSrc, "emboss source texcoord");
+       info.lightingEnabled = true;
+     }
+   }
+@@ -371,6 +405,38 @@ static u32 line_texcoord_mask() noexcept {
  gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRanges& ranges) noexcept {
    ZoneScoped;
  
@@ -1292,7 +1397,7 @@ index bb9ddec..dc77770 100644
    static ByteBuffer buf;
    buf.clear();
    buf.reserve_extra(info.uniformSize);
-@@ -398,7 +430,39 @@ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRa
+@@ -398,7 +464,39 @@ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRa
        buf.append<u32>(line_texcoord_mask());
      }
    }

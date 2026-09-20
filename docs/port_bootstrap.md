@@ -2393,3 +2393,47 @@ Both of this session's defects have the same shape, and it is worth naming:
 The idle skip guarded against wasting host cycles on a spin and froze the
 game; this cap guarded against a tight `sc` loop and killed it. Both were
 written before the port could reach the workload that would have tested them.
+
+## The port dies on an eight-entry bitset
+
+With the first two fixes in, a session reached real 3D, ran for 272 seconds of
+scripted play - past everything that had killed it before - and then crashed
+outright. The in-process crash reporter earned itself here: the stack was
+complete and symbolised.
+
+```
+host crash: std::terminate - an exception escaped
+  #13 std::bitset<8>::_Xran
+  #14 aurora::gx::color_arg_reg_info   (lib/gx/shader_info.cpp:61)
+  #15 aurora::gx::build_shader_info    (lib/gx/shader_info.cpp:212)
+  #16 aurora::gx::fifo::handle_draw_unmerged
+  ...
+  #20 aurora::gx::fifo::call_display_list
+```
+
+Line 61 is `info.sampledTextures.set(stage.texMapId)`. `std::bitset<8>::set`
+throws `std::out_of_range` for an index past the end, nothing catches it, and
+`std::terminate` takes the process down. A single bad id kills the whole port.
+
+The guard above it only rejects `GX_TEXMAP_NULL` (0xFF), and that is not the
+only id the hardware cannot use: `GX_TEX_DISABLE` is `0x100`, and
+`GXSetTevOrder` is documented by its own source to take `map` with that bit
+set. `src/dolphin/gx/GXTev.c` says exactly what the hardware then does:
+
+```c
+tmap = map & ~0x100;
+tmap = (tmap >= GX_MAX_TEXMAP) ? GX_TEXMAP0 : tmap;
+SET_REG_FIELD(..., 1, 6, (map != GX_TEXMAP_NULL && !(map & 0x100)));
+```
+
+Both decode paths in Aurora look clean - the BP decode takes three bits, and
+Aurora's own `GXSetTevOrder` masks the same way the SDK does - so where the
+out-of-range id comes from is **not yet established**. Rather than guess at a
+sixth decode, every bitset index in `shader_info.cpp` now goes through one
+helper that applies the SDK's own clamping rule and **reports each distinct
+out-of-range id once, with which site produced it**. That converts a fatal,
+unattributable crash into a named, bounded fact, and the next run's log says
+which decode is wrong.
+
+This is a clamp, not a recovery: the report is an error line, it names the id
+and the site, and it states that the decode that produced the id is wrong.
