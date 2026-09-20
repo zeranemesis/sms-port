@@ -115,6 +115,10 @@ bool g_gameRunning = false;
 // progress. Expect to revisit once this has actually been run once.
 constexpr unsigned kGameBlocksPerFrame = 131072;
 
+// Host performance-counter ticks spent inside step_game, against the
+// wall-clock second the heartbeat covers.
+Uint64 g_stepTicks = 0;
+
 // Opens the configured disc image and boots the recompiled game. Called
 // once, before the first frame - see port_main(). Logs and leaves
 // g_gameRunning false on any failure, which keeps the menu-only loop as
@@ -178,6 +182,7 @@ static bool run_menu_loop()
         // reading a pc out of this line.
         {
             static Uint64 lastHeartbeat = 0;
+            static Uint64 lastHeartbeatStart = SDL_GetTicks();
             static u64 frames = 0;
             static u64 steps = 0;
             static u64 framesReported = 0;
@@ -185,14 +190,24 @@ static bool run_menu_loop()
             ++frames;
             const Uint64 now = SDL_GetTicks();
             if (now - lastHeartbeat >= 1000) {
+                // The window is this heartbeat's own span, not the time since
+                // the process started - using the latter made the percentage
+                // shrink towards zero as the run went on, which would have read
+                // as "step_game is getting cheaper" when nothing had changed.
+                const Uint64 heartbeatWindowMs = now - lastHeartbeatStart;
+                lastHeartbeatStart = now;
                 lastHeartbeat = now;
                 // Deltas as well as totals: "is it still advancing, and how
                 // fast" is a different question from "how far has it got", and
                 // the totals alone make the first one arithmetic homework.
-                SmsMainLog.info("heartbeat: frames={} (+{}) steps={} (+{}) begun={} running={} pc={:#010x} lr={:#010x} downcount={} r3={:#010x} r4={:#010x}",
+                static Uint64 stepTicksReported = 0;
+                const double stepSeconds = double(g_stepTicks - stepTicksReported) / double(SDL_GetPerformanceFrequency());
+                stepTicksReported = g_stepTicks;
+                SmsMainLog.info("heartbeat: frames={} (+{}) steps={} (+{}) begun={} running={} pc={:#010x} lr={:#010x} downcount={} r3={:#010x} r4={:#010x} | step_game {:.0f}% of wall time",
                     frames, frames - framesReported, steps, steps - stepsReported, frameBegun, g_gameRunning,
                     g_gameCpu.pc, g_gameCpu.lr, g_gameCpu.downcount,
-                    g_gameCpu.gpr[3], g_gameCpu.gpr[4]);
+                    g_gameCpu.gpr[3], g_gameCpu.gpr[4],
+                    heartbeatWindowMs == 0 ? 0.0 : 100.0 * stepSeconds * 1000.0 / double(heartbeatWindowMs));
                 framesReported = frames;
                 stepsReported = steps;
             }
@@ -231,11 +246,34 @@ static bool run_menu_loop()
                 guestFrameDebt = kMaxCatchUpFrames * kGuestFrameSeconds;
             }
 
-            while (frameBegun && g_gameRunning && guestFrameDebt >= kGuestFrameSeconds) {
+            // Where the host second actually goes. The port sits at ~101% of
+            // one core, and "the guest is slow" and "the host loop around it is
+            // expensive" look identical from outside the process: the render
+            // loop runs at the display's 144Hz while only ~36 guest frames a
+            // second produce new content, so every present and every FIFO drain
+            // in between is host work with no guest work behind it. This says
+            // which of the two it is instead of leaving it to be guessed at.
+            // At most ONE guest frame per host iteration, even when behind.
+            //
+            // Running the catch-up as a loop meant up to four guest frames
+            // back to back with no present between them. A guest frame costs
+            // about 26ms of host time here, so that is up to 104ms of frozen
+            // window: measured as the heartbeat's host frame count collapsing
+            // to +9 per second while step_game took 93-94% of wall time. The
+            // guest was fine; the picture was not.
+            //
+            // Stepping once per iteration lets the host present between guest
+            // frames, so the window refreshes at least as often as the guest
+            // produces content. The debt accumulator is unchanged and still
+            // capped, so nothing is lost - the port simply stops trying to
+            // catch up faster than it can draw.
+            const Uint64 stepStart = SDL_GetPerformanceCounter();
+            if (frameBegun && g_gameRunning && guestFrameDebt >= kGuestFrameSeconds) {
                 guestFrameDebt -= kGuestFrameSeconds;
                 ++steps;
                 g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
             }
+            g_stepTicks += SDL_GetPerformanceCounter() - stepStart;
         }
 #endif
 

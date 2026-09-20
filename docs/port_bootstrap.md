@@ -1320,3 +1320,53 @@ decoding, and two runs are never at the same point in it. Comparing that
 percentage across builds therefore measures the scene as much as the change, and
 any such comparison in this document's earlier tables is weaker than it looks.
 Skipped-slice counts and steps/s are the figures that can be compared.
+
+## 2026-09-20: where the host second actually goes
+
+Two leads were named at the end of the budgeting work. Both were measured; one
+was wrong.
+
+### Per-block dispatch overhead: measured, and it does not matter
+
+`dolrecomp_call` runs a host-call lookup on every single block -
+`recomp_host.cpp`'s `dispatch()` is an `unordered_map::find` - before reaching
+the translated code, which looked like a plausible per-block tax. Measuring
+guest cycles per block says otherwise: **290-514 cycles per block** in typical
+frames (one outlier frame at 68, with 85,312 small blocks). At roughly 20,000
+blocks per frame and 36 frames a second that is ~720,000 lookups per second,
+which at any believable hash cost is about 1% of a core.
+
+So the dispatch is not the bottleneck and optimising it would have been work
+spent on nothing. Recorded because a lead that turns out to be wrong is worth
+the same as one that turns out to be right, as long as it was measured.
+
+### The host loop around the guest: also small, but it exposed a real defect
+
+Timing `step_game` against wall time: **93-94% of every second was inside it**.
+The presenting, FIFO draining and UI around it cost about 6%. The bottleneck is
+the translated code itself, which is a code-generation problem rather than
+anything the frame loop can fix.
+
+But the same heartbeat showed the host frame count had collapsed to **+9 per
+second**. The pacing loop ran catch-up as a `while`, so when the guest was
+behind it could execute up to four guest frames back to back with no present in
+between - and a guest frame costs about 26ms of host time here, so that is up to
+104ms of frozen window. The guest was fine; the picture was not, and nothing in
+the guest-side numbers would ever have shown it.
+
+Stepping at most once per host iteration lets the host draw between guest
+frames. The debt accumulator is unchanged and still capped, so nothing is lost:
+
+| | before | after |
+| --- | --- | --- |
+| host frames presented/s | 9 | **32** |
+| guest steps/s | 36 | 32 |
+| step_game share of wall time | 93-94% | 89-91% |
+
+11% less guest work for 3.5x more frames actually seen, and `frames == steps`
+now, which is the relationship that should hold: every guest frame presented
+exactly once, none dropped and none presented twice.
+
+The game is still in slow motion - 32 guest frames per second against 60 - but
+it is now smooth slow motion rather than a picture updating four times less
+often than the guest produces it.

@@ -513,6 +513,13 @@ enum class RunStop {
 // the same mistake as every other probe that was coarser than its subject.
 bool g_lastSliceHitBlockCap = false;
 
+// How many blocks a frame actually executes. Cycles per block is what says
+// whether the per-block dispatch cost matters: dolrecomp_call does a host-call
+// hash lookup on every single block (generated.h's dolrecomp_call, and
+// recomp_host.cpp's dispatch() which is an unordered_map::find), so if blocks
+// are short that lookup is a large fraction of the work.
+u64 g_blocksThisFrame = 0;
+
 bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
 {
     g_lastSliceHitBlockCap = false;
@@ -528,6 +535,7 @@ bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
         // frame together, so record it rather than leave it as "something".
         const u32 calledPc = cpu->pc;
         const s64 downcountBefore = cpu->downcount;
+        ++g_blocksThisFrame;
         if (!dolrecomp_call(cpu, cpu->pc)) {
             return false;
         }
@@ -1245,6 +1253,7 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     // motion, which is what the THP decoder running at half its declared
     // 29.97fps looks like from the inside.
     const u64 frameTimebaseStart = cpu->timebase;
+    const u64 frameBlocksStart = g_blocksThisFrame;
     unsigned slicesExhausted = 0;
     unsigned slicesIdle = 0;
 
@@ -1324,10 +1333,13 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
         if (cpu->timebase - lastReport >= kTicksPerSecond) {
             lastReport = cpu->timebase;
             const u64 advanced = cpu->timebase - frameTimebaseStart;
+            const u64 blocks = g_blocksThisFrame - frameBlocksStart;
             Log.info("frame budget: guest time advanced {} of {} ticks ({:.0f}%) | {} of {} slices stopped on the "
-                     "block cap rather than on cycles | {} slices idle-skipped | blocksPerSlice={}",
+                     "block cap rather than on cycles | {} slices idle-skipped | blocksPerSlice={} | {} blocks, "
+                     "{:.1f} guest cycles per block",
                 advanced, kExpectedTicksPerFrame, 100.0 * double(advanced) / double(kExpectedTicksPerFrame),
-                slicesExhausted, kSlicesPerFrame, slicesIdle, blocksPerSlice);
+                slicesExhausted, kSlicesPerFrame, slicesIdle, blocksPerSlice, blocks,
+                blocks == 0 ? 0.0 : double(advanced * 12u) / double(blocks));
         }
     }
     return true;
