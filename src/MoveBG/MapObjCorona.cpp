@@ -2,8 +2,15 @@
 #include "MoveBG/MapObjBase.hpp"
 #include <JSystem/JMath.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <System/Particles.hpp>
 
-void TBathtub::loadAfter() { }
+void TBathtub::loadAfter()
+{
+	SMS_LoadParticle("/scene/map/map/ms_lkp_yuge1.jpa", 0x1BE);
+	SMS_LoadParticle("/scene/map/map/ms_kp_funsui.jpa", 0x1BF);
+	SMS_LoadParticle("/scene/map/map/ms_kp_break_a.jpa", 0x0F6);
+	SMS_LoadParticle("/scene/map/map/ms_kp_break_b.jpa", 0x0F7);
+}
 
 void TBathtub::hipdrop(const JGeometry::TVec3<f32>&) { }
 
