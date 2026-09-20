@@ -470,6 +470,55 @@ enum class RunStop {
     RepeatedSystemCalls, // the sc retry cap tripped
 };
 
+// dolrecomp_run_blocks (generated.h:621) counts blocks and never looks at
+// downcount, so a "slice" ended after N blocks regardless of how much guest
+// time those blocks represented. Block length varies enormously - a tight loop
+// the recompiler extracted into one block burns thousands of cycles, a run of
+// straight-line code burns a handful - which makes the block count a poor proxy
+// for time, and the measurement said exactly that:
+//
+//   frame budget: guest time advanced 620008 of 675000 ticks (92%) | 64/64 slices hit the block budget
+//   frame budget: guest time advanced  45901 of 675000 ticks ( 7%) | 64/64 slices hit the block budget
+//
+// Every slice of every frame ran out of blocks, and a frame bought anywhere
+// between 7% and 92% of a real GameCube frame. The guest was permanently cut
+// off mid-frame and living in slow motion, which is what the THP decoder
+// running at half its declared 29.97fps looks like from the inside.
+//
+// So run until the *cycle* budget is spent, which is what models a frame, and
+// demote the block count to the safety cap it was always described as. This
+// also gives the idle case the right behaviour for free: a guest with nothing
+// to run spins in SelectThread's `while (RunQueueBits == 0)` loop
+// (OSThread.c) and burns the rest of its frame there, exactly as the hardware
+// does, instead of the frame ending at an arbitrary block.
+//
+// Returns true when a budget ran out (the caller's "keep going" case), false
+// when dolrecomp_call declined a block or an exception is pending - the same
+// contract dolrecomp_run_blocks had.
+// Set by run_blocks_until_budget_spent so the frame probe can say WHICH budget
+// ended the slice. Counting "a budget ran out" answers nothing now that either
+// one can do it, and reading that number as if it still meant blocks would be
+// the same mistake as every other probe that was coarser than its subject.
+bool g_lastSliceHitBlockCap = false;
+
+bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
+{
+    g_lastSliceHitBlockCap = false;
+    for (unsigned blocks = 0; maxBlocks == 0u || blocks < maxBlocks; ++blocks) {
+        if (cpu->downcount <= 0) {
+            return true;
+        }
+        if (!dolrecomp_call(cpu, cpu->pc)) {
+            return false;
+        }
+        if (cpu->exception) {
+            return false;
+        }
+    }
+    g_lastSliceHitBlockCap = true;
+    return true;
+}
+
 RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
 {
     // dolrecomp_run_blocks (generated.h) stops as soon as CPUState::exception
@@ -485,7 +534,7 @@ RunStop run_blocks(CPUState *cpu, unsigned maxBlocks)
     // guards against a hypothetical sc-in-a-tight-loop from stalling a
     // frame - each retry already ran up to maxBlocks real blocks first.
     for (int retry = 0; retry < 64; ++retry) {
-        if (dolrecomp_run_blocks(cpu, maxBlocks)) {
+        if (run_blocks_until_budget_spent(cpu, maxBlocks)) {
             return RunStop::BudgetExhausted;
         }
         // The SDK runs with MSR[FP] deliberately off and switches the FPU in
@@ -1140,6 +1189,19 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     constexpr unsigned kSlicesPerFrame = 64;
     const unsigned blocksPerSlice = maxBlocks / kSlicesPerFrame > 0 ? maxBlocks / kSlicesPerFrame : 1;
 
+    // How much guest time a frame actually buys, measured rather than assumed.
+    //
+    // The comment above says a slice ends on whichever budget runs out first.
+    // That is not true: dolrecomp_run_blocks (generated.h:621) counts blocks
+    // and never looks at downcount, so the block count is the ONLY stop
+    // condition and the cycle budget only feeds the clock. A frame should
+    // advance the timebase by kCyclesPerFrame/12 = 675,000 ticks; anything
+    // less means the guest is being cut off mid-frame and is living in slow
+    // motion, which is what the THP decoder running at half its declared
+    // 29.97fps looks like from the inside.
+    const u64 frameTimebaseStart = cpu->timebase;
+    unsigned slicesExhausted = 0;
+
     for (unsigned slice = 0; slice < kSlicesPerFrame; ++slice) {
         refill_slice_budget(cpu, kCyclesPerFrame / kSlicesPerFrame);
         // Time-driven device work before delivery, so a completion raised here
@@ -1149,6 +1211,9 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
 
         switch (run_blocks(cpu, blocksPerSlice)) {
             case RunStop::BudgetExhausted:
+                if (g_lastSliceHitBlockCap) {
+                    ++slicesExhausted;
+                }
                 continue;
             case RunStop::Exception:
                 Log.warn("step_game: CPU exception {:#x} (program_exception cause={:#x}) at srr0={:#010x}, vector pc={:#010x}",
@@ -1160,6 +1225,21 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
             case RunStop::RepeatedSystemCalls:
                 Log.warn("step_game: gave up after repeated system-call traps near pc={:#010x}", cpu->pc);
                 return false;
+        }
+    }
+
+    {
+        // One line per second, like every other probe here.
+        static u64 lastReport = 0;
+        constexpr u64 kTicksPerSecond = 40500000ull;
+        constexpr u64 kExpectedTicksPerFrame = kCyclesPerFrame / 12; // 12 core cycles per timebase tick (recomp_host.cpp:81)
+        if (cpu->timebase - lastReport >= kTicksPerSecond) {
+            lastReport = cpu->timebase;
+            const u64 advanced = cpu->timebase - frameTimebaseStart;
+            Log.info("frame budget: guest time advanced {} of {} ticks ({:.0f}%) | {} of {} slices stopped on the "
+                     "block cap rather than on cycles | blocksPerSlice={}",
+                advanced, kExpectedTicksPerFrame, 100.0 * double(advanced) / double(kExpectedTicksPerFrame),
+                slicesExhausted, kSlicesPerFrame, blocksPerSlice);
         }
     }
     return true;

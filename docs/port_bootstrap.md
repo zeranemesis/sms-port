@@ -1141,3 +1141,79 @@ waiting for the next retrace, with the block count demoted to a safety cap. The
 heartbeat already shows that idle pc. That is the next piece of work, and until
 it is done the movie runs at about half speed and the right constant is
 machine-specific, which is its own argument against keeping one.
+
+## 2026-09-20: the per-frame budget was counting the wrong thing
+
+The comment on `step_game`'s slice loop said a slice ends "on whichever budget
+runs out first: the cycle budget... or the block count". That was not true.
+`dolrecomp_run_blocks` (`generated/generated.h:621`) is eight lines long and
+never looks at `downcount`:
+
+```c
+while (max_blocks == 0u || blocks < max_blocks) {
+    if (!dolrecomp_call(ctx, ctx->pc)) return 0;
+    if (ctx->exception) return 0;
+    blocks++;
+}
+```
+
+So the block count was the *only* stop condition, and the cycle budget only fed
+the clock. Instrumenting how much guest time a frame actually bought:
+
+```
+frame budget: guest time advanced 620008 of 675000 ticks (92%) | 64/64 slices hit the block budget
+frame budget: guest time advanced 258019 of 675000 ticks (38%) | 64/64 slices hit the block budget
+frame budget: guest time advanced  45901 of 675000 ticks ( 7%) | 64/64 slices hit the block budget
+```
+
+Every slice of every frame ran out of blocks, and a frame bought between **7%
+and 92%** of a real GameCube frame. Block length varies enormously - a tight
+loop the recompiler extracted into one block burns thousands of cycles, a run of
+straight-line code burns a handful - so the block count is a poor proxy for
+time. The guest was permanently cut off mid-frame at an unpredictable point.
+
+`run_blocks_until_budget_spent` now stops on `downcount`, which is what models a
+frame, and the block count becomes the safety cap its own comment always called
+it.
+
+### The cap is not optional, and finding that out cost a stall
+
+Raising the cap to 1,048,576 at the same time as adding the cycle check -
+two variables at once, against this project's own rule - produced frames that
+advanced exactly **675,125 of 675,000 ticks (100%)** with **0 of 64** slices
+stopping on blocks. Correct, and it stalled: after 150s the game sat at
+`appState=3 (NLOGO)` with `piCause=0x144` (VI, DSP and DI all pending and never
+acknowledged) and a DI transfer frozen at `curr=0x8000 done=0x0`.
+
+The previous run had already isolated it, because that one kept the old 256
+blocks/slice cap alongside the cycle check and ran fine. So the cycle check is
+sound and the missing cap is what stalls: something reached through
+`dolrecomp_call` - a host-call bridge or a replacement - returns without
+decrementing `downcount`, so the slice never ends and interrupt delivery, which
+only happens between slices, is starved. **Which** callee is not yet identified;
+that is worth knowing rather than papering over with a cap.
+
+### Where it is left
+
+| | blocks/slice | guest time per frame | guest steps/s | movie fps |
+| --- | --- | --- | --- | --- |
+| block budget only | 256 | 7-92% | 60 | 15.4 |
+| cycle budget + cap | 2048 | **69-71%** | 36 | 12 |
+| cycle budget, no cap | 16384 | 100% | 32 | stalls |
+
+The middle row is what is set. It is the more principled of the two working
+rows - the guest's clock and the work it does now agree to within a third,
+instead of varying by a factor of thirteen frame to frame - and the game reaches
+the movie and plays it normally. It is also honestly slower on the clock the
+player sees: 36 retraces per second instead of 60, so the game runs at about
+60% speed, where the old row ran at 60 retraces of partial work, which is slow
+motion with an incoherent clock rather than a faster game.
+
+Neither row is the answer. The port executes guest code at roughly half the rate
+a GameCube does on one host thread, and that is a performance problem, not a
+budgeting one. The two concrete leads are the callee that does not decrement
+`downcount` (above), and the guest's idle spin: with the cycle budget the guest
+now burns real host cycles inside `SelectThread`'s `while (RunQueueBits == 0);`
+loop (`src/dolphin/os/OSThread.c`), which costs nothing on hardware. Skipping
+ahead when `RunQueueBits` is zero is free time, and `RunQueueBits` is a single
+guest global, so detecting it needs no pc heuristics.
