@@ -65,6 +65,25 @@ bool dispatch(CPUState *cpu, u32 address)
     // spinning on its own OSReport trampoline, with the repeat messages
     // invisible because they dedupe.
     cpu->pc = cpu->lr;
+
+    // Charge the guest for the subroutine this bridge stood in for.
+    //
+    // Not a timing model - the real function's cost is unknown and this does
+    // not pretend to estimate it. It is a forward-progress guarantee. A slice
+    // ends when downcount is spent, and a bridge that returns without touching
+    // downcount cannot end one; a loop made of bridged calls therefore runs
+    // until the block cap, and interrupt delivery, which only happens between
+    // slices, starves. Measured: removing the block cap stalled the game at
+    // NLOGO with VI, DSP and DI all pending and unacknowledged, and the callees
+    // that spend no cycles are precisely these bridges - OSReport, PADInit,
+    // PADRead, PADSetAnalogMode, PADControlMotor, GXSetArray.
+    //
+    // 100 cycles is about 0.2us at 486MHz and 1/81,000th of a frame, so it
+    // cannot distort the clock at any plausible call rate, while still
+    // guaranteeing a slice made entirely of bridges ends after at most ~1,265
+    // of them instead of never.
+    constexpr s64 kBridgedCallCycles = 100;
+    cpu->downcount -= kBridgedCallCycles;
     return true;
 }
 

@@ -1217,3 +1217,49 @@ now burns real host cycles inside `SelectThread`'s `while (RunQueueBits == 0);`
 loop (`src/dolphin/os/OSThread.c`), which costs nothing on hardware. Skipping
 ahead when `RunQueueBits` is zero is free time, and `RunQueueBits` is a single
 guest global, so detecting it needs no pc heuristics.
+
+### The callee that spent no cycles was our own bridges
+
+Naming it took one bounded probe: record `downcount` either side of every
+`dolrecomp_call` and log the first occurrence of each address that spends
+nothing. Sixteen distinct addresses, resolved against
+`config/GMSP01/symbols.txt`:
+
+```
+__OSInitSystemCall  OSReport  PADInit  PADRead  PADSetAnalogMode
+PADControlMotor     GXSetArray          PPCMtwpar
+Config24MB+0x2C ... +0x60
+```
+
+Every one of the interesting ones is a **host-call bridge this port installed**.
+A bridge replaces a whole guest subroutine with host code and returns without
+touching `downcount`, so a stretch of them spends no slice budget at all. The
+`Config24MB` cluster is the instruction fallback (`mtspr`/`mfspr`), which
+advanced `pc` without charging for the instruction it emulated.
+
+Both now charge: 100 cycles per bridged call, one cycle per emulated
+instruction. The 100 is explicitly **not** a timing model - the replaced
+function's real cost is unknown and this does not pretend to estimate it. It is
+a forward-progress guarantee, and at 0.2us it is 1/81,000th of a frame, too
+small to distort the clock at any plausible call rate.
+
+The effect is larger than "no longer stalls", because a slice that ended on the
+block cap **threw away its remaining cycles** - the next `refill_slice_budget`
+overwrites `downcount` rather than adding to it. Recovering that budget:
+
+| | guest time per frame | slices stopped by the block cap |
+| --- | --- | --- |
+| before | 69-71% | 37-41 of 64 |
+| after | **97-99%** | **0-4 of 64** |
+
+Same 36 guest steps/s and same host CPU, so guest work done per host second rose
+about 40%. The block cap is finally what it was always described as: a safety
+net that almost never fires.
+
+Sixteen addresses still spend nothing, but they are now ordinary game blocks at
+mid-function offsets (`__THPDecompressiMCURowNxN+0x19F0`,
+`drawChar_scale__10JUTResFontFffffib+0x210`), i.e. blocks whose counted cost is
+zero rather than bridges that bypass counting. `downcount` is a real cycle
+counter - dolrecomp emits `ctx->downcount -= block_cycles[i]` per basic block
+(`extern/dolrecomp/src/backend/emitter.c:1914,1969`) - so these are sparse and
+interleaved with blocks that do charge, which is why they cannot wedge a slice.

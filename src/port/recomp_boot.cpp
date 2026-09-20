@@ -369,6 +369,13 @@ void handle_instruction_fallback(CPUState *cpu, u32 raw, u32 cia)
     const u32 rB = (raw >> 11) & 0x1Fu;    // bits 16-20 (X-form rB; XFX-form spr high 5 bits)
     const u32 secondaryOp = (raw >> 1) & 0x3FFu; // bits 21-30
 
+    // Every path below emulates exactly one guest instruction, so charge one
+    // instruction's worth of the slice budget. Without this the fallback is
+    // another callee that advances pc while spending nothing, which is what
+    // stops a slice from ever ending on cycles (see recomp_host.cpp's
+    // kBridgedCallCycles).
+    cpu->downcount -= 1;
+
     if (primaryOp == 31 && secondaryOp == 339) { // mfspr
         // XFX-form's spr field packs its two 5-bit halves in reverse order
         // (bits 11-15 = low 5 bits, bits 16-20 = high 5 bits) - rA/rB above
@@ -508,11 +515,39 @@ bool run_blocks_until_budget_spent(CPUState *cpu, unsigned maxBlocks)
         if (cpu->downcount <= 0) {
             return true;
         }
+        // Removing the block cap stalled the game outright, which means some
+        // callee returns without spending any of the slice's cycles: the slice
+        // then never ends on downcount, and interrupt delivery - which only
+        // happens between slices - starves. Naming that callee is what lets the
+        // cap go back to being a safety net instead of the thing holding the
+        // frame together, so record it rather than leave it as "something".
+        const u32 calledPc = cpu->pc;
+        const s64 downcountBefore = cpu->downcount;
         if (!dolrecomp_call(cpu, cpu->pc)) {
             return false;
         }
         if (cpu->exception) {
             return false;
+        }
+        if (cpu->downcount == downcountBefore) {
+            // Bounded the way every probe in this port is bounded: one line per
+            // distinct address AND a hard cap, because a free-running caller is
+            // exactly the shape that has produced five runaway logs here.
+            static std::unordered_map<u32, u64> freeBlocks;
+            static bool capReported = false;
+            auto [it, inserted] = freeBlocks.try_emplace(calledPc, 0);
+            ++it->second;
+            if (inserted) {
+                if (freeBlocks.size() <= 16) {
+                    Log.warn("block at {:#010x} returned without spending any cycles - a slice made only of these "
+                             "never ends on its cycle budget",
+                        calledPc);
+                } else if (!capReported) {
+                    capReported = true;
+                    Log.warn("more than 16 distinct addresses return without spending cycles; no further ones are "
+                             "logged");
+                }
+            }
         }
     }
     g_lastSliceHitBlockCap = true;
