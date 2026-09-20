@@ -114,7 +114,18 @@ TBathtub::TBathtub(const char* name)
 
 void TBathtub::load(JSUMemoryInputStream&) { }
 
-u8 TBathtub::getNumKillerLaunchable() const { return 0; }
+u8 TBathtub::getNumKillerLaunchable() const
+{
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0 || unk248 > 0)
+		return 0;
+
+	int count = getNumGripsDead() + 1;
+	if (count < 2)
+		count = 2;
+	if (count > 4)
+		count = 4;
+	return static_cast<u8>(count);
+}
 
 bool TBathtub::isKillerAttackable() const { return unk248 <= 0; }
 
