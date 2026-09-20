@@ -87,6 +87,12 @@ static AuroraBackend resolve_desired_backend()
 // docs/recompilation.md) provides an entry point, this becomes the fallback
 // path for BACKEND_NULL / no-disc-configured, the same way Marioparty4's
 // launchUILoop() is, rather than the whole program.
+//
+// Both ways out below - the Quit menu action (sets sms::IsRunning to
+// false) and AURORA_EXIT (the OS/window asking to close) - are ordinary,
+// successful ways to end the program, not errors; there is no failure path
+// in this loop yet. The bool return stays meaningful for later, once a
+// real error condition exists to report through it.
 static bool run_menu_loop()
 {
     while (sms::IsRunning) {
@@ -97,7 +103,7 @@ static bool run_menu_loop()
                     sms::ui::handle_event(event->sdl);
                     break;
                 case AURORA_EXIT:
-                    return false;
+                    return true;
                 default:
                     break;
             }
@@ -113,7 +119,7 @@ static bool run_menu_loop()
         aurora_end_frame();
     }
 
-    return sms::IsRunning;
+    return true;
 }
 
 extern "C" int port_main(int argc, char *argv[])

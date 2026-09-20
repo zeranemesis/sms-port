@@ -229,6 +229,12 @@ void sms::config::LoadFromFileName(const char* path) {
         } else {
             SmsConfigLog.error("Failed to load from config! {}", e.what());
         }
+    } catch (const std::exception& e) {
+        // A truncated or hand-edited config.json throws nlohmann::json's own
+        // parse_error here, not a system_error - falling back to defaults
+        // beats crashing the whole app at startup over a corrupt settings
+        // file.
+        SmsConfigLog.error("Failed to load from config! {}", e.what());
     }
 }
 

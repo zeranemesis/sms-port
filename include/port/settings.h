@@ -18,7 +18,7 @@ using namespace config;
 // so this file stays includable from code that only needs settings access.
 enum class GameLanguage : u8 {
     English = 0,
-    French = 3,
+    French = 2,
 };
 
 enum class DiscVerificationState : u8 {
@@ -30,6 +30,10 @@ enum class DiscVerificationState : u8 {
 namespace config {
 template <>
 struct ConfigEnumRange<GameLanguage> {
+    // Bounds the raw stored value to OS_LANGUAGE_ENGLISH..OS_LANGUAGE_FRENCH,
+    // the real SDK's valid encodings in that span (German=1 sits inside it
+    // unused, same as Marioparty4's own range) rather than to just the two
+    // languages settings.cpp's UI currently exposes a picker for.
     static constexpr auto min = GameLanguage::English;
     static constexpr auto max = GameLanguage::French;
 };
