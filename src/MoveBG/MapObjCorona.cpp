@@ -1,5 +1,6 @@
 #include "MoveBG/MapObjCorona.hpp"
 #include "MoveBG/MapObjBase.hpp"
+#include <M3DUtil/MActor.hpp>
 
 void TBathtub::loadAfter() { }
 
@@ -11,13 +12,25 @@ int TBathtub::getNumGripsDead() const { return 0; }
 
 void TBathtub::tumble(f32, f32) { }
 
-MtxPtr TBathtub::getTakingMtx() { return nullptr; }
+MtxPtr TBathtub::getTakingMtx()
+{
+	return mMActor->getModel()->getAnmMtx(mMarioJntIdx);
+}
 
-MtxPtr TBathtub::getSubmarineMtxInDemo() { return nullptr; }
+MtxPtr TBathtub::getSubmarineMtxInDemo()
+{
+	return mMActor->getModel()->getAnmMtx(mSubmarineJntIdx);
+}
 
-MtxPtr TBathtub::getPeachMtxInDemo() { return nullptr; }
+MtxPtr TBathtub::getPeachMtxInDemo()
+{
+	return mMActor->getModel()->getAnmMtx(mDuckJntIdx);
+}
 
-MtxPtr TBathtub::getKoopaJrMtxInDemo() { return nullptr; }
+MtxPtr TBathtub::getKoopaJrMtxInDemo()
+{
+	return mMActor->getModel()->getAnmMtx(mJuniorJntIdx);
+}
 
 BOOL TBathtub::receiveMessage(THitActor* sender, u32 message) { return false; }
 
