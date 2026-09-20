@@ -1554,3 +1554,53 @@ geometry. It gets further than anything before it, and then:
 
 Recorded as **FAIL**, reproducible in about twenty seconds with
 `tools/port/dolphinjet_skip_intro.ps1`.
+
+## 2026-09-20: the FIFO desync was an indexed XF load consuming one byte too many
+
+The desync's first bad byte is never where the fault is, so the parser now keeps
+a trail of the last twelve commands and dumps it. That named the cause in one
+run:
+
+```
+[pos 7450 op 10 +13]  [pos 7463 op 20 +6]  [pos 7469 op 00 +1]  [pos 7470 op 13 +135177]
+```
+
+Two things are wrong there. `0x13` is not a GX opcode at all, but
+`cmd & CP_OPCODE_MASK` turns it into `0x10` (LOAD_XF_REG), whose garbage header
+then consumed **135,177 bytes** and left the cursor inside vertex data - the
+mask hides an invalid byte rather than reporting it. And the real fault is one
+command earlier: `op 20` (LOAD_INDX_A) consumed **6** bytes.
+
+The game's own emitter says what the format is:
+
+```c
+GX_WRITE_U8(0x20);
+GX_WRITE_U32(reg);        // src/dolphin/gx/GXTransform.c:177
+```
+
+One opcode byte and one u32 - **five bytes**, with `reg` carrying the offset in
+bits 0-11, length-1 in bits 12-15 and a 16-bit index in bits 16-31. Aurora read
+the index as a single byte, read `addrLen` from bytes 1-2 instead of the low
+half at 2-3, and consumed five payload bytes instead of four. One byte too many
+per indexed load, and the stream never recovers.
+
+Measured after the fix: **zero desyncs**, where every run before it died on
+`unsupported primitive type 192`.
+
+### Which exposed the next one, as fixing a parse usually does
+
+The indexed load now actually dereferences the array it names -
+`array.data + srcArrayIdx * array.stride` - and `array.data` is null, because
+Aurora rejects the CP array-base registers 0xA0-0xAF that would have set it
+(`command_processor.cpp:1309`; it wants `GX_LOAD_AURORA_ARRAYBASE` with a host
+pointer, since a guest physical address means nothing to it). The run now ends
+in a hard crash with no FATAL line, which is what reading from null plus an
+offset looks like.
+
+So the two defects were linked: the stream desynchronised before it ever got far
+enough to use an array base, and fixing the parse is what made the missing base
+matter. The port does bridge `GXSetArray`, but the guest re-sends the CP
+registers itself from its own shadow state, so the bridge alone never covered
+this path.
+
+Recorded as **FAIL**, reproducible in about twenty seconds.

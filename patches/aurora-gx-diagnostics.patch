@@ -71,7 +71,7 @@ index d1ed04c..c59ad9d 100644
        .format = wgpuFormat,
        .width = width,
 diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
-index 9748556..f9d079a 100644
+index 9748556..b3f8375 100644
 --- a/lib/gx/command_processor.cpp
 +++ b/lib/gx/command_processor.cpp
 @@ -11,9 +11,12 @@
@@ -87,7 +87,7 @@ index 9748556..f9d079a 100644
  
  namespace aurora::gx::fifo {
  static Module Log("aurora::gx::fifo");
-@@ -365,6 +368,36 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+@@ -365,6 +368,64 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
    return false;
  }
  
@@ -106,6 +106,34 @@ index 9748556..f9d079a 100644
 +// byte and reports the position, so drain() can carry the tail into the next
 +// buffer.  Outside stream mode - display lists, which are complete by
 +// construction - every CHECK below still fires exactly as before.
++// The last commands parsed, so a desync can say what led to it. The byte the
++// parser chokes on is never the byte that went wrong - it is wherever the
++// previous command's length was mis-computed and left the cursor stranded.
++struct ParsedCommand {
++  u32 pos;
++  u8 opcode;
++  u32 consumed;
++};
++static std::array<ParsedCommand, 12> s_recentCommands {};
++static size_t s_recentNext = 0;
++
++static void note_command(u32 pos, u8 opcode, u32 consumed) {
++  s_recentCommands[s_recentNext] = ParsedCommand{pos, opcode, consumed};
++  s_recentNext = (s_recentNext + 1) % s_recentCommands.size();
++}
++
++static void dump_recent_commands() {
++  std::string trail;
++  for (size_t i = 0; i < s_recentCommands.size(); ++i) {
++    const auto& c = s_recentCommands[(s_recentNext + i) % s_recentCommands.size()];
++    if (c.consumed == 0 && c.opcode == 0 && c.pos == 0) {
++      continue;
++    }
++    trail += fmt::format(" [pos {} op {:02x} +{}]", c.pos, c.opcode, c.consumed);
++  }
++  Log.error("  commands leading here:{}", trail);
++}
++
 +static bool s_streamMode = false;
 +static bool s_streamTruncated = false;
 +static u32 s_streamCmdStart = 0;
@@ -124,7 +152,7 @@ index 9748556..f9d079a 100644
  // Forward declarations for register handlers
  static void handle_bp(u32 value, bool bigEndian);
  static void handle_cp(u8 addr, u32 value, bool bigEndian);
-@@ -377,6 +410,13 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -377,15 +438,27 @@ void process(const u8* data, u32 size, bool bigEndian) {
    u32 pos = 0;
  
    while (pos < size) {
@@ -135,10 +163,14 @@ index 9748556..f9d079a 100644
 +      break;
 +    }
 +    s_streamCmdStart = pos;
++    const u32 commandStart = pos;
      u8 cmd = data[pos++];
      u8 opcode = cmd & CP_OPCODE_MASK;
      // Log.warn("Processing opcode {:02x} at pos {} (size {})", opcode, pos - 1, size);
-@@ -386,6 +426,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+ 
+     switch (opcode) {
+     case CP_CMD_NOP:
++      note_command(commandStart, cmd, 1);
        continue;
  
      case CP_CMD_LOAD_BP_REG: {
@@ -148,7 +180,7 @@ index 9748556..f9d079a 100644
        CHECK(pos + 4 <= size, "BP reg read overrun");
        u32 value = read_u32(data + pos, bigEndian);
        pos += 4;
-@@ -394,6 +437,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -394,6 +467,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
      }
  
      case CP_CMD_LOAD_CP_REG: {
@@ -158,7 +190,7 @@ index 9748556..f9d079a 100644
        CHECK(pos + 5 <= size, "CP reg read overrun");
        u8 addr = data[pos++];
        u32 value = read_u32(data + pos, bigEndian);
-@@ -413,6 +459,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+@@ -413,25 +489,47 @@ void process(const u8* data, u32 size, bool bigEndian) {
      case CP_CMD_LOAD_INDX_D: {
        ZoneScopedN("LOAD_INDX");
        // Indexed XF load: 4 bytes of data
@@ -167,8 +199,41 @@ index 9748556..f9d079a 100644
 +      }
        CHECK(pos + 4 <= size, "indexed XF read overrun");
        u32 arrayType = GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08));
-       u8 srcArrayIdx = data[pos++];
-@@ -432,6 +481,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+-      u8 srcArrayIdx = data[pos++];
++      // One opcode byte and ONE u32, per the game's own emitter:
++      //
++      //     GX_WRITE_U8(0x20);
++      //     GX_WRITE_U32(reg);        (src/dolphin/gx/GXTransform.c:177)
++      //
++      // with reg laid out by the same function as offset in bits 0-11,
++      // length-1 in bits 12-15 and the 16-bit index in bits 16-31.
++      //
++      // This previously read the index as one byte, read addrLen from bytes
++      // 1-2 instead of the low half at 2-3, and consumed five payload bytes
++      // instead of four. One byte too many per indexed load desynchronises the
++      // whole stream: measured as a trail ending
++      //   [pos 7463 op 20 +6] [pos 7469 op 00 +1] [pos 7470 op 13 +135177]
++      // where 0x13 is not an opcode at all but the 0xF8 mask turns it into an
++      // XF load, whose garbage header then swallowed 135KB and left the parser
++      // inside vertex data for good.
++      const u32 indexed = read_u32(data + pos, bigEndian);
++      pos += 4;
++      const u16 srcArrayIdx = static_cast<u16>(indexed >> 16);
+       auto const& array = g_gxState.arrays[arrayType];
+       u8* srcData = ((u8*)array.data) + srcArrayIdx * array.stride;
+-      u16 addrLen = read_u16(data + pos, bigEndian);
+-      u16 len = (addrLen >> 12) + 1;
+-      u16 dstAddr = addrLen & 0x0FFF;
++      const u16 len = static_cast<u16>(((indexed >> 12) & 0xF) + 1);
++      const u16 dstAddr = static_cast<u16>(indexed & 0x0FFF);
+       if (!copy_xf_data(dstAddr, srcData, len, bigEndian)) {
+ #ifndef NDEBUG
+         Log.debug("Unimplemented indexed XF load (opcode 0x{:02X}, dstAddr=%04x)", opcode, dstAddr);
+ #endif
+       }
+-      pos += 4;
+       break;
+     }
  
      case CP_CMD_CALL_DL: {
        // Call display list: 8 bytes (address + size)
@@ -178,7 +243,19 @@ index 9748556..f9d079a 100644
        CHECK(pos + 8 <= size, "call DL read overrun");
        Log.warn("Ignoring nested GX_CMD_CALL_DL");
        pos += 8;
-@@ -566,6 +618,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+@@ -482,6 +580,11 @@ void process(const u8* data, u32 size, bool bigEndian) {
+       }
+       break;
+     }
++
++    // Record what was just consumed. A desync's first bad byte is never where
++    // the fault is - it is wherever a preceding command's length was computed
++    // wrong and left the cursor stranded - so the trail is what identifies it.
++    note_command(commandStart, cmd, pos - commandStart);
+   }
+ }
+ 
+@@ -566,6 +669,19 @@ static void handle_bp(u32 value, bool bigEndian) {
    switch (regId) {
    // genMode (0x00)
    case 0x00: {
@@ -198,7 +275,7 @@ index 9748556..f9d079a 100644
      g_gxState.numTexGens = bp_get(value, 4, 0);
      g_gxState.numChans = bp_get(value, 3, 4);
      g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
-@@ -1261,6 +1326,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+@@ -1261,6 +1377,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
  
  // XF register handler - decodes XF (transform unit) register writes and updates g_gxState
  static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -208,7 +285,7 @@ index 9748556..f9d079a 100644
    CHECK(pos + 4 <= size, "XF header read overrun");
    u32 header = read_u32(data + pos, bigEndian);
    pos += 4;
-@@ -1269,6 +1337,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1269,6 +1388,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
    u32 addr = header & 0xFFFF;
    u32 dataBytes = count * 4;
    // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
@@ -218,7 +295,7 @@ index 9748556..f9d079a 100644
    CHECK(pos + dataBytes <= size, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
  
    const u8* xfData = data + pos;
-@@ -1282,6 +1353,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1282,6 +1404,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
        u32 reg = xfAddr + i;
        u32 val = read_u32(xfData + i * 4, bigEndian);
  
@@ -236,7 +313,7 @@ index 9748556..f9d079a 100644
        // Skip scalar register writes that haven't changed (viewport/projection handled below)
        if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
          continue;
-@@ -1551,6 +1633,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+@@ -1551,6 +1684,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
      UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
  
    u32 totalVtxBytes = vtxCount * vtxSize;
@@ -246,10 +323,39 @@ index 9748556..f9d079a 100644
    if (pos + totalVtxBytes > size)
      UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
  
-@@ -1604,10 +1689,124 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+@@ -1604,10 +1740,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
    GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
    GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
  
++  // A primitive outside 0x80-0xB8 is not an unimplemented feature, it is a
++  // byte that was never an opcode: the parser is reading the stream at the
++  // wrong offset. "unsupported primitive type 192" says nothing about where
++  // that started, and the surrounding bytes do, so dump them the way the
++  // draw-overrun path already does rather than aborting blind.
++  switch (prim) {
++  case GX_QUADS:
++  case GX_TRIANGLES:
++  case GX_TRIANGLESTRIP:
++  case GX_TRIANGLEFAN:
++  case GX_LINES:
++  case GX_LINESTRIP:
++  case GX_POINTS:
++    break;
++  default: {
++    const u32 cmdPos = pos - 1;
++    const u32 dumpStart = cmdPos > 32 ? cmdPos - 32 : 0;
++    const u32 dumpEnd = cmdPos + 32 < size ? cmdPos + 32 : size;
++    std::string hex;
++    for (u32 i = dumpStart; i < dumpEnd; i++) {
++      hex += i == cmdPos ? fmt::format("[{:02x}]", data[i]) : fmt::format(" {:02x}", data[i]);
++    }
++    Log.error("FIFO desync: byte {:#04x} at pos {} is not a GX opcode (buffer size {})", cmd, cmdPos, size);
++    Log.error("  bytes {}-{}:{}", dumpStart, dumpEnd - 1, hex);
++    dump_recent_commands();
++    break;
++  }
++  }
++
 +  if (fifo_truncated(pos, 2, size)) {
 +
 +    return;
@@ -371,7 +477,7 @@ index 9748556..f9d079a 100644
    draw_prim(prim, fmt, vtxCount, data, pos, size);
  }
  
-@@ -1671,10 +1870,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+@@ -1671,10 +1950,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
  }
  
  std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
@@ -388,7 +494,7 @@ index 9748556..f9d079a 100644
    CHECK(pos + length <= size, "Aurora string read overrun");
    std::string str(reinterpret_cast<const char*>(data) + pos, length);
    pos += length;
-@@ -1683,12 +1888,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1683,12 +1968,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
  
  void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    ZoneScoped;
@@ -407,7 +513,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
      const f32 left = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1711,6 +1922,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1711,6 +2002,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
          .zfar = farZ,
      });
    } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
@@ -417,7 +523,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
      const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
      pos += 4;
-@@ -1722,6 +1936,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1722,6 +2016,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      set_render_scissor({left, top, width, height});
    } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
@@ -427,7 +533,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
      u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
  
-@@ -1743,6 +1960,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1743,6 +2040,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
        g_gxState.stateDirty = true;
      }
    } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
@@ -437,7 +543,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
      const auto texMapId = data[pos];
      pos += 1;
-@@ -1771,6 +1991,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1771,6 +2071,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_TLUT) {
@@ -447,7 +553,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
      const auto idx = data[pos];
      pos += 1;
-@@ -1789,6 +2012,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1789,6 +2092,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      slot.set_no_cache(false); // Reset no-cache flag
      g_gxState.stateDirty = true;
    } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
@@ -457,7 +563,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
      g_gxState.frontOffset = read_f32(data + pos, bigEndian);
      pos += 4;
-@@ -1802,18 +2028,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1802,18 +2108,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
      pos += 4;
      g_gxState.stateDirty = true;
    } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
@@ -488,7 +594,7 @@ index 9748556..f9d079a 100644
      CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
      u8 cmd = data[pos];
      pos += 1;
-@@ -1849,4 +2087,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+@@ -1849,4 +2167,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
    }
  }
  
