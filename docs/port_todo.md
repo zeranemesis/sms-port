@@ -38,6 +38,29 @@ la charge qui les aurait testés.
 
 ## 1. Bloquant pour jouer
 
+### 1.0 En jeu réel, le monde est noir : seul le HUD se dessine
+
+**C'est la tête de liste, et elle corrige une erreur de ma part.** J'avais
+présenté une capture de la piste de Delfino comme la preuve que le moteur 3D
+rendait — c'était une **cinématique**, pas du jeu. Valentin l'a relevé
+immédiatement. Le port traverse trois couches qui se ressemblent à l'écran et
+ne prouvent pas du tout la même chose, et il faut les nommer séparément :
+
+| couche | signature dans `draw 1s` | ce qu'une belle image y prouve |
+|---|---|---|
+| vidéo THP | `prims=[0x80/4 xN]` seul, un quad par image | le décodeur vidéo et un quad texturé |
+| cinématique moteur | strips variés `0x98/3`, `0x98/5`, `0x98/10`… | le chemin géométrique |
+| jeu réel | HUD présent, Mario contrôlable | que le jeu est jouable |
+
+En jeu réel (HUD affiché : compteur de pièces, jauge LIFE), le FIFO ne porte
+**que des quads à 4 sommets** — `prims=[0x80/4 x40042]`, aucun triangle strip —
+et l'écran est noir hors HUD. La géométrie du niveau n'est pas soumise du tout.
+
+Ce n'est donc pas un problème de rendu : rien n'arrive au GP. À chercher du
+côté de ce qui alimente les listes d'affichage du niveau, pas du côté des
+shaders.
+
+
 ### 1.1 Trouver le décodage qui produit un identifiant de texture hors bornes
 
 Le correctif `55c9de2b` empêche le crash et **nomme** la valeur fautive, mais
@@ -101,12 +124,20 @@ gradient uniquement, sans quoi les zones plates gonflent le score :
 | colonnes | **100,0 %** (32 800 échantillons) |
 | lignes | 23,0 % (58 100 échantillons) |
 
-L'argument tient sans témoin externe, et c'est ce qui le rend solide : les deux
-chiffres viennent de la même image capturée par le même chemin. Un chemin de
-capture qui diviserait la résolution diviserait **les deux** axes. Ici la
-verticale porte tout son détail et l'horizontale n'en a aucun : la sortie est
-donc **rendue en 640 de large puis doublée**, tandis que la hauteur est
-réellement rendue à 896.
+**Correction : la conclusion « rendu en 640 de large » était fausse.** En
+mesurant couche par couche, le HUD, lui, est à pleine résolution dans les deux
+axes :
+
+| couche | colonnes dupliquées | lignes dupliquées |
+|---|---|---|
+| HUD du jeu (jauge LIFE) | 49,6 % | 55,7 % |
+| cinématique moteur | 100,0 % | 23,0 % |
+| vidéo THP (visage de Mario) | 100,0 % | 15,5 % |
+
+Le HUD prouve que la cible de rendu porte bien le détail horizontal. Ce qui est
+réellement anormal est **anisotrope** : la scène et la vidéo sont agrandies au
+plus proche voisin horizontalement et lissées verticalement. Un agrandissement
+2× honnête donnerait deux chiffres identiques, pas 100 % contre 20 %.
 
 *(Un témoin sur la barre de titre donne 72,7 %, cohérent, mais il ne prouve rien
 à lui seul : le cadre non client et la zone client ne transitent pas forcément
@@ -140,9 +171,11 @@ shader correct et produit du noir ».
 
 ### 2.3 Les couleurs de la vidéo THP sont délavées
 
-Pendant la cinématique d'intro (un seul quad plein écran par image), tout est
-surexposé. Écarté : les uniformes atteignant le shader sont **exactement** les
-valeurs attendues de `THPDraw.c` (`colorRegs[0] = (-90, 0, -114, 135)`,
+**À requalifier.** L'image délavée que j'avais retenue (l'avion sur la piste)
+est très probablement un **fondu au blanc**, pas un défaut : une autre image de
+la même vidéo, plus tard, sort nette et parfaitement colorée, sous-titres
+lisibles. Écarté par ailleurs : les uniformes atteignant le shader sont
+**exactement** les valeurs attendues de `THPDraw.c` (`colorRegs[0] = (-90, 0, -114, 135)`,
 `kcolors` conformes). Le moteur 3D, lui, sort des couleurs justes. Reste à
 examiner l'arithmétique des étages TEV du combine YUV, ou les plans Y/U/V
 eux-mêmes.
