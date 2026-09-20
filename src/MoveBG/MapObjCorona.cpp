@@ -162,7 +162,7 @@ bool TBathtub::allowsTumble() const
 	f32 z = *reinterpret_cast<const f32*>(self + 0x1A0) * dx
 	       + *reinterpret_cast<const f32*>(self + 0x1A4) * dy
 	       + *reinterpret_cast<const f32*>(self + 0x1A8) * dz;
-	f32 magnitude = x * x + y * y + z * z;
+	f32 magnitude = JGeometry::TUtil<f32>::sqrt(x * x + y * y + z * z);
 	if (magnitude < 4200.0f || magnitude > 4700.0f)
 		return false;
 	return true;
