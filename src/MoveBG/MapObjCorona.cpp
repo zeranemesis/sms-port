@@ -1,5 +1,6 @@
 #include "MoveBG/MapObjCorona.hpp"
 #include "MoveBG/MapObjBase.hpp"
+#include <JSystem/JMath.hpp>
 #include <M3DUtil/MActor.hpp>
 
 void TBathtub::loadAfter() { }
@@ -24,7 +25,16 @@ int TBathtub::getNumGripsDead() const
 	return count;
 }
 
-void TBathtub::tumble(f32, f32) { }
+void TBathtub::tumble(f32 angle, f32 force)
+{
+	if (unk29A == 0) {
+		f32 amount = force * 0.0001f;
+		s32 index = static_cast<u16>(static_cast<s32>(182.04445f * angle)) >> jmaSinShift;
+		unk1E8 += amount * jmaCosTable[index];
+		unk1EC += 0.0f;
+		unk1F0 += amount * -jmaSinTable[index];
+	}
+}
 
 MtxPtr TBathtub::getTakingMtx()
 {
