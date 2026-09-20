@@ -321,6 +321,8 @@ bool pending(CPUState *)
 
 #ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
 
+bool interrupts_enabled(CPUState *cpu) { return (cpu->msr & kMsrExternalInterruptEnable) != 0; }
+
 bool dispatch(CPUState *cpu)
 {
     if ((cpu->msr & kMsrExternalInterruptEnable) == 0) {
@@ -428,6 +430,13 @@ bool advance_decrementer(CPUState *cpu, u64 elapsedTicks)
 }
 
 #else
+
+// Without a recompiled game nothing is ever delivered, so nothing is ever
+// takeable either. Matching dispatch() keeps the two answers consistent.
+bool interrupts_enabled(CPUState *)
+{
+    return false;
+}
 
 bool dispatch(CPUState *)
 {

@@ -1229,7 +1229,10 @@ bool boot_game(CPUState *cpu)
         { "GXSetDrawDone", DOLRECOMP_SYMBOL_GXSetDrawDone },
         { "GXDrawDone", DOLRECOMP_SYMBOL_GXDrawDone },
         { "GXFlush", DOLRECOMP_SYMBOL_GXFlush },
-        { "GXCopyDisp", DOLRECOMP_SYMBOL_GXCopyDisp },
+        // GXCopyDisp must remain in the recompiled guest.  Its body emits the
+        // BP copy registers (including the EFB -> XFB trigger) through the
+        // write-gather pipe.  Forwarding it to Aurora skips those commands,
+        // and Aurora's public GXCopyDisp entry point is currently a no-op.
         // Must be bridged, not forwarded: it carries a pointer - see
         // recomp_gx_fifo.cpp's host_call_gx_set_array.
         { "GXSetArray", DOLRECOMP_SYMBOL_GXSetArray },
@@ -1238,6 +1241,12 @@ bool boot_game(CPUState *cpu)
         // metadata but deliberately lets the original GX body update gxData.
         { "GXLoadTexObj", DOLRECOMP_SYMBOL_GXLoadTexObj },
         { "GXLoadTexObjPreLoaded", DOLRECOMP_SYMBOL_GXLoadTexObjPreLoaded },
+        // The guest TLUT contains a GameCube address; expose the equivalent
+        // native palette pointer to Aurora before the original SDK loads it.
+        { "GXLoadTlut", DOLRECOMP_SYMBOL_GXLoadTlut },
+        // Aurora cannot compile TEV alpha compare operations yet. The bridge
+        // keeps the SDK routine but substitutes its unsupported op safely.
+        { "GXSetTevAlphaOp", DOLRECOMP_SYMBOL_GXSetTevAlphaOp },
         { "GXInvalidateTexAll", DOLRECOMP_SYMBOL_GXInvalidateTexAll },
     };
     gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
@@ -1346,8 +1355,29 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
         // AND has nothing to run - which cannot be true before it exists.
         // RunQueueBits is kept as the second half because a non-zero value
         // means the spin is about to exit anyway.
+        //
+        // And the context is not sufficient on its own either. SelectThread's
+        // idle loop is
+        //     OSSetCurrentContext(&IdleContext);
+        //     do { OSEnableInterrupts();
+        //          while (RunQueueBits == 0) ;
+        //          OSDisableInterrupts(); } while (RunQueueBits == 0);
+        // and the guest arrives there from VIWaitForRetrace, which called
+        // OSDisableInterrupts before going to sleep. So between
+        // OSSetCurrentContext (0x80340A68) and the OSEnableInterrupts call one
+        // instruction later (0x80340A6C) the context test already passes while
+        // MSR[EE] is still clear - and skipping that slice skips the very call
+        // that would let the retrace in. Nothing then wakes anything: no
+        // runnable thread, no alarm, VI pending in PI forever, and the port
+        // reporting a contented 60 frames a second over a guest executing zero
+        // instructions. A 12-minute session froze at 38 seconds exactly here,
+        // at pc=0x80340A6C with msr=0x32 and piCause=0x140.
+        //
+        // The rule that covers both cases: a spin is only a wait if something
+        // can interrupt it. With MSR[EE] clear the guest still has work to do,
+        // so the slice is real work and gets run.
         const bool guestIsIdle = mem_read32(cpu, kOsCurrentContextAddress) == kIdleContextAddress
-            && mem_read32(cpu, kRunQueueBitsAddress) == 0;
+            && mem_read32(cpu, kRunQueueBitsAddress) == 0 && interrupt::interrupts_enabled(cpu);
         if (!dispatched && guestIsIdle) {
             cpu->downcount = 0;
             ++slicesIdle;
@@ -1394,6 +1424,36 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
                 advanced, kExpectedTicksPerFrame, 100.0 * double(advanced) / double(kExpectedTicksPerFrame),
                 slicesExhausted, kSlicesPerFrame, slicesIdle, blocksPerSlice, blocks,
                 blocks == 0 ? 0.0 : double(advanced * 12u) / double(blocks));
+
+            // The watchdog for the whole class of failure this port is blind
+            // to: a guest that has stopped executing without crashing. Every
+            // liveness check here passes straight through it - the window is
+            // up, frames are presented, the heartbeat counts sixty a second,
+            // the frame budget reports 100% - and the line above will happily
+            // print "0 blocks" beside all of it. That is how a freeze at 38
+            // seconds went unnoticed for the remaining eleven minutes of a
+            // session.
+            //
+            // Three seconds, not one: a legitimately idle second exists (a
+            // loading screen where every thread waits on DVD), a legitimately
+            // idle three seconds with nothing pending does not.
+            static unsigned deadSeconds = 0;
+            if (blocks == 0) {
+                ++deadSeconds;
+                if (deadSeconds >= 3) {
+                    Log.error("FAIL: the guest has executed no instructions for {} seconds. pc={:#010x} "
+                              "msr={:#010x} (EE={}) runQueueBits={:#010x} currentContext={:#010x} "
+                              "piCause={:#010x} piMask={:#010x} | {} of {} slices idle-skipped",
+                        deadSeconds, cpu->pc, cpu->msr, interrupt::interrupts_enabled(cpu) ? 1 : 0,
+                        mem_read32(cpu, kRunQueueBitsAddress), mem_read32(cpu, kOsCurrentContextAddress),
+                        interrupt::debug_cause(), interrupt::debug_mask(), slicesIdle, kSlicesPerFrame);
+                    if (deadSeconds == 3) {
+                        log_guest_backtrace(cpu, 16);
+                    }
+                }
+            } else {
+                deadSeconds = 0;
+            }
         }
     }
     return true;

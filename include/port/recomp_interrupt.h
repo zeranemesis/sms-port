@@ -101,6 +101,12 @@ bool pending(CPUState *cpu);
 // back here, it comes back through the guest's own OSLoadContext.
 bool dispatch(CPUState *cpu);
 
+// True when the guest currently has MSR[EE] set, i.e. when an interrupt could
+// actually be taken. This is not the same question as "is anything pending":
+// a guest sitting in a spin with interrupts disabled still has work to do -
+// the instruction that re-enables them - and must be run, not skipped.
+bool interrupts_enabled(CPUState *cpu);
+
 // PI's cause and mask as they currently stand, for diagnostics only. Whether
 // an interrupt is being taken is not visible from the guest's pc, and "stuck
 // in the same place" reads identically whether dispatch is firing or never

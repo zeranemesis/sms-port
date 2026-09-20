@@ -2250,3 +2250,98 @@ Fog is correctly decoded and genuinely disabled, and is not the cause. Recorded
 because the alternative was patching a correct decoder into a broken one, which
 would have been the first instrument-induced error here to introduce a defect
 rather than merely mislead.
+
+## The guest stops executing, and every counter says it is fine
+
+A 12-minute scripted session froze at 38 seconds of gameplay and stayed frozen
+for the rest of the run.
+
+Nothing reported it. The window was up, frames were presented, the heartbeat
+counted 60 frames a second, and the frame-budget line read
+`guest time advanced 674997 of 675000 ticks (100%)`. The same line also said
+`0 blocks, 0.0 guest cycles per block` and `64 of 64 slices idle-skipped`, and
+that is the whole story: the guest was executing zero instructions while every
+liveness check in the port passed.
+
+The captures agree and were the first honest signal: ten consecutive
+screenshots, twenty seconds apart, **bit-identical** and 96.8% black.
+
+### What the state said
+
+```
+threads: current=none runQueueBits=0x00000000 reschedule=0 alarmQueueHead=0x00000000
+threads:   DefaultThread state=4 (WAITING) prio=16 queue=retraceQueue
+interrupt: not takeable (dispatched=6593 masked=135238 not-takeable=299770)
+           msr=0x00000032 piCause=0x00000140 piMask=0x00000ffc pc=0x80340a6c
+```
+
+No runnable thread, no alarm, every thread waiting. VI *is* pending in PI
+(`0x100`) and PI's mask *does* let it through (`0x0ffc`), so the hardware side
+is correct. `msr=0x32` has no `0x8000`: **MSR[EE] is clear**, so
+`interrupt::dispatch` refuses, forever.
+
+The guest backtrace names the caller exactly:
+
+```
+__start -> main -> TApplication::proc -> TApplication::gameLoop
+  -> JDrama::TDisplay::endRendering -> JDrama::TVideo::waitForRetrace
+  -> VIWaitForRetrace -> OSSleepThread -> SelectThread
+```
+
+### The one-instruction window
+
+`VIWaitForRetrace` calls `OSDisableInterrupts` before sleeping, so the guest
+reaches the scheduler with EE clear. `SelectThread`'s idle loop
+(`src/dolphin/os/OSThread.c`) is what turns them back on:
+
+```c
+if (RunQueueBits == 0) {
+    OSSetCurrentContext(&IdleContext);
+    do { OSEnableInterrupts();
+         while (RunQueueBits == 0) ;
+         OSDisableInterrupts(); } while (RunQueueBits == 0);
+```
+
+Disassembling it settles the rest:
+
+```
+80340a68: bl OSSetCurrentContext   <- the idle-skip condition becomes true here
+80340a6c: bl OSEnableInterrupts    <- FROZEN here, never executed
+80340a70: lwz r0, RunQueueBits(r13)   <- where a healthy run sits, EE set
+80340a74: cmpwi r0, 0
+80340a78: beq  0x80340a70
+```
+
+The port's idle fast-forward skips a slice when
+`__OSCurrentContext == &IdleContext && RunQueueBits == 0`. Both hold from
+`0x80340A68` onwards - one instruction *before* the call that re-enables
+interrupts. So the slice is skipped, `OSEnableInterrupts` never runs, EE stays
+clear, the retrace is never delivered, nothing becomes runnable, the state
+still looks idle, and it is skipped again. A livelock of the port's own making.
+
+Every healthy sample sits at `0x80340A70` and every frozen one at
+`0x80340A6C`: the defect is exactly four bytes wide.
+
+### The fix, and the rule behind it
+
+A spin is only a wait if something can interrupt it. With MSR[EE] clear the
+guest still has work to do - the instruction that re-enables them - so the
+slice is real work and must be run. The condition gains
+`interrupt::interrupts_enabled(cpu)`.
+
+This is the second time the idle fast-forward has deadlocked the port, after
+`RunQueueBits == 0` alone froze the boot. Both failures have the same shape:
+a state that *looks* idle from outside while the guest still has an
+instruction to execute.
+
+### The permanent test
+
+The defect became a watchdog rather than a unit test, because the valuable
+thing is catching the *symptom* whatever causes it next: three consecutive
+seconds of zero executed blocks now logs `FAIL` with pc, MSR, EE, RunQueueBits,
+the current context, PI cause and mask, plus one guest backtrace.
+
+`tools/port/analyse_captures.py` is the other half, and the half that was
+missing: it reports the frame-to-frame difference between captures, so
+bit-identical consecutive frames are named as FROZEN. A process that has
+stopped drawing but not crashed passes every other check this project has.
