@@ -1859,3 +1859,47 @@ run photographed unrelated things the developer had open. That is a privacy
 defect in the tooling regardless of what happens to be on screen. It now
 captures only the DolphinJet window rectangle via `GetWindowRect`, and the
 full-screen captures from these runs were deleted.
+
+## 2026-09-20: where the 80,000 draws a second actually go
+
+A counter that separates **submitted** from **issued to the GPU**, and names
+where the rest went. It checks its own arithmetic in the line it prints, so a
+counter that is wrong says so instead of being believed - six probes in this
+project have already produced a false reading by being coarser than their
+subject, and one invented a defect outright.
+
+Measured in gameplay:
+
+```
+draw fate 1s: submitted=6566 reached_render=6566 (dropped_before_render=0)
+              | pipeline_not_ready=0 issued=6566 of which without_texture=1885
+```
+
+Three things this settles:
+
+- **The pipeline cache is not the problem.** `pipeline_not_ready = 0` across the
+  whole run. `find_pipeline_impl` returning a reference for a merely-queued
+  pipeline, and `render()` dropping such draws in silence, was the leading
+  suspect from the exploration. It never fires here.
+- **Essentially every draw reaches the GPU.** submitted and issued track each
+  other to within a handful per second.
+- **The 80,000 figure was a different thing.** The older `draw 1s:` probe counts
+  every `handle_draw`; this one counts pushed draw commands, and merging takes
+  80,000 down to ~6,550. Both are right and they measure different things -
+  worth stating, because comparing them would look like a catastrophic loss
+  that is not there.
+
+What it does surface: **1,880 of 6,550 issued draws a second - 28% - carry no
+texture bind group at all**, so every texture unit samples zero. That is
+visually black and is indistinguishable from a correct shader without this
+count. It is not the whole story though, since the other 72% are issued with
+textures and the screen is still black.
+
+### The self-check earned its place immediately
+
+Its first run flagged one inconsistent line, `submitted=6501
+reached_render=6506`. That was the check being wrong, not the counters: a draw
+submitted in one frame is rendered in the next, so a one-second delta window can
+straddle that boundary. The invariant that actually holds - every draw reaching
+`render()` either loses its pipeline or is issued - is exact over cumulative
+totals, and the check now uses those.
