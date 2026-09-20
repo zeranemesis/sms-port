@@ -1,8 +1,16 @@
 #include "MoveBG/MapObjCorona.hpp"
 #include "MoveBG/MapObjBase.hpp"
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JMath.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <System/Particles.hpp>
+
+extern "C" u8 allowsLaunch__6TKoopaCFv(void*);
+
+static bool bathtubKoopaAllowsLaunch()
+{
+	return allowsLaunch__6TKoopaCFv(JDrama::TNameRefGen::search("クッパ")) != 0;
+}
 
 void TBathtub::loadAfter()
 {
@@ -116,7 +124,8 @@ void TBathtub::load(JSUMemoryInputStream&) { }
 
 u8 TBathtub::getNumKillerLaunchable() const
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0 || unk248 > 0)
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0 || unk248 > 0
+	    || !bathtubKoopaAllowsLaunch())
 		return 0;
 
 	int count = getNumGripsDead() + 1;
@@ -131,7 +140,8 @@ bool TBathtub::isKillerAttackable() const { return unk248 <= 0; }
 
 u8 TBathtub::getNumKillerBurstable() const
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0
+	    || !bathtubKoopaAllowsLaunch())
 		return 0;
 
 	int count = getNumGripsDead();
