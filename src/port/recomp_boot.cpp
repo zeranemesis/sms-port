@@ -107,6 +107,11 @@ std::array<u8, kLockedCacheSize> g_lockedCache {};
 // especially visible in THP: its decoder runs in a dedicated thread and is
 // preempted between IDCT operations, turning otherwise-valid coefficients into
 // noisy image bands when another thread borrows the FPU.
+// RunQueueBits = .sbss:0x80405ED8 (config/GMSP01/symbols.txt:30995) and
+// IdleContext = .bss:0x803FA558, size 0x2C8 - which matches sizeof(OSContext)
+// exactly, a useful cross-check that it is the object it claims to be.
+constexpr u32 kRunQueueBitsAddress = 0x80405ED8u;
+constexpr u32 kIdleContextAddress = 0x803FA558u;
 constexpr u32 kOsCurrentContextAddress = GC_RAM_BASE + 0xD4u;
 constexpr u32 kOsFpuContextAddress = GC_RAM_BASE + 0xD8u;
 constexpr u32 kOsContextFprOffset = 0x90u;
@@ -673,7 +678,11 @@ void log_guest_backtrace(CPUState *cpu, unsigned maxFrames)
     }
 }
 
-void deliver_pending_interrupts(CPUState *cpu)
+// Returns true when the guest was actually pushed into
+// __OSDispatchInterrupt, which the caller needs to know: a slice that
+// just delivered an interrupt has a handler to run and must not be
+// skipped, however idle the guest looked a moment earlier.
+bool deliver_pending_interrupts(CPUState *cpu)
 {
     // Bounded outcome trace: whether an interrupt is actually being taken is
     // not observable from the guest's pc alone, and "it is stuck in the same
@@ -691,7 +700,7 @@ void deliver_pending_interrupts(CPUState *cpu)
     const bool traceThisCall = (calls % 19200u) == 1u && traced < 24;
     const auto trace = [&](const char *outcome) {
         if (!traceThisCall) {
-            return;
+            return false;
         }
         ++traced;
         Log.info("interrupt: {} after {} frames (dispatched={} masked={} not-takeable={}) "
@@ -706,7 +715,7 @@ void deliver_pending_interrupts(CPUState *cpu)
         // The guest has not unmasked PI_VI yet (SetInterruptMask,
         // src/dolphin/os/OSInterrupt.c:244, is what ORs 0x100 into PI's mask).
         // Nothing to do but leave the cause standing until it does.
-        return;
+        return false;
     }
     if (!interrupt::dispatch(cpu)) {
         ++skippedNotTakeable;
@@ -722,7 +731,7 @@ void deliver_pending_interrupts(CPUState *cpu)
         // MSR[EE] clear, or no context to save into yet. The cause stays
         // pending, so the next frame tries again - which is what a real level-
         // triggered interrupt line does, rather than being dropped.
-        return;
+        return false;
     }
     ++dispatched;
     trace("dispatched");
@@ -730,6 +739,7 @@ void deliver_pending_interrupts(CPUState *cpu)
     // __OSDispatchInterrupt and will resume itself through OSLoadContext. The
     // cycle budget it spends there is its own.
     rebase_guest_timebase(cpu);
+    return true;
 }
 
 // GameCube DOL header: 7 text + 11 data sections, all big-endian u32 at
@@ -1236,13 +1246,56 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     // 29.97fps looks like from the inside.
     const u64 frameTimebaseStart = cpu->timebase;
     unsigned slicesExhausted = 0;
+    unsigned slicesIdle = 0;
 
     for (unsigned slice = 0; slice < kSlicesPerFrame; ++slice) {
         refill_slice_budget(cpu, kCyclesPerFrame / kSlicesPerFrame);
         // Time-driven device work before delivery, so a completion raised here
         // is taken in this same slice rather than waiting for the next one.
         exi::tick(cpu);
-        deliver_pending_interrupts(cpu);
+        const bool dispatched = deliver_pending_interrupts(cpu);
+
+        // Fast-forward the guest's idle spin.
+        //
+        // SelectThread parks a guest with nothing runnable in
+        //     while (RunQueueBits == 0) ;
+        // (src/dolphin/os/OSThread.c), which costs a real GameCube nothing and
+        // costs this port full host cycles, because the cycle budget now makes
+        // the guest actually sit there rather than being cut off. RunQueueBits
+        // is a single guest global (.sbss:0x80405ED8,
+        // config/GMSP01/symbols.txt:30995), so recognising the state needs no
+        // pc heuristics and no guesswork about which block the spin compiled to.
+        //
+        // The clock still advances: spending the slice's budget without
+        // executing leaves the next refill_slice_budget to account for exactly
+        // the same cycles it would have, so guest time passes at the same rate
+        // and every time-driven device completion still lands where it would
+        // have. What is skipped is only the host work of simulating a spin
+        // whose entire purpose is to wait.
+        //
+        // Never skipped when an interrupt was just delivered: that slice has a
+        // handler to run, and it is the handler that makes a thread runnable.
+        // RunQueueBits == 0 on its own is NOT idleness, and using it alone
+        // deadlocked the boot: before __OSThreadInit runs there is no
+        // scheduler and no runnable thread to count, so the condition held
+        // from the first frame and every slice of every frame was skipped -
+        // measured as "64 slices idle-skipped" with the game frozen at
+        // appState=0 (WAIT).
+        //
+        // The exact signal is the context. SelectThread does
+        // OSSetCurrentContext(&IdleContext) immediately before the spin and
+        // OSClearContext(&IdleContext) immediately after, so
+        // __OSCurrentContext pointing at IdleContext means the scheduler is up
+        // AND has nothing to run - which cannot be true before it exists.
+        // RunQueueBits is kept as the second half because a non-zero value
+        // means the spin is about to exit anyway.
+        const bool guestIsIdle = mem_read32(cpu, kOsCurrentContextAddress) == kIdleContextAddress
+            && mem_read32(cpu, kRunQueueBitsAddress) == 0;
+        if (!dispatched && guestIsIdle) {
+            cpu->downcount = 0;
+            ++slicesIdle;
+            continue;
+        }
 
         switch (run_blocks(cpu, blocksPerSlice)) {
             case RunStop::BudgetExhausted:
@@ -1272,9 +1325,9 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
             lastReport = cpu->timebase;
             const u64 advanced = cpu->timebase - frameTimebaseStart;
             Log.info("frame budget: guest time advanced {} of {} ticks ({:.0f}%) | {} of {} slices stopped on the "
-                     "block cap rather than on cycles | blocksPerSlice={}",
+                     "block cap rather than on cycles | {} slices idle-skipped | blocksPerSlice={}",
                 advanced, kExpectedTicksPerFrame, 100.0 * double(advanced) / double(kExpectedTicksPerFrame),
-                slicesExhausted, kSlicesPerFrame, blocksPerSlice);
+                slicesExhausted, kSlicesPerFrame, slicesIdle, blocksPerSlice);
         }
     }
     return true;

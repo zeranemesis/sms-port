@@ -1263,3 +1263,60 @@ zero rather than bridges that bypass counting. `downcount` is a real cycle
 counter - dolrecomp emits `ctx->downcount -= block_cycles[i]` per basic block
 (`extern/dolrecomp/src/backend/emitter.c:1914,1969`) - so these are sparse and
 interleaved with blocks that do charge, which is why they cannot wedge a slice.
+
+## 2026-09-20: fast-forwarding the guest's idle spin
+
+With the cycle budget in place the guest genuinely sits in `SelectThread`'s
+
+```c
+if (RunQueueBits == 0) {
+    OSSetCurrentContext(&IdleContext);
+    do { OSEnableInterrupts(); while (RunQueueBits == 0) ; OSDisableInterrupts(); }
+    while (RunQueueBits == 0);
+    OSClearContext(&IdleContext);
+}
+```
+
+(`src/dolphin/os/OSThread.c`). That loop costs a GameCube nothing and costs this
+port full host cycles to simulate, for a wait.
+
+### The obvious condition is wrong, and it deadlocks the boot
+
+`RunQueueBits == 0` alone is **not** idleness. Before `__OSThreadInit` runs there
+is no scheduler and nothing to count, so the condition holds from the very first
+frame. Measured: "64 slices idle-skipped" on every frame, CPU down to 8.5%, and
+the game frozen at `appState=0 (WAIT)` having executed nothing at all. The CPU
+number on its own looked like a spectacular win, which is exactly why it was
+checked against the game's state before being believed.
+
+The exact signal is the context: `SelectThread` does
+`OSSetCurrentContext(&IdleContext)` immediately before the spin and
+`OSClearContext(&IdleContext)` immediately after, so `__OSCurrentContext ==
+&IdleContext` means the scheduler is up *and* has nothing to run, which cannot
+be true before it exists. `IdleContext` is at `.bss:0x803FA558` with size
+`0x2C8`, matching `sizeof(OSContext)` exactly - a useful check that it is the
+object it claims to be. `RunQueueBits == 0` is kept as the second half, since a
+non-zero value means the spin is about to exit anyway.
+
+A slice is never skipped when an interrupt was just delivered: that slice has a
+handler to run, and the handler is what makes a thread runnable.
+`deliver_pending_interrupts` now returns whether it dispatched.
+
+### What it buys
+
+The clock is unaffected: spending the slice's budget without executing leaves
+the next `refill_slice_budget` to account for exactly the cycles it would have,
+so guest time passes at the same rate and every time-driven device completion
+lands where it would have. Only the host work of simulating a wait is skipped.
+
+Skipped slices per frame, over 90 seconds: **62 of 64** on eight sampled frames,
+0 on eight others, and 21/58/52 elsewhere - the game alternates between frames
+that are almost entirely idle and frames that are fully busy. Guest steps went
+from 36/s to 36-40/s.
+
+**A caveat on the numbers, because the obvious comparison is invalid here.** The
+"guest time advanced per frame" percentage depends on what the movie is
+decoding, and two runs are never at the same point in it. Comparing that
+percentage across builds therefore measures the scene as much as the change, and
+any such comparison in this document's earlier tables is weaker than it looks.
+Skipped-slice counts and steps/s are the figures that can be compared.
