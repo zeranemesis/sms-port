@@ -3,9 +3,13 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JMath.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <Camera/CameraShake.hpp>
+#include <MarioUtil/RumbleMgr.hpp>
+#include <Player/MarioAccess.hpp>
 #include <System/Particles.hpp>
 
 extern "C" u8 allowsLaunch__6TKoopaCFv(void*);
+extern "C" void getDown__6TKoopaFv(void*);
 
 static bool bathtubKoopaAllowsLaunch()
 {
@@ -22,7 +26,33 @@ void TBathtub::loadAfter()
 
 void TBathtub::hipdrop(const JGeometry::TVec3<f32>&) { }
 
-void TBathtub::quake(const JGeometry::TVec3<f32>&) { }
+void TBathtub::quake(const JGeometry::TVec3<f32>& position)
+{
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+		return;
+
+	f32 dx = position.x - *reinterpret_cast<f32*>(reinterpret_cast<u8*>(this) + 0x10C);
+	f32 dz = position.z - *reinterpret_cast<f32*>(reinterpret_cast<u8*>(this) + 0x114);
+	f32 distance = dz * dz + (dx * dx + 0.0f);
+	if (distance > 0.0000038146973f) {
+		JGeometry::TUtil<f32>::inv_sqrt(distance);
+	}
+
+	unk24C = 300;
+	u8* params = reinterpret_cast<u8*>(unk16C);
+	unk250 = *reinterpret_cast<int*>(params + 0x54);
+	unk258 = *reinterpret_cast<int*>(params + 0x68);
+	unk25C = *reinterpret_cast<int*>(params + 0x68);
+	unk254 = *reinterpret_cast<u32*>(params + 0x7C);
+	unk248 = *reinterpret_cast<int*>(params + 0xF4);
+
+	gpCameraShake->startShake(static_cast<EnumCamShakeMode>(0x25), 1.0f);
+	gpCameraShake->startShake(static_cast<EnumCamShakeMode>(0x26), 1.0f);
+	SMSRumbleMgr->start(4, static_cast<f32*>(nullptr));
+	JGeometry::TVec3<f32> velocity(0.0f, 1.0f, 0.0f);
+	SMS_ThrowMario(velocity, 10.0f);
+	getDown__6TKoopaFv(JDrama::TNameRefGen::search("クッパ"));
+}
 
 int TBathtub::getNumGripsDead() const
 {
