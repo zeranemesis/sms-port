@@ -196,7 +196,43 @@ static bool run_menu_loop()
                 framesReported = frames;
                 stepsReported = steps;
             }
-            if (frameBegun && g_gameRunning) {
+            // The guest gets one step_game per *guest* frame, not one per host
+            // frame. Those are not the same thing and treating them as the same
+            // was making the game run at the display's refresh rate: measured
+            // "+144" steps per second in this heartbeat on a 144Hz monitor,
+            // while step_game advances the guest clock by exactly kCyclesPerFrame
+            // = kCpuClockHz/60 each time (recomp_boot.cpp:757). The guest was
+            // therefore living 2.4 seconds per real second - unplayable, and the
+            // reason the AI audio path reports dropping queued bytes: it is being
+            // handed 2.4x more samples than a 32kHz device can consume.
+            //
+            // So accumulate real elapsed time and run whole guest frames out of
+            // it. The leftover stays in the accumulator, which keeps the long-run
+            // rate exact instead of drifting by a fraction of a frame each time.
+            //
+            // NOTE: 60 is what the clock model already assumes, so this makes the
+            // loop self-consistent with it. GMSP01 is the PAL disc and the real
+            // retrace rate is whatever the guest programs into VI; deriving both
+            // this and kCyclesPerFrame from the VI registers rather than from a
+            // constant is a separate, unmeasured question and is NOT settled here.
+            constexpr double kGuestFrameSeconds = 1.0 / 60.0;
+            // Never run more than a few guest frames per host frame. Without a
+            // cap, one long hitch (a shader compile, a disc read) makes the next
+            // iteration try to catch up over the whole gap, which takes even
+            // longer and never recovers.
+            constexpr unsigned kMaxCatchUpFrames = 4;
+            static double guestFrameDebt = 0.0;
+            static Uint64 lastStepTicks = SDL_GetTicks();
+
+            const Uint64 nowTicks = SDL_GetTicks();
+            guestFrameDebt += double(nowTicks - lastStepTicks) / 1000.0;
+            lastStepTicks = nowTicks;
+            if (guestFrameDebt > kMaxCatchUpFrames * kGuestFrameSeconds) {
+                guestFrameDebt = kMaxCatchUpFrames * kGuestFrameSeconds;
+            }
+
+            while (frameBegun && g_gameRunning && guestFrameDebt >= kGuestFrameSeconds) {
+                guestFrameDebt -= kGuestFrameSeconds;
                 ++steps;
                 g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
             }

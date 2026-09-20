@@ -1121,9 +1121,13 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     // decision about *when* to report in one place.
     probe::report(cpu);
 
-    // One host frame is one guest frame, so this is the vertical retrace. It
-    // only raises the hardware line; when the guest actually takes it is up to
-    // MSR[EE] and PI's mask, exactly as on real hardware.
+    // One call to step_game is one guest frame, so this is the vertical
+    // retrace. It used to be one *host* frame as well, which made the retrace
+    // rate the monitor's refresh rate; portmain.cpp now paces these calls from
+    // real elapsed time instead, so the guest sees 60 retraces per real second
+    // whatever the display does. This only raises the hardware line; when the
+    // guest actually takes it is up to MSR[EE] and PI's mask, exactly as on
+    // real hardware.
     interrupt::raise_vi_retrace(cpu);
 
     // The frame's work is run in slices rather than one go, because the host

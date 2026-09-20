@@ -1058,3 +1058,46 @@ It exercises the carry-over mechanism rather than the draw path specifically. A
 draw needs live GX and graphics state that a headless test cannot stand up
 honestly, and pretending otherwise would make the test prove less than it looks
 like it proves.
+
+## 2026-09-20: the game was running at the monitor's refresh rate
+
+The AI audio path reporting "dropped N queued bytes to bound latency" is what
+exposed this. It was not an audio defect.
+
+`portmain.cpp` called `step_game` once per host frame, and the host frame is
+paced by `aurora_begin_frame()`, i.e. by vsync. The heartbeat measured **+144
+steps per second** on a 144Hz display. Meanwhile `step_game` advances the guest
+clock by exactly `kCyclesPerFrame = kCpuClockHz / 60` per call
+(`recomp_boot.cpp:757`) and raises one vertical retrace per call.
+
+So the guest lived 2.4 seconds per real second. Unplayable, and it handed the
+32kHz audio device 2.4x more samples than it could consume - hence the drops.
+It would also have been *too slow* on a 50Hz display, which is the same defect
+seen from the other side.
+
+The loop now accumulates real elapsed time and runs whole guest frames out of
+it, keeping the remainder so the long-run rate does not drift, with catch-up
+capped at four frames so one hitch cannot start a spiral.
+
+Measured over 60 s, before and after:
+
+| | before | after |
+| --- | --- | --- |
+| host frames/s | +144 | +144 (unchanged) |
+| **guest steps/s** | **+144** | **+60** |
+| audio drop warnings | 4 (log is capped) | **0** |
+
+The 60 is what the clock model already assumes, so this makes the loop
+self-consistent with it. It is **not** established as correct: GMSP01 is the
+PAL disc, and the real retrace rate is whatever the guest programs into VI.
+Deriving both this and `kCyclesPerFrame` from the VI registers instead of from a
+constant is a separate question and is deliberately left open.
+
+### What this then made visible
+
+With the guest paced to real time, the THP movie advances about 5 frames per
+guest second. That rate is unchanged by the pacing - before the fix it was 11.4
+frames per *real* second, which is the same 4.8 per *guest* second - so this is
+a pre-existing defect the speed bug was hiding, not something introduced here.
+A THP intro is not a 5fps movie. Not yet investigated; the movie's own header
+frame rate is the thing to read first.
