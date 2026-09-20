@@ -457,7 +457,12 @@ bool host_call_gx_set_gp_fifo(CPUState *, u32)
     return true;
 }
 
-bool host_call_gx_set_draw_done(CPUState *, u32)
+// DrawDone = .sbss:0x804060F8, a single byte (config/GMSP01/symbols.txt:31112),
+// and FinishQueue is the OSThreadQueue right after it at 0x804060FC - which is
+// exactly the address the thread probe resolved the stuck main thread to.
+constexpr u32 kGuestDrawDoneFlag = 0x804060F8u;
+
+bool host_call_gx_set_draw_done(CPUState *cpu, u32)
 {
     // This SDK revision's actual symbol is GXSetDrawDone (no callback
     // argument - confirmed present in generated/generated_symbols.h,
@@ -470,6 +475,38 @@ bool host_call_gx_set_draw_done(CPUState *, u32)
     // has no Aurora implementation at all and isn't bridged yet - expect
     // it to show up as an unresolved-call log miss if/when reached.
     GXSetDrawDone();
+
+    // Without this the game stops dead the moment it reaches gameplay, and the
+    // comment above turned out to predict the mechanism without naming it.
+    //
+    // On hardware GXSetDrawDone clears DrawDone and writes BP register
+    // 0x45000002; the GP later raises PE_FINISH, whose handler sets DrawDone
+    // and wakes FinishQueue (src/dolphin/gx/GXMisc.c:74-96, 245-261).
+    // GXWaitDrawDone then returns. This port bridges GXSetDrawDone away, so the
+    // guest's own body never runs, and does not model PE_FINISH at all - but
+    // GXWaitDrawDone is NOT bridged, so the guest's own copy does run and
+    // sleeps on FinishQueue forever.
+    //
+    // Measured: appState=5 (GAMEPLAY) with a black screen, every thread
+    // WAITING, 96.9% of cycles in the scheduler's idle spin, and DefaultThread
+    // - the main game thread, priority 16 - parked on FinishQueue. That queue
+    // has exactly one sleeper anywhere in the SDK, GXWaitDrawDone
+    // (GXMisc.c:94), so this is a proof rather than an inference.
+    //
+    // Setting the flag rather than bridging GXWaitDrawDone as well is the more
+    // faithful of the two: the guest's own wait code still runs and finds the
+    // work already finished, which is what it would find on hardware if the
+    // interrupt beat it to the check. It is also honest about what this port
+    // is - Aurora renders synchronously, so by the time this returns there is
+    // nothing left to wait for.
+    //
+    // What this does NOT model: the PE interrupt itself. DrawDone stays 1
+    // instead of cycling 0/1 per frame, so nothing here would notice a GP that
+    // really did fall behind, and GXSetDrawDoneCallback/TokenCB never fire.
+    // Both need the PE register block at 0xCC001000 and PI cause bit 0x400
+    // (__OSDispatchInterrupt, src/dolphin/os/OSInterrupt.c:368), which is a
+    // larger piece of work than unblocking gameplay warranted today.
+    mem_write8(cpu, kGuestDrawDoneFlag, 1);
     return true;
 }
 

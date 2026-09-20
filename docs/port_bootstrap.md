@@ -1488,3 +1488,69 @@ This is the frontier now, and unlike everything before it, it is reachable in
 about twenty seconds and reproducible on demand. It is **untested territory
 turned into a testable defect**, which is the whole point of being able to press
 A.
+
+## 2026-09-20: the black gameplay screen was GXWaitDrawDone
+
+Resolving what each waiting thread was parked on named it immediately:
+
+```
+prio 16  DefaultThread   attend sur 0x804060FC = FinishQueue [sbss]
+prio 12  0x803e27a0      attend sur FreeAudioBufferQueue
+prio  8  ...             attend sur JKRDecomp / JKRAramStream / JKRAram
+prio  3  ...             attend sur JASystem::Dvd
+prio  2  ...             attend sur JASystem::AudioThread
+```
+
+`FinishQueue` has exactly one sleeper anywhere in the SDK - `GXWaitDrawDone`
+(`src/dolphin/gx/GXMisc.c:94`) - so the main game thread being on it is a proof,
+not an inference.
+
+The chain: on hardware `GXSetDrawDone` clears `DrawDone` and writes BP register
+`0x45000002`; the GP later raises PE_FINISH (PI cause bit `0x400`,
+`OSInterrupt.c:368`), whose handler sets `DrawDone` and wakes `FinishQueue`.
+This port **bridges `GXSetDrawDone` away** to an Aurora no-op, so the guest's own
+body never runs, and it does not model PE_FINISH at all - but `GXWaitDrawDone`
+is **not** bridged, so the guest's own copy runs and sleeps forever. The
+existing comment on that bridge had even predicted where the trouble would
+surface, without naming the consequence.
+
+The bridge now sets the guest's `DrawDone` byte (`.sbss:0x804060F8`). That is
+more faithful than bridging `GXWaitDrawDone` as well: the guest's own wait code
+still runs and finds the work already finished, which is what it would find on
+hardware if the interrupt beat it to the check. Aurora renders synchronously, so
+by the time the bridge returns there is genuinely nothing to wait for.
+
+**What it does not model**, stated because it will matter later: the PE interrupt
+itself. `DrawDone` stays 1 rather than cycling per frame, so nothing would notice
+a GP that really had fallen behind, and `GXSetDrawDoneCallback`/`TokenCB` never
+fire. Both need the PE register block at `0xCC001000` and PI cause bit `0x400`.
+
+### Which immediately reached two new defects
+
+With the main thread running, the game starts a DVD read (`state=1 (BUSY)
+offset=0x210c1040 length=0x8000` - loading a level) and begins submitting real
+geometry. It gets further than anything before it, and then:
+
+```
+[ERROR] aurora::gx::fifo: CP_REG_ARRAYBASE_ID is not supported on Aurora.
+                          Use GX_LOAD_AURORA_ARRAYBASE instead.   (x3)
+[FATAL] aurora::gx::fifo: unsupported primitive type 192
+```
+
+- **CP array bases.** Aurora rejects CP registers 0xA0-0xAF
+  (`command_processor.cpp:1309`) because a guest physical address means nothing
+  to it; it wants `GX_LOAD_AURORA_ARRAYBASE` with a host pointer. This port does
+  bridge `GXSetArray` and emit that, but the guest re-sends the CP registers
+  itself from its own shadow state, so the bridge alone is not enough.
+- **Primitive 192.** `0xC0` is not a valid GX opcode at all (draws are
+  0x80-0xB8), so the FIFO parser is out of sync rather than meeting something
+  merely unimplemented. Gameplay is the first time real geometry has ever gone
+  through this path, and `recomp_gx_fifo.cpp`'s size-8 FIFO write - the
+  `stfd`/`psq_st` split - carries its own comment saying the split direction is
+  "a best guess from big-endian byte order, not confirmed". It is now exercised
+  for the first time. Not established as the cause; it is the first thing to
+  check, and the next step is a hex dump around this FATAL like the one the
+  draw-overrun path already has.
+
+Recorded as **FAIL**, reproducible in about twenty seconds with
+`tools/port/dolphinjet_skip_intro.ps1`.
