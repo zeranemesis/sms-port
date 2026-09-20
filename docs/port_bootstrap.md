@@ -928,3 +928,46 @@ semantics differ under recompilation, not to add more probes around memory.
 A 75-second run ended at ~60s with `aurora::gx::fifo: draw vertex data overrun:
 need 80 bytes at pos 854, have 854`. Shorter runs (40-45s) have not reproduced
 it. It is a separate defect from the bands and it is not cleared.
+
+## 2026-09-20: the bands were the FPU context, and the probes proved it
+
+The previous section ended by saying the decoder wrote noise and the next step
+was the Huffman path. That was the right conclusion from the evidence and the
+wrong guess about the cause. A parallel session working in the same tree had
+already found it: **the port never performed the SDK's lazy FPU context
+handoff.**
+
+The FP-unavailable trap added earlier in this port sets `MSR[FP]` and resumes,
+which is what lets floating-point code run at all. What it does *not* do is what
+the real `__OSFPUnavailableHandler` also does - save the previous owner's FPRs,
+paired singles and FPSCR into its `OSContext` and load the new owner's. So when
+another thread borrowed the FPU, the THP decode thread's floating-point state
+was silently replaced underneath it, and the IDCT in flight produced garbage for
+whatever macroblocks it was working on. The bitstream was never desynchronised;
+the arithmetic was.
+
+That explains every property of the bands that had been measured and none of
+which a memory-plumbing fault accounted for: one band per frame rather than
+sustained corruption, a different height each time, Y/U/V wrong in the same
+picture region simultaneously, every affected line demonstrably written by the
+guest, and the locked cache and its DMA both faithful.
+
+### The instrumentation became the regression test
+
+The probes built while hunting the cause are what confirms the fix, with no new
+measurement invented after the fact:
+
+| measurement | before | after |
+| --- | --- | --- |
+| locked-cache stores carrying noise | 72 in 40 s | **0 in 45 s** |
+| max tile-row roughness, any plane | 84-139 | **0.5-2.5** |
+| movie still advancing | `v/a=668/666` | `v/a=514/512`, revision 1→120 |
+| bands on screen | 4-5 per frame | **none** |
+
+The low roughness was checked rather than accepted: a plane that has gone flat
+would report the same thing. It has not - `nonZero=94%`, mean 163-167, min 0,
+max 255, texture revision climbing. The frames sampled are simply smooth ones
+(sky and cloud), and a busy frame - Peach against the cabin's map screen, full
+of texture detail - is clean too.
+
+Screenshots are the criterion here, not the counters, and they agree.
