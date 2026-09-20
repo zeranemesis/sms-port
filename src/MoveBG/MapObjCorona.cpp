@@ -118,7 +118,27 @@ u8 TBathtub::getNumKillerLaunchable() const { return 0; }
 
 bool TBathtub::isKillerAttackable() const { return unk248 <= 0; }
 
-u8 TBathtub::getNumKillerBurstable() const { return 0; }
+u8 TBathtub::getNumKillerBurstable() const
+{
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+		return 0;
+
+	int count = getNumGripsDead();
+	if (count >= 4)
+		return 8;
+	if (!allowsTumble() && unk250 == 0 && unk258 == 0) {
+		switch (count) {
+		case 2:
+			return 6;
+		case 3:
+		case 4:
+			return 8;
+		default:
+			return 0;
+		}
+	}
+	return 0;
+}
 
 // Unused
 bool TBathtub::isBreaking() const { return false; }
