@@ -112,11 +112,24 @@ réellement rendue à 896.
 à lui seul : le cadre non client et la zone client ne transitent pas forcément
 par le même chemin dans `PrintWindow`.)*
 
-Aurora annonce pourtant `renderViewport 1280x896 logicalViewport 640x448`,
-`Using framebuffer size 1280x960`, et `map_logical_viewport` (`lib/gx/gx.cpp`)
-applique bien `scaleX` et `scaleY` symétriquement. **Prochaine mesure** :
-journaliser `gfx::get_render_target_size()` et la largeur réelle du descripteur
-de texture de la cible, une ligne bornée, pour voir lequel des trois ment.
+**Pistes déjà écartées par lecture** — inutile de les refaire :
+
+- `map_logical_viewport` (`lib/gx/gx.cpp`) applique `scaleX` et `scaleY`
+  symétriquement ; avec 640×480 logique et 1280×960 de cible, les deux valent 2
+  et le viewport rendu vaut bien 1280×896.
+- La cible de rendu : `Using framebuffer size 1280x960`, et
+  `resize_swapchain` crée `g_frameBuffer` à cette taille.
+- Le multi-échantillonnage : le port ne renseigne pas `AuroraConfig::msaa`, et
+  `aurora.cpp:97` le force à 1. Pas de MSAA, donc pas de résolution ratée.
+- `calculate_present_viewport` (`lib/webgpu/gpu.cpp`) : avec une surface
+  1280×960 et un contenu 640×448 elle rend `left=0 top=32 width=1280
+  height=896` — ce qui correspond exactement aux bandes noires observées, et
+  la largeur n'est pas divisée.
+
+Restent le shader de rééchantillonnage (`resample_present_source`) et le blit
+final. **Prochaine mesure** : une ligne bornée donnant la taille réelle de
+`g_resampledFrameBuffer`, celle de `g_frameBuffer` et celle de la surface au
+moment du présent. L'une des trois ne vaut pas ce que le code laisse croire.
 
 ### 2.2 35 % des dessins n'ont aucune texture liée
 
