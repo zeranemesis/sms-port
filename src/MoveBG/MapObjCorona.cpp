@@ -125,7 +125,31 @@ MtxPtr TBathtub::getKoopaJrMtxInDemo()
 	return mMActor->getModel()->getAnmMtx(mJuniorJntIdx);
 }
 
-BOOL TBathtub::receiveMessage(THitActor* sender, u32 message) { return false; }
+BOOL TBathtub::receiveMessage(THitActor*, u32 message)
+{
+	switch (message) {
+	case 1:
+	case 3:
+		hipdrop(*gpMarioPos);
+		return true;
+	case 0: {
+		if (reinterpret_cast<const u8*>(this)[0x299] == 0) {
+			const u8* params = reinterpret_cast<const u8*>(unk16C);
+			int timer = *reinterpret_cast<const int*>(params + 0x2C);
+			if (unk250 <= timer) {
+				unk250 = timer;
+				unk258 = *reinterpret_cast<const int*>(params + 0x40);
+				unk25C = *reinterpret_cast<const int*>(params + 0x40);
+				unk254 = *reinterpret_cast<const u32*>(params + 0x7C);
+			}
+		}
+		return true;
+	}
+	case 2:
+	default:
+		return false;
+	}
+}
 
 Mtx* TBathtub::getRootJointMtx() const
 {
