@@ -2386,6 +2386,8 @@ DEFINE_NERVE(TNerveBossEelMouthOpenWait, TLiveActor)
 
 DEFINE_NERVE(TNerveBossEelSleepOnBottom, TLiveActor)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
 
 	if (spine->getTime() == 0) {
