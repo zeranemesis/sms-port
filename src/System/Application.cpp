@@ -77,6 +77,9 @@ TARAMBlock gArBkGuide;
 
 extern "C" void ReInitializeGX();
 
+// Retail keeps an out-of-line call in SMSGetAnmFrameRate, so prevent
+// inlining here (initialize already calls out-of-line).
+#pragma dont_inline on
 f32 SMSGetRealVSyncTimesPerSec()
 {
 	f32 result = 60.0f;
@@ -92,6 +95,7 @@ f32 SMSGetRealVSyncTimesPerSec()
 	}
 	return result;
 }
+#pragma dont_inline off
 
 f32 SMSGetVSyncTimesPerSec()
 {
