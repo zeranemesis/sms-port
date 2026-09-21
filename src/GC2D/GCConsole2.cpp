@@ -2555,6 +2555,8 @@ void TGCConsole2::startInsertJetBalloon()
 
 void TGCConsole2::startAppearRedCoin()
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	unk3C = 1;
 	unk59 = 1;
 
