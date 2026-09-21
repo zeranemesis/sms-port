@@ -584,6 +584,8 @@ void MSound::initSound()
 
 void MSound::pauseOn(bool param_1)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	if (param_1)
 		if (checkUnkA8(2))
 			MSoundSESystem::MSoundSE::startSoundSystemSE(MSD_SE_SY_PAUSE_ON, 0,
