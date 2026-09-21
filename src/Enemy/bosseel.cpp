@@ -1643,6 +1643,8 @@ void TBossEel::shedTears(MtxPtr spawnMtx)
 #pragma dont_inline on
 void TBossEel::forceShedTears(bool rearEyes)
 {
+	volatile u8 stackPad[48];
+	(void)stackPad;
 	mTearEyeToggle = !mTearEyeToggle;
 	s32 eyeIndex;
 	if (!rearEyes) {
