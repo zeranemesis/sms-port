@@ -106,6 +106,8 @@ void TMarDirector::movement_game()
 
 void TMarDirector::fireGetBlueCoin(TCoin* coin)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (!coin)
 		return;
 
