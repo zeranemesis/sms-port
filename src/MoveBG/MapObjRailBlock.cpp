@@ -31,6 +31,8 @@ TRailMapObj::TRailMapObj(const char* name)
 // TODO: weird stack frame issues here D:
 void TRailMapObj::initGraphTracer(TGraphWeb* graph)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	unk138 = new TGraphTracer;
 
 	unk138->unk0 = graph;
