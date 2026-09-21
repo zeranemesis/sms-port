@@ -640,6 +640,8 @@ void MSound::pauseOff(u8 param_1)
 
 void MSound::demoModeIn(u16 param_1, bool param_2)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	for (u8 cat = 0; cat < 16; ++cat) {
 		if (param_1 >> cat & 1)
 			if (MSGMSound->unk0->mSeTable.mSoundMax[cat] != 0)
