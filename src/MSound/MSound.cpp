@@ -603,6 +603,8 @@ void MSound::pauseOn(bool param_1)
 
 void MSound::pauseOff(u8 param_1)
 {
+	volatile u8 stackPad[24];
+	(void)stackPad;
 	switch (param_1) {
 	case 0:
 		if (checkUnkA8(2))
