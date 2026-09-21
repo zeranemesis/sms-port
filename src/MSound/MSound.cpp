@@ -1097,6 +1097,8 @@ u32 MSound::getWallSound(u32 param_1, f32 velocity)
 
 void MSound::startBeeSe(Vec* param_1, u32 param_2)
 {
+	volatile u8 stackPad[32];
+	(void)stackPad;
 	if (param_2 > 3) {
 		JAISound* sound
 		    = !checkUnkA8(1)
