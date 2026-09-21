@@ -135,7 +135,7 @@ BOOL TBathtub::receiveMessage(THitActor*, u32 message)
 		hipdrop(*gpMarioPos);
 		return true;
 	case 0: {
-		if (unk29A == 0) {
+		if (reinterpret_cast<const u8*>(this)[0x29A] == 0) {
 			const u8* params = reinterpret_cast<const u8*>(unk16C);
 			int timer = *reinterpret_cast<const int*>(params + 0x2C);
 			if (unk250 <= timer) {
