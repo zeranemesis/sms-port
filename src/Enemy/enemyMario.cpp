@@ -1441,6 +1441,8 @@ void TEnemyMario::considerAfter()
 
 void TEnemyMario::hitWater(THitActor* sender)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	if (mSpecialModel != nullptr)
 		return;
 
