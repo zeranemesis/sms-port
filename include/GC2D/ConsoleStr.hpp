@@ -40,13 +40,16 @@ public:
 public:
 	/* 0x10 */ J2DSetScreen* unk10;
 	/* 0x14 */ J2DSetScreen* unk14;
+	u8 unk18Pad[0x3C];
 	/* 0x18 */ f32 unk18;
 	/* 0x1C */ int unk1C;
 	/* 0x20 */ u32 unk20;
 	/* 0x24 */ u32 unk24;
 	/* 0x28 */ TBoundPane* unk28[3];
 	/* 0x34 */ JUTPoint unk34[66];
-	/* 0x244 */ TBoundPane* unk244[9];
+	/* Retail contains additional pane storage before these members. */
+	u8 unk244Pad[0x5C4];
+	/* 0x844 */ TBoundPane* unk244[9];
 	/* 0x268 */ TBoundPane* unk268[5];
 	/* 0x27C */ TExPane* unk27C[5];
 	/* 0x290 */ TExPane* unk290[2];
@@ -57,9 +60,11 @@ public:
 	/* 0x2A9 */ u8 unk2A9;
 	/* 0x2AC */ void* unk2AC;
 	/* 0x2B0 */ void* unk2B0;
-	/* 0x2B4 */ void* unk2B4;
-	/* 0x2B8 */ int unk2B8;
-	/* 0x2BC */ int unk2BC;
+	/* 0x8B4 */ void* unk2B4;
+	/* Retail pane/state storage omitted from the current source model. */
+	u8 unk2C0[0x20];
+	/* 0x8D8 */ int unk2B8;
+	/* 0x8DC */ int unk2BC;
 };
 
 #endif
