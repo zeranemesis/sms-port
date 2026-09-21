@@ -542,6 +542,8 @@ TWoodBlock::TWoodBlock(const char* name)
 
 BOOL TWoodBlock::calcRecycle()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	switch (unk148) {
 	case 0:
 		unk14C = 1;
