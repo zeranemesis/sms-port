@@ -1130,8 +1130,8 @@ void TMarDirector::moveStage()
 		case 5:
 		case 6:
 		case 8:
-			unkE4 = 2;
-			unkB4 = TApplication::APP_STATE_BOOT;
+			unkE4 = 8;
+			unkB4 = TApplication::APP_STATE_TITLE;
 			break;
 
 		case 9:
@@ -1168,10 +1168,10 @@ void TMarDirector::moveStage()
 	}
 
 	if (gpMarioOriginal->checkFlag(MARIO_FLAG_HAS_FLUDD)) {
-		u32 r5 = 0;
-		if ((int)gpMarioOriginal->mWaterGun->mSecondNozzle == 3)
-			r5 = 4;
-		TFlagManager::smInstance->setFlag(0x40004, r5);
+		int nozzle = gpMarioOriginal->mWaterGun->mSecondNozzle;
+		if (nozzle == 3)
+			nozzle = 4;
+		TFlagManager::smInstance->setFlag(0x40004, nozzle);
 	}
 }
 
