@@ -909,6 +909,7 @@ void THamuKuri::setBehavior()
 
 void THamuKuri::changeCapHolder() { }
 
+#pragma dont_inline on
 void THamuKuri::selectCapHolder()
 {
 	if (!gpMarioOriginal->isWearingCap()) {
@@ -926,6 +927,7 @@ void THamuKuri::selectCapHolder()
 		}
 	}
 }
+#pragma dont_inline off
 
 void THamuKuri::makeCapFly(TMapObjBase* param_1)
 {
