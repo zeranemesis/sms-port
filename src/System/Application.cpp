@@ -552,6 +552,7 @@ bool TApplication::checkAdditionalMovie()
 void TApplication::proc()
 {
 	while (mAppState != APP_STATE_QUIT) {
+		mDisplay->unk4C = 2;
 		u8 nextState = APP_STATE_DEFAULT;
 		int iVar9    = 0;
 
@@ -574,7 +575,7 @@ void TApplication::proc()
 			TMenuDirector* dir = new TMenuDirector;
 			mDirector          = dir;
 			dir->setup(mDisplay, mGamePads[0]);
-			TFlagManager::getInstance()->setFlag(3, 0x20001);
+			TFlagManager::getInstance()->setFlag(0x20001, 3);
 			mCurrArea.set(1, 0, 0);
 		} break;
 
@@ -582,6 +583,8 @@ void TApplication::proc()
 			if (checkAdditionalMovie()) {
 				// Show a movie before entering a stage, e.g. the secret levels
 				SMSSetupMovieRenderingInfo(mDisplay);
+				if (mDisplay->getRenderMode().viTVmode >> 2 == VI_PAL)
+					mDisplay->unk4C = 1;
 				mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 				                       (u16)SMSGetGameRenderHeight());
 				TMovieDirector* dir = new TMovieDirector;
@@ -616,6 +619,8 @@ void TApplication::proc()
 
 		case APP_STATE_MOVIE: {
 			SMSSetupMovieRenderingInfo(mDisplay);
+			if (mDisplay->getRenderMode().viTVmode >> 2 == VI_PAL)
+				mDisplay->unk4C = 1;
 			mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 			                       (u16)SMSGetGameRenderHeight());
 			TMovieDirector* dir = new TMovieDirector;
