@@ -1258,6 +1258,8 @@ TBossEelCollision::TBossEelCollision(MtxPtr collisionMtx, const char* name)
 
 void TBossEelCollision::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	volatile u8 stackPad[24];
+	(void)stackPad;
 	if (cue & CUE_MOVE) {
 		calcEntryRadius();
 		for (s32 i = 0; i < mColCount; ++i) {
