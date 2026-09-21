@@ -115,6 +115,8 @@ TCardSave::TCardSave(const char* name, bool param_2)
 
 void TCardSave::load(JSUMemoryInputStream& stream)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	JDrama::TViewObj::load(stream);
 	initData(gpMarDirector->unk18[0]);
 }
