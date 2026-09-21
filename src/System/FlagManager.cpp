@@ -6,6 +6,8 @@ TFlagManager* TFlagManager::smInstance = 0;
 
 TFlagManager* TFlagManager::start(JKRHeap* heap)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (smInstance == nullptr)
 		smInstance = new (heap, 0) TFlagManager;
 
@@ -96,7 +98,7 @@ s32 TFlagManager::getFlag(u32 flag) const
 		}
 		break;
 	case 7:
-		if (flag < 0x70002) {
+		if (flag < 0x70003) {
 			return mSavedOptionBools[low >> 3] >> (low & 7) & 1;
 		}
 		break;
@@ -106,7 +108,7 @@ s32 TFlagManager::getFlag(u32 flag) const
 		}
 		break;
 	case 9:
-		if (flag < 0x90001) {
+		if (flag < 0x90002) {
 			return mOptionBools[low >> 3] >> (low & 7) & 1;
 		}
 		break;
@@ -157,7 +159,7 @@ void TFlagManager::setFlag(u32 flag, s32 value)
 		}
 		break;
 	case 7:
-		if (flag < 0x70002) {
+		if (flag < 0x70003) {
 			mSavedOptionBools[low >> 3] &= ~(1 << (low & 7));
 			mSavedOptionBools[low >> 3] |= (value & 1) << (low & 7);
 		}
@@ -168,7 +170,7 @@ void TFlagManager::setFlag(u32 flag, s32 value)
 		}
 		break;
 	case 9:
-		if (flag < 0x90001) {
+		if (flag < 0x90002) {
 			mOptionBools[low >> 3] &= ~(1 << (low & 7));
 			mOptionBools[low >> 3] |= (value & 1) << (low & 7);
 		}
@@ -200,12 +202,12 @@ bool TFlagManager::getBool(u32 flag) const
 		}
 		break;
 	case 7:
-		if (flag < 0x70002) {
+		if (flag < 0x70003) {
 			return getFlag(flag) != 0;
 		}
 		break;
 	case 9:
-		if (flag < 0x90001) {
+		if (flag < 0x90002) {
 			return getFlag(flag) != 0;
 		}
 		break;
@@ -238,14 +240,14 @@ void TFlagManager::setBool(bool value, u32 flag)
 	case 6:
 		break;
 	case 7:
-		if (flag < 0x70002) {
+		if (flag < 0x70003) {
 			setFlag(flag, value ? 1 : 0);
 		}
 		break;
 	case 8:
 		break;
 	case 9:
-		if (flag < 0x90001) {
+		if (flag < 0x90002) {
 			setFlag(flag, value ? 1 : 0);
 		}
 		break;
@@ -479,6 +481,8 @@ void TFlagManager::correctFlag()
 
 void TFlagManager::save(JSUMemoryOutputStream& out)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	mLastSaveTimeBackup = mLastSaveTime;
 	mLastSaveTime       = OSGetTime();
 
@@ -586,7 +590,10 @@ void TFlagManager::saveOption(JSUMemoryOutputStream& out)
 		OSSetSoundMode(1);
 		setBool(true, 0x70001);
 	}
-	setFlag(0x80000, 0);
+	s32 language = getFlag(0xA0001);
+	language += 1;
+	setFlag(0x80001, language);
+	setBool(!getBool(0x70002), 0x90001);
 	out.write(mSavedOptionBools, sizeof(mSavedOptionBools));
 	out.write(mSavedOptionInts, sizeof(mSavedOptionInts));
 }

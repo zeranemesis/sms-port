@@ -1453,7 +1453,7 @@ void TModelWaterManager::drawRefracAndSpec() const
 {
 
 	Mtx afStack_3c;
-	PSMTXIdentity(afStack_3c);
+	MTXIdentity(afStack_3c);
 	GXSetCurrentMtx(GX_PNMTX0);
 	GXLoadPosMtxImm(afStack_3c, GX_PNMTX0);
 	GXLoadNrmMtxImm(afStack_3c, GX_PNMTX0);

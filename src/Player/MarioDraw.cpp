@@ -608,12 +608,12 @@ static int MarioFootDirRCtrl(J3DNode* param_1, int param_2)
 
 				Vec currentNormalCross1;
 				Vec currentNormalCross2;
-				PSVECCrossProduct(&currentMtxDir, &normalDir,
+				VECCrossProduct(&currentMtxDir, &normalDir,
 				                  &currentNormalCross1);
-				PSVECCrossProduct(&normalDir, &currentMtxDir,
+				VECCrossProduct(&normalDir, &currentMtxDir,
 				                  &currentNormalCross2);
-				PSVECNormalize(&currentNormalCross1, &currentNormalCross1);
-				PSVECNormalize(&currentNormalCross2, &currentNormalCross2);
+				VECNormalize(&currentNormalCross1, &currentNormalCross1);
+				VECNormalize(&currentNormalCross2, &currentNormalCross2);
 
 				J3DSys::mCurrentMtx[0][0] = currentNormalCross2.x;
 				J3DSys::mCurrentMtx[1][0] = currentNormalCross2.y;
@@ -732,12 +732,12 @@ static int MarioFootDirLCtrl(J3DNode* param_1, int param_2)
 
 				Vec currentNormalCross1;
 				Vec currentNormalCross2;
-				PSVECCrossProduct(&currentMtxDir, &normalDir,
+				VECCrossProduct(&currentMtxDir, &normalDir,
 				                  &currentNormalCross1);
-				PSVECCrossProduct(&normalDir, &currentMtxDir,
+				VECCrossProduct(&normalDir, &currentMtxDir,
 				                  &currentNormalCross2);
-				PSVECNormalize(&currentNormalCross1, &currentNormalCross1);
-				PSVECNormalize(&currentNormalCross2, &currentNormalCross2);
+				VECNormalize(&currentNormalCross1, &currentNormalCross1);
+				VECNormalize(&currentNormalCross2, &currentNormalCross2);
 
 				J3DSys::mCurrentMtx[0][0] = currentNormalCross2.x;
 				J3DSys::mCurrentMtx[1][0] = currentNormalCross2.y;

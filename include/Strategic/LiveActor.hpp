@@ -43,6 +43,7 @@ enum {
 	// so that call sites read the same across versions.
 	LIVE_FLAG_UNK4000     = LIVE_FLAG_ABOVE_4000(0x4000),
 	LIVE_FLAG_UNK8000     = LIVE_FLAG_ABOVE_4000(0x8000),
+	LIVE_FLAG_UNK10000    = LIVE_FLAG_ABOVE_4000(0x10000),
 	// WARNING: some flag values are overloaded between derived classes. E.g.
 	// LIVE_FLAG_UNK10000 means different things for NPCs and small enemies.
 	// Be careful about placing stuff here -- it might belong to derived classes
@@ -152,6 +153,13 @@ public:
 		mLinearVelocity = v;
 	}
 	TLodAnm* getLodAnm() { return unkD0; }
+	const char* getBas(int idx) const
+	{
+		const char** basTable = getBasNameTable();
+		if (!basTable)
+			return nullptr;
+		return basTable[idx];
+	}
 
 public:
 	/* 0x70 */ TLiveManager* mManager;

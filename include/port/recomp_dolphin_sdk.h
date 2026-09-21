@@ -4,15 +4,9 @@
 // Each function here has the signature recomp::HostCallFn expects and does
 // the actual marshalling between DolRecomp's guest CPUState/memory and a
 // real Aurora call. Only functions marshalled carefully enough to trust are
-// here - notably not yet PADRead/PADInit, whose PADStatus argument lives in
-// guest memory in the *original* GameCube ABI layout, which is not
-// byte-identical to Aurora's own PADStatus (it has a TARGET_PC-only
-// `extButton` field, and none of this has been checked against a real
-// disc's actual struct layout). Guessing at that marshalling without a way
-// to test it against real game data is exactly the "silent corruption"
-// risk docs/recompilation.md's own portability audit already flags as the
-// most serious one in this port - so it is left as a documented gap
-// (an unresolved host call, logged with its address) rather than a guess.
+// here. PADInit/PADRead live in recomp_pad instead: their PADStatus argument
+// needs guest-memory marshalling, since Aurora's TARGET_PC struct has an
+// extra host-only `extButton` field.
 //
 // What is here is limited to what's safe without that struct knowledge:
 // scalar arguments only, since DolRecomp's CPUState register file already

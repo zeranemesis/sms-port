@@ -84,6 +84,8 @@ int TCubeManagerBase::getInCubeNo(const Vec& v) const
 
 bool TCubeManagerBase::isInCube(const Vec& v, s32 i) const
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	bool result = false;
 	if (i >= 0 && i < unk10) {
 		TCubeGeneralInfo& info = (*unk14)[i];
@@ -139,6 +141,8 @@ inline bool TCubeManagerFast::isInOtherCube(const Vec& pos) const
 
 bool SMS_IsInOtherFastCube(const Vec& pos)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	bool result = false;
 	if (!gpMarDirector->isDemoModeNow()
 	    && (gpCubeFastA->isInOtherCube(pos) || gpCubeFastB->isInOtherCube(pos)

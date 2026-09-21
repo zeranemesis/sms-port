@@ -90,6 +90,8 @@ f32 MSHandle::MSACos(f32 param_1)
 
 void MSHandle::setSeDistanceParameters()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	u8 type = smSeCategory[get_thing(mSoundID)].mType;
 	if (mState == SOUNDSTATE_Prepared)
 		type = 0;
@@ -124,6 +126,8 @@ void MSHandle::setSeDistancePitch(u8 moveTime)
 
 void MSHandle::setSeDistancePan(u8 moveTime)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	FabricatedPositionInfo* ptr = unk1C;
 
 	f32 thing = ptr->unk18;
@@ -200,6 +204,8 @@ f32 MSHandle::calcDolby(const Vec& pos, f32 dist)
 
 void MSHandle::setSeDistanceVolume(u8 moveTime)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	u32 swBit = getSwBit();
 	if (swBit & MSSeSwBit_ModDistanceVolume) {
 		f32 d = JALSystem::processModDistVolume(mSoundID, unk1C->unk18);

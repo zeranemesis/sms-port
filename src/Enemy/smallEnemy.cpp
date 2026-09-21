@@ -205,7 +205,7 @@ void TSmallEnemy::init(TLiveManager* param_1)
 	if (!unk124->getGraph() || unk124->getGraph()->isDummy())
 		unk124->init(gpConductor->getGraphByName("main"));
 
-	setGoalPathMario();
+	setGoalPath(TPathNode((THitActor*)gpMarioAddress));
 	initAnmSound();
 }
 
@@ -755,7 +755,7 @@ void TSmallEnemy::decHpByWater(THitActor* param_1)
 
 void TSmallEnemy::kill()
 {
-	if (!checkLiveFlag(LIVE_FLAG_DEAD))
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
 		return;
 
 	mHitPoints = 1;
@@ -763,9 +763,9 @@ void TSmallEnemy::kill()
 		mSpine->reset();
 		mSpine->setNext(&TNerveSmallEnemyDie::theNerve());
 		mSpine->pushAfterCurrent(&TNerveSmallEnemyDie::theNerve());
-
-		onLiveFlag(LIVE_FLAG_UNK40);
 	}
+
+	onLiveFlag(LIVE_FLAG_UNK40);
 }
 
 bool TSmallEnemy::isFindMario(float param_1)
@@ -842,9 +842,8 @@ void TSmallEnemy::generateEffectColumWater()
 void TSmallEnemy::setBckAnm(int index)
 {
 	mCurrentBckAnm = index;
-	getMActor()->setBckFromIndex(index);
-	const char** table = getBasNameTable();
-	setAnmSound(!table ? nullptr : table[index]);
+	mMActor->setBckFromIndex(index);
+	setAnmSound(getBas(index));
 }
 
 void TSmallEnemy::expandCollision()

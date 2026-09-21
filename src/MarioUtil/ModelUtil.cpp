@@ -63,7 +63,7 @@ void SMS_RideMoveByGroundActor(TRidingInfo* riding_info,
 			if (!riding_info->unk0->getRootJointMtx()) {
 				SMS_GetActorMtx(*riding_info->unk0, mtx.mMtx);
 			} else {
-				PSMTXCopy(*riding_info->unk0->getRootJointMtx(), mtx.mMtx);
+				MTXCopy(*riding_info->unk0->getRootJointMtx(), mtx.mMtx);
 			}
 			MTXMultVec(mtx.mMtx, &riding_info->localPos, pos);
 			*arg2 = *arg2 + riding_info->unk0->mRotation.y - riding_info->unk10;
@@ -85,9 +85,9 @@ void SMS_RideMoveCalcLocalPos(TRidingInfo* riding_info,
 	if (!riding_info->unk0->getRootJointMtx()) {
 		SMS_GetActorMtx(*riding_info->unk0, mtx.mMtx);
 	} else {
-		PSMTXCopy(*riding_info->unk0->getRootJointMtx(), mtx.mMtx);
+		MTXCopy(*riding_info->unk0->getRootJointMtx(), mtx.mMtx);
 	}
-	PSMTXInverse(mtx.mMtx, mtx.mMtx);
+	MTXInverse(mtx.mMtx, mtx.mMtx);
 	MTXMultVec(mtx.mMtx, (Vec*)&pos, &riding_info->localPos);
 }
 

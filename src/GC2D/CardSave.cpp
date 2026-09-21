@@ -115,6 +115,8 @@ TCardSave::TCardSave(const char* name, bool param_2)
 
 void TCardSave::load(JSUMemoryInputStream& stream)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	JDrama::TViewObj::load(stream);
 	initData(gpMarDirector->unk18[0]);
 }
@@ -955,7 +957,7 @@ s8 TCardSave::drawMessageBM(TEProgress param_1)
 
 s8 TCardSave::waitForAnyKey(TEProgress param_1)
 {
-	s32 result = -1;
+	s8 result = -1;
 
 	switch (unk10) {
 	case 0:
@@ -1004,6 +1006,8 @@ s8 TCardSave::waitForAnyKey(TEProgress param_1)
 
 s8 TCardSave::waitForSelectOver()
 {
+	volatile u8 stackPad[32];
+	(void)stackPad;
 	s8 result = -1;
 
 	switch (unk10) {

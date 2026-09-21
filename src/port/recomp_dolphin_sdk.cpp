@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <unordered_set>
 #include <vector>
 
 namespace sms::recomp::dolphin_sdk {
@@ -19,7 +20,6 @@ aurora::Module Log("sms::recomp::dolphin_sdk");
 constexpr u32 kFirstVariadicGpr = 4;
 constexpr u32 kLastVariadicGpr = 10;
 constexpr size_t kMaxFormatLength = 4096;
-constexpr size_t kMaxStringArgLength = 4096;
 
 u32 next_variadic_gpr(CPUState *cpu, u32 &gprIndex)
 {
@@ -27,17 +27,6 @@ u32 next_variadic_gpr(CPUState *cpu, u32 &gprIndex)
         return 0;
     }
     return cpu->gpr[gprIndex++];
-}
-
-void append_guest_cstring(std::string &out, CPUState *cpu, u32 addr)
-{
-    for (size_t i = 0; i < kMaxStringArgLength; ++i) {
-        const u8 c = mem_read8(cpu, addr + static_cast<u32>(i));
-        if (c == 0) {
-            return;
-        }
-        out.push_back(static_cast<char>(c));
-    }
 }
 
 } // namespace
@@ -67,7 +56,7 @@ std::string format_os_report(CPUState *cpu, u32 formatGuestAddr)
                 out.push_back('%');
                 break;
             case 's':
-                append_guest_cstring(out, cpu, next_variadic_gpr(cpu, gprIndex));
+                out += read_guest_cstring(cpu, next_variadic_gpr(cpu, gprIndex));
                 break;
             case 'c':
                 out.push_back(static_cast<char>(next_variadic_gpr(cpu, gprIndex)));
@@ -102,7 +91,20 @@ bool host_call_os_report(CPUState *cpu, u32 address)
 {
     (void)address;
     const std::string message = format_os_report(cpu, cpu->gpr[3]);
-    Log.info("{}", message);
+    // A stuck polling loop (e.g. a call site spinning on OSReport("bootrom")
+    // waiting for a hardware condition that never arrives) calls this many
+    // thousands of times per second with the exact same text from the exact
+    // same call site - logging every hit filled a 1.4GB+ file in seconds
+    // against a real GMSP01 dump. Each distinct (call site, message) pair is
+    // still logged once: that's the real information (what the game is
+    // reporting, and from where), the repeat count isn't.
+    static std::unordered_set<std::string> alreadyLogged;
+    std::string key = message;
+    key += '\0';
+    key += std::to_string(cpu->pc);
+    if (alreadyLogged.insert(std::move(key)).second) {
+        Log.info("{} (called from pc={:#010x} lr={:#010x})", message, cpu->pc, cpu->lr);
+    }
     return true;
 }
 

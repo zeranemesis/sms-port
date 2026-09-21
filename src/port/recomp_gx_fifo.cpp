@@ -1,0 +1,957 @@
+#include "port/recomp_gx_fifo.h"
+#include "port/recomp_boot.h"
+#include "port/recomp_host.h"
+
+#include "aurora/lib/logging.hpp"
+#include "aurora/lib/gx/command_processor.hpp"
+#include "aurora/lib/gx/fifo.hpp"
+#include "aurora/lib/gx/gx.hpp"
+
+#include <dolphin/gx/GXFifo.h>
+#include <dolphin/gx/GXAurora.h>
+#include <dolphin/gx/GXCommandList.h>
+#include <dolphin/gx/GXFrameBuffer.h>
+#include <dolphin/gx/GXGeometry.h>
+#include <dolphin/gx/GXManage.h>
+
+#include <array>
+#include <cmath>
+#include <cstring>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace sms::recomp::gx_fifo {
+namespace {
+
+aurora::Module Log("sms::recomp::gx_fifo");
+
+// The real GX write-gather-pipe on hardware. Verified: dr_cpu's
+// mem_write8/16/32/64 (extern/dolrecomp/src/cpu/cpu.c) already route any
+// store to an address resolve_addr() can't map into guest RAM through
+// CPUState::external_write - this range being outside GC_RAM_BASE/MEM1/
+// MEM2 means every FIFO store the recompiled game executes reaches this
+// handler as soon as it's registered, no other CPU-side change needed.
+constexpr u32 kFifoBase = 0xCC008000u;
+constexpr u32 kFifoEnd = 0xCC009000u;
+
+void write(CPUState *, u32 /*addr*/, u64 value, u8 size)
+{
+    // The write-gather pipe ignores the specific address within the range
+    // on real hardware (and aurora::gx::fifo's write_u8/u16/u32 API takes
+    // no address either) - only the value and size matter.
+    //
+    // `value` here is dr_cpu's plain host-native integer (verified reading
+    // mem_write32: it passes the same `value` it would otherwise
+    // write_be32() into mapped RAM, not pre-byte-swapped) - exactly what
+    // aurora::gx::fifo::write_u16/write_u32 expect, since they apply their
+    // own bswap() internally before appending to the FIFO buffer
+    // (extern/aurora/lib/gx/fifo.hpp).
+    switch (size) {
+        case 1:
+            aurora::gx::fifo::write_u8(static_cast<u8>(value));
+            break;
+        case 2:
+            aurora::gx::fifo::write_u16(static_cast<u16>(value));
+            break;
+        case 4:
+            aurora::gx::fifo::write_u32(static_cast<u32>(value));
+            break;
+        case 8:
+            // stfd/psq_st path - not yet exercised against a real run, so
+            // the split direction (high word first) is a best guess from
+            // big-endian byte order, not confirmed.
+            aurora::gx::fifo::write_u32(static_cast<u32>(value >> 32));
+            aurora::gx::fifo::write_u32(static_cast<u32>(value));
+            break;
+        default:
+            Log.warn("FIFO write: unexpected size {}", size);
+            break;
+    }
+}
+
+// The CPUState whose RAM the CP array-base resolver reads. Set once, before any
+// guest code runs.
+CPUState *g_resolverCpu = nullptr;
+
+// Aurora cannot turn a guest physical address into anything it can read, so it
+// used to refuse both the CP array-base registers and GX_CMD_CALL_DL outright.
+// This is the translation both were missing.
+void *resolve_guest_memory(u32 guestAddress, u32 *sizeOut)
+{
+    if (g_resolverCpu == nullptr) {
+        return nullptr;
+    }
+    // Cached (0x8...), uncached (0xC...) and physical all name the same bytes,
+    // exactly as the GXSetArray bridge and the ARAM/DI transfers resolve theirs.
+    const u32 offset = guestAddress & 0x03FFFFFFu;
+    if (offset >= g_resolverCpu->ram_size) {
+        return nullptr;
+    }
+    // Neither an array nor a display list carries a length the hardware could
+    // check, so the only bound that is actually known is the end of guest RAM.
+    // A display list's own byte count is validated against this by the caller.
+    if (sizeOut != nullptr) {
+        *sizeOut = g_resolverCpu->ram_size - offset;
+    }
+    return g_resolverCpu->ram + offset;
+}
+
+} // namespace
+
+void install()
+{
+    register_mmio_range({
+        .base = kFifoBase,
+        .end = kFifoEnd,
+        .name = "GX FIFO",
+        .read = nullptr, // write-only on real hardware; a read here is a
+                          // signal something unexpected is happening, let
+                          // the generic dispatcher's miss-log path catch it
+        .write = &write,
+    });
+}
+
+void install_guest_memory_resolver(CPUState *cpu)
+{
+    g_resolverCpu = cpu;
+    aurora::gx::fifo::g_guestMemoryResolver = &resolve_guest_memory;
+}
+
+namespace {
+
+// The host GXFifoObj* GXInit() really returns (extern/aurora/lib/dolphin/
+// gx/GXManage.cpp - GXInit already calls aurora::gx::fifo::init() and
+// wires both GXSetCPUFifo/GXSetGPFifo to it internally, verified reading
+// that function). The guest never needs the real value - GXFifoObj is an
+// opaque `u8 pad[128]` (extern/aurora/include/dolphin/gx/GXFifo.h) that
+// Aurora's own GXSetCPUFifo/GXSetGPFifo never dereference (`CPUFifo =
+// fifo;` is a plain pointer store) - so it's safe to hand the guest a
+// fabricated sentinel instead and translate it back here.
+GXFifoObj *g_realFifoObj = nullptr;
+
+// The GameCube GXTexObj is a 32-byte big-endian object. Its image pointer is
+// encoded in image3 as a physical address divided by 32. Aurora's
+// GX_LOAD_AURORA_TEXOBJ carries a native host pointer instead, so the raw BP
+// writes emitted by the guest's GXLoadTexObj alone cannot make its texture
+// resolver see game RAM.
+struct GuestTextureRevision {
+    u64 signature = 0;
+    u32 version = 1;
+    u64 lastDiagnosticTimebase = 0;
+};
+
+std::unordered_map<u32, GuestTextureRevision> g_guestTextureRevisions;
+
+// Bytes the base mip level occupies for a given GX texture format. Factored
+// out because the *bounds check* needs it as much as the hash does: Aurora is
+// handed a raw host pointer and will read width x height x bpp from it, so
+// validating only the start address lets it run off the end of guest RAM.
+u64 texture_source_bytes(u32 width, u32 height, u32 format)
+{
+    const u64 pixels = u64(width) * height;
+    switch (format & 0x0Fu) {
+    case 0: // I4
+    case 8: // C4
+        return (pixels + 1) / 2;
+    case 2: // IA4
+    case 9: // C8
+        return pixels;
+    case 3:  // IA8
+    case 4:  // RGB565
+    case 5:  // RGB5A3
+    case 10: // C14X2
+        return pixels * 2;
+    case 6: // RGBA8
+        return pixels * 4;
+    default: // I8 and unknown extended formats: one byte is the safest base.
+        return pixels;
+    }
+}
+
+u64 sampled_texture_content_signature(const u8 *data, u32 availableBytes, u32 width, u32 height, u32 format)
+{
+    // Aurora caches decoded textures by (object ID, data revision), while a
+    // GameCube GXTexObj has no matching revision field. Sample the base level
+    // so writes into a reused movie/render buffer advance that revision without
+    // needlessly re-uploading ordinary immutable textures.
+    const u32 bytes = static_cast<u32>(std::min<u64>(texture_source_bytes(width, height, format), availableBytes));
+    if (bytes == 0) {
+        return 0;
+    }
+
+    u64 hash = 1469598103934665603ull;
+    constexpr u32 kSampleCount = 64;
+    for (u32 i = 0; i < kSampleCount; ++i) {
+        const u32 index = static_cast<u32>((u64(i) * (bytes - 1)) / (kSampleCount - 1));
+        hash ^= data[index];
+        hash *= 1099511628211ull;
+    }
+    return hash;
+}
+
+bool emit_guest_texture_metadata(CPUState *cpu, u32 textureMap)
+{
+    constexpr u32 kGuestTexObjSize = 0x20;
+    constexpr u32 kGuestImage0Offset = 0x08;
+    constexpr u32 kGuestImage3Offset = 0x0C;
+    constexpr u32 kGuestFormatOffset = 0x14;
+    constexpr u32 kGuestTlutOffset = 0x18;
+    constexpr u32 kGuestFlagsOffset = 0x1F;
+    constexpr u32 kTextureMapCount = 8;
+
+    const u32 objectAddress = cpu->gpr[3];
+    const u32 objectOffset = objectAddress & 0x03FFFFFFu;
+    if (textureMap >= kTextureMapCount || objectOffset > cpu->ram_size || kGuestTexObjSize > cpu->ram_size - objectOffset) {
+        return false;
+    }
+
+    const u32 image0 = mem_read32(cpu, objectAddress + kGuestImage0Offset);
+    const u32 image3 = mem_read32(cpu, objectAddress + kGuestImage3Offset);
+    const u32 format = mem_read32(cpu, objectAddress + kGuestFormatOffset);
+    const u32 tlut = mem_read32(cpu, objectAddress + kGuestTlutOffset);
+    const u8 flags = mem_read8(cpu, objectAddress + kGuestFlagsOffset);
+
+    const u32 width = (image0 & 0x3FFu) + 1;
+    const u32 height = ((image0 >> 10) & 0x3FFu) + 1;
+    const u32 imageAddress = (image3 & 0x001FFFFFu) << 5;
+    const u32 imageOffset = imageAddress & 0x03FFFFFFu;
+    // Validate the whole extent, not just the start. Aurora receives a bare
+    // host pointer and decodes width x height x bpp bytes from it, so an
+    // address that is merely *inside* RAM is not enough - a texture starting
+    // near the top would be read past the end of the guest's memory.
+    const u64 sourceBytes = texture_source_bytes(width, height, format);
+    if (imageOffset >= cpu->ram_size || sourceBytes > cpu->ram_size - imageOffset) {
+        // Capped by count as well as deduplicated: imageAddress comes from a
+        // 21-bit field shifted left by 5, so up to two million distinct keys
+        // are reachable. Deduplication alone bounds neither the log nor the
+        // set - the exact mistake already corrected in recomp_host.cpp.
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(imageAddress).second) {
+            Log.warn("GXLoadTexObj image {:#010x} + {:#x} bytes runs past guest RAM - Aurora texture metadata not emitted",
+                imageAddress, sourceBytes);
+        }
+        return false;
+    }
+
+    // A stable ID lets Aurora retain decoded static textures. Bump the
+    // revision whenever the guest object describes different source data.
+    const u64 contentSignature = sampled_texture_content_signature(
+        cpu->ram + imageOffset, cpu->ram_size - imageOffset, width, height, format);
+    const u64 signature = (u64(image0) << 32) ^ u64(image3) ^ (u64(format) << 17) ^ (u64(tlut) << 1) ^ flags ^ contentSignature;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(objectAddress, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) {
+            revisionIt->second.version = 1;
+        }
+    }
+    if (inserted && g_guestTextureRevisions.size() <= 8) {
+        Log.info("GXLoadTexObj bridge: map={} object={:#010x} image={:#010x} {}x{} format={:#x}",
+            textureMap, objectAddress, imageAddress, width, height, format);
+    }
+    // THPPlayer converts its decoded Y/U/V planes into exactly these I8
+    // dimensions. One bounded diagnostic per second tells us whether their
+    // bytes actually evolve before they reach Aurora's TEV combiner.
+    const bool thpPlane = format == 1u
+        && ((width == 640u && height == 448u) || (width == 320u && height == 224u));
+    if (thpPlane && cpu->timebase - revisionIt->second.lastDiagnosticTimebase >= 40500000ull) {
+        // Scan the WHOLE plane, not a sample of it. The 64-point signature
+        // above is a change detector, not a content detector: 64 bytes out of
+        // a 286,720-byte plane is 0.02%, so "all sampled bytes are zero" does
+        // not distinguish a decoder that wrote nothing from a sample that
+        // happened to miss everything. This is the measurement that does.
+        //
+        // One full pass per plane per second is nothing next to the decode
+        // that produced it, and the caller is already throttled to that rate.
+        const u8 *plane = cpu->ram + imageOffset;
+        u64 nonZero = 0;
+        u64 sum = 0;
+        u8 minByte = 0xFFu;
+        u8 maxByte = 0;
+        for (u64 i = 0; i < sourceBytes; ++i) {
+            const u8 value = plane[i];
+            if (value != 0) {
+                ++nonZero;
+            }
+            sum += value;
+            minByte = value < minByte ? value : minByte;
+            maxByte = value > maxByte ? value : maxByte;
+        }
+        // The mean is what distinguishes "the renderer is broken" from "the
+        // movie opens on a dark frame". A non-zero count alone cannot: a plane
+        // that is 90% non-zero can still be almost entirely near-black.
+        const double mean = sourceBytes == 0 ? 0.0 : double(sum) / double(sourceBytes);
+        Log.info("THP plane: map={} image={:#010x} {}x{} bytes={:#x} nonZero={:.1f}% mean={:.1f} min={} max={} revision={}",
+            textureMap, imageAddress, width, height, sourceBytes,
+            sourceBytes == 0 ? 0.0 : (100.0 * double(nonZero) / double(sourceBytes)), mean, minByte, maxByte,
+            revisionIt->second.version);
+
+        // Horizontal bands of corrupted pixels cross every rendered frame, and
+        // they cut through the subject rather than sitting above and below it,
+        // so they are not letterbox rows. This narrows where they come from.
+        //
+        // An I8 texture is tiled in 8x4 blocks, so a run of consecutive bytes
+        // is NOT a scanline: one row of tiles is (width/8) tiles of 32 bytes,
+        // i.e. width*4 bytes covering scanlines 4r..4r+3. Profiling by tile row
+        // is therefore the only row statistic that means anything here, and it
+        // is also exactly the granularity the locked-cache DMA works at.
+        //
+        // What decides: a natural image's tile-row means move smoothly, because
+        // each is an average over 2560 pixels. A band of corruption does not -
+        // it shows as a large jump against both neighbours. If the jumps are
+        // here, the plane is already wrong in guest RAM and the fault is in the
+        // decoder or its DMA; if the plane is smooth, the bands are introduced
+        // after this point, in the upload or the TEV combiner.
+        const u32 tileRowBytes = width * 4u;
+        const u32 tileRows = tileRowBytes == 0 ? 0u : u32(sourceBytes / tileRowBytes);
+        if (tileRows >= 3u) {
+            std::vector<double> rowMean(tileRows, 0.0);
+            for (u32 r = 0; r < tileRows; ++r) {
+                u64 rowSum = 0;
+                const u8 *row = plane + u64(r) * tileRowBytes;
+                for (u32 i = 0; i < tileRowBytes; ++i) {
+                    rowSum += row[i];
+                }
+                rowMean[r] = double(rowSum) / double(tileRowBytes);
+            }
+            // A band is a row unlike BOTH neighbours, so score on the smaller
+            // of the two differences: a genuine image edge moves one way and
+            // stays there, and scores zero here.
+            u32 worstRow = 0;
+            double worstScore = 0.0;
+            u32 zeroRows = 0;
+            for (u32 r = 0; r < tileRows; ++r) {
+                if (rowMean[r] == 0.0) {
+                    ++zeroRows;
+                }
+                if (r == 0 || r + 1 == tileRows) {
+                    continue;
+                }
+                const double up = std::abs(rowMean[r] - rowMean[r - 1]);
+                const double down = std::abs(rowMean[r] - rowMean[r + 1]);
+                const double score = up < down ? up : down;
+                if (score > worstScore) {
+                    worstScore = score;
+                    worstRow = r;
+                }
+            }
+            // The mean above cannot see the defect that is actually on screen,
+            // and assuming it could was wrong. The bands are random-byte noise,
+            // whose mean is ~128 - indistinguishable from this movie's own
+            // 100-150. A mean per tile row is simply the wrong statistic for
+            // noise; roughness is the right one.
+            //
+            // Adjacent bytes inside an I8 tile are adjacent pixels horizontally
+            // in groups of 8, so the mean absolute difference between them
+            // measures high-frequency energy. A natural image at this scale
+            // sits in the single digits; uniform random bytes average 85.3
+            // (the mean of |x-y| over two independent uniforms on 0..255).
+            // Nothing in a real frame comes close, so this separates cleanly.
+            std::vector<double> roughness(tileRows, 0.0);
+            u32 roughestRow = 0;
+            double roughestValue = 0.0;
+            double roughnessSum = 0.0;
+            for (u32 r = 0; r < tileRows; ++r) {
+                const u8 *row = plane + u64(r) * tileRowBytes;
+                u64 diffSum = 0;
+                u32 diffCount = 0;
+                for (u32 i = 0; i + 1 < tileRowBytes; ++i) {
+                    if ((i & 7u) == 7u) {
+                        continue; // tile edge: not a horizontal neighbour
+                    }
+                    diffSum += u32(std::abs(int(row[i + 1]) - int(row[i])));
+                    ++diffCount;
+                }
+                roughness[r] = diffCount == 0 ? 0.0 : double(diffSum) / double(diffCount);
+                roughnessSum += roughness[r];
+                if (roughness[r] > roughestValue) {
+                    roughestValue = roughness[r];
+                    roughestRow = r;
+                }
+            }
+            const double roughnessAvg = roughnessSum / double(tileRows);
+            Log.info("THP plane rows: map={} tileRows={} zeroRows={} worstBand=row{} (scanlines {}-{}) score={:.1f} "
+                     "neighbours={:.1f}/{:.1f}/{:.1f} | roughness avg={:.1f} max={:.1f} at row{} (scanlines {}-{})",
+                textureMap, tileRows, zeroRows, worstRow, worstRow * 4u, worstRow * 4u + 3u, worstScore,
+                worstRow > 0 ? rowMean[worstRow - 1] : 0.0, rowMean[worstRow],
+                worstRow + 1 < tileRows ? rowMean[worstRow + 1] : 0.0,
+                roughnessAvg, roughestValue, roughestRow, roughestRow * 4u, roughestRow * 4u + 3u);
+
+            // The roughest row alone proves nothing about the DMA: it has to be
+            // asked against a control, and the control has to be a row of real
+            // picture. The SMOOTHEST row is not that - it is whichever row is
+            // flattest, which for this movie is a constant-coloured border with
+            // roughness 0.0, and a border proves nothing about a decoded row.
+            // The row whose roughness is closest to the frame average is a
+            // typical decoded row, so that is the control.
+            u32 controlRow = 0;
+            double controlDistance = 1e9;
+            for (u32 r = 0; r < tileRows; ++r) {
+                if (rowMean[r] <= 1.0) {
+                    continue; // padding: never written, not evidence either way
+                }
+                const double distance = std::abs(roughness[r] - roughnessAvg);
+                if (distance < controlDistance) {
+                    controlDistance = distance;
+                    controlRow = r;
+                }
+            }
+            bool ringDeep = false;
+            // GX texture pointers are physical offsets (image3 is the address
+            // shifted right by 5, with no region base), while the locked-cache
+            // DMA records the cached guest address it wrote through. Comparing
+            // them without adding the base compares two different things and
+            // answers "not covered" for every row, control included - which is
+            // exactly what the first run of this probe reported.
+            const u32 planeGuestBase = GC_RAM_BASE | imageOffset;
+            const bool roughCovered = locked_cache_store_covered(
+                planeGuestBase + roughestRow * tileRowBytes, tileRowBytes, &ringDeep);
+            const bool controlCovered = locked_cache_store_covered(
+                planeGuestBase + controlRow * tileRowBytes, tileRowBytes, nullptr);
+            Log.info("THP plane dma: map={} plane={:#010x} roughRow{} (roughness {:.1f}) covered={} | "
+                     "controlRow{} (roughness {:.1f}) covered={} | ringStillComplete={}",
+                textureMap, planeGuestBase, roughestRow, roughestValue, roughCovered, controlRow,
+                roughness[controlRow], controlCovered, ringDeep);
+        }
+        revisionIt->second.lastDiagnosticTimebase = cpu->timebase;
+    }
+
+    // Emit Aurora's documented software-FIFO metadata first, then return
+    // false so DolRecomp runs the original GXLoadTexObj. That retains the
+    // guest GX shadow-state updates and the normal BP register sequence.
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TEXOBJ);
+    aurora::gx::fifo::write_u8(static_cast<u8>(textureMap));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + imageOffset));
+    aurora::gx::fifo::write_u32(width);
+    aurora::gx::fifo::write_u32(height);
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u32(tlut);
+    aurora::gx::fifo::write_u8((flags & 1u) != 0);
+    aurora::gx::fifo::write_u32(objectAddress);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return true;
+}
+
+// J3D materials do not use GXLoadTexObj.  They write TEXIMAGE0/TEXIMAGE3
+// directly into a display list, which is valid on the GameCube but leaves
+// Aurora with a guest physical address and no host pointer.  Translate that
+// raw pair into Aurora's metadata command before the guest submits the list.
+bool emit_display_list_texture_metadata(CPUState *cpu, u32 textureMap, u32 image0,
+                                        u32 image3, u32 mode1)
+{
+    constexpr u32 kTextureMapCount = 8;
+    if (textureMap >= kTextureMapCount) return false;
+
+    const u32 width = (image0 & 0x3FFu) + 1;
+    const u32 height = ((image0 >> 10) & 0x3FFu) + 1;
+    const u32 format = (image0 >> 20) & 0xFu;
+    const u32 imageAddress = (image3 & 0x001FFFFFu) << 5;
+    const u32 imageOffset = imageAddress & 0x03FFFFFFu;
+    const u64 sourceBytes = texture_source_bytes(width, height, format);
+    if (imageOffset >= cpu->ram_size || sourceBytes > cpu->ram_size - imageOffset) {
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(imageAddress).second) {
+            Log.warn("J3D display-list texture {:#010x} + {:#x} bytes runs past guest RAM", imageAddress,
+                sourceBytes);
+        }
+        return false;
+    }
+
+    // Keep this identity disjoint from real guest GXTexObj addresses (which
+    // use the cached/uncached GameCube regions).  A source address is a stable
+    // identity for a direct J3D load; the signature still advances the
+    // revision if a mutable buffer is reused.
+    const u32 textureId = 0x40000000u | imageOffset;
+    const u64 contentSignature = sampled_texture_content_signature(
+        cpu->ram + imageOffset, cpu->ram_size - imageOffset, width, height, format);
+    const u64 signature = (u64(image0) << 32) ^ u64(image3) ^ u64(mode1)
+        ^ (u64(textureMap) << 56) ^ contentSignature;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(
+        textureId, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) revisionIt->second.version = 1;
+    }
+
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TEXOBJ);
+    aurora::gx::fifo::write_u8(static_cast<u8>(textureMap));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + imageOffset));
+    aurora::gx::fifo::write_u32(width);
+    aurora::gx::fifo::write_u32(height);
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u32(0);
+    // J3D's direct path has no GXTexObj flags.  A non-zero max LOD is the
+    // observable indication that the material can select a mip level.
+    aurora::gx::fifo::write_u8(((mode1 >> 8) & 0xFFu) != 0);
+    aurora::gx::fifo::write_u32(textureId);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return true;
+}
+
+bool host_call_gx_init(CPUState *, u32)
+{
+    // Aurora's GXInit is a faithful reimplementation - it runs
+    // aurora::gx::fifo::init() and then replays the whole default register
+    // block (GXSetTexCoordGen x8, GXSetNumTexGens(1), GXSetTevOrder x16,
+    // GXSetNumTevStages(1), GXSetTevOp(GX_REPLACE), ...) through that fifo,
+    // which is what brings g_gxState up out of its struct defaults. So it
+    // still has to run, and it has to run first, to prepare the host side.
+    static bool auroraInitDone = false;
+    if (!auroraInitDone) {
+        auroraInitDone = true;
+        g_realFifoObj = GXInit(nullptr, 0);
+        Log.info("GXInit -> aurora fifo initialized, deferring to the guest's own GXInit");
+    }
+
+    // ...but replacing the guest's GXInit outright was wrong, and measurably
+    // so. The guest's GX library keeps its own shadow state (`gxData`,
+    // src/dolphin/gx/GXInit.c) whose *register address* bytes are installed
+    // by that very function - SET_REG_FIELD(..., 8, 24, 0xC0 + i * 2) and
+    // friends. Skipping it leaves gxData zeroed in BSS, so the first time the
+    // game flushes its dirty state it emits genMode (BP register 0x00) as a
+    // plain zero: ntex=0, nchan=0, ntevstages=0+1=1. That silently clobbered
+    // Aurora's numTexGens back to 0 while leaving the TEV orders intact, and
+    // the first textured draw then died in the shader builder with
+    // "unhandled tcg src 21" (GX_MAX_TEXGENSRC, TcgConfig's never-configured
+    // sentinel) on a state dump that matched a zero genMode exactly.
+    //
+    // Returning false hands control back to dolrecomp_call, which falls
+    // through to dolrecomp_call_original and runs the real GXInit. It
+    // initializes gxData properly and re-emits the same defaults through the
+    // write-gather pipe, so Aurora's state is rewritten with identical values
+    // rather than corrupted ones. It also returns the guest's own &FifoObj in
+    // r3, which is a genuine guest address - no fabricated handle needed.
+    return false;
+}
+
+bool host_call_gx_set_cpu_fifo(CPUState *, u32)
+{
+    // The guest-supplied handle (r3) is intentionally ignored - see
+    // g_realFifoObj's comment. It is now the guest's real &FifoObj, since
+    // the guest runs its own GXInit, but Aurora's GXSetCPUFifo never
+    // dereferences what it is handed (`CPUFifo = fifo;` is a plain pointer
+    // store), so forwarding the host object instead stays safe.
+    GXSetCPUFifo(g_realFifoObj);
+    Log.info("GXSetCPUFifo (real fifo object)");
+    return true;
+}
+
+bool host_call_gx_set_gp_fifo(CPUState *, u32)
+{
+    GXSetGPFifo(g_realFifoObj);
+    Log.info("GXSetGPFifo (real fifo object)");
+    return true;
+}
+
+// DrawDone = .sbss:0x804060F8, a single byte (config/GMSP01/symbols.txt:31112),
+// and FinishQueue is the OSThreadQueue right after it at 0x804060FC - which is
+// exactly the address the thread probe resolved the stuck main thread to.
+constexpr u32 kGuestDrawDoneFlag = 0x804060F8u;
+
+bool host_call_gx_set_draw_done(CPUState *cpu, u32)
+{
+    // This SDK revision's actual symbol is GXSetDrawDone (no callback
+    // argument - confirmed present in generated/generated_symbols.h,
+    // unlike GXSetDrawDoneCallback, which this dump doesn't have at all).
+    // Aurora's real GXSetDrawDone() just synchronously invokes whatever
+    // callback GXSetDrawDoneCallback registered (extern/aurora/lib/
+    // dolphin/gx/GXManage.cpp) - none has been registered through this
+    // bridge, so today this is a safe no-op.
+    // GXWaitDrawDone (real address 0x80355CBC per generated_symbols.h)
+    // has no Aurora implementation at all and isn't bridged yet - expect
+    // it to show up as an unresolved-call log miss if/when reached.
+    GXSetDrawDone();
+
+    // Without this the game stops dead the moment it reaches gameplay, and the
+    // comment above turned out to predict the mechanism without naming it.
+    //
+    // On hardware GXSetDrawDone clears DrawDone and writes BP register
+    // 0x45000002; the GP later raises PE_FINISH, whose handler sets DrawDone
+    // and wakes FinishQueue (src/dolphin/gx/GXMisc.c:74-96, 245-261).
+    // GXWaitDrawDone then returns. This port bridges GXSetDrawDone away, so the
+    // guest's own body never runs, and does not model PE_FINISH at all - but
+    // GXWaitDrawDone is NOT bridged, so the guest's own copy does run and
+    // sleeps on FinishQueue forever.
+    //
+    // Measured: appState=5 (GAMEPLAY) with a black screen, every thread
+    // WAITING, 96.9% of cycles in the scheduler's idle spin, and DefaultThread
+    // - the main game thread, priority 16 - parked on FinishQueue. That queue
+    // has exactly one sleeper anywhere in the SDK, GXWaitDrawDone
+    // (GXMisc.c:94), so this is a proof rather than an inference.
+    //
+    // Setting the flag rather than bridging GXWaitDrawDone as well is the more
+    // faithful of the two: the guest's own wait code still runs and finds the
+    // work already finished, which is what it would find on hardware if the
+    // interrupt beat it to the check. It is also honest about what this port
+    // is - Aurora renders synchronously, so by the time this returns there is
+    // nothing left to wait for.
+    //
+    // What this does NOT model: the PE interrupt itself. DrawDone stays 1
+    // instead of cycling 0/1 per frame, so nothing here would notice a GP that
+    // really did fall behind, and GXSetDrawDoneCallback/TokenCB never fire.
+    // Both need the PE register block at 0xCC001000 and PI cause bit 0x400
+    // (__OSDispatchInterrupt, src/dolphin/os/OSInterrupt.c:368), which is a
+    // larger piece of work than unblocking gameplay warranted today.
+    mem_write8(cpu, kGuestDrawDoneFlag, 1);
+    return true;
+}
+
+bool host_call_gx_draw_done(CPUState *, u32)
+{
+    GXDrawDone();
+    return true;
+}
+
+bool host_call_gx_flush(CPUState *, u32)
+{
+    GXFlush();
+    return true;
+}
+
+// GXSetArray is the one GX call that cannot work by simply forwarding FIFO
+// bytes, because what it puts in the FIFO is a *pointer*.
+//
+// On hardware the CP array-base registers hold a guest physical address and
+// the GP walks guest RAM itself. Aurora has no guest RAM to walk: it rejects
+// those registers outright ("CP_REG_ARRAYBASE_ID is not supported on Aurora.
+// Use GX_LOAD_AURORA_ARRAYBASE instead.", lib/gx/command_processor.cpp) and
+// offers its own command carrying a 64-bit *host* pointer instead.
+//
+// So every indexed vertex attribute the game set up was dropped, and with
+// it every piece of geometry drawn from an array - which is essentially all
+// of them. Measured: the render loop ran and presented 6613 frames in 6791,
+// and every one of them was a flat clear colour.
+//
+// Translating guest pointer to host pointer is exactly this bridge's job.
+bool host_call_gx_set_array(CPUState *cpu, u32)
+{
+    const auto attr = static_cast<GXAttr>(cpu->gpr[3]);
+    const u32 guestPointer = cpu->gpr[4];
+    const auto stride = static_cast<u8>(cpu->gpr[5]);
+
+    // Cached (0x8...), uncached (0xC...) and physical all name the same bytes;
+    // masking off the region nibble is what the real DMA engines do too, and
+    // matches how the ARAM and DI transfers in recomp_exi.cpp resolve theirs.
+    const u32 offset = guestPointer & 0x03FFFFFFu;
+    if (offset >= cpu->ram_size) {
+        static std::unordered_set<u32> warned;
+        if (warned.insert(guestPointer).second) {
+            Log.warn("GXSetArray(attr={}) base {:#010x} is outside guest RAM - array not forwarded",
+                static_cast<int>(attr), guestPointer);
+        }
+        return true;
+    }
+
+    // The SDK's GXSetArray has no size argument; the hardware has no size
+    // register either, only a stride. Aurora wants one for its own upload
+    // bookkeeping, so it gets the only bound that is actually known: the array
+    // cannot run past the end of guest RAM.
+    const u32 size = cpu->ram_size - offset;
+
+    // GameCube vertex data is big-endian, hence le = false.
+    GXSetArray(attr, cpu->ram + offset, size, stride, false);
+    return true;
+}
+
+bool host_call_gx_load_tex_obj(CPUState *cpu, u32)
+{
+    emit_guest_texture_metadata(cpu, cpu->gpr[4]);
+    // Keep the original GameCube SDK body: it updates guest gxData as well
+    // as emitting BP state that Aurora's FIFO decoder still consumes.
+    return false;
+}
+
+bool host_call_gx_load_tex_obj_preloaded(CPUState *cpu, u32)
+{
+    // GXLoadTexObjPreLoaded(obj, region, id) puts the texture-map ID in r5,
+    // unlike GXLoadTexObj(obj, id), which puts it in r4. Some game paths
+    // call this lower-level API directly, so bridge both entry points.
+    emit_guest_texture_metadata(cpu, cpu->gpr[5]);
+    return false;
+}
+
+bool host_call_gx_load_tlut(CPUState *cpu, u32)
+{
+    // GXTlutObj is a 12-byte big-endian guest object:
+    //   +0x00: TLUT format/register state, +0x04: BP 0x64 source address,
+    //   +0x08: palette entry count.  The recompiled SDK must still run after
+    // this observer to preserve its GX shadow-state and BP register writes.
+    constexpr u32 kGuestTlutObjSize = 0x0C;
+    constexpr u32 kGuestLoadTlut0Offset = 0x04;
+    constexpr u32 kGuestNumEntriesOffset = 0x08;
+    constexpr u32 kTlutCount = 20;
+
+    const u32 objectAddress = cpu->gpr[3];
+    const u32 tlutIndex = cpu->gpr[4];
+    const u32 objectOffset = objectAddress & 0x03FFFFFFu;
+    if (tlutIndex >= kTlutCount || objectOffset > cpu->ram_size
+        || kGuestTlutObjSize > cpu->ram_size - objectOffset) {
+        return false;
+    }
+
+    const u32 tlut = mem_read32(cpu, objectAddress);
+    const u32 loadTlut0 = mem_read32(cpu, objectAddress + kGuestLoadTlut0Offset);
+    const u16 numEntries = mem_read16(cpu, objectAddress + kGuestNumEntriesOffset);
+    const u32 paletteAddress = (loadTlut0 & 0x001FFFFFu) << 5;
+    const u32 paletteOffset = paletteAddress & 0x03FFFFFFu;
+    const u64 paletteBytes = u64(numEntries) * 2u;
+    if (numEntries == 0 || paletteOffset >= cpu->ram_size
+        || paletteBytes > cpu->ram_size - paletteOffset) {
+        static std::unordered_set<u32> warned;
+        if (warned.size() < 16 && warned.insert(paletteAddress).second) {
+            Log.warn("GXLoadTlut palette {:#010x} + {:#x} bytes is outside guest RAM", paletteAddress,
+                paletteBytes);
+        }
+        return false;
+    }
+
+    // Aurora caches a TLUT by object ID and revision just like it caches a
+    // texture.  Guest GX objects do not carry either, so use their stable RAM
+    // address and advance the revision when the palette contents change.
+    const u32 objectId = 0x60000000u | objectOffset;
+    const u32 format = (tlut >> 10) & 0x3u;
+    const u64 signature = sampled_texture_content_signature(
+        cpu->ram + paletteOffset, cpu->ram_size - paletteOffset, numEntries, 1, 5)
+        ^ (u64(format) << 48) ^ (u64(numEntries) << 32) ^ paletteAddress;
+    auto [revisionIt, inserted] = g_guestTextureRevisions.try_emplace(
+        objectId, GuestTextureRevision { signature, 1, 0 });
+    if (!inserted && revisionIt->second.signature != signature) {
+        revisionIt->second.signature = signature;
+        ++revisionIt->second.version;
+        if (revisionIt->second.version == 0) revisionIt->second.version = 1;
+    }
+
+    aurora::gx::fifo::write_u8(GX_LOAD_AURORA);
+    aurora::gx::fifo::write_u16(GX_LOAD_AURORA_TLUT);
+    aurora::gx::fifo::write_u8(static_cast<u8>(tlutIndex));
+    aurora::gx::fifo::write_u64(reinterpret_cast<u64>(cpu->ram + paletteOffset));
+    aurora::gx::fifo::write_u32(format);
+    aurora::gx::fifo::write_u16(numEntries);
+    aurora::gx::fifo::write_u32(objectId);
+    aurora::gx::fifo::write_u32(revisionIt->second.version);
+    return false;
+}
+
+bool host_call_gx_invalidate_tex_all(CPUState *, u32)
+{
+    // The guest routine only writes GameCube texture-cache invalidation BP
+    // registers. Aurora has a host-side decoded-texture cache as well, which
+    // those raw registers cannot invalidate. This is crucial for THP video
+    // frames: the same GXTexObj points at pixels overwritten every frame.
+    aurora::gx::clear_static_texture_cache();
+    return false;
+}
+
+// GXCallDisplayList has to run in the recompiled SDK: besides emitting the
+// CALL_DL packet, its body flushes the guest's dirty GX state first.  Returning
+// false below keeps precisely that behaviour.  This observer only reads the
+// material list before it is submitted, so it can answer a narrow but important
+// question about the black 3D scene: did J3D's GDSetGenMode2 actually write a
+// multi-stage TEV genMode into a list the game is about to call?
+//
+// The scan intentionally stops at the first primitive.  Material display
+// lists are command-only; beyond a draw command the byte count depends on the
+// live vertex descriptor and attempting to parse it here would manufacture a
+// second FIFO parser.  A list that does not have a safely readable command
+// prefix is simply not reported.
+bool host_call_gx_call_display_list(CPUState *cpu, u32)
+{
+    const u32 guestAddress = cpu->gpr[3];
+    const u32 bytes = cpu->gpr[4];
+    const u32 offset = guestAddress & 0x03FFFFFFu;
+    if (bytes == 0 || offset >= cpu->ram_size || bytes > cpu->ram_size - offset) {
+        return false;
+    }
+
+    const u8 *const data = cpu->ram + offset;
+    u32 pos = 0;
+    u32 bpWrites = 0;
+    bool hasGenMode = false;
+    u32 genMode = 0;
+    struct RawTexture {
+        u32 image0 = 0;
+        u32 image3 = 0;
+        u32 mode1 = 0;
+        bool hasImage0 = false;
+        bool hasImage3 = false;
+    };
+    std::array<RawTexture, 8> textures {};
+
+    const auto textureMapForRegister = [](u32 reg, u32 low, u32 high) -> int {
+        if (reg >= low && reg < low + 4) return static_cast<int>(reg - low);
+        if (reg >= high && reg < high + 4) return static_cast<int>(reg - high + 4);
+        return -1;
+    };
+
+    while (pos < bytes) {
+        const u8 opcode = data[pos++];
+        if (opcode == 0x00) {
+            continue;
+        }
+        // Draw commands contain a descriptor-dependent vertex payload.  The
+        // preceding command prefix is all a J3D material list needs for this
+        // diagnostic, and is the only part we can parse independently.
+        if (opcode >= 0x80 && opcode <= 0xBF) {
+            break;
+        }
+        if (opcode == 0x61) { // CP_CMD_LOAD_BP_REG
+            if (bytes - pos < 4) break;
+            const u32 value = (u32(data[pos]) << 24) | (u32(data[pos + 1]) << 16)
+                | (u32(data[pos + 2]) << 8) | u32(data[pos + 3]);
+            pos += 4;
+            ++bpWrites;
+            if ((value >> 24) == 0x00u) {
+                hasGenMode = true;
+                genMode = value;
+            }
+            const u32 reg = value >> 24;
+            if (const int map = textureMapForRegister(reg, 0x88u, 0xA8u); map >= 0) {
+                textures[static_cast<size_t>(map)].image0 = value;
+                textures[static_cast<size_t>(map)].hasImage0 = true;
+            } else if (const int map = textureMapForRegister(reg, 0x94u, 0xB4u); map >= 0) {
+                textures[static_cast<size_t>(map)].image3 = value;
+                textures[static_cast<size_t>(map)].hasImage3 = true;
+            } else if (const int map = textureMapForRegister(reg, 0x84u, 0xA4u); map >= 0) {
+                textures[static_cast<size_t>(map)].mode1 = value;
+            }
+            continue;
+        }
+        if (opcode == 0x08) { // LOAD_CP_REG
+            if (bytes - pos < 5) break;
+            pos += 5;
+            continue;
+        }
+        if (opcode >= 0x20 && opcode <= 0x38 && (opcode & 7u) == 0) { // indexed XF
+            if (bytes - pos < 4) break;
+            pos += 4;
+            continue;
+        }
+        if (opcode == 0x40) { // CALL_DL
+            if (bytes - pos < 8) break;
+            pos += 8;
+            continue;
+        }
+        if (opcode == 0x10) { // LOAD_XF_REG: header plus `count` words
+            if (bytes - pos < 4) break;
+            const u16 countMinusOne = static_cast<u16>((u16(data[pos]) << 8) | data[pos + 1]);
+            const u64 payload = 4u + (u64(countMinusOne) + 1u) * 4u;
+            if (payload > bytes - pos) break;
+            pos += static_cast<u32>(payload);
+            continue;
+        }
+        // Unknown command: do not make any claim about this list.
+        return false;
+    }
+
+    for (u32 map = 0; map < textures.size(); ++map) {
+        const RawTexture &texture = textures[map];
+        if (texture.hasImage0 && texture.hasImage3) {
+            emit_display_list_texture_metadata(cpu, map, texture.image0, texture.image3, texture.mode1);
+        }
+    }
+
+    if (hasGenMode) {
+        static std::unordered_set<u64> reported;
+        constexpr size_t kMaxReports = 48;
+        const u64 key = (u64(offset) << 32) | genMode;
+        if (reported.size() < kMaxReports && reported.insert(key).second) {
+            Log.info("GXCallDisplayList material candidate at {:#010x}, {} bytes: {} BP writes, "
+                     "genMode={:#010x} (texgens={} channels={} TEV stages={})",
+                guestAddress, bytes, bpWrites, genMode, genMode & 0xFu,
+                (genMode >> 4) & 0x7u, ((genMode >> 10) & 0xFu) + 1u);
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+void register_known_gx_calls(const NamedAddress *addresses, size_t count)
+{
+    std::vector<HostCallEntry> entries;
+    for (size_t i = 0; i < count; ++i) {
+        const char *name = addresses[i].name;
+        HostCallFn fn = nullptr;
+        if (std::strcmp(name, "GXInit") == 0) {
+            fn = &host_call_gx_init;
+        } else if (std::strcmp(name, "GXSetCPUFifo") == 0) {
+            fn = &host_call_gx_set_cpu_fifo;
+        } else if (std::strcmp(name, "GXSetGPFifo") == 0) {
+            fn = &host_call_gx_set_gp_fifo;
+        } else if (std::strcmp(name, "GXSetDrawDone") == 0) {
+            fn = &host_call_gx_set_draw_done;
+        } else if (std::strcmp(name, "GXDrawDone") == 0) {
+            fn = &host_call_gx_draw_done;
+        } else if (std::strcmp(name, "GXFlush") == 0) {
+            fn = &host_call_gx_flush;
+        } else if (std::strcmp(name, "GXSetArray") == 0) {
+            fn = &host_call_gx_set_array;
+        } else if (std::strcmp(name, "GXLoadTexObj") == 0) {
+            fn = &host_call_gx_load_tex_obj;
+        } else if (std::strcmp(name, "GXLoadTexObjPreLoaded") == 0) {
+            fn = &host_call_gx_load_tex_obj_preloaded;
+        } else if (std::strcmp(name, "GXLoadTlut") == 0) {
+            fn = &host_call_gx_load_tlut;
+        } else if (std::strcmp(name, "GXInvalidateTexAll") == 0) {
+            fn = &host_call_gx_invalidate_tex_all;
+        } else if (std::strcmp(name, "GXCallDisplayList") == 0) {
+            fn = &host_call_gx_call_display_list;
+        }
+        if (fn) {
+            entries.push_back({ addresses[i].address, name, fn });
+        }
+        // Everything else in the GX family relies purely on install()'s
+        // external_write forwarding above - only functions that configure
+        // Aurora's fifo module or callback wiring, rather than writing
+        // FIFO bytes themselves, need a bridge here at all.
+    }
+    if (!entries.empty()) {
+        register_host_calls(entries.data(), entries.size());
+    }
+}
+
+
+bool run_fifo_stream_self_test()
+{
+    // Three NOPs (one byte each, no side effects) then a LOAD_BP_REG whose
+    // 4-byte payload is only half present. BP register 0xFF is unassigned, so
+    // even the completed write lands in the processor's unhandled branch and
+    // changes no graphics state.
+    constexpr u8 kNop = 0x00;
+    constexpr u8 kLoadBpReg = 0x61;
+    const std::array<u8, 6> cut { kNop, kNop, kNop, kLoadBpReg, 0xFFu, 0x00u };
+
+    const u32 consumed = aurora::gx::fifo::process_stream(cut.data(), u32(cut.size()), true);
+    if (consumed != 3) {
+        Log.error("fifo stream self-test: expected 3 bytes consumed before the cut command, got {}", consumed);
+        return false;
+    }
+
+    // Now the rest arrives, exactly as it does on the next host frame.
+    const std::array<u8, 5> completed { kLoadBpReg, 0xFFu, 0x00u, 0x00u, 0x00u };
+    const u32 consumedWhole = aurora::gx::fifo::process_stream(completed.data(), u32(completed.size()), true);
+    if (consumedWhole != completed.size()) {
+        Log.error("fifo stream self-test: completed command should consume all {} bytes, got {}", completed.size(),
+            consumedWhole);
+        return false;
+    }
+
+    // A buffer that is entirely one incomplete command must consume nothing at
+    // all, rather than half-executing it.
+    const std::array<u8, 2> onlyCut { kLoadBpReg, 0xFFu };
+    const u32 consumedNone = aurora::gx::fifo::process_stream(onlyCut.data(), u32(onlyCut.size()), true);
+    if (consumedNone != 0) {
+        Log.error("fifo stream self-test: a lone incomplete command should consume 0 bytes, got {}", consumedNone);
+        return false;
+    }
+
+    Log.info("fifo stream self-test: an incomplete trailing command is carried over instead of aborting");
+    return true;
+}
+
+} // namespace sms::recomp::gx_fifo

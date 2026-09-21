@@ -2217,6 +2217,8 @@ void TGCConsole2::startDisappearTank()
 
 void TGCConsole2::startAppearCoin()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (unk108->getPane()->isVisible()) {
 		return;
 	}
@@ -2528,6 +2530,8 @@ void TGCConsole2::startAppearJetBalloon(int nozzleKind, int count)
 
 void TGCConsole2::startInsertJetBalloon()
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	unk3D = 1;
 	unk59 = 1;
 
@@ -2551,6 +2555,8 @@ void TGCConsole2::startInsertJetBalloon()
 
 void TGCConsole2::startAppearRedCoin()
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	unk3C = 1;
 	unk59 = 1;
 

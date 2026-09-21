@@ -13,7 +13,6 @@
 #include <JSystem/JKernel/JKRDvdFile.hpp>
 #include <JSystem/JKernel/JKRDvdRipper.hpp>
 #include <System/Resolution.hpp>
-#include <dolphin/vi.h>
 #include <System/EventWatcher.hpp>
 #include <System/EmitterViewObj.hpp>
 #include <System/RenderModeObj.hpp>
@@ -62,8 +61,8 @@ void TMarDirector::decideMarioPosIdx()
 	case 4:
 	case 5:
 	case 6:
-	case 7:
-	case 8: {
+	case 8:
+	case 9: {
 		unkE4 = 14;
 		gpApplication.mFader->setColor(
 		    JUtility::TColor(0xd2, 0xd2, 0xd2, 0xff));
@@ -306,11 +305,13 @@ bool TMarDirector::setupObjects()
 
 		JDrama::TLookAtCamera* cam = static_cast<JDrama::TLookAtCamera*>(
 		    JDrama::TNameRefGen::search("camera 1"));
-		// TODO: PAL asm for this aspect computation differs structurally
-		// (uses SMSGetGameRenderHeight/SMSGetGameVideoWidth, not
-		// SMSGetGameVideoHeight) -- needs proper re-decompilation for GMSP01.
+#ifdef VERSION_GMSP01
+		cam->mAspect = (u16)SMSGetGameVideoWidth() * 0.9134614f
+		               / (u16)SMSGetGameRenderHeight();
+#else
 		cam->mAspect = (u16)SMSGetGameVideoWidth() * 0.9134614f
 		               / (u16)SMSGetGameVideoHeight(VIGetTvFormat());
+#endif
 	}
 
 	unk80 = new JDrama::TViewObjPtrListT<JDrama::TViewObj>("イベントグループ");

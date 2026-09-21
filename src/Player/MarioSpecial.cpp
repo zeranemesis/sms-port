@@ -1518,7 +1518,7 @@ BOOL TMario::fencePunch()
 				unk2F4.y = z;
 				Mtx mtx;
 				getRidingMtx(mtx);
-				PSMTXMultVec(mtx, &unk2F4, &mPosition);
+				MTXMultVec(mtx, &unk2F4, &mPosition);
 			}
 		}
 	}

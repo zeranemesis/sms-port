@@ -961,6 +961,8 @@ f32 MSStageCubeFade::calcParamRatioInCube(s32 id) { }
 
 void MSStageCubeSwitch::proc()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	Vec tmp = SMS_GetMarioPos();
 	tmp.y += 75.0f;
 	Vec local_18 = tmp;

@@ -1,0 +1,146 @@
+diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
+index a5088fd..2bb0b10 100644
+--- a/lib/gx/pipeline.cpp
++++ b/lib/gx/pipeline.cpp
+@@ -5,6 +5,8 @@
+ #include "shader_info.hpp"
+ #include "tracy/Tracy.hpp"
+ 
++#include <chrono>
++
+ namespace aurora::gx {
+ static Module Log("aurora::gx");
+ 
+@@ -14,8 +16,82 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
+   return build_pipeline(config, {}, shader, "GX Pipeline");
+ }
+ 
++namespace {
++u64 g_submitted = 0;
++u64 g_reachedRender = 0;
++u64 g_pipelineNotReady = 0;
++u64 g_issued = 0;
++u64 g_issuedWithoutTexture = 0;
++u64 g_issuedEmpty = 0;
++u64 g_issuedNoColorWrite = 0;
++
++void report_draw_fate() {
++  static auto lastReport = std::chrono::steady_clock::now();
++  static unsigned reports = 0;
++  static u64 lastSubmitted = 0;
++  static u64 lastReached = 0;
++  static u64 lastNotReady = 0;
++  static u64 lastIssued = 0;
++  static u64 lastNoTexture = 0;
++
++  const auto now = std::chrono::steady_clock::now();
++  if (now - lastReport < std::chrono::seconds(1) || reports >= 600) {
++    return;
++  }
++  lastReport = now;
++  ++reports;
++
++  const u64 submitted = g_submitted - lastSubmitted;
++  const u64 reached = g_reachedRender - lastReached;
++  const u64 notReady = g_pipelineNotReady - lastNotReady;
++  const u64 issued = g_issued - lastIssued;
++  const u64 noTexture = g_issuedWithoutTexture - lastNoTexture;
++  const u64 empty = g_issuedEmpty;
++  const u64 noColor = g_issuedNoColorWrite;
++  lastSubmitted = g_submitted;
++  lastReached = g_reachedRender;
++  lastNotReady = g_pipelineNotReady;
++  lastIssued = g_issued;
++  lastNoTexture = g_issuedWithoutTexture;
++
++  // The probe checks its own arithmetic. Every draw that reaches render()
++  // either loses its pipeline or is issued, so those two must add up - and if
++  // they ever do not, the counter is lying and says so rather than being
++  // believed. Six probes in this port have already produced a false reading by
++  // being coarser than their subject.
++  // Check the CUMULATIVE totals, not the per-second deltas. A draw submitted
++  // in one frame is rendered in the next, so a delta window can legitimately
++  // straddle that boundary and show reached slightly above or below submitted -
++  // which made the check cry wolf on its first run. The invariant that really
++  // holds is that every draw reaching render() either loses its pipeline or is
++  // issued, and that is exact over the totals.
++  const bool consistent = g_pipelineNotReady + g_issued == g_reachedRender;
++  Log.info("draw fate 1s: submitted={} reached_render={} (dropped_before_render={}) | pipeline_not_ready={} "
++           "issued={} of which without_texture={} empty_total={} no_color_write_total={}{}",
++           submitted, reached, submitted >= reached ? submitted - reached : 0, notReady, issued, noTexture, empty,
++           noColor, consistent ? "" : "  <-- COUNTER INCONSISTENT, do not trust this line");
++}
++} // namespace
++
++void note_draw_submitted(bool colorUpdate) {
++  ++g_submitted;
++  // A draw whose colour write mask is off writes no pixel whatever the shader
++  // returns - which is why forcing the fragment shader to solid magenta left
++  // the screen black and read as "nothing rasterises at all". This separates
++  // "never drawn" from "drawn into a closed write mask".
++  if (!colorUpdate) {
++    ++g_issuedNoColorWrite;
++  }
++}
++
+ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
++  ++g_reachedRender;
+   if (!gfx::bind_pipeline(data.pipeline, pass)) {
++    // Not an error state Aurora reports: find_pipeline_impl hands back a valid
++    // reference for a pipeline that is only queued, so the draw is pushed and
++    // then quietly discarded here until the build catches up.
++    ++g_pipelineNotReady;
++    report_draw_fate();
+     return;
+   }
+ 
+@@ -29,10 +105,24 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
+     pass.SetBlendConstant(&color);
+   }
++  ++g_issued;
++  if (!data.bindGroups.textureBindGroup) {
++    // Issued, but every texture unit samples zero - visually black, and
++    // indistinguishable from a correct shader without this count.
++    ++g_issuedWithoutTexture;
++  }
++  if (data.indexCount == 0 && data.vtxCount == 0) {
++    // Issued with nothing to draw. Counted rather than assumed away: a draw
++    // call with a zero count rasterises nothing and is invisible to every
++    // other counter here.
++    ++g_issuedEmpty;
++  }
+   if (data.indexCount == 0) {
+     pass.Draw(data.vtxCount, data.instanceCount);
+   } else {
+     pass.DrawIndexed(data.indexCount, data.instanceCount);
+   }
++  // Now that this draw is classified, the invariant holds.
++  report_draw_fate();
+ }
+ } // namespace aurora::gx
+diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
+index 474c85c..2d71b99 100644
+--- a/lib/gx/pipeline.hpp
++++ b/lib/gx/pipeline.hpp
+@@ -4,6 +4,20 @@
+ #include "gx.hpp"
+ 
+ namespace aurora::gx {
++
++// Separates draws that were SUBMITTED from draws that actually reached the
++// GPU, and says where the others went.
++//
++// 80,000 draws a second were being submitted to a black screen, and nothing in
++// the port could tell whether they were drawn and invisible or never drawn at
++// all - render() drops a draw silently when its pipeline is not ready, and a
++// texture that failed to resolve samples zero, which looks exactly like a
++// correct shader and produces black.
++//
++// Called from command_processor.cpp when a draw is pushed; the rest is counted
++// inside render(), which reports once per second.
++void note_draw_submitted(bool colorUpdate);
++
+ struct DrawData {
+   gfx::PipelineRef pipeline;
+   gfx::Range vertRange;

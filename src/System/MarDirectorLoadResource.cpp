@@ -66,8 +66,14 @@ int TMarDirector::loadResource()
 	gpResourceManager = new JPAResourceManager(0x201, 0x800, nullptr);
 	gpMarioParticleManager->unk3B8 = new JPAEmitterManager(
 	    gpResourceManager, particleNum, emitterNum, emitterNum * 2, nullptr);
+	// The PAL executable reserves a slightly larger pool for global effects.
+#ifdef VERSION_GMSP01
+	gpEmitterManager4D2
+	    = new JPAEmitterManager(nullptr, 270, 0x20, 0x40, nullptr);
+#else
 	gpEmitterManager4D2
 	    = new JPAEmitterManager(nullptr, 200, 0x20, 0x40, nullptr);
+#endif
 	loadParticle();
 
 	void* rawArch = SMSLoadArchive("/data/yoshi.arc", nullptr, 0, nullptr);
@@ -107,6 +113,9 @@ int TMarDirector::loadResource()
 			return 1;
 	}
 
+#ifdef VERSION_GMSP01
+	load2DResource2Aram();
+#endif
 	unkD4 = new (0x20) char[0x64000];
 	unkD8 = new JKRMemArchive;
 

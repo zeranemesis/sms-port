@@ -259,11 +259,215 @@ bouchon renverrait faux (`handled` ne pouvant jamais valoir
 `interception_exit`. Le module se lierait et n'exécuterait **rien** nativement —
 l'inverse exact du gain recherché.
 
-**Conclusion : le backend LLVM n'est pas utilisable avec ce runtime aujourd'hui.**
-C'est un écart d'intégration à corriger en amont, pas une dépendance à ajouter.
+**Mise à jour du 2026-09-18 : corrigé localement.** L'écart tenait en deux
+parties bien identifiées une fois le code réel lu (pas deviné) des trois
+couches concernées (`GXRuntime/include/core/cpu.h`, `GXRuntime/src/core/cpu.c`,
+`Source/Core/Core/PowerPC/StaticRecomp/StaticRecompCore_Hooks.cpp`) :
 
-**Conséquence pratique : utiliser `--backend c`.** C'est de toute façon le défaut
-du gabarit.
+1. **Le lien** : `GXRuntime/src/core/cpu.c` n'implémentait pas
+   `ppc_native_region_available`, ni les macros `PPC_HOST_CALL_NATIVE_REGION_QUERY`
+   / `PPC_NATIVE_REGION_QUERY_PENDING` / `PPC_NATIVE_REGION_QUERY_HANDLED` que
+   son propre `cpu.h` ne déclarait pas non plus — contrairement à la copie de
+   DolRecomp. Le layout de `CPUState` est vérifié identique entre les deux
+   copies (mêmes champs `external_addr`/`external_value`/`external_rid`,
+   même `host_call`), donc porter uniquement les trois macros + la fonction
+   (28 lignes, vérifiées ligne à ligne contre l'original) dans la copie de
+   GXRuntime est un ajout sûr, pas un remplacement de fichier.
+2. **Le protocole côté hôte** (la partie qui manquait vraiment et que le
+   `grep` précédent confirmait absente) : `StaticRecompCore::HookHostCall`
+   (`StaticRecompCore_Hooks.cpp`) transmettait tout appel, y compris
+   l'adresse sentinelle `0xFFFFFFFC`, tel quel à `ModManager::HostCall`, qui
+   ne la reconnaît pas — `external_rid` restait donc à `PENDING`, et
+   `ppc_native_region_available` renvoyait toujours "indisponible". Le
+   correctif intercepte cette adresse **avant** de transmettre, et répond
+   avec l'oracle déjà câblé mais jusque-là seulement utilisé au chargement du
+   module : `m_module_source.host_call_range_contains` (lui-même
+   `ModManager::HandlesRange`, qui sait déjà quelles plages contiennent un
+   point d'interception).
+
+Patch complet (3 fichiers, 92 lignes) : [`patches/moderngekko-native-region-query.patch`](../patches/moderngekko-native-region-query.patch).
+À appliquer depuis `lib/ModernGekko/vendor/dolphin` (le fork Dolphin vendorisé
+sous `ModernGekko`) :
+
+```bash
+git -C lib/ModernGekko/vendor/dolphin apply /path/to/sms-port/patches/moderngekko-native-region-query.patch
+```
+
+**Résultat mesuré sur GMSP01**, après avoir recompilé `moderngekko-port`/
+`moderngekko-run` (le correctif touche le runtime hôte, pas seulement le
+module par jeu) puis reconstruit le module avec `--backend llvm` : le lien
+**réussit sans erreur** (6978 chunks, `gGMSP01_recomp.dll` produite), et le
+module n'est **pas inerte** — capture d'écran à l'appui, le jeu affiche la
+même cinématique d'ouverture (avion, vue de l'archipel) qu'avec le backend C,
+preuve que l'exécution native est bien empruntée et pas juste que
+l'interception de secours tourne en boucle. FPS observé en fenêtré avec
+`--allow-interpreter` : pics à ~31-33 sur les scènes légères contre ~22-27
+avec `--backend c` au même point de la cinématique — un gain réel mais qui
+n'atteint pas encore les 50 FPS nominaux PAL ; d'autres goulots
+(vraisemblablement les sites d'interception encore fréquents dans le code de
+boot, et le thread audio) restent à investiguer séparément.
+
+**Preuve de niveau SCRIPTED uniquement** : lien vérifié par un build réel,
+rendu vérifié par capture d'écran automatisée sur ~2 minutes d'exécution
+stable (pas de crash), FPS lu depuis le titre de fenêtre. Aucune partie
+humaine jouée sur ce backend pour l'instant — la comparaison de performance
+ressenties en jeu réel reste à faire.
+
+**Mise à jour du 2026-09-19 : la mesure ci-dessus vient de la cinématique
+d'intro, pas du gameplay — ne pas la généraliser.** Valentin a fait remarquer,
+à juste titre, qu'une cinématique n'est pas représentative : elle enchaîne des
+plans très divers (avion, foule de Pianta, gros plans figés) dont la charge
+GPU n'a aucun rapport avec le jeu réellement joué. Mesurer là-dessus et
+conclure sur « la vitesse du jeu » aurait été trompeur.
+
+Pour corriger ça, le protocole d'automatisation intégré à ModernGekko
+(`--automation-dir`, fichiers `commands/*.txt` en clé=valeur, `status.txt`
+avec `fps`/`vps`/`speed` lus directement depuis `Core::System::GetPerfMetrics()`
+côté moteur — pas depuis le titre de fenêtre) a servi à naviguer les menus
+jusqu'à une vraie partie : création de fichier sur la carte mémoire, sélection
+de données, `START` sur le fichier, traversée de la cinématique d'arrivée,
+jusqu'au HUD de jeu complet (pièces, soleils, vies) avec Mario réellement
+déplaçable au stick. Vérifié positivement : `main_y`/`main_x` font marcher
+et nager Mario (ondulations d'eau en temps réel autour de lui, capture à
+l'appui), donc c'est bien de l'interaction, pas une seconde cinématique.
+
+**Mesuré en gameplay réel (plage/eau autour de l'aéroport de Delfino,
+backend LLVM + résolution interne 6x)** : `speed` = 0.997, 1.002, 1.006,
+0.9996, 1.008 sur cinq échantillons pris pendant un déplacement effectif du
+personnage (pas à l'arrêt) — c'est-à-dire la cadence nominale PAL **atteinte
+et même très légèrement dépassée** sur cette zone, contre 0.4-0.55 relevé
+plus tôt pendant les passages les plus chargés de l'intro. La cinématique
+d'intro est donc le pire cas du jeu côté performance, pas une référence pour
+le reste.
+
+**Toujours SCRIPTED, et une seule zone testée.** Ce sont des entrées
+automatisées (fichiers de commande), pas une manette tenue par un humain, et
+la zone testée est une plage ouverte peu chargée (peu de géométrie, aucun
+PNJ) — pas la place de Delfino elle-même, plus dense (façades, Pianta,
+eau/particules), qui reste le vrai test de charge à faire avant de conclure
+que « le jeu tourne à 50 FPS » sans qualificatif.
+
+**Conséquence pratique : `--backend llvm` est utilisable**, mais `--backend c`
+reste le défaut du gabarit et le choix le plus sûr tant que ce correctif n'est
+pas remonté en amont (`ExpansionPak/ModernGekko`) ni éprouvé au-delà de la
+cinématique d'intro.
+
+## Préparer une vraie manette (clavier) pour un playtest humain
+
+Le générateur de config de ModernGekko (`GenerateControllerConfig`,
+`tools/frontend_config.cpp`) ne produit que des profils manette SDL
+(`Buttons/A = `Button A``) — inutilisable pour jouer au clavier, dont les
+touches n'ont pas ces noms. Il faut écrire à la main
+`<user-dir>/Config/GCPadNew.ini` (le fichier existant n'est jamais régénéré,
+`EnsureControllerConfig` vérifie juste sa présence) et ajouter
+`controller=<device>` sous `[Input]` dans `config.ini` pour que ce profil soit
+effectivement chargé au lancement (sinon `EnsureControllerConfig` n'est même
+pas appelé, `moderngekko_run.cpp:258`).
+
+**Deux pièges, trouvés en lisant `GXRuntime/vendor/dolphin/Source/Core/InputCommon/ControllerInterface/DInput/`
+après qu'un premier essai n'ait eu aucun effet** :
+- Le nom de périphérique clavier sous Windows est `DInput/0/Keyboard Mouse`
+  (`DInputKeyboardMouse.cpp` : `GetSource()` renvoie `"DInput"`, `GetName()`
+  renvoie `"Keyboard Mouse"`) — pas `Keyboard Mouse/0/Keyboard Mouse`.
+- Les touches spéciales sont nommées en **MAJUSCULES** dans la table
+  `NamedKeys.h` de Dolphin (`RETURN`, `UP`, `DOWN`, `LEFT`, `RIGHT`) — `Return`
+  ou `Up` ne correspondent à rien et sont silencieusement ignorés. Les lettres
+  seules (`A`-`Z`) ne sont pas affectées par ce piège.
+
+Profil clavier vérifié fonctionnel (testé : une pression sur `RETURN`
+interrompt immédiatement le mode démo automatique du titre, alors que la
+version fautive plus haut ne faisait jamais rien) :
+
+```ini
+[GCPad1]
+Device = DInput/0/Keyboard Mouse
+Buttons/A = X
+Buttons/B = Z
+Buttons/X = C
+Buttons/Y = S
+Buttons/Z = D
+Buttons/Start = RETURN
+D-Pad/Up = T
+D-Pad/Down = G
+D-Pad/Left = F
+D-Pad/Right = H
+Main Stick/Up = UP
+Main Stick/Down = DOWN
+Main Stick/Left = LEFT
+Main Stick/Right = RIGHT
+Main Stick/Modifier = Shift
+C-Stick/Up = I
+C-Stick/Down = K
+C-Stick/Left = J
+C-Stick/Right = L
+Triggers/L = Q
+Triggers/R = W
+```
+
+**Piège méthodologique attenant :** l'écran-titre de SMS ne reste pas figé sur
+« PRESS START! » — il enchaîne d'office sur un mode démo (extraits de gameplay
+auto-joués façon FLUDD). Presser une touche pendant l'intro ou la démo ne
+prouve donc rien par simple observation d'un changement de scène : ça peut
+avancer tout seul. Le test fiable est d'envoyer l'entrée et vérifier une
+transition **immédiate** (moins d'une seconde), pas juste « ça a changé après
+quelques secondes ».
+
+**`--automation-dir` et une vraie manette/clavier sont mutuellement
+exclusifs sur un même port** : l'automatisation installe un input overrider
+(`ciface::Touch::RegisterGameCubeInputOverrider`) qui prend la main sur
+l'entrée normale. Lancer avec `--automation-dir` pendant qu'un humain joue au
+clavier bloquerait ses touches — relancer sans ce flag pour un vrai playtest.
+
+## Bug ouvert : l'écran « Select data » affiche « New » malgré une sauvegarde réelle sur disque
+
+Constaté en relançant une session fraîche sur un profil qui avait déjà une
+partie créée : le fichier `.gci` existe bel et bien sur la carte mémoire
+virtuelle (`<user-dir>/GC/EUR/Card A/01-GMSP-super_mario_sunshine.gci`,
+57 Ko, horodaté de la session précédente — pas un fichier vide), mais l'écran
+« Select data » affiche quand même « New » sur les trois emplacements au lieu
+du nom/aperçu attendu pour un fichier existant. L'écriture sur la carte
+mémoire fonctionne donc, mais quelque chose dans la relecture/l'affichage au
+menu ne la reconnaît pas. Pas encore diagnostiqué plus loin (pas bloquant :
+sélectionner le bloc recrée simplement un fichier par-dessus), mais à
+creuser avant de considérer la persistance de sauvegarde comme fiable.
+
+## Mesure de charge au-delà de la plage : la zone de gunk hostile de l'aéroport
+
+En poussant plus loin après l'aéroport (zone recouverte du gunk
+rose/orange hostile de l'histoire, avec effet de teinte sur Mario et rendu de
+liquide), la vitesse mesurée est descendue à **0.90** (backend LLVM,
+résolution 6x) — la première zone où un vrai coût de rendu se voit, contre
+0.997-1.008 sur la plage ouverte et un retour à ~1.00-1.03 juste après, une
+fois sorti du gunk et de retour dans l'eau. Toujours loin des 0.40-0.55 de la
+cinématique d'intro, et toujours SCRIPTED. La place de Delfino elle-même
+(façades, Pianta, plus de géométrie) n'a pas été atteinte par navigation à
+l'aveugle cette session — reste le vrai test de charge à faire.
+
+## Test de fumée automatisé
+
+`tools/port/moderngekko_smoke_test.py` (dans ce dépôt) rejoue le strict
+minimum vérifiable de façon fiable : lancer `moderngekko-run.exe` avec
+`--automation-dir`, attendre `booted=1`, laisser tourner quelques secondes,
+et vérifier que `state=running` et que `speed` (lu depuis
+`Core::System::GetPerfMetrics`, pas le titre de fenêtre) dépasse un seuil bas.
+Volontairement **ne rejoue pas** la navigation de menus jusqu'au gameplay :
+cette séquence dépend du minutage exact des scènes de l'intro (voir plus haut)
+et serait un test fragile, pas un test fiable. Ça suffit en revanche à
+détecter un lien cassé, un module qui retombe silencieusement sur
+l'interpréteur, ou un crash au boot — exactement la classe de régression que
+le bug native-region-query aurait dû déclencher s'il avait existé un test
+avant cette session :
+
+```bash
+python tools/port/moderngekko_smoke_test.py \
+    --moderngekko-run <ModernGekko-Template>/lib/ModernGekko/build/moderngekko-run.exe \
+    --game <ModernGekko-Template>/extracted/GMSP01 \
+    --module <output>/GMSP01/<hash>/gGMSP01_recomp.dll
+```
+
+Vérifié dans les deux sens le 2026-09-19 : `PASS` avec le vrai module LLVM
+(`speed=0.516` pendant l'intro, cohérent avec les mesures ci-dessus), et
+`exit code 2` propre sur un chemin de module inexistant.
 
 ### MAX_PATH bloque la compilation du module
 
@@ -337,3 +541,40 @@ pour valider un jeu : il donne un faux negatif spectaculaire.
 
 Le code produit par la recompilation dérive du disque et n'est pas commité :
 seule la recette l'est. Chacun le régénère depuis sa propre copie du jeu.
+
+## Reproduction locale du 2026-09-18 — recette confirmée reproductible
+
+La recette ci-dessus a été rejouée intégralement sur une machine Windows 11
+distincte, avec le vrai dump GMSP01 PAL déjà extrait pour la route Aurora
+(`sms-port/orig/GMSP01/`, réutilisé tel quel dans `extracted/GMSP01/` du
+template, sans re-extraction). Chaque étape a été exécutée séparément et
+vérifiée avant de passer à la suivante :
+
+- MSVC 19.51 (VS 18 Insiders) + Ninja embarqué + LLVM 20.1.8 (archive
+  officielle extraite localement, `LLVMExports.cmake` patché sur le chemin
+  DIA SDK réel de cette machine) : `dolrecomp` se configure et compile sans
+  erreur avec `DOLRECOMP_ENABLE_LLVM=ON`.
+- `lib/ModernGekko` (qui embarque Dolphin, 35 sous-modules `Externals`,
+  ~881 Mo une fois clonés) se configure et compile sans erreur, cible
+  `moderngekko-port`.
+- `moderngekko-port.exe build extracted/GMSP01 --backend c --toolchain auto
+  --output C:\mgm` produit `gGMSP01_recomp.dll` sans erreur.
+- `moderngekko-run.exe --game extracted/GMSP01 --module <dll>
+  --allow-interpreter` (fenêtré, pas `--headless`) : le jeu démarre
+  (`entry=0x8000522C`, identique à la session précédente), le titre de
+  fenêtre affiche un FPS qui monte de 0 à ~15-24 en quelques secondes, et
+  **deux captures d'écran réelles** confirment un rendu correct au-delà du
+  point déjà documenté : la cinématique d'intro (avion, vue de l'archipel
+  depuis le hublot) puis la scène d'accueil sur la place Delfino avec les
+  Pianta et le sous-titre "We're so pleased to welcome you to our beautiful
+  home!" rendu net. Aucune erreur dans les logs (`stderr` ne contient que les
+  deux lignes de boot attendues).
+
+**Preuve de niveau SCRIPTED uniquement** : ce run a été lancé et observé par
+capture d'écran automatisée, sans manette ni entrée humaine. Il valide que la
+chaîne d'outils est reproductible sur une machine neuve et que le rendu/l'audio
+progressent bien au-delà du point déjà atteint précédemment, mais **ne
+constitue pas** une validation de jouabilité : rester jusqu'à l'écran de
+sélection de fichier puis manipuler réellement une manette (niveau HUMAN)
+reste l'étape suivante avant de considérer la question de la jouabilité comme
+avancée.

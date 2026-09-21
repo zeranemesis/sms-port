@@ -519,7 +519,7 @@ void clearEFB_alpha(s16 x, s16 y, s16 wd, s16 ht, u8 alpha)
 	f32 fbottom = fy + fht;
 
 	C_MTXOrtho(m, fy, fbottom, fx, fright, 0.0f, 1.0f);
-	PSMTXIdentity(pmtx);
+	MTXIdentity(pmtx);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XY, GX_U16, 0);
@@ -591,7 +591,7 @@ static void draw_mist(u16 x, u16 y, u16 wd, u16 ht, void* buffer)
 	f32 offset_y = (2.0f / f_ht);
 
 	C_MTXOrtho(m, f_top, f_bottom, f_left, f_right, 0.0f, 1.0f);
-	PSMTXIdentity(e_m);
+	MTXIdentity(e_m);
 	GXSetTexCopySrc(x, y, wd, ht);
 	GXSetCopyFilter(GX_FALSE, 0, GX_TRUE, vFilter);
 	GXSetTexCopyDst(wd >> 1, ht >> 1, GX_TF_RGB565, GX_TRUE);
@@ -1423,7 +1423,7 @@ public:
 		GXSetCullMode(GX_CULL_NONE);
 
 		Mtx concat;
-		PSMTXConcat(r30, unk80050, concat);
+		MTXConcat(r30, unk80050, concat);
 		DCInvalidateRange(unk800A4, unk800AC * (unk800AC * 4));
 		GXLoadPosMtxImm(concat, GX_PNMTX0);
 		GXLoadNrmMtxImm(r30, GX_PNMTX0);

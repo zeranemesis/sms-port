@@ -1,0 +1,45 @@
+diff --git a/src/backend/emitter.c b/src/backend/emitter.c
+index 45c3286..752071f 100644
+--- a/src/backend/emitter.c
++++ b/src/backend/emitter.c
+@@ -1607,15 +1607,37 @@ static void emit_instruction_with_range(FILE* out, const PPCInst* inst,
+         fprintf(out, "    }\n");
+         break;
+ 
+-    case PPC_OP_DCBST:
+-    case PPC_OP_DCBF:
+-    case PPC_OP_DCBI:
+     case PPC_OP_ICBI:
++        /* Instruction-cache invalidate is the one member of this family that
++           can carry real information for a recompiler: it is how guest code
++           announces that it has just written instructions. Keep routing it
++           out to the host so self-modifying code stays visible. */
+         fprintf(out, "    ppc_fallback_instruction(ctx, 0x%08Xu, 0x%08Xu);\n",
+                 inst->raw, inst->address);
+         fprintf(out, "    return;\n");
+         break;
+ 
++    case PPC_OP_DCBST:
++    case PPC_OP_DCBF:
++    case PPC_OP_DCBI:
++        /* Data-cache maintenance, emitted inline as a no-op for the same
++           reason DCBT/DCBTST below are: this backend keeps guest memory
++           coherent by construction (every store goes straight to it), so
++           there is no cache state for a flush/store/invalidate to act on.
++
++           These used to share the ICBI path above - fallback plus an
++           unconditional `return` - which is correct but costs a full exit
++           from the chunk and a fresh dispatch per instruction. That is
++           ruinous inside the cache loops the Dolphin SDK builds on:
++           DCFlushRange is `dcbf; addi; bdnz`, so a single call covering a
++           large range (Super Mario Sunshine asks OSProtectRange for a 2GB
++           span, i.e. 67M cache lines) turned into 67M host round trips and
++           took minutes instead of a fraction of a second. Falling through
++           inline lets the loop stay inside the generated function and be
++           bounded by the normal cycle budget like any other loop. */
++        fprintf(out, "    (void)ctx;\n");
++        break;
++
+     case PPC_OP_DCBTST:
+     case PPC_OP_DCBT:
+         fprintf(out, "    (void)ctx;\n");

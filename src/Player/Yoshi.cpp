@@ -983,7 +983,7 @@ void TYoshi::calcAnim()
 		break;
 	case STATE_MOUNTED:
 		thinkAnimation();
-		PSMTXCopy(mMario->getTakenMtx(), mtx);
+		MTXCopy(mMario->getTakenMtx(), mtx);
 		break;
 	case STATE_UNK1:
 		J3DGetTranslateRotateMtx(0, mEggRotSpeed, 0, mTranslation.x,
@@ -1022,16 +1022,16 @@ void TYoshi::calcAnim()
 			break;
 		}
 
-		PSMTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
+		MTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
 		mActor->calcAnm();
-		PSMTXCopy(mActor->getModel()->getAnmMtx(37),
+		MTXCopy(mActor->getModel()->getAnmMtx(37),
 		          mMirrorModels[0]->getBaseTRMtx());
-		PSMTXCopy(mActor->getModel()->getAnmMtx(32),
+		MTXCopy(mActor->getModel()->getAnmMtx(32),
 		          mMirrorModels[1]->getBaseTRMtx());
 		mMirrorModels[0]->calc();
 		mMirrorModels[1]->calc();
 		Mtx tongueMtx;
-		PSMTXCopy(mActor->getModel()->getAnmMtx(mJointIdxTongue), tongueMtx);
+		MTXCopy(mActor->getModel()->getAnmMtx(mJointIdxTongue), tongueMtx);
 		mTongue->calcAnim(tongueMtx);
 	}
 

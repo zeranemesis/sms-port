@@ -1,0 +1,62 @@
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index eff0c65..70f05b2 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -515,7 +515,16 @@ gx::DrawData* get_last_draw_command() {
+   if (g_currentRenderPass >= current_render_passes().size()) {
+     return nullptr;
+   }
+-  auto& last = current_render_passes()[g_currentRenderPass].commands.back();
++  // back() on an empty vector is undefined behaviour, and this is reached for
++  // the FIRST draw of a render pass whenever the state is not dirty - which
++  // only happens once real geometry arrives, because until then every draw
++  // dirtied the state again. There is no "last draw" to merge with at that
++  // point; that is a normal answer, not an error.
++  auto& commands = current_render_passes()[g_currentRenderPass].commands;
++  if (commands.empty()) {
++    return nullptr;
++  }
++  auto& last = commands.back();
+   if (last.type != CommandType::Draw || last.data.draw.type != ShaderType::GX) {
+     return nullptr;
+   }
+@@ -523,6 +532,39 @@ gx::DrawData* get_last_draw_command() {
+ }
+ 
+ static void push_draw_command(ShaderDrawCommand data) {
++  // Which render pass a draw lands in, and whether that pass is offscreen.
++  //
++  // Everything else about these draws has now been measured and is healthy -
++  // they reach the GPU, their pipelines are ready, their matrices, projection
++  // and viewport are correct, and their raster state is rich and sane - and
++  // the screen is still black. A draw recorded into an offscreen pass that is
++  // never resolved back is invisible no matter how correct it is, and this
++  // port does not bridge GXCopyTex, so that resolve may simply not happen.
++  {
++    static u64 onscreen = 0, offscreen = 0, noPass = 0;
++    static auto lastReport = std::chrono::steady_clock::now();
++    static unsigned reports = 0;
++    if (g_currentRenderPass >= current_render_passes().size()) {
++      ++noPass;
++    } else if (current_render_passes()[g_currentRenderPass].offscreen) {
++      ++offscreen;
++    } else {
++      ++onscreen;
++    }
++    const auto now = std::chrono::steady_clock::now();
++    if (now - lastReport >= std::chrono::seconds(1) && reports < 600) {
++      lastReport = now;
++      ++reports;
++        // An empty or tiny scissor rejects every fragment no matter how correct
++      // the geometry is, and nothing so far has looked at it.
++      Log.info("draw passes 1s: onscreen={} offscreen={} no_pass={} | passes this frame={} | scissor=({},{} {}x{}) "
++               "viewport=({},{} {}x{})",
++               onscreen, offscreen, noPass, current_render_passes().size(), g_cachedScissor.x, g_cachedScissor.y,
++               g_cachedScissor.width, g_cachedScissor.height, g_cachedViewport.left, g_cachedViewport.top,
++               g_cachedViewport.width, g_cachedViewport.height);
++      onscreen = offscreen = noPass = 0;
++    }
++  }
+   push_command(CommandType::Draw, Command::Data{.draw = data});
+   ++g_drawCallCount;
+ }
