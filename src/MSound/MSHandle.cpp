@@ -204,6 +204,8 @@ f32 MSHandle::calcDolby(const Vec& pos, f32 dist)
 
 void MSHandle::setSeDistanceVolume(u8 moveTime)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	u32 swBit = getSwBit();
 	if (swBit & MSSeSwBit_ModDistanceVolume) {
 		f32 d = JALSystem::processModDistVolume(mSoundID, unk1C->unk18);
