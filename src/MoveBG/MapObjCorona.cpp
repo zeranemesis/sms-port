@@ -1,10 +1,12 @@
 #include "MoveBG/MapObjCorona.hpp"
 #include "MoveBG/MapObjBase.hpp"
+#include <math.h>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JMath.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Camera/CameraShake.hpp>
 #include <MarioUtil/RumbleMgr.hpp>
+#include <MarioUtil/MathUtil.hpp>
 #include <Player/MarioAccess.hpp>
 #include <System/Particles.hpp>
 
@@ -171,8 +173,30 @@ bool TBathtub::allowsTumble() const
 void TBathtub::calcRootMatrix() { }
 
 #pragma dont_inline on
-bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>&, f32, f32*) const
+bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>& position, f32 radius,
+                           f32* gripAngle) const
 {
+	Mtx* matrix = getRootJointMtx();
+	f32 dx = position.x - (*matrix)[0][3];
+	f32 dy = position.y - (*matrix)[1][3];
+	f32 dz = position.z - (*matrix)[2][3];
+	f32 localX = (*matrix)[0][0] * dx + (*matrix)[1][0] * dy + (*matrix)[2][0] * dz;
+	f32 localZ = (*matrix)[0][2] * dx + (*matrix)[1][2] * dy + (*matrix)[2][2] * dz;
+	f32 angle = 0.005493164f * static_cast<f32>(matan(localZ, localX));
+	f32 nearest = 180.0f;
+	int nearestIndex = 0;
+	for (int i = 0; i < 5; ++i) {
+		f32 wrapped = static_cast<f32>(fmod(360.0f + (unk150[i] - angle + 180.0f), 360.0f));
+		f32 distance = static_cast<f32>(fabs(-180.0f + wrapped));
+		if (distance < nearest) {
+			nearest = distance;
+			nearestIndex = i;
+		}
+	}
+	if (nearest < radius) {
+		*gripAngle = unk150[nearestIndex];
+		return true;
+	}
 	return false;
 }
 #pragma dont_inline off
