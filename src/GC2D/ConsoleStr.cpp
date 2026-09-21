@@ -28,9 +28,10 @@ TConsoleStr::TConsoleStr(const char* name)
     , unk10(nullptr)
     , unk14(nullptr)
     , unk20(0xB4)
-    , unk24(0)
-    , unk2A8(0)
-    , unk2B8(0)
+	, unk24(0)
+	, unk2A8(0)
+	, unk2A9(0)
+	, unk2B8(0)
     , unk2BC(7)
 {
 }
