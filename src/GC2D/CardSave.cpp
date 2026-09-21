@@ -1004,6 +1004,8 @@ s8 TCardSave::waitForAnyKey(TEProgress param_1)
 
 s8 TCardSave::waitForSelectOver()
 {
+	volatile u8 stackPad[32];
+	(void)stackPad;
 	s8 result = -1;
 
 	switch (unk10) {
