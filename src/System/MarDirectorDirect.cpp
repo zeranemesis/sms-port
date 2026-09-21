@@ -138,9 +138,9 @@ int TMarDirector::direct()
 			u32 uVar11 = ~uVar8;
 			u32 uVar4  = uVar11;
 			if (mMoveTickCount & 1)
-				uVar4 &= ~0x100;
+				uVar4 &= ~CUE_MOVEMENT_GATE_A;
 			if (mMoveTickCount & 2)
-				uVar4 &= ~0x200;
+				uVar4 &= ~CUE_MOVEMENT_GATE_B;
 			if (unk4E & 1)
 				mShinePfLstMov->perform(uVar4, &local_140);
 			else
@@ -579,31 +579,53 @@ void TMarDirector::setMario()
 		gpMarioOriginal->toroccoStart();
 		break;
 
-	case 3:
+	case 0:
+	default: {
 		const JGeometry::TVec3<f32>* pos = nullptr;
 		if (uVar10)
 			pos = &marioSetPosition->getUnk10(uVar10 - 1);
 		gpMarioOriginal->waitingStart(pos, 0.0f);
-		break;
+	} break;
 	}
 
-	switch (gpApplication.mCurrArea.getStage()) {
-	case 0x3C:
-		gpMarioOriginal->mWaterGun->changeNozzle(TWaterGun::Rocket, true);
-		break;
+	TMario* mario = gpMarioOriginal;
+	// NOTE: declaration order is load-bearing for matching (r28/r29).
+	TWaterGun* waterGun;
+	TGameSequence& currArea = gpApplication.mCurrArea;
+	if (mario->checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+		switch (currArea.getStage()) {
+		case 0x3C:
+			mario->mWaterGun->changeNozzle(TWaterGun::Rocket, true);
+			break;
 
-		// TODO: crazy cases
-	case 0:
-	case 7:
-		gpMarioOriginal->mWaterGun->changeNozzle(
-		    (TWaterGun::TNozzleType)TFlagManager::getInstance()->getFlag(
-		        0x40004),
-		    true);
-		gpMarioOriginal->mWaterGun->changeNozzle(TWaterGun::Spray, true);
-		break;
+		case 1:
+		case 2:
+		case 3:
+		case 4:
+		case 5:
+		case 6:
+		case 8:
+		case 9:
+		case 0x10:
+		case 0x2C:
+		case 0x34:
+		case 0x39:
+			break;
+
+		default: {
+			waterGun = mario->mWaterGun;
+			waterGun->changeNozzle(
+			    (TWaterGun::TNozzleType)TFlagManager::getInstance()->getFlag(
+			        0x40004),
+			    true);
+			gpMarioOriginal->mWaterGun->changeNozzle(TWaterGun::Spray,
+			                                         true);
+			break;
+		}
+		}
 	}
 
-	u32 uVar6 = SMS_getShineIDofExStage(gpApplication.mCurrArea.getStage());
+	u8 uVar6 = SMS_getShineIDofExStage(currArea.getStage());
 	if (uVar6 != 0xff && TFlagManager::getInstance()->getShineFlag(uVar6) == 0)
 		gpMarioOriginal->offFlag(MARIO_FLAG_HAS_FLUDD);
 }
@@ -1108,8 +1130,8 @@ void TMarDirector::moveStage()
 		case 5:
 		case 6:
 		case 8:
-			unkE4 = 2;
-			unkB4 = TApplication::APP_STATE_BOOT;
+			unkE4 = 8;
+			unkB4 = TApplication::APP_STATE_TITLE;
 			break;
 
 		case 9:
@@ -1146,10 +1168,10 @@ void TMarDirector::moveStage()
 	}
 
 	if (gpMarioOriginal->checkFlag(MARIO_FLAG_HAS_FLUDD)) {
-		u32 r5 = 0;
-		if ((int)gpMarioOriginal->mWaterGun->mSecondNozzle == 3)
-			r5 = 4;
-		TFlagManager::smInstance->setFlag(0x40004, r5);
+		int nozzle = gpMarioOriginal->mWaterGun->mSecondNozzle;
+		if (nozzle == 3)
+			nozzle = 4;
+		TFlagManager::smInstance->setFlag(0x40004, nozzle);
 	}
 }
 
@@ -1157,16 +1179,16 @@ JStage::TObject* TMarDirector::JSGFindObject(const char* param_1,
                                              JStage::TEObject param_2) const
 {
 	if (strcmp("cam_int1", param_1) == 0) {
+		TMarDirector* director = const_cast<TMarDirector*>(this);
 		JDrama::TCamera* cam
-		    = (JDrama::TCamera*)const_cast<TMarDirector*>(this)->search(
-		        "camera 1");
+		    = (JDrama::TCamera*)director->search("camera 1");
 		return cam;
 	}
 
 	if (strcmp("mario", param_1) == 0) {
+		TMarDirector* director = const_cast<TMarDirector*>(this);
 		JDrama::TActor* mario
-		    = (JDrama::TActor*)const_cast<TMarDirector*>(this)->search(
-		        "マリオ");
+		    = (JDrama::TActor*)director->search("マリオ");
 		return mario;
 	}
 

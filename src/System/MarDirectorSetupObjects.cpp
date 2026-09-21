@@ -44,6 +44,8 @@ void TMarDirector::decideMarioPosIdx()
 	unkD1 = 0;
 	unkE4 = 1;
 
+	TGameSequence& prevArea = gpApplication.mPrevArea;
+
 	switch (gpApplication.mCurrArea.unk0) {
 	case 15:
 		unkE4 = 14;
@@ -77,7 +79,7 @@ void TMarDirector::decideMarioPosIdx()
 				TFlagManager::getInstance()->setBool(false, 0x30004);
 				unkD0 = 4;
 			} else {
-				switch (SMS_getShineStage(gpApplication.mPrevArea.unk0)) {
+				switch (SMS_getShineStage(prevArea.unk0)) {
 				case 2:
 					unkD0 = 1;
 					unkD1 = 2;

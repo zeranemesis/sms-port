@@ -59,7 +59,7 @@ void TMarDirector::initECTGft(
 
 		const ResTIMG* img = gpPollution->getLayer(i)->getPollutionImage();
 
-		efbTex->setImgPtr((u8*)&img + img->imageDataOffset);
+		efbTex->setImgPtr((u8*)img + img->imageDataOffset);
 		JDrama::TSize size(img->width, img->height);
 		efbTex->setDstSize(size);
 		efbTex->setTexFmt(GX_CTF_R8);
@@ -95,8 +95,9 @@ JDrama::TViewObj* TMarDirector::initECTMir(
 
 	GXTexObj& obj = mirrorCam->unk60;
 	mirrorTex->setTexAttb(obj);
-	mirrorTex->setSrcRect(
-	    JDrama::TRect(0, 0, GXGetTexObjWidth(&obj), GXGetTexObjHeight(&obj)));
+	JDrama::TRect rect(0, 0, GXGetTexObjWidth(&obj),
+	                   GXGetTexObjHeight(&obj));
+	mirrorTex->setSrcRect(rect);
 
 	return mirrorTex;
 }
