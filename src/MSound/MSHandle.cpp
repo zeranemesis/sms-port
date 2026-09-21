@@ -126,6 +126,8 @@ void MSHandle::setSeDistancePitch(u8 moveTime)
 
 void MSHandle::setSeDistancePan(u8 moveTime)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	FabricatedPositionInfo* ptr = unk1C;
 
 	f32 thing = ptr->unk18;
