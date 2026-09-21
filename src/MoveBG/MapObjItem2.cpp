@@ -162,6 +162,8 @@ TJumpBase::TJumpBase(const char* name)
 
 void TJumpBase::initMapObj()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	TMapObjBase::initMapObj();
 	if (mMapCollisionManager) {
 		TMapCollisionBase* base = mMapCollisionManager->unk8;
