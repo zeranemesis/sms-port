@@ -6,6 +6,8 @@ TFlagManager* TFlagManager::smInstance = 0;
 
 TFlagManager* TFlagManager::start(JKRHeap* heap)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (smInstance == nullptr)
 		smInstance = new (heap, 0) TFlagManager;
 
