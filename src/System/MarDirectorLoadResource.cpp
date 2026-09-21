@@ -107,6 +107,9 @@ int TMarDirector::loadResource()
 			return 1;
 	}
 
+#ifdef VERSION_GMSP01
+	load2DResource2Aram();
+#endif
 	unkD4 = new (0x20) char[0x64000];
 	unkD8 = new JKRMemArchive;
 
