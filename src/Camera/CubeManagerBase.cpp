@@ -141,6 +141,8 @@ inline bool TCubeManagerFast::isInOtherCube(const Vec& pos) const
 
 bool SMS_IsInOtherFastCube(const Vec& pos)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	bool result = false;
 	if (!gpMarDirector->isDemoModeNow()
 	    && (gpCubeFastA->isInOtherCube(pos) || gpCubeFastB->isInOtherCube(pos)
