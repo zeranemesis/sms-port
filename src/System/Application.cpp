@@ -102,7 +102,7 @@ f32 SMSGetVSyncTimesPerSec()
 		result = 50.0f;
 		break;
 	}
-	return 0.5f * result;
+	return result / 2.0f;
 }
 
 f32 SMSGetAnmFrameRate()
