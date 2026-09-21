@@ -2217,6 +2217,8 @@ void TGCConsole2::startDisappearTank()
 
 void TGCConsole2::startAppearCoin()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (unk108->getPane()->isVisible()) {
 		return;
 	}
