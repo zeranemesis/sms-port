@@ -22,6 +22,7 @@ class JKRArchive;
 class JUTResFont;
 
 f32 SMSGetVSyncTimesPerSec();
+f32 SMSGetRealVSyncTimesPerSec();
 f32 SMSGetAnmFrameRate();
 void* SMSLoadArchive(const char*, void*, u32, JKRHeap*);
 

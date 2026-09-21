@@ -73,6 +73,22 @@ TARAMBlock gArBkGuide;
 
 extern "C" void ReInitializeGX();
 
+f32 SMSGetRealVSyncTimesPerSec()
+{
+	f32 result = 60.0f;
+	switch (VIGetTvFormat()) {
+	case VI_MPAL:
+	case VI_NTSC:
+	case VI_EURGB60:
+		result = 60.0f;
+		break;
+	case VI_PAL:
+		result = 50.0f;
+		break;
+	}
+	return result;
+}
+
 f32 SMSGetVSyncTimesPerSec()
 {
 	f32 result = 60.0f;
@@ -86,10 +102,13 @@ f32 SMSGetVSyncTimesPerSec()
 		result = 50.0f;
 		break;
 	}
-	return result / 2.0f;
+	return 0.5f * result;
 }
 
-f32 SMSGetAnmFrameRate() { return 60.0f / SMSGetVSyncTimesPerSec(); }
+f32 SMSGetAnmFrameRate()
+{
+	return 60.0f / (SMSGetRealVSyncTimesPerSec() * 0.5f);
+}
 
 TApplication::TApplication()
     : mSelf(this)
@@ -211,7 +230,7 @@ void TApplication::initialize()
 	GXInit(JKRAllocFromHeap(nullptr, 0x80000, 0x20), 0x80000);
 	SMS_ResetTexCacheRegion();
 	GXPokeAlphaRead(GX_READ_NONE);
-	void* pvVar3 = new (0x20) u8[0xa5000];
+	void* pvVar3 = new (0x20) u8[0xa5a00];
 	GXRenderModeObj rmode;
 	SMSSetupTitleRenderMode(&rmode);
 	mDisplay = new JDrama::TDisplay(2, pvVar3, pvVar3, rmode);
@@ -237,8 +256,9 @@ void TApplication::initialize()
 
 	SMSRumbleMgr = new RumbleMgr(true, true, true, true);
 	SMSRumbleMgr->init();
-	mFader = new TSmplFader(JUtility::TColor(0, 0, 0, 0),
-	                        SMSGetVSyncTimesPerSec(), "ルートフェーダー");
+	mFader = new TSmplFader(JUtility::TColor(0, 0, 0, 255),
+	                        SMSGetRealVSyncTimesPerSec() * 0.5f,
+	                        "ルートフェーダー");
 	mFader->setDisplaySize(SMSGetGCLogoRenderWidth(),
 	                       SMSGetGCLogoRenderHeight());
 	TFlagManager::start(JKRGetCurrentHeap());
@@ -796,9 +816,10 @@ JKRMemArchive* TApplication::mountStageArchive()
 
 	TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >& tmp = *unk30;
 	if (mCurrArea.getStage() < tmp.size()) {
-		if (mCurrArea.getScenario() < tmp[mCurrArea.getStage()].size()) {
+		TNameRefAryT<TScenarioArchiveName>& scenarios = tmp[mCurrArea.getStage()];
+		if (mCurrArea.getScenario() < scenarios.size()) {
 			const char* scenarioArcName
-			    = tmp[mCurrArea.getStage()][mCurrArea.getScenario()].getName();
+			    = scenarios[mCurrArea.getScenario()].unkC;
 
 			DVDChangeDir("/data/scene");
 			void* archBlob
