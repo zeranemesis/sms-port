@@ -1074,6 +1074,8 @@ TBossEelEye::TBossEelEye(const TLiveActor* owner, int jointIndex,
     , mBlurTimer(0)
     , mBlurDuration(50)
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	mBlendModel = new SDLModel(modelData, modelFlags, 1);
 	mBlendModel->getModelData()->getMaterialName()->getIndex("_mat7");
 	getMActor()->initNormalMotionBlend();
