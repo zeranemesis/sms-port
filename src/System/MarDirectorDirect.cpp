@@ -138,9 +138,9 @@ int TMarDirector::direct()
 			u32 uVar11 = ~uVar8;
 			u32 uVar4  = uVar11;
 			if (mMoveTickCount & 1)
-				uVar4 &= ~0x100;
+				uVar4 &= ~CUE_MOVEMENT_GATE_A;
 			if (mMoveTickCount & 2)
-				uVar4 &= ~0x200;
+				uVar4 &= ~CUE_MOVEMENT_GATE_B;
 			if (unk4E & 1)
 				mShinePfLstMov->perform(uVar4, &local_140);
 			else
