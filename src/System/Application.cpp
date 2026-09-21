@@ -720,19 +720,17 @@ int TApplication::gameLoop()
 			JDrama::TGraphics graphics;
 			graphics.unkFE = 0;
 
-			JDrama::TVideo* video = mDisplay->unk60;
-			GXSetViewport(0.0f, 0.0f, video->mNextRenderMode.fbWidth,
-			              video->mNextRenderMode.efbHeight, 0.0f, 1.0f);
-			GXSetScissor(0, 0, video->mNextRenderMode.fbWidth,
-			             video->mNextRenderMode.efbHeight);
+			GXRenderModeObj& renderMode = mDisplay->unk60->mNextRenderMode;
+			GXSetViewport(0.0f, 0.0f, renderMode.fbWidth,
+			              renderMode.efbHeight, 0.0f, 1.0f);
+			GXSetScissor(0, 0, renderMode.fbWidth, renderMode.efbHeight);
 			Mtx afStack_1ac;
-			C_MTXOrtho(afStack_1ac, 0.0f, (f32)video->mNextRenderMode.fbWidth,
-			           0.0f, (f32)video->mNextRenderMode.efbHeight, -1.0f,
-			           1.0f);
+			C_MTXOrtho(afStack_1ac, 0.0f, (f32)renderMode.fbWidth, 0.0f,
+			           (f32)renderMode.efbHeight, -1.0f, 1.0f);
 			GXSetProjection(afStack_1ac, GX_ORTHOGRAPHIC);
 			mFader->update();
-			mFader->draw(JDrama::TRect(0, 0, video->mNextRenderMode.fbWidth,
-			                           video->mNextRenderMode.efbHeight));
+			mFader->draw(JDrama::TRect(0, 0, renderMode.fbWidth,
+			                           renderMode.efbHeight));
 			if (gpMSound != nullptr)
 				gpMSound->mainLoop();
 		}
