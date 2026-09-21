@@ -683,6 +683,8 @@ void MSound::talkModeIn(bool param_1)
 
 void MSound::talkModeOut()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	if (checkUnkA8(2)) {
 		MSoundSESystem::MSoundSE::startSoundSystemSE(MSD_SE_SY_TALK_MODE_OUT, 0,
 		                                             nullptr, 0);
