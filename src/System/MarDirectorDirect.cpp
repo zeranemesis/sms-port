@@ -1179,16 +1179,16 @@ JStage::TObject* TMarDirector::JSGFindObject(const char* param_1,
                                              JStage::TEObject param_2) const
 {
 	if (strcmp("cam_int1", param_1) == 0) {
+		TMarDirector* director = const_cast<TMarDirector*>(this);
 		JDrama::TCamera* cam
-		    = (JDrama::TCamera*)const_cast<TMarDirector*>(this)->search(
-		        "camera 1");
+		    = (JDrama::TCamera*)director->search("camera 1");
 		return cam;
 	}
 
 	if (strcmp("mario", param_1) == 0) {
+		TMarDirector* director = const_cast<TMarDirector*>(this);
 		JDrama::TActor* mario
-		    = (JDrama::TActor*)const_cast<TMarDirector*>(this)->search(
-		        "マリオ");
+		    = (JDrama::TActor*)director->search("マリオ");
 		return mario;
 	}
 
