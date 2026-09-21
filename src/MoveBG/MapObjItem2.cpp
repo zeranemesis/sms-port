@@ -44,6 +44,8 @@ void TMushroom1up::touchPlayer(THitActor* param_1)
 
 void TMushroom1up::makeObjAppeared()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	TMapObjBase::makeObjAppeared();
 	mStateTimer = 1200;
 	unk138      = 0;
