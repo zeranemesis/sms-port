@@ -90,6 +90,8 @@ f32 MSHandle::MSACos(f32 param_1)
 
 void MSHandle::setSeDistanceParameters()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	u8 type = smSeCategory[get_thing(mSoundID)].mType;
 	if (mState == SOUNDSTATE_Prepared)
 		type = 0;
