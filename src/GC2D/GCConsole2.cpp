@@ -2528,6 +2528,8 @@ void TGCConsole2::startAppearJetBalloon(int nozzleKind, int count)
 
 void TGCConsole2::startInsertJetBalloon()
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	unk3D = 1;
 	unk59 = 1;
 
