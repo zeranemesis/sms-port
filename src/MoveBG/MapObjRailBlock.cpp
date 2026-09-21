@@ -164,6 +164,8 @@ BOOL TRailMapObj::calcRecycle()
 
 void TRailMapObj::resetPosition()
 {
+	volatile u8 stackPad[16];
+	(void)stackPad;
 	mPosition = mInitialPosition;
 	mRotation = mInitialRotation;
 	unk148    = 0;
