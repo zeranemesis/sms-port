@@ -37,6 +37,9 @@ public:
 	void startDisappearTank();
 	void startAppearCoin();
 	void startDisappearCoin();
+	void countBlueCoin();
+	void countShine();
+	void checkDolpic8();
 	void startInsertLife(int);
 	void resetLife(int);
 	bool startAppearLife(int);

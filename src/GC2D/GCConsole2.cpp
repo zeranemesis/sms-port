@@ -2242,6 +2242,75 @@ void TGCConsole2::startAppearCoin()
 	unk124->clearStatus(JPABaseEmitter::STATUS_STOP_EMIT);
 }
 
+void TGCConsole2::countBlueCoin()
+{
+	// TODO: partial (53%); retail emits a second createEmitter call and
+	// uses different register homes. Structure (flag loops, digit
+	// textures, emitter-or-star, timer) verified against retail asm.
+	int count   = 0;
+	int display = 0;
+	if (TFlagManager::smInstance->getFlag(0x40001) != unk168) {
+		unk168++;
+
+		for (int i = 0x46; i < 0x56; ++i) {
+			if (TFlagManager::smInstance->getFlag(0x10000 + i))
+				count++;
+		}
+		for (int i = 0x6c; i < 0x74; ++i) {
+			if (TFlagManager::smInstance->getFlag(0x10000 + i))
+				count++;
+		}
+
+		display = unk168 - count * 10;
+		if (display < 0)
+			display = 0;
+
+		if (display >= 100) {
+			int hundreds = (int)((f32)display * 0.01f);
+			int rem      = display - hundreds * 100;
+			int tens     = (int)((f32)rem * 0.1f);
+			int ones     = rem % 10;
+			((J2DPicture*)unk154[0]->getPane())
+			    ->changeTexture(unkE0[hundreds]->getTexInfo(), 0);
+			((J2DPicture*)unk154[1]->getPane())
+			    ->changeTexture(unkE0[tens]->getTexInfo(), 0);
+			((J2DPicture*)unk154[2]->getPane())
+			    ->changeTexture(unkE0[ones]->getTexInfo(), 0);
+		} else {
+			int tens = (int)((f32)display * 0.1f);
+			int ones = display % 10;
+			((J2DPicture*)unk154[0]->getPane())
+			    ->changeTexture(unkE0[tens]->getTexInfo(), 0);
+			((J2DPicture*)unk154[1]->getPane())
+			    ->changeTexture(unkE0[ones]->getTexInfo(), 0);
+		}
+
+		J2DPane* hidePane = unk154[2]->getPane();
+		if (hidePane->isVisible())
+			hidePane->hide();
+
+		if (unk160->getPane()->isVisible()) {
+			JUTRect rect = unk154[1]->getPane()->getGlobalBounds();
+			JGeometry::TVec3<f32> pos;
+			pos.x = rect.x1 + 0.5f * (rect.x2 - rect.x1);
+			pos.y = rect.y1 + 0.5f * (rect.y2 - rect.y1);
+			pos.z = 0.0f;
+			gpEmitterManager4D2->createEmitter(pos, 0x1fc, 0, 0);
+		} else {
+			startAppearStar();
+		}
+
+		unk170 = display;
+		unk16C = 1;
+	}
+
+	if (unk16C != 0) {
+		unk16C++;
+		if (unk16C > 0x190)
+			unk16C = 0;
+	}
+}
+
 void TGCConsole2::startDisappearCoin()
 {
 	unk4D = true;
