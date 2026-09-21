@@ -590,7 +590,10 @@ void TFlagManager::saveOption(JSUMemoryOutputStream& out)
 		OSSetSoundMode(1);
 		setBool(true, 0x70001);
 	}
-	setFlag(0x80000, 0);
+	s32 language = getFlag(0xA0001);
+	language += 1;
+	setFlag(0x80001, language);
+	setBool(!getBool(0x70002), 0x90001);
 	out.write(mSavedOptionBools, sizeof(mSavedOptionBools));
 	out.write(mSavedOptionInts, sizeof(mSavedOptionInts));
 }
