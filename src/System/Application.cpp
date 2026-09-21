@@ -868,8 +868,16 @@ JKRMemArchive* TApplication::mountStageArchive()
 	JKRMemArchive* result = nullptr;
 
 	TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >& tmp = *unk30;
-	if (mCurrArea.getStage() < tmp.size()) {
-		TNameRefAryT<TScenarioArchiveName>& scenarios = tmp[mCurrArea.getStage()];
+	JGadget::TVector_pointer<TNameRefAryT<TScenarioArchiveName> >& vec
+	    = tmp.getChildren();
+	// TODO: odd hand-rolled size; plain tmp.size() does not reproduce the
+	// retail reload, but this spelling might still be off (see symbol order)
+	u32 count = tmp.begin() == nullptr
+	                ? 0
+	                : (u32)(vec.end() - vec.begin());
+	u8 stage  = mCurrArea.getStage();
+	if (stage < count) {
+		TNameRefAryT<TScenarioArchiveName>& scenarios = tmp[stage];
 		if (mCurrArea.getScenario() < scenarios.size()) {
 			const char* scenarioArcName
 			    = scenarios[mCurrArea.getScenario()].unkC;
