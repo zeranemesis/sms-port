@@ -268,10 +268,42 @@ bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>& position, f32 radius,
 }
 #pragma dont_inline off
 
-u8 TBathtub::getNextJuncture(const JGeometry::TVec3<f32>&,
-                             const JGeometry::TVec3<f32>&) const
+u8 TBathtub::getNextJuncture(const JGeometry::TVec3<f32>& position,
+                             const JGeometry::TVec3<f32>& direction) const
 {
-	return 0;
+	Mtx* matrix = getRootJointMtx();
+	JGeometry::TVec3<f32> delta(position.x - (*matrix)[0][3],
+	                            position.y - (*matrix)[1][3],
+	                            position.z - (*matrix)[2][3]);
+	JGeometry::TVec3<f32> normal;
+	normal.setLength(delta, 1.0f);
+
+	const f32 dot = normal.x * direction.x + normal.y * direction.y
+	              + normal.z * direction.z;
+	JGeometry::TVec3<f32> projected(
+	    delta.x + direction.x - normal.x * dot,
+	    delta.y + direction.y - normal.y * dot,
+	    delta.z + direction.z - normal.z * dot);
+	f32 localX = (*matrix)[0][0] * projected.x
+	            + (*matrix)[1][0] * projected.y
+	            + (*matrix)[2][0] * projected.z;
+	f32 localZ = (*matrix)[0][2] * projected.x
+	            + (*matrix)[1][2] * projected.y
+	            + (*matrix)[2][2] * projected.z;
+	f32 angle = 0.005493164f * static_cast<f32>(matan(localZ, localX));
+
+	f32 nearest = 180.0f;
+	u8 nearestIndex = 0;
+	for (u8 i = 0; i < 5; ++i) {
+		f32 wrapped = static_cast<f32>(fmod(360.0f + (unk13C[i] - angle + 180.0f),
+		                                    360.0f));
+		f32 distance = static_cast<f32>(fabs(-180.0f + wrapped));
+		if (distance < nearest) {
+			nearestIndex = i;
+			nearest = distance;
+		}
+	}
+	return nearestIndex;
 }
 
 u8 TBathtub::getNextGrip(const JGeometry::TVec3<f32>&,
