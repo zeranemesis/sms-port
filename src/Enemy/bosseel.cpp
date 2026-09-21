@@ -113,8 +113,6 @@ TBEelTearsDrop::TBEelTearsDrop(TBEelTears* owner, int jointIndex,
 
 void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	volatile u8 stackPad[16];
-	(void)stackPad;
 	THitActor::perform(cue, graphics);
 	if (cue & CUE_MOVE) {
 		mPosition.y += mRiseSpeed;
