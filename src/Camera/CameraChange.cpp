@@ -446,6 +446,8 @@ void CPolarSubCamera::changeCamModeSpecifyCamMapToolAndFrame_(
 
 void CPolarSubCamera::execFrontRotate_()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	(void)0;
 	(void)0;
 	(void)0;
