@@ -15,6 +15,7 @@ extern "C" void getDown__6TKoopaFv(void*);
 extern "C" void stagger__6TKoopaFb(void*, bool);
 extern "C" void* __ct__14TBathtubParamsFv(void*);
 
+
 static bool bathtubKoopaAllowsLaunch()
 {
 	return allowsLaunch__6TKoopaCFv(JDrama::TNameRefGen::search("クッパ")) != 0;
