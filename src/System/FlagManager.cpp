@@ -481,6 +481,8 @@ void TFlagManager::correctFlag()
 
 void TFlagManager::save(JSUMemoryOutputStream& out)
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	mLastSaveTimeBackup = mLastSaveTime;
 	mLastSaveTime       = OSGetTime();
 
