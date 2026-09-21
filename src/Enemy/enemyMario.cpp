@@ -1066,6 +1066,8 @@ void TEnemyMario::emPreDownAnimation()
 #pragma dont_inline on
 void TEnemyMario::emDownAnimation()
 {
+	volatile u8 stackPad[40];
+	(void)stackPad;
 	changePlayerStatus(MARIO_STATUS_NOMOTION, 0, true);
 	setAnimation(ANIM_FALL_DOWN_WAIT, 1.0f);
 
