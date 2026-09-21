@@ -13,6 +13,7 @@
 extern "C" u8 allowsLaunch__6TKoopaCFv(void*);
 extern "C" void getDown__6TKoopaFv(void*);
 extern "C" void stagger__6TKoopaFb(void*, bool);
+extern "C" void* __ct__14TBathtubParamsFv(void*);
 
 static bool bathtubKoopaAllowsLaunch()
 {
@@ -218,6 +219,32 @@ void TBathtub::updatePosture_() { }
 TBathtub::TBathtub(const char* name)
     : TMapObjBase(name)
 {
+	unk164 = nullptr;
+	unk290 = 0;
+	unk16C = reinterpret_cast<TBathtubParams*>(
+	    __ct__14TBathtubParamsFv(new u8[0x210]));
+	unk1D8 = 0.0f;
+	unk1DC = 0.0f;
+	unk1E0 = 0.0f;
+	unk1E4 = 1.0f;
+	mPosition.x = 0.0f;
+	mPosition.y = 0.0f;
+	mPosition.z = 0.0f;
+	unk1E8 = 0.0f;
+	unk1EC = 0.0f;
+	unk1F0 = 0.0f;
+	unk250 = 0;
+	unk254 = 1;
+	unk258 = 0;
+	unk25C = 1;
+	unk248 = 0;
+	unk298 = 0;
+	unk244 = 0.0f;
+	unk240 = 0.0f;
+	unk23C = 0.0f;
+	unk29A = 0;
+	unk2A0 = 0;
+	unk294 = 0;
 }
 
 void TBathtub::load(JSUMemoryInputStream&) { }
