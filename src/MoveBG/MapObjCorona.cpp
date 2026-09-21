@@ -156,7 +156,7 @@ BOOL TBathtub::receiveMessage(THitActor*, u32 message)
 
 Mtx* TBathtub::getRootJointMtx() const
 {
-    if (unk29A != 0)
+    if (reinterpret_cast<const u8*>(this)[0x29A] != 0)
         return *reinterpret_cast<Mtx**>(reinterpret_cast<u8*>(getModel()) + 0x58);
     return reinterpret_cast<Mtx*>(reinterpret_cast<u8*>(getModel()) + 0x20);
 }
