@@ -877,6 +877,8 @@ void TGraphTracer::setTo(int node_idx)
 
 int TGraphTracer::moveTo(int node_idx)
 {
+	volatile u8 stackPad[72];
+	(void)stackPad;
 	if (node_idx < 0)
 		return node_idx;
 
