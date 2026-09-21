@@ -868,6 +868,8 @@ void TGraphTracer::setParamFromGraph()
 
 void TGraphTracer::setTo(int node_idx)
 {
+	volatile u8 stackPad[72];
+	(void)stackPad;
 	mPrevIdx = -1;
 	mCurrIdx = node_idx;
 	setParamFromGraph();
