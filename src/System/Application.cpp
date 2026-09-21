@@ -67,6 +67,10 @@ static void* arcBufMario;
 static void* arcBufCmn;
 static void* bufStageArcBin;
 static void* spGameHeapBlock;
+#ifdef VERSION_GMSP01
+static JKRMemArchive* sCmn2DArc;
+static void* sCmn2DArcBuf;
+#endif
 
 TARAMBlock gArBkConsole;
 TARAMBlock gArBkGuide;
@@ -159,6 +163,9 @@ void SMSLoadArchiveARAM(TARAMBlock* param_1, const char* param_2)
 	// Try to load a compressed version of the archive first
 	char compressedArcPath[64];
 	strcpy(compressedArcPath, param_2);
+#ifdef VERSION_GMSP01
+	param_1->unk0 = nullptr;
+#endif
 	char* loc = strstr(compressedArcPath, ".arc");
 	if (loc != nullptr) {
 		strcpy(loc, ".szs");
@@ -278,6 +285,43 @@ void TApplication::initialize()
 	OSResumeThread(&gSetupThread);
 }
 
+#ifdef VERSION_GMSP01
+#pragma dont_inline on
+void load2DResource2Aram()
+{
+	static u8 sLoadResourceLang     = -1;
+	static const char* cmn2dNames[] = {
+		"/data/cmn2d_en.arc", "/data/cmn2d_ge.arc", "/data/cmn2d_fr.arc",
+		"/data/cmn2d_sp.arc", "/data/cmn2d_it.arc",
+	};
+	static const char* game_6Names[] = {
+		"/data/game_6_en.arc", "/data/game_6_ge.arc", "/data/game_6_fr.arc",
+		"/data/game_6_sp.arc", "/data/game_6_it.arc",
+	};
+	static const char* guideNames[] = {
+		"/data/guide_en.arc", "/data/guide_ge.arc", "/data/guide_fr.arc",
+		"/data/guide_sp.arc", "/data/guide_it.arc",
+	};
+
+	if (sLoadResourceLang
+	    != (u8)TFlagManager::getInstance()->getFlag(0xA0001)) {
+		sLoadResourceLang = (u8)TFlagManager::getInstance()->getFlag(0xA0001);
+		if (JKRFileLoader::getVolume("cmn2d") != nullptr)
+			sCmn2DArc->unmountFixed();
+
+		SMSLoadArchive(cmn2dNames[sLoadResourceLang], sCmn2DArcBuf, 0xA000,
+		               nullptr);
+		sCmn2DArc->mountFixed(sCmn2DArcBuf, MBF_0);
+		JKRAram::getAramHeap()->freeAll();
+
+		SMSLoadArchiveARAM(&gArBkConsole, game_6Names[sLoadResourceLang]);
+		SMSLoadArchiveARAM(&gArBkGuide, guideNames[sLoadResourceLang]);
+	}
+}
+#pragma dont_inline off
+#endif
+
+#pragma dont_inline on
 void* TApplication::setupThreadFuncLogo()
 {
 	while (!gpMSound->checkWaveOnAram(MS_WAVE_UNK0))
@@ -295,12 +339,16 @@ void* TApplication::setupThreadFuncLogo()
 	    "/data/stageArc.bin", nullptr, EXPAND_SWITCH_DEFAULT, 0, mHeap,
 	    JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
 
+#ifdef VERSION_GMSP01
+	load2DResource2Aram();
+#else
 	SMSLoadArchiveARAM(&gArBkConsole, "/data/game_6.arc");
-
 	SMSLoadArchiveARAM(&gArBkGuide, "/data/guide.arc");
+#endif
 
 	return nullptr;
 }
+#pragma dont_inline off
 
 static void* SetupThreadFuncLogo(void* param)
 {
@@ -340,6 +388,11 @@ void TApplication::initialize_bootAfter()
 	gpCardManager = new TCardManager(sectorWorkArea, cardWorkArea, 0, 14,
 	                                 workerThreadStack, 0x1000);
 	gpCardManager->readOptionBlock();
+
+#ifdef VERSION_GMSP01
+	sCmn2DArcBuf = new (0x20) u8[0xA000];
+	sCmn2DArc    = new JKRMemArchive;
+#endif
 
 	mHeap->becomeCurrentHeap();
 
