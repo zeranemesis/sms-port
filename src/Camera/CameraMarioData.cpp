@@ -22,6 +22,8 @@ TCameraMarioData::TCameraMarioData()
 
 void TCameraMarioData::calcAndSetMarioData()
 {
+	volatile u8 stackPad[8];
+	(void)stackPad;
 	int status = SMS_GetMarioStatus();
 	switch (status) {
 	case MARIO_STATUS_HANGING:
