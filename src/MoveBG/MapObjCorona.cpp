@@ -171,7 +171,46 @@ bool TBathtub::allowsTumble() const
 	return true;
 }
 
-void TBathtub::calcRootMatrix() { }
+void TBathtub::calcRootMatrix()
+{
+	MtxPtr matrix = getModel()->getBaseTRMtx();
+	if (reinterpret_cast<const u8*>(this)[0x299] != 0) {
+		MsMtxSetRotRPH(matrix, 0.0f, mRotation.y, 0.0f);
+		matrix[0][3] = mPosition.x;
+		matrix[1][3] = mPosition.y;
+		matrix[2][3] = mPosition.z;
+		return;
+	}
+
+	const f32 x = unk1D8;
+	const f32 y = unk1DC;
+	const f32 z = unk1E0;
+	const f32 w = unk1E4;
+	const f32 xx = x + x;
+	const f32 yy = y + y;
+	const f32 zz = z + z;
+	const f32 wx = w * xx;
+	const f32 wy = w * yy;
+	const f32 wz = w * zz;
+	const f32 xx2 = x * xx;
+	const f32 xy = x * yy;
+	const f32 xz = x * zz;
+	const f32 yy2 = y * yy;
+	const f32 yz = y * zz;
+	const f32 zz2 = z * zz;
+	matrix[0][0] = 1.0f - (yy2 + zz2);
+	matrix[0][1] = xy - wz;
+	matrix[0][2] = xz + wy;
+	matrix[1][0] = xy + wz;
+	matrix[1][1] = 1.0f - (xx2 + zz2);
+	matrix[1][2] = yz - wx;
+	matrix[2][0] = xz - wy;
+	matrix[2][1] = yz + wx;
+	matrix[2][2] = 1.0f - (xx2 + yy2);
+	matrix[0][3] = mPosition.x;
+	matrix[1][3] = mPosition.y;
+	matrix[2][3] = mPosition.z;
+}
 
 #pragma dont_inline on
 bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>& position, f32 radius,
