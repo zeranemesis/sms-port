@@ -146,6 +146,8 @@ void TMushroom1up::control()
 
 void TMushroom1up::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	volatile u8 stackPad[24];
+	(void)stackPad;
 	if (unk139 != 2 && mStateTimer < 240 && (cue & CUE_ENTRY)
 	    && gpMarDirector->mMoveTickCount % 6 > 2)
 		cue &= ~CUE_ENTRY;
