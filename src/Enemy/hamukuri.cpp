@@ -1391,12 +1391,17 @@ bool THaneHamuKuri::isCollidMove(THitActor* param_1)
 	return TSmallEnemy::isCollidMove(param_1);
 }
 
-bool THaneHamuKuri::isHitValid(u32)
+bool THaneHamuKuri::isHitValid(u32 param_1)
 {
-	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
+	// NOTE: direct mLiveFlag access (not check/onLiveFlag inlines) so MWCC
+	// reuses the loaded value instead of reloading it.
+	if (mLiveFlag & LIVE_FLAG_HIDDEN)
 		return false;
-	else
+	else {
+		if (param_1 == 0xb)
+			mLiveFlag |= LIVE_FLAG_HIDDEN;
 		return true;
+	}
 }
 
 void THaneHamuKuri::resetFlyParam() { }
