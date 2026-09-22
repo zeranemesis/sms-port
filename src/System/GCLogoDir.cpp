@@ -14,6 +14,10 @@
 #include <MSound/MSoundSE.hpp>
 #include <GC2D/ScrnFader.hpp>
 #include <GC2D/ProgSelect.hpp>
+#include <System/CardManager.hpp>
+#include <System/FlagManager.hpp>
+#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+#include <dolphin/os.h>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -128,27 +132,21 @@ TGCLogoDir::~TGCLogoDir()
 	mGamePad->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 }
 
-// TODO: GMSP01 asm for this function (inlined into direct_nlogo at both call
-// sites) is structurally different from this JP-derived reconstruction: it
-// branches on VIGetTvFormat() == VI_PAL and calls OSGetEuRgb60Mode() to
-// short-circuit selection before falling into the same B-hold timer logic.
-// This is a best-effort approximation (enough to link), not a verified match.
+// GMSP01 asks about 50/60 Hz where GMSJ01 asks about progressive scan, so the
+// whole selection hangs off VIGetTvFormat() == VI_PAL plus OSGetEuRgb60Mode().
+// There is no VIGetDTVStatus/OSGetProgressiveMode test and no mProgSelect flag
+// test on this version, and the B-hold timer is compared before the button is
+// read, not after.
 static inline bool checkProgressiveSelect(TGCLogoDir* director)
 {
 	bool selected = false;
-	if (director->mProgSelect->unkC.check(0xffff)
-	    && (VIGetTvFormat() == 0
-	        || (VIGetTvFormat() == VI_PAL && OSGetEuRgb60Mode() == 1))
-	    && VIGetDTVStatus() == 1) {
-		if (OSGetProgressiveMode() == 1) {
-			director->mProgSelect->unkC = 0;
-			selected                    = true;
+	if (VIGetTvFormat() == VI_PAL) {
+		if (OSGetEuRgb60Mode() == 1) {
+			selected = true;
+		} else if (director->mBHoldTimer / SMSGetVSyncTimesPerSec() > 1.0f) {
+			selected = true;
 		} else if (director->mGamePad->getButton() & JUTGamePad::B) {
 			director->mBHoldTimer += 1;
-			if (director->mBHoldTimer / SMSGetVSyncTimesPerSec() > 1.0f) {
-				director->mProgSelect->unkC = 0;
-				selected                    = true;
-			}
 		} else {
 			director->mBHoldTimer = 0;
 		}
@@ -198,27 +196,26 @@ bool TGCLogoDir::direct_nlogo()
 	bool ended    = false;
 	int nextState = mState;
 	switch (mState) {
-	case STATE_WAIT_FADE_IN:
+	case STATE_WAIT_FADE_IN: {
+		bool selected = checkProgressiveSelect(this);
 		if (gpApplication.mFader->isFullyFadedIn()) {
-			nextState = !mProgSelect->unkC.check(0xffff) ? STATE_ASK_PROGRESSIVE
-			                                             : STATE_SHOW_LOGO;
+			nextState = selected ? STATE_ASK_PROGRESSIVE : STATE_SHOW_LOGO;
 
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_MV_CHAO, 0, nullptr, 0);
 			mLogoShowTimer = 0;
-		} else {
-			checkProgressiveSelect(this);
 		}
 		break;
+	}
 
 	case STATE_SHOW_LOGO:
-		mLogoShowTimer += 1;
-		if (mLogoShowTimer / mRefreshRate >= 0.8f) {
-			nextState = STATE_FADE_OUT;
-			OSSetProgressiveMode(0);
+		if (checkProgressiveSelect(this)) {
+			mLogoShowTimer = 0;
+			nextState      = STATE_ASK_PROGRESSIVE;
 		} else {
-			if (checkProgressiveSelect(this)) {
-				mLogoShowTimer = 0;
-				nextState      = STATE_ASK_PROGRESSIVE;
+			mLogoShowTimer += 1;
+			if (mLogoShowTimer / mRefreshRate >= 0.8f) {
+				nextState = STATE_FADE_OUT;
+				OSSetEuRgb60Mode(0);
 			}
 		}
 		break;
@@ -246,6 +243,22 @@ bool TGCLogoDir::direct_nlogo()
 		nextState = STATE_FADE_OUT;
 
 	if (nextState != mState) {
+		// Leaving the first state is where the saved options come back off the
+		// memory card. The card manager is still probing at this point, so wait
+		// it out -- -1 is "not finished yet" -- and only read if it came back
+		// healthy.
+		if (mState == STATE_WAIT_FADE_IN) {
+			s32 status;
+			while ((status = gpCardManager->getLastStatus()) == -1)
+				OSYieldThread();
+
+			if (status == 0) {
+				JSUMemoryInputStream stream(nullptr, 0);
+				gpCardManager->getOptionReadStream(&stream);
+				TFlagManager::getInstance()->loadOption(stream);
+			}
+		}
+
 		switch (nextState) {
 		case STATE_FADE_OUT:
 			gpApplication.mFader->startWipe(15, 0.4f, 0.0f);

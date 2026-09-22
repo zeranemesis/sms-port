@@ -240,7 +240,9 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 					if (unk34[3 * i + j].x != 0) {
 						unk28[i]->getPane()->setAlpha(uVar13 * 0.7f);
 
-						JUTRect local_90 = unk28[i]->unk14;
+						JUTRect local_90(
+						    unk28[i]->unk14.x1, unk28[i]->unk14.y1,
+						    unk28[i]->unk14.x2, unk28[i]->unk14.y2);
 						((J2DPicture*)unk28[i]->getPane())
 						    ->draw(unk34[iVar9 + 12 * i].x,
 						           unk34[iVar9 + 12 * i].y, local_90.getWidth(),
