@@ -454,12 +454,24 @@ static void evGetPollutionLevel(TSpcTypedInterp<TEventWatcher>* interp,
 
 static void evSetEventStart(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	// TODO: stubbed UNUSED; map sizes: Start 0x174, End 0x148. Needs bodies.
+	interp->verifyArgNum(1, &arg_num);
+	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
+	if (event) {
+		event->startControl();
+		event->unk18 = 2;
+		event->unk1C = nullptr;
+		u32 dummy = event->unk18;
+		(void)dummy;
+	}
+	interp->push();
 }
 
 static void evSetEventEnd(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	// TODO: stubbed UNUSED; map sizes: Start 0x174, End 0x148. Needs bodies.
+	interp->verifyArgNum(1, &arg_num);
+	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
+	event->finishControl();
+	interp->push();
 }
 
 static void evSetNextStage(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
