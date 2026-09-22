@@ -739,3 +739,26 @@ not better. Both locals are load-bearing for the current near-match; the
 16-byte excess comes from something else. Whoever picks this up next should
 look at the *caller's* frame or at alignment of `TTimeArray`/`OSTick` across
 the two adjacent inlined blocks, not at trimming these two locals further.
+
+## A commented-out-looking `(void)x;` marker is not always dead code
+
+Two independent cases this session: `src/Map/PollutionObj.cpp`'s
+`getDepthFromMap` had `// TODO: inlines are wrong here!` followed by
+`(void)0;`, and `src/GC2D/MessageLoader.cpp`'s constructor had
+`// NOTE: assert but in an if?` followed by `if (unk4) (void)unk4;`. Both
+read like leftover debris from a previous reconstruction attempt -- a
+discard-expression that should compile to nothing.
+
+Removing either one made the match measurably **worse**, not better or
+neutral: `PollutionObj.cpp` regressed a sibling function
+(`updateDepthMap`, unrelated, matching before) to 0%, and
+`MessageLoader.cpp`'s constructor itself dropped from 99.8% to 92.0%. In
+both cases the object's `.text` layout past that point depends on the
+statement being there, likely because it changes MWCC's optimizer/scheduler
+decisions even though it discards a value. Do not "clean up" one of these
+without rebuilding the whole object (not just the target function) and
+checking every function in it, not only the one the comment sits in.
+
+Neither TODO comment has actually been resolved by this observation --
+they're still marking a real, unexplained gap. The finding is narrower:
+whatever is wrong, deleting the marker is not the fix.
