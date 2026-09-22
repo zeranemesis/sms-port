@@ -385,6 +385,7 @@ void TOptionRumbleUnit::update()
 }
 #pragma dont_inline off
 
+#pragma dont_inline on
 void TOptionRumbleUnit::checkRumble()
 {
 	if (mShouldRumble) {
@@ -406,6 +407,8 @@ void TOptionRumbleUnit::checkRumble()
 		}
 	}
 }
+
+#pragma dont_inline off
 
 void TOptionRumbleUnit::toggle()
 {
