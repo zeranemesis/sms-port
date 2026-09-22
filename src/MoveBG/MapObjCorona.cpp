@@ -375,6 +375,7 @@ TBathtub::TBathtub(const char* name)
 	unk244 = 0.0f;
 	unk240 = 0.0f;
 	unk23C = 0.0f;
+	unk299 = 0;
 	unk29A = 0;
 	unk2A0 = 0;
 	unk294 = 0;
