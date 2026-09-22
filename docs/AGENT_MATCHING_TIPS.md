@@ -726,6 +726,16 @@ a wrong or speculative header edit regresses every call site at once. A
 session that finds this pattern should not patch one `.cpp` in isolation --
 diagnose and fix the header's own locals, then rebuild the *whole* report to
 confirm every affected unit moved together. Not yet solved for either header
-above; both still need someone to find which local in the inline body needs
-removing or restructuring, the way `NpcThrow.cpp`'s `f32 yaw` local was for a
-single-site case.
+above.
+
+**Dead end already ruled out for `TimeRec.hpp`, so don't retry it:** the
+`NpcThrow.cpp` fix removed one named local that was never spilled to memory.
+`startTimer(u8,u8,u8,u8)`/`endTimer()` looked like the same shape (`TTimeRec*
+inst`, `u32 col`, both register-resident, never stored), but inlining either
+one away individually -- `inst` alone, or `col` alone, each tried in
+isolation with everything else byte-for-byte unchanged -- made
+`TLiveManager::perform` measurably *worse* (99.8% to 97.1%, then to 78.5%),
+not better. Both locals are load-bearing for the current near-match; the
+16-byte excess comes from something else. Whoever picks this up next should
+look at the *caller's* frame or at alignment of `TTimeArray`/`OSTick` across
+the two adjacent inlined blocks, not at trimming these two locals further.
