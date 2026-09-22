@@ -707,10 +707,11 @@ bool TSmallEnemy::changeMove()
 		}
 	}
 
-	// TODO: retail tail checks mLiveFlag 0xf0 bit31 and returns 1 if set;
-	// ours returns 0 unconditionally. Switch constants also off by one
-	// (retail cmpwi 2/3/4 vs ours 3/4/5 region). Needs state-enum work.
-	return 0;
+	// TODO: switch constants still off by one region (retail cmpwi 2/3/4
+	// vs ours); needs state-enum/case-order work. Tail fixed below.
+	if (mJuiceBlock->checkLiveFlag(LIVE_FLAG_DEAD))
+		return true;
+	return false;
 }
 
 void TSmallEnemy::scalingChangeActor()
