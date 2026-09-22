@@ -83,7 +83,9 @@ void THauntLegManager::initSetEnemies()
 		THauntLeg* enemy = (THauntLeg*)unk18[i];
 
 		int nodeIdx = TMsRange<s32>(0, graph->unk8).rand();
-		graph->getGraphNode(nodeIdx).getPoint(&enemy->mPosition);
+		JGeometry::TVec3<f32> pos;
+		graph->getGraphNode(nodeIdx).getPoint(&pos);
+		enemy->mPosition = pos;
 		enemy->mPosition.y += 5.0f;
 		enemy->onLiveFlag(LIVE_FLAG_AIRBORNE);
 		enemy->reset();
@@ -92,8 +94,8 @@ void THauntLegManager::initSetEnemies()
 		     j < enemy->getMActor()->getModel()->getModelData()->getMaterialNum();
 		     ++j) {
 			SMS_InitPacket_TwoTevColor(
-			    ((THauntLeg*)unk18[i])->getMActor()->getModel(), j, GX_TEVREG1,
-			    &tevColorData1[colorIdx], GX_TEVREG2, &tevColorData2[colorIdx]);
+			    ((THauntLeg*)unk18[i])->getMActor()->getModel(), j, GX_TEVREG0,
+			    &tevColorData1[colorIdx], GX_TEVREG1, &tevColorData2[colorIdx]);
 		}
 
 		++colorIdx;
@@ -173,6 +175,7 @@ void THauntLeg::reset()
 	TWalkerEnemy::reset();
 }
 
+// TODO: same cross product codegen issues as TNameKuri::calcRootMatrix
 void THauntLeg::calcRootMatrix()
 {
 	gpCurHauntLeg = this;
@@ -319,9 +322,12 @@ MtxPtr THauntLeg::getTakingMtx()
 
 bool THauntLeg::isUseCallBack()
 {
-	return mSpine->getCurrentNerve() == &TNerveHauntLegHaunt::theNerve();
+	return mSpine->getCurrentNerve() == &TNerveHauntLegHaunt::theNerve() ? true
+	                                                                     : false;
 }
 
+// TODO: the jump speed constant is kept in f31 across getGravityY() in the
+// target, and the squared length is contracted into an fmadds there.
 DEFINE_NERVE(TNerveHauntLegHaunt, TLiveActor)
 {
 	THauntLeg* self = (THauntLeg*)spine->getBody();
@@ -341,7 +347,9 @@ DEFINE_NERVE(TNerveHauntLegHaunt, TLiveActor)
 
 			JGeometry::TVec3<f32> diff
 			    = self->mPosition - self->unk19C->mPosition;
-			if (diff.length() < 200.0f && self->unk19C->mHolder == nullptr
+			if (JGeometry::TUtil<f32>::sqrt(diff.x * diff.x + diff.y * diff.y
+			                                + diff.z * diff.z)
+			        < 200.0f && self->unk19C->mHolder == nullptr
 			    && self->unk19C->receiveMessage(self, 4)) {
 				self->mHeldObject = self->unk19C;
 				self->unk198      = 1;
