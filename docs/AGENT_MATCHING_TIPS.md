@@ -701,3 +701,31 @@ Two symptoms of a *missing* destructor, both meaning "the target keeps this in m
 Fix: give the smallest offending value/helper type an empty `~T() {}` and re-check.
 This is a global change, so re-run the baseline — one destructor can fix (or shift) many callsites at once.
 Concrete case: adding `~TMsRange<f32>()` (a field of `TSmallEnemyParams`) took several `TFooManager::load` functions from ~95% to 100%.
+
+## Shared inline header functions cost stack at every call site, in lockstep
+
+A near-100%-fuzzy function whose diff is *only* a uniform stack-offset shift
+(no wrong instructions, no reordering -- see "MWCC 1.2.5 stack padding bugs"
+above) is often not a bug in that `.cpp` file at all. Check whether the
+function calls an **inline member function defined in a shared header**
+(`Camera.hpp`, `TimeRec.hpp`, etc.). If so, the same phantom-slot offset will
+recur, unchanged, in every other `.cpp` that calls the same inline -- because
+the inline body is re-elaborated at each call site, not shared code.
+
+Confirmed this session: `TTimeRec::startTimer()`/`endTimer()` (inline in
+`include/System/TimeRec.hpp`) produce the identical +16-byte frame excess in
+both `TLiveManager::perform` (`src/Strategic/livemanager.cpp`) and
+`TObjManager::perform` (`src/Strategic/objmanager.cpp`) -- two unrelated
+classes, same delta, same header. `CPolarSubCamera::changeCamMode_()` (inline
+in `include/Camera/Camera.hpp`) shows the same pattern in
+`makeMtxForPrevTalk` (`src/Camera/CameraTalk.cpp`).
+
+This means: **fixing the header fixes every call site at once** (as the
+destructor tip above also found for a different mechanism), but it also means
+a wrong or speculative header edit regresses every call site at once. A
+session that finds this pattern should not patch one `.cpp` in isolation --
+diagnose and fix the header's own locals, then rebuild the *whole* report to
+confirm every affected unit moved together. Not yet solved for either header
+above; both still need someone to find which local in the inline body needs
+removing or restructuring, the way `NpcThrow.cpp`'s `f32 yaw` local was for a
+single-site case.
