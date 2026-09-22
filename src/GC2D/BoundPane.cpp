@@ -3,6 +3,11 @@
 
 TBoundPane::TBoundPane(J2DScreen* param_1, u32 param_2)
 {
+	unk14.x1 = 0;
+	unk14.y1 = 0;
+	unk14.x2 = 0;
+	unk14.y2 = 0;
+
 	unk0  = param_1->search(param_2);
 	unk4  = unk0->mBounds;
 	unk28 = 0.0f;

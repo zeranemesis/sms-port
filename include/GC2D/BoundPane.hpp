@@ -25,7 +25,12 @@ public:
 public:
 	/* 0x0 */ J2DPane* unk0;
 	/* 0x4 */ JUTRect unk4;
-	/* 0x14 */ JUTRect unk14;
+	// Not a JUTRect: the retail ctor zeroes these four fields with raw
+	// stores instead of a JUTRect::set(0,0,0,0) call, so this member can't
+	// carry JUTRect's non-trivial default constructor.
+	/* 0x14 */ struct {
+		s32 x1, y1, x2, y2;
+	} unk14;
 	/* 0x24 */ bool unk24;
 	/* 0x25 */ bool unk25;
 	/* 0x28 */ f32 unk28;
