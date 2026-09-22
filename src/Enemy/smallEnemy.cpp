@@ -240,7 +240,8 @@ void TSmallEnemy::attackToMario()
 {
 	sendAttackMsgToMario();
 
-	// TODO: wtf
+	// NOTE: the zero Vec below is real: retail zeroes three stack slots
+	// (0x2c/0x30/0x34) here. Removing it regressed 87% -> 58%.
 	JGeometry::TVec3<f32> local_14(0, 0, 0);
 	(void)&local_14;
 
@@ -706,6 +707,9 @@ bool TSmallEnemy::changeMove()
 		}
 	}
 
+	// TODO: retail tail checks mLiveFlag 0xf0 bit31 and returns 1 if set;
+	// ours returns 0 unconditionally. Switch constants also off by one
+	// (retail cmpwi 2/3/4 vs ours 3/4/5 region). Needs state-enum work.
 	return 0;
 }
 
@@ -909,6 +913,8 @@ void TSmallEnemy::behaveToHitOthers(THitActor* param_1)
 	if (!isCollidMove(param_1))
 		return;
 
+	// NOTE: declaration order result-then-local verified: swapping them
+	// regressed 91.8% -> 88.9%.
 	JGeometry::TVec3<f32> result(0.0f, 0.0f, 0.0f);
 
 	JGeometry::TVec3<f32> local_14;

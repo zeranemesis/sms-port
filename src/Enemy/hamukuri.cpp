@@ -1194,6 +1194,12 @@ bool THamuKuri::isCollidMove(THitActor* param_1)
 	    || param_1->isActorType(0x10000013)
 	    || param_1->isActorType(0x10000011)) {
 		THamuKuri* hamu = (THamuKuri*)param_1;
+		// TODO: retail materializes the nerve comparisons to bool
+		// (li1/li0/clrlwi) instead of this &&-chain's direct branches;
+		// needs a helper or different spelling. Second BoundFreeze is
+		// a duplicated check in our source; retail checks SmallEnemyDie
+		// on self and WallDie on self with param pos for forceRoll.
+		// Direct rewrite regressed 92.7% -> 88.9%, so kept as-is.
 		if (hamu->mSpine->getCurrentNerve()
 		        != &TNerveHamuKuriBoundFreeze::theNerve()
 		    && hamu->mSpine->getCurrentNerve()
@@ -1238,6 +1244,9 @@ void THamuKuri::isSerialWallDie() { }
 
 void THamuKuri::forceRoll(JGeometry::TVec3<f32> param_1, bool param_2)
 {
+	// NOTE: operator* form must stay: retail calls scale(float) out of
+	// line here; spelling this as in-place scale() inlines to fmuls and
+	// regresses 90% -> 77%.
 	JGeometry::TVec3<f32> local_20(mPosition.x - param_1.x, 10.0f,
 	                               mPosition.z - param_1.z);
 
@@ -1687,14 +1696,17 @@ void TDangoHamuKuri::setRunAnm()
 
 void TDangoHamuKuri::calcRootMatrix()
 {
-	getModel()->setBaseScale(mPosition);
+	getModel()->setBaseScale(mScaling);
 	if (mHolder && mHolder->mHeldObject == this) {
 		MtxPtr takingMtx = getTakingMtx();
 		if (takingMtx) {
 			if (unk230) {
 				unk210 += 40.0f;
 				if (unk210 > 360.0f) {
-					// TODO: should be a rand interval
+					// TODO: retail evaluates (20-10) BEFORE rand() and
+					// keeps it across the call; MsRandF(l, r) header is
+					// rand-first. Explicit range-first regressed (const
+					// folding) so kept as-is; see TMsRange in RandomUtil.
 					unk210 = -MsRandF(10.0f, 20.0f);
 					unk230 = 0;
 				}
@@ -2255,7 +2267,7 @@ void TDoroHamuKuri::setBehavior()
 	}
 }
 
-void TDoroHamuKuri::onHaveCap()
+inline void TDoroHamuKuri::onHaveCap()
 {
 	unk198                    = 1;
 	TDoroHamuKuriManager* man = (TDoroHamuKuriManager*)getManager();

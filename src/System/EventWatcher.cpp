@@ -454,10 +454,12 @@ static void evGetPollutionLevel(TSpcTypedInterp<TEventWatcher>* interp,
 
 static void evSetEventStart(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
+	// TODO: stubbed UNUSED; map sizes: Start 0x174, End 0x148. Needs bodies.
 }
 
 static void evSetEventEnd(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
+	// TODO: stubbed UNUSED; map sizes: Start 0x174, End 0x148. Needs bodies.
 }
 
 static void evSetNextStage(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
