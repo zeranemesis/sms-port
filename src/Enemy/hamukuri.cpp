@@ -361,6 +361,11 @@ void THaneHamuKuriManager::load(JSUMemoryInputStream& stream)
 	TSmallEnemyManager::load(stream);
 }
 
+// TODO: retail keeps `bl THaneHamuKuri::THaneHamuKuri` here (name "はねハムクリ")
+// but MWCC inlines the 96B ctor (base-ctor bl + vtable/float stores);
+// all 6 sibling `new X;` sites keep bl, incl. the smaller 68B
+// TDoroHamuKuri ctor, so this is not a size threshold. Explicit-arg
+// spelling tested, no change. Inline-steering TBD.
 TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 {
 	return new THaneHamuKuri;
@@ -1138,6 +1143,8 @@ MtxPtr THamuKuri::getTakingMtx()
 	MsMtxSetRotRPH(afStack_84, 0.0f, 0.0f, 0.0f);
 	MTXConcat(mat, afStack_84, mat);
 
+	MtxPtr takingMtx = unk1B0;
+
 	// TODO: identity33 but order is transposed?!
 	unk1B0[0][0] = 1.0f;
 	unk1B0[0][1] = 0.0f;
@@ -1151,9 +1158,9 @@ MtxPtr THamuKuri::getTakingMtx()
 	unk1B0[2][1] = 0.0f;
 	unk1B0[2][2] = 1.0f;
 
-	MTXConcat(mat, unk1B0, unk1B0);
+	MTXConcat(mat, takingMtx, takingMtx);
 
-	return unk1B0;
+	return takingMtx;
 }
 
 bool THamuKuri::isResignationAttack()
@@ -1180,6 +1187,9 @@ bool THamuKuri::isHitValid(u32 param_1)
 
 	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return false;
+
+	if (param_1 == HIT_MESSAGE_UNKB)
+		onLiveFlag(LIVE_FLAG_HIDDEN);
 
 	return true;
 }
@@ -2139,6 +2149,11 @@ void TFireHamuKuri::walkBehavior(int param_1, f32 param_2)
 	}
 }
 
+// TODO: retail tail (after HIDDEN check) is `if (param_1 ==
+// HIT_MESSAGE_UNKB) onLiveFlag(LIVE_FLAG_HIDDEN); return true;`
+// (same tail as THamuKuri::isHitValid, verified there 93.0% -> 96.6%),
+// but retail keeps `bl requestSerialKill` out-of-line here while MWCC
+// inlines it (0.0%); re-apply tail once inline steering is solved.
 bool TFireHamuKuri::isHitValid(u32 param_1)
 {
 	if (param_1 == 11)
