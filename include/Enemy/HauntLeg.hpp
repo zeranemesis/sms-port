@@ -26,7 +26,7 @@ public:
 
 class THauntLegManager : public TSmallEnemyManager {
 public:
-	THauntLegManager(const char* name);
+	THauntLegManager(const char* name = "ハントレッグマネージャー");
 
 	virtual void load(JSUMemoryInputStream& stream);
 	virtual void createModelData();
