@@ -454,10 +454,24 @@ static void evGetPollutionLevel(TSpcTypedInterp<TEventWatcher>* interp,
 
 static void evSetEventStart(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
+	interp->verifyArgNum(1, &arg_num);
+	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
+	if (event) {
+		event->startControl();
+		event->unk18 = 2;
+		event->unk1C = nullptr;
+		u32 dummy = event->unk18;
+		(void)dummy;
+	}
+	interp->push();
 }
 
 static void evSetEventEnd(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
+	interp->verifyArgNum(1, &arg_num);
+	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
+	event->finishControl();
+	interp->push();
 }
 
 static void evSetNextStage(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
@@ -1276,6 +1290,25 @@ static void evIsWaterMelonIsReached(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push(result);
 }
 
+static void evStartMontemanBGM(TSpcTypedInterp<TEventWatcher>* interp,
+                                u32 arg_num)
+{
+	interp->verifyArgNum(0, &arg_num);
+	MSBgm::stopTrackBGM(0, 10);
+	MSBgm::startBGM(0x8001002F);
+	if (SMSGetMSound()->gateCheck(0x4851))
+		MSoundSESystem::MSoundSE::startSoundSystemSE(0x4851, 0, nullptr, 0);
+	interp->push();
+}
+
+static void evStartMontemanFanfare(TSpcTypedInterp<TEventWatcher>* interp,
+                                   u32 arg_num)
+{
+	interp->verifyArgNum(0, &arg_num);
+	MSBgm::startBGM(0x80010026);
+	interp->push();
+}
+
 template <> void TSpcTypedBinary<TEventWatcher>::initUserBuiltin()
 {
 	// clang-format off
@@ -1356,6 +1389,8 @@ template <> void TSpcTypedBinary<TEventWatcher>::initUserBuiltin()
   bindSystemDataToSymbol("appearReadyGo", (u32)&evAppearReadyGo);
   bindSystemDataToSymbol("onNeutralMarioKey", (u32)&evOnNeutralMarioKey);
   bindSystemDataToSymbol("invalidatePad", (u32)&evInvalidatePad);
+  bindSystemDataToSymbol("startMontemanBGM", (u32)&evStartMontemanBGM);
+  bindSystemDataToSymbol("startMontemanFanfare", (u32)&evStartMontemanFanfare);
   bindSystemDataToSymbol("checkWoodBox", (u32)&evCheckWoodBox);
   bindSystemDataToSymbol("refreshWoodBox", (u32)&evRefreshWoodBox);
   bindSystemDataToSymbol("killWoodBox", (u32)&evKillWoodBox);

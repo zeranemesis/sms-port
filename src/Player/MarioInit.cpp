@@ -935,7 +935,7 @@ TMario::TEParams::TEParams(const char* prm)
     , PARAM_INIT(mMotor, 0)
     , PARAM_INIT(mMinSpeed, 0.0f)
     , PARAM_INIT(mDirty, 0.0f)
-    , PARAM_INIT(mInvincibleTime, 0)
+    , PARAM_INIT(mInvincibleTime, 300)
 {
 	TParams::load(mPrmPath);
 }

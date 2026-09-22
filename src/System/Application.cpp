@@ -77,6 +77,9 @@ TARAMBlock gArBkGuide;
 
 extern "C" void ReInitializeGX();
 
+// Retail keeps an out-of-line call in SMSGetAnmFrameRate, so prevent
+// inlining here (initialize already calls out-of-line).
+#pragma dont_inline on
 f32 SMSGetRealVSyncTimesPerSec()
 {
 	f32 result = 60.0f;
@@ -92,6 +95,7 @@ f32 SMSGetRealVSyncTimesPerSec()
 	}
 	return result;
 }
+#pragma dont_inline off
 
 f32 SMSGetVSyncTimesPerSec()
 {
@@ -270,7 +274,8 @@ void TApplication::initialize()
 	                       SMSGetGCLogoRenderHeight());
 	TFlagManager::start(JKRGetCurrentHeap());
 	TTimeRec::start(0xDFC0);
-	TTimeRec::instance()->unk81C |= 1;
+	u16* unk81C = &TTimeRec::instance()->unk81C;
+	*unk81C |= 1;
 	TDrawSyncManager::smInstance->setCallback(0, 0xDFC0, 0xDFFF,
 	                                          TTimeRec::instance());
 	mMeter = new TProcessMeter(2);
@@ -547,6 +552,7 @@ bool TApplication::checkAdditionalMovie()
 void TApplication::proc()
 {
 	while (mAppState != APP_STATE_QUIT) {
+		mDisplay->unk4C = 2;
 		u8 nextState = APP_STATE_DEFAULT;
 		int iVar9    = 0;
 
@@ -569,7 +575,7 @@ void TApplication::proc()
 			TMenuDirector* dir = new TMenuDirector;
 			mDirector          = dir;
 			dir->setup(mDisplay, mGamePads[0]);
-			TFlagManager::getInstance()->setFlag(3, 0x20001);
+			TFlagManager::getInstance()->setFlag(0x20001, 3);
 			mCurrArea.set(1, 0, 0);
 		} break;
 
@@ -577,6 +583,8 @@ void TApplication::proc()
 			if (checkAdditionalMovie()) {
 				// Show a movie before entering a stage, e.g. the secret levels
 				SMSSetupMovieRenderingInfo(mDisplay);
+				if (mDisplay->getRenderMode().viTVmode >> 2 == VI_PAL)
+					mDisplay->unk4C = 1;
 				mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 				                       (u16)SMSGetGameRenderHeight());
 				TMovieDirector* dir = new TMovieDirector;
@@ -611,6 +619,8 @@ void TApplication::proc()
 
 		case APP_STATE_MOVIE: {
 			SMSSetupMovieRenderingInfo(mDisplay);
+			if (mDisplay->getRenderMode().viTVmode >> 2 == VI_PAL)
+				mDisplay->unk4C = 1;
 			mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 			                       (u16)SMSGetGameRenderHeight());
 			TMovieDirector* dir = new TMovieDirector;
@@ -716,19 +726,17 @@ int TApplication::gameLoop()
 			JDrama::TGraphics graphics;
 			graphics.unkFE = 0;
 
-			JDrama::TVideo* video = mDisplay->unk60;
-			GXSetViewport(0.0f, 0.0f, video->mNextRenderMode.fbWidth,
-			              video->mNextRenderMode.efbHeight, 0.0f, 1.0f);
-			GXSetScissor(0, 0, video->mNextRenderMode.fbWidth,
-			             video->mNextRenderMode.efbHeight);
+			GXRenderModeObj& renderMode = mDisplay->unk60->mNextRenderMode;
+			GXSetViewport(0.0f, 0.0f, renderMode.fbWidth,
+			              renderMode.efbHeight, 0.0f, 1.0f);
+			GXSetScissor(0, 0, renderMode.fbWidth, renderMode.efbHeight);
 			Mtx afStack_1ac;
-			C_MTXOrtho(afStack_1ac, 0.0f, (f32)video->mNextRenderMode.fbWidth,
-			           0.0f, (f32)video->mNextRenderMode.efbHeight, -1.0f,
-			           1.0f);
+			C_MTXOrtho(afStack_1ac, 0.0f, (f32)renderMode.fbWidth, 0.0f,
+			           (f32)renderMode.efbHeight, -1.0f, 1.0f);
 			GXSetProjection(afStack_1ac, GX_ORTHOGRAPHIC);
 			mFader->update();
-			mFader->draw(JDrama::TRect(0, 0, video->mNextRenderMode.fbWidth,
-			                           video->mNextRenderMode.efbHeight));
+			mFader->draw(JDrama::TRect(0, 0, renderMode.fbWidth,
+			                           renderMode.efbHeight));
 			if (gpMSound != nullptr)
 				gpMSound->mainLoop();
 		}

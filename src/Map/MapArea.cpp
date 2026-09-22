@@ -18,7 +18,7 @@ static bool checkLinesCollision(f32 x0, f32 z0, f32 x1, f32 z1, f32 x2, f32 z2,
 	return true;
 }
 
-static bool checkLinePolygonCollision(f32 x0, f32 z0, f32 x1, f32 z1,
+static inline bool checkLinePolygonCollision(f32 x0, f32 z0, f32 x1, f32 z1,
                                       TBGCheckData* data)
 {
 	if (checkLinesCollision(x0, z0, x1, z1, data->getPoint1().x,
@@ -36,7 +36,7 @@ static bool checkLinePolygonCollision(f32 x0, f32 z0, f32 x1, f32 z1,
 	return false;
 }
 
-static bool pointIsInPolygon(f32 x, f32 z, TBGCheckData* data)
+static inline bool pointIsInPolygon(f32 x, f32 z, TBGCheckData* data)
 {
 	if ((data->mPoint1.z - z) * (data->mPoint2.x - data->mPoint1.x)
 	        - (data->mPoint1.x - x) * (data->mPoint2.z - data->mPoint1.z)
@@ -59,7 +59,7 @@ static bool pointIsInPolygon(f32 x, f32 z, TBGCheckData* data)
 	return true;
 }
 
-static bool pointIsInGrid(f32 x, f32 z, f32 minX, f32 minZ, f32 maxX, f32 maxZ)
+static inline bool pointIsInGrid(f32 x, f32 z, f32 minX, f32 minZ, f32 maxX, f32 maxZ)
 {
 	if (minX <= x && x <= maxX && minZ <= z && z <= maxZ) {
 		return true;

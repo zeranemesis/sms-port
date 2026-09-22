@@ -1478,9 +1478,18 @@ void TWaterGun::changeNozzle(TNozzleType nozzleType, bool animate)
 
 void TWaterGun::movement()
 {
-	if (!canSpray()) {
+	if (mCurrentWater == 0) {
 		unk1CC2 = 0;
 		unk1CC4 = 0;
+	} else {
+		u8 directorMode = gpMarDirector->unk124;
+		if (directorMode == 3 || directorMode == 4 || (directorMode != 1 && directorMode != 2)) {
+			unk1CC2 = 0;
+			unk1CC4 = 0;
+		} else if (!canSpray()) {
+			unk1CC2 = 0;
+			unk1CC4 = 0;
+		}
 	}
 
 	unk1CC8 += (unk1CC2 - unk1CC8) * mWatergunParams.mChangeSpeed.get();
@@ -1888,7 +1897,7 @@ BOOL TWaterGun::damage()
 
 void TWaterGun::changeBackup()
 {
-	// TODO: Missing stack space
+	// TODO: Missing stack space (original has 8 extra bytes for alignment)
 	// volatile u32 unused2[5];
 	if (mSwitchToSecondNozzleProgress == 0.0f) {
 		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_POMP_BACK, 0,

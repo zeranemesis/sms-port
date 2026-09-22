@@ -40,6 +40,10 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// Force emission of weak inline functions that appear in the original binary
+static MActorAnmData* (TMActorKeeper::*force_emit_getMActorAnmData)() const = &TMActorKeeper::getMActorAnmData;
+static JGeometry::TVec3<f32>& (*force_emit_SMS_GetMarioPos)() = &SMS_GetMarioPos;
+
 const char* bgeso_bastable[] = {
 	nullptr,
 	"/scene/bgeso/bas/bgeso_cannon.bas",
@@ -190,7 +194,7 @@ BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
 			mHolder = actor;
 
 			if (mOwner->unk190.color.a != 0)
-				mOwner->showMessage(0xE0028);
+				mOwner->showMessage(0x25);
 
 			return true;
 		}
@@ -699,8 +703,19 @@ f32 TBossGesso::lenFromToeToMario()
 
 void TBossGesso::showMessage(u32 param_1)
 {
-	u32 idx  = param_1 == 0xE0028 ? 3 : param_1 - 0xE0003;
-	u32 flag = param_1 == 0xE0003 ? 0 : 1 << idx;
+	u32 idx;
+	if (param_1 == 0x25) {
+		idx = 3;
+	} else {
+		idx = param_1 - 3;
+	}
+
+	u32 flag;
+	if (param_1 == 3) {
+		flag = 0;
+	} else {
+		flag = 1 << idx;
+	}
 
 	if ((unk198 & flag) == 0)
 		gpMarDirector->getConsole()->startAppearBalloon(param_1, true);
@@ -809,6 +824,8 @@ void TBossGesso::gotTentacleDamage()
 	mSpine->reset();
 	mSpine->setNext(&TNerveBGTentacleDamage::theNerve());
 	mSpine->pushAfterCurrent(&TNerveBGWait::theNerve());
+
+	unk1A0 = 1;
 }
 
 void TBossGesso::gotEyeDamage()
@@ -1266,7 +1283,7 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 			if (toMario.squared() < 4000000.0f) {
 				unk19C++;
 				if (unk19C >= 1200) {
-					showMessage(0xE0004);
+					showMessage(4);
 					unk1A0 = 1;
 				}
 			}

@@ -361,6 +361,11 @@ void THaneHamuKuriManager::load(JSUMemoryInputStream& stream)
 	TSmallEnemyManager::load(stream);
 }
 
+// TODO: retail keeps `bl THaneHamuKuri::THaneHamuKuri` here (name "はねハムクリ")
+// but MWCC inlines the 96B ctor (base-ctor bl + vtable/float stores);
+// all 6 sibling `new X;` sites keep bl, incl. the smaller 68B
+// TDoroHamuKuri ctor, so this is not a size threshold. Explicit-arg
+// spelling tested, no change. Inline-steering TBD.
 TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 {
 	return new THaneHamuKuri;
@@ -909,6 +914,7 @@ void THamuKuri::setBehavior()
 
 void THamuKuri::changeCapHolder() { }
 
+#pragma dont_inline on
 void THamuKuri::selectCapHolder()
 {
 	if (!gpMarioOriginal->isWearingCap()) {
@@ -926,6 +932,7 @@ void THamuKuri::selectCapHolder()
 		}
 	}
 }
+#pragma dont_inline off
 
 void THamuKuri::makeCapFly(TMapObjBase* param_1)
 {
@@ -1136,6 +1143,8 @@ MtxPtr THamuKuri::getTakingMtx()
 	MsMtxSetRotRPH(afStack_84, 0.0f, 0.0f, 0.0f);
 	MTXConcat(mat, afStack_84, mat);
 
+	MtxPtr takingMtx = unk1B0;
+
 	// TODO: identity33 but order is transposed?!
 	unk1B0[0][0] = 1.0f;
 	unk1B0[0][1] = 0.0f;
@@ -1149,9 +1158,9 @@ MtxPtr THamuKuri::getTakingMtx()
 	unk1B0[2][1] = 0.0f;
 	unk1B0[2][2] = 1.0f;
 
-	MTXConcat(mat, unk1B0, unk1B0);
+	MTXConcat(mat, takingMtx, takingMtx);
 
-	return unk1B0;
+	return takingMtx;
 }
 
 bool THamuKuri::isResignationAttack()
@@ -1179,6 +1188,9 @@ bool THamuKuri::isHitValid(u32 param_1)
 	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
 		return false;
 
+	if (param_1 == HIT_MESSAGE_UNKB)
+		onLiveFlag(LIVE_FLAG_HIDDEN);
+
 	return true;
 }
 
@@ -1192,6 +1204,12 @@ bool THamuKuri::isCollidMove(THitActor* param_1)
 	    || param_1->isActorType(0x10000013)
 	    || param_1->isActorType(0x10000011)) {
 		THamuKuri* hamu = (THamuKuri*)param_1;
+		// TODO: retail materializes the nerve comparisons to bool
+		// (li1/li0/clrlwi) instead of this &&-chain's direct branches;
+		// needs a helper or different spelling. Second BoundFreeze is
+		// a duplicated check in our source; retail checks SmallEnemyDie
+		// on self and WallDie on self with param pos for forceRoll.
+		// Direct rewrite regressed 92.7% -> 88.9%, so kept as-is.
 		if (hamu->mSpine->getCurrentNerve()
 		        != &TNerveHamuKuriBoundFreeze::theNerve()
 		    && hamu->mSpine->getCurrentNerve()
@@ -1236,6 +1254,9 @@ void THamuKuri::isSerialWallDie() { }
 
 void THamuKuri::forceRoll(JGeometry::TVec3<f32> param_1, bool param_2)
 {
+	// NOTE: operator* form must stay: retail calls scale(float) out of
+	// line here; spelling this as in-place scale() inlines to fmuls and
+	// regresses 90% -> 77%.
 	JGeometry::TVec3<f32> local_20(mPosition.x - param_1.x, 10.0f,
 	                               mPosition.z - param_1.z);
 
@@ -1391,12 +1412,17 @@ bool THaneHamuKuri::isCollidMove(THitActor* param_1)
 	return TSmallEnemy::isCollidMove(param_1);
 }
 
-bool THaneHamuKuri::isHitValid(u32)
+bool THaneHamuKuri::isHitValid(u32 param_1)
 {
-	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
+	// NOTE: direct mLiveFlag access (not check/onLiveFlag inlines) so MWCC
+	// reuses the loaded value instead of reloading it.
+	if (mLiveFlag & LIVE_FLAG_HIDDEN)
 		return false;
-	else
+	else {
+		if (param_1 == 0xb)
+			mLiveFlag |= LIVE_FLAG_HIDDEN;
 		return true;
+	}
 }
 
 void THaneHamuKuri::resetFlyParam() { }
@@ -1680,14 +1706,17 @@ void TDangoHamuKuri::setRunAnm()
 
 void TDangoHamuKuri::calcRootMatrix()
 {
-	getModel()->setBaseScale(mPosition);
+	getModel()->setBaseScale(mScaling);
 	if (mHolder && mHolder->mHeldObject == this) {
 		MtxPtr takingMtx = getTakingMtx();
 		if (takingMtx) {
 			if (unk230) {
 				unk210 += 40.0f;
 				if (unk210 > 360.0f) {
-					// TODO: should be a rand interval
+					// TODO: retail evaluates (20-10) BEFORE rand() and
+					// keeps it across the call; MsRandF(l, r) header is
+					// rand-first. Explicit range-first regressed (const
+					// folding) so kept as-is; see TMsRange in RandomUtil.
 					unk210 = -MsRandF(10.0f, 20.0f);
 					unk230 = 0;
 				}
@@ -2120,6 +2149,11 @@ void TFireHamuKuri::walkBehavior(int param_1, f32 param_2)
 	}
 }
 
+// TODO: retail tail (after HIDDEN check) is `if (param_1 ==
+// HIT_MESSAGE_UNKB) onLiveFlag(LIVE_FLAG_HIDDEN); return true;`
+// (same tail as THamuKuri::isHitValid, verified there 93.0% -> 96.6%),
+// but retail keeps `bl requestSerialKill` out-of-line here while MWCC
+// inlines it (0.0%); re-apply tail once inline steering is solved.
 bool TFireHamuKuri::isHitValid(u32 param_1)
 {
 	if (param_1 == 11)
@@ -2173,6 +2207,9 @@ void TFireHamuKuri::sendAttackMsgToMario()
 		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 }
 
+// single call site (moveObject); retail keeps bl, MWCC inlines without this
+// TODO: temporary inline-forcing aid; revisit with proper inline steering
+#pragma dont_inline on
 void TFireHamuKuri::changeTevColor()
 {
 	if (recoverFire()) {
@@ -2191,6 +2228,7 @@ void TFireHamuKuri::changeTevColor()
 		           + mFireHamOtherColorStart.b;
 	}
 }
+#pragma dont_inline off
 
 TDoroHamuKuri::TDoroHamuKuri(const char* name)
     : THamuKuri(name)
@@ -2248,7 +2286,7 @@ void TDoroHamuKuri::setBehavior()
 	}
 }
 
-void TDoroHamuKuri::onHaveCap()
+inline void TDoroHamuKuri::onHaveCap()
 {
 	unk198                    = 1;
 	TDoroHamuKuriManager* man = (TDoroHamuKuriManager*)getManager();

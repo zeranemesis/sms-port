@@ -240,7 +240,8 @@ void TSmallEnemy::attackToMario()
 {
 	sendAttackMsgToMario();
 
-	// TODO: wtf
+	// NOTE: the zero Vec below is real: retail zeroes three stack slots
+	// (0x2c/0x30/0x34) here. Removing it regressed 87% -> 58%.
 	JGeometry::TVec3<f32> local_14(0, 0, 0);
 	(void)&local_14;
 
@@ -706,7 +707,11 @@ bool TSmallEnemy::changeMove()
 		}
 	}
 
-	return 0;
+	// TODO: switch constants still off by one region (retail cmpwi 2/3/4
+	// vs ours); needs state-enum/case-order work. Tail fixed below.
+	if (mJuiceBlock->checkLiveFlag(LIVE_FLAG_DEAD))
+		return true;
+	return false;
 }
 
 void TSmallEnemy::scalingChangeActor()
@@ -909,6 +914,8 @@ void TSmallEnemy::behaveToHitOthers(THitActor* param_1)
 	if (!isCollidMove(param_1))
 		return;
 
+	// NOTE: declaration order result-then-local verified: swapping them
+	// regressed 91.8% -> 88.9%.
 	JGeometry::TVec3<f32> result(0.0f, 0.0f, 0.0f);
 
 	JGeometry::TVec3<f32> local_14;

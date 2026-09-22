@@ -221,8 +221,15 @@ TBGTakeHit::TBGTakeHit(TBGTentacle* owner, const char* name)
 }
 
 // TODO: these were almost surely calling onHitFlag/offHitFlag, but what flag?..
-void TBGTakeHit::enableAttackCheck() { }
-void TBGTakeHit::disableAttackCheck() { }
+void TBGTakeHit::enableAttackCheck()
+{
+	mOwner->mTakeHit->onHitFlag(HIT_FLAG_CANNOT_ATTACK);
+}
+
+void TBGTakeHit::disableAttackCheck()
+{
+	mOwner->mTakeHit->offHitFlag(HIT_FLAG_CANNOT_ATTACK);
+}
 
 MtxPtr TBGTakeHit::getTakingMtx() { return unk80; }
 
@@ -636,9 +643,15 @@ void TBGTentacle::throwMario(THitActor* param_1, THitActor* param_2)
 	mOwner->stopIfRoll();
 }
 
-BOOL TBGTentacle::isAttacking() const { }
+BOOL TBGTentacle::isAttacking() const
+{
+	return mState == 1 || mState == 2;
+}
 
-bool TBGTentacle::canTake() const { }
+bool TBGTentacle::canTake() const
+{
+	return mState == 4 && mTakeHit->getHolder() != nullptr;
+}
 
 f32 TBGTentacle::getNodeLen() const
 {
@@ -846,7 +859,10 @@ void TBGTentacle::changeStateAndFixNodes(int new_state)
 	mTakeHit->offHitFlag(HIT_FLAG_CANNOT_GET_HIT);
 }
 
-void TBGTentacle::returnToDefaultState() { }
+void TBGTentacle::returnToDefaultState()
+{
+	changeStateAndFixNodes(0);
+}
 
 void TBGTentacle::moveNode()
 {
@@ -980,8 +996,11 @@ void TBGTentacle::moveConstraint()
 	case 1:
 		for (int i = 0; i < mNodeNum; ++i) {
 			MtxPtr mtx = unk80->getModel()->getAnmMtx(i);
-			mNodes[i].setPosition(
-			    JGeometry::TVec3<f32>(mtx[0][0], mtx[0][1], mtx[0][2]));
+			JGeometry::TVec3<f32> pos;
+			pos.x = mtx[0][3];
+			pos.y = mtx[1][3];
+			pos.z = mtx[2][3];
+			mNodes[i].setPosition(pos);
 		}
 		int iVar10;
 		if (mOwner->beakHeld()) {
@@ -1003,8 +1022,11 @@ void TBGTentacle::moveConstraint()
 	case 10:
 		for (int i = 0; i < mNodeNum; ++i) {
 			MtxPtr mtx = unk80->getModel()->getAnmMtx(i);
-			mNodes[i].setPosition(
-			    JGeometry::TVec3<f32>(mtx[0][0], mtx[0][1], mtx[0][2]));
+			JGeometry::TVec3<f32> pos;
+			pos.x = mtx[0][3];
+			pos.y = mtx[1][3];
+			pos.z = mtx[2][3];
+			mNodes[i].setPosition(pos);
 		}
 		break;
 
