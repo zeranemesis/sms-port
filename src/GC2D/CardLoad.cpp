@@ -922,9 +922,7 @@ bool TCardLoad::titleDraw()
 		++unk258;
 	} break;
 
-	case 5:
-	case 6:
-	case 7:
+	default:
 		break;
 	}
 
@@ -2582,6 +2580,10 @@ void TCardLoad::changeScene()
 			drawMessage(PROGRESS_UNK0);
 		}
 	} break;
+	case 0x33:
+	case 0x34:
+	case 0x35:
+		break;
 	}
 
 	if (prevUnk1C != unk1C) {
