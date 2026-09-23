@@ -6,6 +6,7 @@
 #include <Map/Map.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
 #include <Player/MarioAccess.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
@@ -59,7 +60,7 @@ TYumboSeed::TYumboSeed(MActor* actor, const TYumbo& owner)
 void TYumboSeed::init()
 {
 	initHitActor(0x1000002A, 1, 0x80000000, 30.0f, 30.0f, 0.0f, 0.0f);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("弾グループ"))
+	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
 	    ->getChildren()
 	    .push_back(this);
 }
@@ -71,7 +72,8 @@ void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_CALC_ANIM) {
 		TPosition3f mtx;
-		mtx.translation(mPosition);
+		mtx.identity33();
+		mtx.setTrans(mPosition);
 		mActor->getModel()->setBaseScale(mScaling);
 		MTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
 		mActor->getModel()->calc();
@@ -94,10 +96,13 @@ void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TYumboSeed::checkHitActors()
 {
-	for (int i = 0; i < mColCount; ++i) {
-		if (mCollisions[i]->mActorType == 0x80000001) {
+	THitActor** end = mCollisions + mColCount;
+	for (THitActor** it = mCollisions; it != end; ++it) {
+		switch ((*it)->mActorType) {
+		case 0x80000001:
 			SMS_SendMessageToMario(this, 0xE);
 			mSeedFlags |= SEED_FLAG_UNUSED;
+			break;
 		}
 	}
 }
@@ -127,15 +132,14 @@ void TYumbo::init(TLiveManager* manager)
 	initMActorAndKeeper();
 	mSpine->initWith(&TNerveYumboDancing::theNerve());
 
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it) {
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it) {
 		*it = new TYumboSeed(mMActorKeeper->createMActor("samboSeed.bmd", 3),
 		                     *this);
 		(*it)->init();
 	}
 
 	initCollision();
-	mScaledBodyRadius = 75.0f;
-	mScaling.x = mScaling.y = mScaling.z = 1.5f;
 	initAnmSound();
 	mCenterJointIndex
 	    = getModel()->getModelData()->getJointName()->getIndex("center");
@@ -167,6 +171,8 @@ void TYumbo::initCollision()
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	mGroundHeight = gpMap->checkGround(
 	    mPosition.x, mPosition.y + mHeadHeight, mPosition.z, &mGroundPlane);
+	mScaledBodyRadius = 75.0f;
+	mScaling.set(1.5f, 1.5f, 1.5f);
 }
 
 BOOL TYumbo::receiveMessage(THitActor* sender, u32 message)
@@ -198,7 +204,8 @@ void TYumbo::moveObject()
 void TYumbo::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TSmallEnemy::perform(cue, graphics);
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it)
 		(*it)->perform(cue, graphics);
 }
 
@@ -245,9 +252,10 @@ bool TYumbo::isFindOutMario() const
 	    < getSaveLoadParam()->mSLSearchHeight.get()) {
 		JGeometry::TVec3<f32> target(gpMarioPos->x, mPosition.y,
 		                             gpMarioPos->z);
-		if (isInSight(target, getSaveLoadParam()->mSLSearchLength.get(),
-		              getSaveLoadParam()->mSLSearchAngle.get(),
-		              getSaveLoadParam()->mSLSearchAware.get()))
+		f32 length = getSaveLoadParam()->mSLSearchLength.get();
+		f32 angle  = getSaveLoadParam()->mSLSearchAngle.get();
+		f32 aware  = getSaveLoadParam()->mSLSearchAware.get();
+		if (isInSight(target, length, angle, aware))
 			return true;
 		return false;
 	}
@@ -256,11 +264,11 @@ bool TYumbo::isFindOutMario() const
 
 bool TYumbo::isWantToAppear() const
 {
-	if (getSaveLoadParam()->mSLGiveUpHeight.get()
-	    <= fabsf(gpMarioPos->y - mPosition.y))
+	f32 giveUpHeight = getSaveLoadParam()->mSLGiveUpHeight.get();
+	if (giveUpHeight <= fabsf(gpMarioPos->y - mPosition.y))
 		return true;
 
-	JGeometry::TVec3<f32> diff = *gpMarioPos;
+	JGeometry::TVec3<f32> diff = SMS_GetMarioPos();
 	diff -= mPosition;
 	diff.y      = 0.0f;
 	f32 giveUp = getSaveLoadParam()->mSLGiveUpLength.get();
@@ -269,7 +277,8 @@ bool TYumbo::isWantToAppear() const
 
 bool TYumbo::isAllSeedBroken() const
 {
-	for (TYumboSeed* const* it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed* const* end = mSeeds + 16;
+	for (TYumboSeed* const* it = mSeeds; it != end; ++it)
 		if (!((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED))
 			return false;
 	return true;
@@ -277,7 +286,8 @@ bool TYumbo::isAllSeedBroken() const
 
 bool TYumbo::isChangedBlock() const
 {
-	return mSpine->getLatestNerve() == &TNerveSmallEnemyChange::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveSmallEnemyChange::theNerve();
 }
 
 // TODO: the quaternion part is a rough guess and does not match yet
@@ -293,23 +303,21 @@ void TYumbo::shotSeeds()
 
 	JGeometry::TVec3<f32> velocity = *gpMarioPos;
 	velocity -= mPosition;
-	velocity.y += 200.0f * (0.5f + rand() * (1.0f / 32768.0f));
+	velocity.y += 200.0f * (0.5f + MsRandF());
 	velocity.setLength(getSaveLoadParam()->mShootSpeed.get());
 
+	f32 angleY = MsGetRotFromZaxisY(velocity);
 	JGeometry::TQuat4<f32> yaw;
-	yaw.setRotate(JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f),
-	              -(MsGetRotFromZaxisY(velocity) * (3.1415927f / 180.0f)));
-	yaw.rotate(velocity);
+	yaw.setEulerY(-(0.017453294f * angleY));
+	yaw.rotate(velocity, velocity);
 
 	JGeometry::TQuat4<f32> spin;
-	spin.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f),
-	               6.2831855f * (rand() * (1.0f / 32768.0f)));
+	spin.setEulerZ(6.2831855f * MsRandF());
 	JGeometry::TQuat4<f32> tilt;
-	tilt.setRotate(JGeometry::TVec3<f32>(1.0f, 0.0f, 0.0f),
-	               -3.1415927f * getSaveLoadParam()->mShootAngleX.get());
+	tilt.setEulerX(-3.1415927f * getSaveLoadParam()->mShootAngleX.get());
 	JGeometry::TQuat4<f32> rot;
 	rot.mul(spin, tilt);
-	rot.rotate(velocity);
+	rot.rotate(velocity, velocity);
 
 	seed->startToMove(mPosition, velocity,
 	                  getSaveLoadParam()->mSeedLife.get());
@@ -343,17 +351,20 @@ bool TYumbo::isWaterproof() const
 
 bool TYumbo::isFreeze() const
 {
-	return mSpine->getLatestNerve() == &TNerveYumboFreeze::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveYumboFreeze::theNerve();
 }
 
 bool TYumbo::isDead() const
 {
-	return mSpine->getLatestNerve() == &TNerveSmallEnemyDie::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveSmallEnemyDie::theNerve();
 }
 
 TYumboSeed* TYumbo::getUnusedSeed()
 {
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it)
 		if ((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED)
 			return *it;
 	return nullptr;
@@ -425,6 +436,9 @@ DEFINE_NERVE(TNerveYumboDancing, TLiveActor)
 	if (spine->getTime() == 0)
 		self->setBckAnm(2);
 
+	// TODO: the target inlines MsGetRotFromZaxisY through lookatMario here, we
+	// hit the inline depth limit instead. Spelling the lookatMario body out
+	// here matches (99.6%), which hints at a different inline structure.
 	self->lookatMario();
 	if (self->isFindOutMario()) {
 		spine->pushAfterCurrent(&TNerveYumboHiding::theNerve());
