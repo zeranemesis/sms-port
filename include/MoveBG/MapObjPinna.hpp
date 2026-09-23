@@ -114,9 +114,16 @@ public:
 
 class TPinnaCoaster : public TMapObjBase {
 public:
-	void control();
-	void initMapObj();
+	virtual void control();
+	virtual void initMapObj();
 	TPinnaCoaster(const char* name = "コースター");
+
+public:
+	/* 0x138 */ int unk138;
+	/* 0x13C */ char unk13C[4]; // TODO: padding or unknown field
+	/* 0x148 */ f32 unk148;
+	/* 0x144 */ f32 unk144;
+	/* 0x140 */ f32 unk140;
 };
 
 class TMerryPole : public TMapObjBase {
