@@ -59,7 +59,7 @@ TYumboSeed::TYumboSeed(MActor* actor, const TYumbo& owner)
 void TYumboSeed::init()
 {
 	initHitActor(0x1000002A, 1, 0x80000000, 30.0f, 30.0f, 0.0f, 0.0f);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("弾グループ"))
+	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
 	    ->getChildren()
 	    .push_back(this);
 }
@@ -127,15 +127,14 @@ void TYumbo::init(TLiveManager* manager)
 	initMActorAndKeeper();
 	mSpine->initWith(&TNerveYumboDancing::theNerve());
 
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it) {
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it) {
 		*it = new TYumboSeed(mMActorKeeper->createMActor("samboSeed.bmd", 3),
 		                     *this);
 		(*it)->init();
 	}
 
 	initCollision();
-	mScaledBodyRadius = 75.0f;
-	mScaling.x = mScaling.y = mScaling.z = 1.5f;
 	initAnmSound();
 	mCenterJointIndex
 	    = getModel()->getModelData()->getJointName()->getIndex("center");
@@ -167,6 +166,8 @@ void TYumbo::initCollision()
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	mGroundHeight = gpMap->checkGround(
 	    mPosition.x, mPosition.y + mHeadHeight, mPosition.z, &mGroundPlane);
+	mScaledBodyRadius = 75.0f;
+	mScaling.set(1.5f, 1.5f, 1.5f);
 }
 
 BOOL TYumbo::receiveMessage(THitActor* sender, u32 message)
@@ -198,7 +199,8 @@ void TYumbo::moveObject()
 void TYumbo::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TSmallEnemy::perform(cue, graphics);
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it)
 		(*it)->perform(cue, graphics);
 }
 
@@ -269,7 +271,8 @@ bool TYumbo::isWantToAppear() const
 
 bool TYumbo::isAllSeedBroken() const
 {
-	for (TYumboSeed* const* it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed* const* end = mSeeds + 16;
+	for (TYumboSeed* const* it = mSeeds; it != end; ++it)
 		if (!((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED))
 			return false;
 	return true;
@@ -277,7 +280,8 @@ bool TYumbo::isAllSeedBroken() const
 
 bool TYumbo::isChangedBlock() const
 {
-	return mSpine->getLatestNerve() == &TNerveSmallEnemyChange::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveSmallEnemyChange::theNerve();
 }
 
 // TODO: the quaternion part is a rough guess and does not match yet
@@ -297,16 +301,13 @@ void TYumbo::shotSeeds()
 	velocity.setLength(getSaveLoadParam()->mShootSpeed.get());
 
 	JGeometry::TQuat4<f32> yaw;
-	yaw.setRotate(JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f),
-	              -(MsGetRotFromZaxisY(velocity) * (3.1415927f / 180.0f)));
+	yaw.setEulerY(-(0.017453294f * MsGetRotFromZaxisY(velocity)));
 	yaw.rotate(velocity);
 
 	JGeometry::TQuat4<f32> spin;
-	spin.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f),
-	               6.2831855f * (rand() * (1.0f / 32768.0f)));
+	spin.setEulerZ(6.2831855f * (rand() * (1.0f / 32768.0f)));
 	JGeometry::TQuat4<f32> tilt;
-	tilt.setRotate(JGeometry::TVec3<f32>(1.0f, 0.0f, 0.0f),
-	               -3.1415927f * getSaveLoadParam()->mShootAngleX.get());
+	tilt.setEulerX(-3.1415927f * getSaveLoadParam()->mShootAngleX.get());
 	JGeometry::TQuat4<f32> rot;
 	rot.mul(spin, tilt);
 	rot.rotate(velocity);
@@ -343,17 +344,20 @@ bool TYumbo::isWaterproof() const
 
 bool TYumbo::isFreeze() const
 {
-	return mSpine->getLatestNerve() == &TNerveYumboFreeze::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveYumboFreeze::theNerve();
 }
 
 bool TYumbo::isDead() const
 {
-	return mSpine->getLatestNerve() == &TNerveSmallEnemyDie::theNerve();
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveSmallEnemyDie::theNerve();
 }
 
 TYumboSeed* TYumbo::getUnusedSeed()
 {
-	for (TYumboSeed** it = mSeeds; it != mSeeds + 16; ++it)
+	TYumboSeed** end = mSeeds + 16;
+	for (TYumboSeed** it = mSeeds; it != end; ++it)
 		if ((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED)
 			return *it;
 	return nullptr;
