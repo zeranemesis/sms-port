@@ -231,8 +231,8 @@ void TElecNokonoko::calcRootMatrix()
 {
 	TSpineEnemy::calcRootMatrix();
 	if (isCarapaceOn(this)) {
-		const TNerveBase<TLiveActor>* nerve = mSpine->getCurrentNerve();
-		if (nerve != &TNerveElecNokonokoFreeze::theNerve()
+		const TNerveBase<TLiveActor>* nerve;
+		if ((nerve = mSpine->getCurrentNerve()) != &TNerveElecNokonokoFreeze::theNerve()
 		    && nerve != &TNerveSmallEnemyDie::theNerve()) {
 			if (mSpine->getCurrentNerve()
 			    != &TNerveElecNokonokoCollect::theNerve()) {
@@ -240,27 +240,27 @@ void TElecNokonoko::calcRootMatrix()
 				                                &mPosition, 0, nullptr, 0, 4);
 				if (JPABaseEmitter* emitter
 				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17A, getModel()->getAnmMtx(7), 1, this))
+				        0x17A, getMActor()->getModel()->getAnmMtx(7), 1, this))
 					emitter->setGlobalScale(mScaling);
 				if (JPABaseEmitter* emitter
 				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17B, getModel()->getAnmMtx(7), 1, this))
+				        0x17B, getMActor()->getModel()->getAnmMtx(7), 1, this))
 					emitter->setGlobalScale(mScaling);
 				if (JPABaseEmitter* emitter
 				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17C, getModel()->getAnmMtx(7), 1, this))
+				        0x17C, getMActor()->getModel()->getAnmMtx(7), 1, this))
 					emitter->setGlobalScale(mScaling);
 			}
 		}
 	}
 
-	if (isBckAnm(2)) {
+	if (mCurrentBckAnm == 2) {
 		if (JPABaseEmitter* emitter
 		    = gpMarioParticleManager->emitAndBindToMtxPtr(
-		        0x17D, getModel()->getAnmMtx(0), 1, this))
+		        0x17D, getMActor()->getModel()->getAnmMtx(0), 1, this))
 			emitter->setGlobalScale(mScaling);
 
-		MtxPtr mtx = getModel()->getAnmMtx(8);
+		MtxPtr mtx = getMActor()->getModel()->getAnmMtx(8);
 		unk1A8.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		if (JPABaseEmitter* emitter
 		    = gpMarioParticleManager->emitAndBindToPosPtr(0x17E, &unk1A8, 1,
@@ -305,8 +305,7 @@ BOOL TElecNokonoko::receiveMessage(THitActor* sender, u32 message)
 		return TRUE;
 	}
 
-	switch (message) {
-	case HIT_MESSAGE_TRAMPLE:
+	if (message == HIT_MESSAGE_TRAMPLE) {
 		if (unk1A4 == 1) {
 			mHitPoints = 1;
 			kill();
@@ -314,7 +313,9 @@ BOOL TElecNokonoko::receiveMessage(THitActor* sender, u32 message)
 		}
 		SMS_SendMessageToMario(this, 9);
 		return FALSE;
-	case HIT_MESSAGE_SPRAYED_BY_WATER:
+	}
+
+	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		if (!changeByJuice())
 			behaveToWater(sender);
 		else
@@ -329,9 +330,7 @@ bool TElecNokonoko::isResignationAttack()
 {
 	f32 range = mParams->mSLCarapaceShootRange.get();
 	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-		JGeometry::TVec3<f32> diff = getUnk104().getPoint();
-		diff -= mPosition;
-		if (diff.length() < range) {
+		if ((unk104.getPoint() - mPosition).length() < range) {
 			mSpine->pushAfterCurrent(&TNerveElecNokonokoShoot::theNerve());
 			return true;
 		}
@@ -405,7 +404,7 @@ void TElecNokonoko::setMeltAnm()
 	unk18C               = 3;
 	mCarapace->mVelocity = zero;
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0xCA, getModel()->getAnmMtx(0), 0, nullptr))
+	        0xCA, getMActor()->getModel()->getAnmMtx(0), 0, nullptr))
 		emitter->setGlobalScale(mScaling);
 }
 
@@ -510,7 +509,7 @@ void TElecCarapace::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_ENTRY) {
 		if (!isState(0) && !mOwner->checkLiveFlag(LIVE_FLAG_DEAD)) {
-			if (checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN))
+			if (mLiveFlag & (LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN))
 				return;
 
 			TCircleShadowRequest request;
@@ -521,7 +520,7 @@ void TElecCarapace::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 			request.mRadiusX = request.mRadiusZ = mOwner->mScaledBodyRadius;
 			request.mRotationY                  = mRotation.y;
-			gpBindShadowManager->request(request, mActorType);
+			gpBindShadowManager->request(request, getActorType());
 		}
 	}
 }
@@ -556,8 +555,10 @@ void TElecCarapace::behaveToHitWall(const TBGCheckData* wall)
 		unk184 = 0;
 		unk176 = 1;
 		unk175 = 1;
-		f32 t  = -1.5f * mLinearVelocity.dot(wall->mNormal);
-		mVelocity.set(t * wall->mNormal.x, 3.0f, t * wall->mNormal.z);
+		f32 t  = -1.5f * mLinearVelocity.dot(wall->getNormal());
+		mVelocity.x = t * wall->getNormal().x;
+		mVelocity.y = 3.0f;
+		mVelocity.z = t * wall->getNormal().z;
 		mPosition.y = 2.0f + mGroundHeight;
 		setGoalPath(TPathNode(mOwner->mPosition));
 	}
@@ -597,7 +598,7 @@ void TElecCarapace::shoot()
 		target.y += mPosition.y;
 		target.z += mPosition.z;
 
-		unk174 = unk174 == false;
+		unk174 = !unk174;
 		unk188 = 0.0f;
 		unk150 = 2;
 		unk176 = 0;
@@ -614,9 +615,8 @@ void TElecCarapace::shoot()
 void TElecCarapace::setZigParameter()
 {
 	f32 cycle = TMsRange<f32>(3.0f, 5.0f).rand();
-	JGeometry::TVec3<f32> diff = getUnk104().getPoint();
-	diff.sub(mPosition);
-	unk178 = cycle * JGeometry::TUtil<f32>::sqrt(diff.dot(diff));
+	// TODO: the target calls TVec3::dot out of line here, unknown why
+	unk178 = cycle * (unk104.getPoint() - mPosition).length();
 	unk17C = TMsRange<f32>(20.0f, 30.0f).rand();
 }
 
@@ -628,20 +628,20 @@ void TElecCarapace::bind()
 
 void TElecCarapace::calcRootMatrix()
 {
-	MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x, mPosition.y,
+	MsMtxSetXYZRPH(getMActor()->getModel()->getBaseTRMtx(), mPosition.x, mPosition.y,
 	               mPosition.z, mRotation.x, mRotation.y + unk188,
 	               mRotation.z);
-	getModel()->setBaseScale(mScaling);
+	getMActor()->getModel()->setBaseScale(mScaling);
 	SMSGetMSound()->startSoundActor(MSD_SE_EN_DENNOKO_SPARK2, &mPosition, 0,
 	                                nullptr, 0, 4);
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17A, getModel()->getAnmMtx(2), 1, this))
+	        0x17A, getMActor()->getModel()->getAnmMtx(2), 1, this))
 		emitter->setGlobalScale(mOwner->mScaling);
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17B, getModel()->getAnmMtx(2), 1, this))
+	        0x17B, getMActor()->getModel()->getAnmMtx(2), 1, this))
 		emitter->setGlobalScale(mOwner->mScaling);
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17C, getModel()->getAnmMtx(2), 1, this))
+	        0x17C, getMActor()->getModel()->getAnmMtx(2), 1, this))
 		emitter->setGlobalScale(mOwner->mScaling);
 }
 
@@ -663,9 +663,9 @@ void TElecCarapace::sendMessage()
 			// an effect that got commented out
 			TMsRange<s32> range(0, 360);
 			for (int j = 0; j < 5; ++j) {
-				range.rand();
-				range.rand();
-				range.rand();
+				rand();
+				rand();
+				rand();
 			}
 		} else if (TElecNokonoko::mReflectSw) {
 			reflect(hit);
@@ -705,7 +705,7 @@ void TElecCarapace::reflect(THitActor* actor)
 		MsVECNormalize(&dir, &dir);
 
 		JGeometry::TVec3<f32> normal(0.0f, 0.0f, 0.0f);
-		if (fabs(dir.z / dir.x) > 1.0f) {
+		if (fabsf(dir.z / dir.x) > 1.0f) {
 			if (actor->mPosition.z > mPosition.z)
 				normal.z = 1.0f;
 			else
@@ -718,7 +718,9 @@ void TElecCarapace::reflect(THitActor* actor)
 		}
 
 		f32 t = -7.0f * dir.dot(normal);
-		mVelocity.set(dir.x * t, 2.0f, dir.z * t);
+		mVelocity.x = dir.x * t;
+		mVelocity.y = 2.0f;
+		mVelocity.z = dir.z * t;
 		mPosition.y = 2.0f + mGroundHeight;
 
 		unk174 = false;
@@ -820,7 +822,7 @@ DEFINE_NERVE(TNerveElecNokonokoTurn, TLiveActor)
 
 	if (self->isBckAnm(15)
 	    && MsIsInSight(self->mPosition, self->mRotation.y, *gpMarioPos,
-	                   self->getSaveParams()->mSLSearchLength.get(), 60.0f,
+	                   ((TSmallEnemyParams*)self->getSaveParam())->mSLSearchLength.get(), 60.0f,
 	                   0.0f))
 		self->setBckAnm(14);
 
@@ -849,14 +851,14 @@ DEFINE_NERVE(TNerveElecNokonokoFreeze, TLiveActor)
 		if (isCarapaceOn(self)) {
 			self->setBckAnm(3);
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xCA, self->getModel()->getAnmMtx(0), 0, nullptr);
+			    0xCA, self->getMActor()->getModel()->getAnmMtx(0), 0, nullptr);
 		} else {
 			self->setBckAnm(7);
 		}
 	}
 
 	if (self->isBckAnm(3) && self->getCurAnmFrameNo(0) < 25.0f) {
-		MtxPtr mtx = self->getModel()->getAnmMtx(8);
+		MtxPtr mtx = self->getMActor()->getModel()->getAnmMtx(8);
 		self->unk1A8.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		if (JPABaseEmitter* emitter
 		    = gpMarioParticleManager->emitAndBindToPosPtr(0x17E, &self->unk1A8,
@@ -942,9 +944,7 @@ DEFINE_NERVE(TNerveElecCarapaceMove, TLiveActor)
 
 	if (self->unk184) {
 		f32 catchDist = 64.0f * self->mOwner->mParams->mSLCarapaceSpeed.get();
-		JGeometry::TVec3<f32> diff = self->getUnk104().getPoint();
-		diff -= self->mPosition;
-		if (diff.length() < catchDist) {
+		if ((self->unk104.getPoint() - self->mPosition).length() < catchDist) {
 			if (!self->mOwner->isCatchReady())
 				self->mOwner->forceCatchReady();
 			spine->pushAfterCurrent(&TNerveElecCarapaceReturn::theNerve());
@@ -980,9 +980,9 @@ DEFINE_NERVE(TNerveElecCarapaceReturn, TLiveActor)
 	TElecCarapace* self = (TElecCarapace*)spine->getBody();
 	if (spine->getTime() == 0) {
 		JGeometry::TVec3<f32> ownerPos = self->mOwner->mPosition;
-		self->unk18C.x = 0.015625f * (ownerPos.x - self->mPosition.x);
-		self->unk18C.y = 0.015625f * (ownerPos.y - self->mPosition.y);
-		self->unk18C.z = 0.015625f * (ownerPos.z - self->mPosition.z);
+		self->unk18C.set(0.015625f * (ownerPos.x - self->mPosition.x),
+		                 0.015625f * (ownerPos.y - self->mPosition.y),
+		                 0.015625f * (ownerPos.z - self->mPosition.z));
 		if (self->mOwner->isBckAnm(8))
 			self->mOwner->setBckAnm(0);
 	}
