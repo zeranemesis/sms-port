@@ -62,13 +62,13 @@ public:
 	/// Initiates a pane's alpha animation.
 	/// The clamp is written out here: going through a separate clamp helper
 	/// adds an inline level that breaks the inlining pattern in Guide.cpp.
+	/// TODO: an `if/else` for the lower bound takes the out-of-line copy in
+	/// Guide.cpp from 96.8% to 99.7%, but shifts registers in
+	/// TOptionRumbleUnit/TOptionSoundUnit::setState, so the true shape is
+	/// still unknown.
 	void setPaneAlpha(s32 time, s16 target_alpha, s16 initial_alpha)
 	{
-		s16 a;
-		if (initial_alpha < 0)
-			a = 0;
-		else
-			a = initial_alpha;
+		s16 a = initial_alpha < 0 ? s16(0) : initial_alpha;
 		if (a > 255)
 			a = 255;
 		mPane->setAlpha(a);
