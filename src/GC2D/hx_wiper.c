@@ -5,10 +5,15 @@
 #include <dolphin/vi.h>
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
+#include <math.h>
 
 // TODO: this translation unit is freshly scaffolded from marioEU.MAP. The
 // big drawing routines (Hx_Test*, Hx_Logo, Hx_GameOver, the Hxs_* helpers)
 // are not decompiled yet and are left as empty stubs.
+
+// NOTE: the file is compiled as C++ (see configure.py), everything in it has
+// C linkage.
+extern "C" {
 
 void ReInitializeGX(void);
 
@@ -54,6 +59,8 @@ static u16 img_wx;
 static u16 img_wy;
 
 static void Hx_Circle(void);
+static void Hx_FrBufferMorf(f32 strength);
+static u32 Hx_TimerCountDown(void);
 static void Hx_Test1(void);
 static void Hx_Test5(void);
 static void Hx_Test4(void);
@@ -171,13 +178,14 @@ static void Hgx_ReadTexture(char* path, void* buffer)
 	DVDFileInfo info;
 	s32 length;
 
-	if (hx.hasResource != 0)
-		return;
-
-	if (DVDOpen(path, &info)) {
-		length = DVDReadPrio(&info, buffer, info.length, 0, 2);
-		DVDClose(&info);
-		DCStoreRange(buffer, length);
+	switch (hx.hasResource) {
+	case 0:
+		if (DVDOpen(path, &info)) {
+			length = DVDReadPrio(&info, buffer, info.length, 0, 2);
+			DVDClose(&info);
+			DCStoreRange(buffer, length);
+		}
+		break;
 	}
 }
 
@@ -205,21 +213,16 @@ static void Hx_SetVFilter(f32 strength)
 	u8 steps;
 	u32 i;
 
-	vtable[0] = vtable_org[0];
-	vtable[1] = vtable_org[1];
-	vtable[2] = vtable_org[2];
-	steps     = 64.0f * strength;
-	vtable[3] = vtable_org[3];
-	vtable[4] = vtable_org[4];
-	vtable[5] = vtable_org[5];
-	vtable[6] = vtable_org[6];
+	steps = 64.0f * strength;
+	for (i = 0; i < 7; i++)
+		vtable[i] = vtable_org[i];
 
 	for (i = 0; i < steps; i++) {
 		vtable[dec_step[i & 3]]--;
 		vtable[inc_step[i % 3]]++;
 	}
 
-	GXSetCopyFilter(GX_FALSE, NULL, GX_TRUE, vtable);
+	GXSetCopyFilter(GX_FALSE, 0, GX_TRUE, vtable);
 }
 
 void Hx_SetVFilterFade(void)
@@ -227,7 +230,7 @@ void Hx_SetVFilterFade(void)
 	// TODO: UNUSED in the map (size 0x358), contents unknown
 }
 
-static void __Hx_FrBufferMorf(u16 x, u16 y)
+static void __Hx_FrBufferMorf(u32 x, u32 y)
 {
 	GXTexObj texObj;
 
@@ -253,12 +256,16 @@ static void __Hx_FrBufferMorf(u16 x, u16 y)
 	GXLoadTexObj(&texObj, GX_TEXMAP0);
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 	GXPosition3f32(x, y, 0.0f);
+	GXColor1u32(0);
 	GXTexCoord2f32(0.0f, 0.0f);
 	GXPosition3f32(x + 0x30, y, 0.0f);
+	GXColor1u32(0);
 	GXTexCoord2f32(1.0f, 0.0f);
 	GXPosition3f32(x + 0x30, y + 0x30, 0.0f);
+	GXColor1u32(0);
 	GXTexCoord2f32(1.0f, 1.0f);
 	GXPosition3f32(x, y + 0x30, 0.0f);
+	GXColor1u32(0);
 	GXTexCoord2f32(0.0f, 1.0f);
 	GXEnd();
 }
@@ -471,34 +478,281 @@ static f32 Hx_MotionUpdate(HxMotion* motion)
 	return motion->value;
 }
 
+static u32 HX_CIRCLE_STATE1_TIME;
+static u32 HX_CIRCLE_STATE1_TIME2;
+
+static void Hxs1_Circle(f32 radius);
+static void Hxs2_Circle(u8 alpha, f32 inner, f32 outer);
+
 static void Hx_Circle(void)
 {
-	// TODO: not decompiled yet
+	static f32 r;
+	static f32 p1;
+	static f32 p2;
+	static f32 p3;
+	static u16 a1;
+	static u16 a2;
+	static u16 a3;
+	static f32 boke;
+
+	switch (hx.isPal) {
+	case 1:
+		HX_CIRCLE_STATE1_TIME  = 25;
+		HX_CIRCLE_STATE1_TIME2 = 20;
+		break;
+	default:
+		HX_CIRCLE_STATE1_TIME  = 30;
+		HX_CIRCLE_STATE1_TIME2 = 25;
+		break;
+	}
+
+	switch (hx.step) {
+	case 0:
+		p1 = p2 = p3 = 0.0f;
+		a1 = a2 = a3 = 0;
+		r    = 1.0f;
+		boke = 0.0f;
+		switch (hx.handleType) {
+		case 0:
+			Hx_MotionSet(&hx.motion, 400.0f, 2.0f,
+			             HX_CIRCLE_STATE1_TIME2 - 12, 10.0f);
+			hx.timer = HX_CIRCLE_STATE1_TIME2;
+			break;
+		case 1:
+			Hx_MotionSet(&hx.motion, 400.0f, 5.0f,
+			             HX_CIRCLE_STATE1_TIME - 20, 15.0f);
+			hx.timer = HX_CIRCLE_STATE1_TIME;
+			break;
+		}
+		hx.step++;
+	case 1:
+		r = Hx_MotionUpdate(&hx.motion);
+		switch (hx.handleType) {
+		case 1:
+			boke += 2.0f / HX_CIRCLE_STATE1_TIME;
+			if (boke > 1.0f)
+				boke = 1.0f;
+			Hx_FrBufferMorf(boke);
+			Hx_SetVFilter(1.0f);
+			break;
+		case 0:
+			r = 400.0f - r;
+			if (r < 0.0f)
+				r = 0.0f;
+			break;
+		}
+		if (Hx_TimerCountDown() == 0) {
+			hx.step++;
+			hx.state = 3;
+		}
+		break;
+	default:
+		hx.state = 3;
+		break;
+	}
+
+	Hxs1_Circle(r);
+	if (r > 22.0f) {
+		Hxs2_Circle(a1 >> 8, (r - 20.0f) + p1, r);
+		p1 += 0.05f;
+		if (a1 < 0xFF00)
+			a1 += 0x180;
+	}
+	if (r > 42.0f) {
+		Hxs2_Circle(a2 >> 8, (r - 40.0f) + p2, (r - 20.0f) + p1);
+		p2 += 0.12f;
+		if (a2 < 0xFF00)
+			a2 += 0xC0;
+	}
+	if (r > 62.0f) {
+		Hxs2_Circle(a3 >> 8, (r - 60.0f) + p3, (r - 40.0f) + p2);
+		p3 += 0.25f;
+		if (a3 < 0xFF00)
+			a3 += 0x80;
+	}
 }
 
-static void Hxs1_Circle(f32 param_1)
+static void Hxs1_Circle(f32 radius)
 {
-	// TODO: not decompiled yet
+	u32 y;
+	f32 dy;
+	f32 dx;
+	f32 y0;
+	f32 y1;
+
+	Hx_CameraInit();
+	Hx_GxInit(0, 1);
+	for (y = 0; y <= hx.halfHeight; y++) {
+		dy = hx.halfHeight - y;
+		// TODO: fake? the target converts y twice up front
+		y0 = y;
+		y1 = y;
+		if (dy >= radius) {
+			GXBegin(GX_LINES, GX_VTXFMT0, 4);
+			GXPosition3f32(0.0f, y0, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.width, y1, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(0.0f, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.width, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXEnd();
+		} else {
+			dx = std::sqrtf(radius * radius - dy * dy);
+			GXBegin(GX_LINES, GX_VTXFMT0, 8);
+			GXPosition3f32(0.0f, y0, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.halfWidth - dx, y1, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.halfWidth + dx, y0, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.width, y1, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.halfWidth + dx, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.width, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(0.0f, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXPosition3f32(hx.halfWidth - dx, hx.height - y, 1.0f);
+			GXColor1u32(0xFF);
+			GXEnd();
+		}
+	}
 }
 
-static void Hxs2_Circle(u8 param_1, f32 param_2, f32 param_3)
+static void Hxs2_Circle(u8 alpha, f32 inner, f32 outer)
 {
-	// TODO: not decompiled yet
+	u32 y;
+	f32 dy;
+	f32 dyy;
+	f32 xo;
+	f32 xi;
+
+	Hx_CameraInit();
+	Hx_GxInit(0, 1);
+	for (y = hx.halfHeight - outer; y <= hx.halfHeight; y++) {
+		dy  = hx.halfHeight - y;
+		dyy = dy * dy;
+		xo  = std::sqrtf(outer * outer - dyy);
+		if (dy >= inner) {
+			GXBegin(GX_LINES, GX_VTXFMT0, 4);
+			GXPosition3f32(hx.halfWidth - xo, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xo, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth - xo, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xo, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXEnd();
+		} else {
+			xi = std::sqrtf(inner * inner - dyy);
+			GXBegin(GX_LINES, GX_VTXFMT0, 8);
+			GXPosition3f32(hx.halfWidth - xo, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth - xi, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xi, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xo, y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xi, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth + xo, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth - xo, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXPosition3f32(hx.halfWidth - xi, hx.height - y, 1.0f);
+			GXColor1u32(alpha);
+			GXEnd();
+		}
+	}
 }
 
 static void Hxs_FrBufferMorf2(f32 x)
 {
-	// TODO: not decompiled yet
+	GXTexObj texObj;
+	f32 y;
+
+	Frb2_InitGx(&texObj);
+	if (x < (f32)(hx.width >> 2)) {
+		for (y = 0.0f; y < hx.height; y += 16.0f) {
+			Hx_GetFrBuffer(fbuf2, 0, y, 0xA0, 0x10);
+			GXInvalidateTexAll();
+			GXLoadTexObj(&texObj, GX_TEXMAP0);
+			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+			GXPosition3f32(x, y, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(0.0f, 0.0f);
+			GXPosition3f32(hx.width >> 2, y, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(1.0f, 0.0f);
+			GXPosition3f32(hx.width >> 2, y + 16.0f, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(1.0f, 1.0f);
+			GXPosition3f32(x, y + 16.0f, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(0.0f, 1.0f);
+			GXEnd();
+			GXDrawDone();
+		}
+	}
+
+	Frb2_InitBlackBox();
+	Frb2_RendBox(0xFF, 0.0f, 0.0f, x, hx.height);
+	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	GXPosition3f32(0.0f, 0.0f, 0.0f);
+	GXColor1u32(0xFF);
+	GXPosition3f32(x, 0.0f, 0.0f);
+	GXColor1u32(0xFF);
+	GXPosition3f32(x, hx.height, 0.0f);
+	GXColor1u32(0xFF);
+	GXPosition3f32(0.0f, hx.height, 0.0f);
+	GXColor1u32(0xFF);
+	GXEnd();
 }
 
 static void Hxs_FrBufferMorf2B(f32 x)
 {
-	// TODO: not decompiled yet
+	GXTexObj texObj;
+	int left = (hx.width >> 1) + (hx.width >> 2);
+	f32 right;
+	f32 y;
+
+	Frb2_InitGx(&texObj);
+	right = hx.width - x;
+	if (x < (f32)(hx.width >> 2)) {
+		for (y = 0.0f; y < hx.height; y += 16.0f) {
+			Hx_GetFrBuffer(fbuf2, left, y, 0xA0, 0x10);
+			GXInvalidateTexAll();
+			GXLoadTexObj(&texObj, GX_TEXMAP0);
+			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+			GXPosition3f32(left, y, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(0.0f, 0.0f);
+			GXPosition3f32(right, y, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(1.0f, 0.0f);
+			GXPosition3f32(right, y + 16.0f, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(1.0f, 1.0f);
+			GXPosition3f32(left, y + 16.0f, 0.0f);
+			GXColor1u32(0);
+			GXTexCoord2f32(0.0f, 1.0f);
+			GXEnd();
+			GXDrawDone();
+		}
+	}
+
+	Frb2_InitBlackBox();
+	Frb2_RendBox(0xFF, right, 0.0f, hx.width, hx.height);
 }
 
 static void Hx_Door(void)
 {
-	u32 value;
+	int value;
 
 	switch (hx.step) {
 	case 0:
@@ -639,3 +893,5 @@ static void Hx_Test5(void)
 {
 	// TODO: not decompiled yet
 }
+
+} // extern "C"
