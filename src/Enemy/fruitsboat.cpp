@@ -88,15 +88,13 @@ void TFruitsBoat::setJumpReaction()
 	case 2:
 		name = "shipdolpic3";
 		break;
+	case 3:
 	default:
-		goto end;
+		return;
 	}
 
 	if (!mMActor->checkCurAnm(name, 0) || mMActor->curAnmEndsNext(0, nullptr))
 		mMActor->setBck(name);
-
-end:
-	offLiveFlag(LIVE_FLAG_UNK20000);
 }
 
 void TFruitsBoat::traceBckTrack()
@@ -136,6 +134,9 @@ Mtx* TFruitsBoat::getRootJointMtx() const
 	return (Mtx*)mMActor->getModel()->getAnmMtx(0);
 }
 
+// TODO: map size is 0x17c, ours is 0x154 -- the inlined copies in
+// TNerveFruitsBoatGraphWander::execute match (modulo stack), so the missing
+// 10 instructions are something that only shows in the out-of-line copy.
 void TFruitsBoat::rowToCurPathNode(f32 speed)
 {
 	if (unk124->getGraph()->getSplineRail() ? TRUE : FALSE) {
@@ -309,6 +310,13 @@ static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
 	return JGeometry::TVec3<f32>(s, 0.0f, c);
 }
 
+// TODO: fabricated, the target does not fuse the multiply-add here
+static inline f32 MsLerp(f32 a, f32 b, f32 t)
+{
+	f32 d = t * (b - a);
+	return a + d;
+}
+
 void TFruitsBoat::moveObject()
 {
 	// Pitch the boat along the waves: sample the wave height at the bow and
@@ -324,8 +332,7 @@ void TFruitsBoat::moveObject()
 	bow.y   = gpMapObjWave->getWaveHeight(bow.x, bow.z);
 	stern.y = gpMapObjWave->getWaveHeight(stern.x, stern.z);
 
-	JGeometry::TVec3<f32> dir = bow;
-	dir.sub(stern);
+	JGeometry::TVec3<f32> dir = bow - stern;
 	JGeometry::TVec3<f32> rot = MsGetRotFromZaxis(dir);
 	rot.x *= 0.5f;
 
@@ -355,8 +362,10 @@ void TFruitsBoat::moveObject()
 
 			onLiveFlag(LIVE_FLAG_UNK20000);
 			offLiveFlag(LIVE_FLAG_UNK10000);
-			if (plane->isBounceOnLanding())
+			if (plane->isBounceOnLanding()) {
 				setJumpReaction();
+				offLiveFlag(LIVE_FLAG_UNK20000);
+			}
 		}
 	} else {
 		if (plane == nullptr || plane->mActor != this
@@ -375,9 +384,9 @@ void TFruitsBoat::moveObject()
 			JGeometry::TVec3<f32> axis;
 			axis.cross(up, toMario);
 			axis.normalize();
-			mRollAxis.x += 0.1f * (axis.x - mRollAxis.x);
-			mRollAxis.y += 0.1f * (axis.y - mRollAxis.y);
-			mRollAxis.z += 0.1f * (axis.z - mRollAxis.z);
+			mRollAxis.x = MsLerp(mRollAxis.x, axis.x, 0.1f);
+			mRollAxis.y = MsLerp(mRollAxis.y, axis.y, 0.1f);
+			mRollAxis.z = MsLerp(mRollAxis.z, axis.z, 0.1f);
 		}
 	}
 
