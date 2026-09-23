@@ -348,13 +348,13 @@ void TLeafBoat::touchActor(THitActor* actor)
 
 	JGeometry::TVec3<f32> dir(actor->mPosition.x - mPosition.x, 0.0f,
 	                          actor->mPosition.z - mPosition.z);
-	if (dir.dot(mVelocity) < 0.0f)
+	if (dir.dot(JGeometry::TVec3<f32>(mVelocity)) < 0.0f)
 		return;
 
 	if (dir.x != 0.0f || dir.z != 0.0f)
 		MsVECNormalize(&dir, &dir);
 
-	f32 dot = dir.dot(mVelocity);
+	f32 dot = dir.dot(JGeometry::TVec3<f32>(mVelocity));
 	if (actor->checkActorType(0x10000000)) {
 		mVelocity.x -= (1.0f + unk138) * (dir.x * dot);
 		mVelocity.z -= (1.0f + unk138) * (dir.z * dot);
@@ -364,10 +364,14 @@ void TLeafBoat::touchActor(THitActor* actor)
 	}
 }
 
+// TODO: the ROM keeps this out-of-line in bind(), find out why instead of
+// forcing it
+#pragma dont_inline on
 void TLeafBoat::touchWall(JGeometry::TVec3<f32>* pos,
                           TBGWallCheckRecord* record)
 {
-	for (int i = 0; i < record->mResultWallsNum; ++i) {
+	int wallNum = record->mResultWallsNum;
+	for (int i = 0; i < wallNum; ++i) {
 		const TBGCheckData* wall = record->mResultWalls[i];
 		if (JGeometry::TVec3<f32>(mVelocity).dot(wall->getNormal()) < 0.0f) {
 			f32 dist = pos->dot(wall->getNormal()) + wall->mPlaneDistance;
@@ -381,6 +385,7 @@ void TLeafBoat::touchWall(JGeometry::TVec3<f32>* pos,
 		}
 	}
 }
+#pragma dont_inline off
 
 void TLeafBoat::bind()
 {
@@ -404,6 +409,8 @@ void TLeafBoat::bind()
 	if (gpMap->isTouchedWallsAndMoveXZ(&record))
 		touchWall(&pos, &record);
 
+	// TODO: the ROM calls TVec3<f32>::sub out-of-line here (it is never
+	// inlined anywhere in the game), our JGeometry header inlines it.
 	JGeometry::TVec3<f32> delta(pos);
 	delta.sub(mPosition);
 	mLinearVelocity = delta;
@@ -457,9 +464,7 @@ void TLeafBoat::calc()
 
 	if (unk160 > 8) {
 		if (fabsf(mVelocity.x) + fabsf(mVelocity.z) > 0.1f) {
-			unk164.x = mPosition.x;
-			unk164.y = mPosition.y - mYOffset;
-			unk164.z = mPosition.z;
+			unk164.set(mPosition.x, mPosition.y - mYOffset, mPosition.z);
 			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
 			emitAndBindScale(0x1E8, 3, &unk164, scale);
 			emitAndBindScale(0x107, 1, &unk164, scale);
@@ -675,12 +680,12 @@ void TBiancoBell::stopToRing() { mMActor->getFrameCtrl(0)->setRate(0.0f); }
 
 void TBiancoBell::ring()
 {
-	if (mMActor->getFrameCtrl(0)->getFrame() == 0.0f
-	    || mMActor->getFrameCtrl(0)->getFrame()
-	               + mMActor->getFrameCtrl(0)->getRate()
-	           >= mMActor->getFrameCtrl(0)->getEnd() - 1.0f) {
+	if (getMActor()->getFrameCtrl(0)->getFrame() == 0.0f
+	    || getMActor()->getFrameCtrl(0)->getFrame()
+	               + getMActor()->getFrameCtrl(0)->getRate()
+	           >= getMActor()->getFrameCtrl(0)->getEnd() - 1.0f) {
 		startAnim(mRingAnm);
-		mMActor->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
+		getMActor()->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
 		if (mRingSound)
 			gpMSound->startSoundActor(0x89B8, &mPosition, 0, nullptr, 0, 4);
 	}
@@ -688,12 +693,12 @@ void TBiancoBell::ring()
 
 void TBiancoBell::ringSingle()
 {
-	if (mMActor->getFrameCtrl(0)->getFrame() == 0.0f
-	    || mMActor->getFrameCtrl(0)->getFrame()
-	               + mMActor->getFrameCtrl(0)->getRate()
-	           >= mMActor->getFrameCtrl(0)->getEnd() - 1.0f) {
+	if (getMActor()->getFrameCtrl(0)->getFrame() == 0.0f
+	    || getMActor()->getFrameCtrl(0)->getFrame()
+	               + getMActor()->getFrameCtrl(0)->getRate()
+	           >= getMActor()->getFrameCtrl(0)->getEnd() - 1.0f) {
 		startAnim(4);
-		mMActor->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
+		getMActor()->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
 		gpMSound->startSoundActor(0x89B8, &mPosition, 0, nullptr, 0, 4);
 	}
 }
@@ -750,12 +755,7 @@ void TBellWatermill::control()
 	if (unk158 == 0.0f && unk178 == 0.0f && unk170 == 0.0f)
 		return;
 
-	f32 speed = unk158;
-	if (speed > unk16C)
-		speed = unk16C;
-	else if (speed < -unk16C)
-		speed = -unk16C;
-	unk154 += speed;
+	unk154 += MsClamp(unk158, -unk16C, unk16C);
 	unk154 = MsWrap(unk154, 0.0f, 360.0f);
 
 	gpMSound->startSoundActorWithInfo(0x3044, &mPosition, nullptr,
@@ -803,24 +803,24 @@ void TBellWatermill::control()
 	mPosition.y = unk170 + mInitialPosition.y + mYOffset;
 	unk190      = 0;
 
-	Mtx yRot;
 	Mtx mtx;
+	Mtx yRot;
+	MtxPtr ptr  = mtx;
 	mRotation.z = unk154;
-	MsMtxSetRotZ(mtx, mRotation.z);
+	MsMtxSetRotZ(ptr, mRotation.z);
 	if (mRotation.y != 0.0f) {
-		MsMtxSetRotZ(mtx, mRotation.z);
+		MsMtxSetRotZ(ptr, mRotation.z);
 		MsMtxSetRotY(yRot, mRotation.y);
-		MTXConcat(yRot, mtx, mtx);
+		MTXConcat(yRot, ptr, ptr);
 	} else {
-		MsMtxSetRotZ(mtx, mRotation.z);
+		MsMtxSetRotZ(ptr, mRotation.z);
 	}
 
-	MtxPtr ptr = mtx;
-	ptr[0][3]  = mPosition.x;
-	ptr[1][3]  = mPosition.y;
-	ptr[2][3]  = mPosition.z;
+	ptr[0][3] = mPosition.x;
+	ptr[1][3] = mPosition.y;
+	ptr[2][3] = mPosition.z;
 	ptr[1][3] -= mYOffset;
-	MTXCopy(mtx, getModel()->getAnmMtx(0));
+	MTXCopy(ptr, getModel()->getAnmMtx(0));
 }
 
 void TBellWatermill::loadAfter()
