@@ -3,6 +3,7 @@
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/Gesso.hpp>
 #include <Enemy/HamuKuri.hpp>
+#include <Enemy/HauntLeg.hpp>
 #include <Enemy/Launcher.hpp>
 #include <Enemy/MameGesso.hpp>
 #include <Enemy/NameKuri.hpp>
@@ -146,9 +147,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	// if ( strcmp(name, "EffectEnemy") == 0)
 	//     return new TEffectEnemy("エフェクト敵");
 
-	// TODO:
-	// if ( strcmp(name, "HauntLegManager") == 0)
-	//     return new THauntLegManager;
+	if (strcmp(name, "HauntLegManager") == 0)
+		return new THauntLegManager;
 
 	if (strcmp(name, "HamuKuriManager") == 0)
 		return new THamuKuriManager;
