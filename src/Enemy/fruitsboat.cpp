@@ -67,8 +67,8 @@ int TFruitsBoat::setBckTrack(const char* name)
 			mBckTrackCtrl = new J3DFrameCtrl(0);
 			mBckTrackCtrl->init(mBckTrack->getFrameMax());
 			mBckTrackCtrl->setAttribute(mBckTrack->getAttribute());
-			mBckTrackCtrl->setRate(getSaveLoadParam()->mSLBckMoveSpeed.get()
-			                       * SMSGetAnmFrameRate());
+			f32 speed = getSaveLoadParam()->mSLBckMoveSpeed.get();
+			mBckTrackCtrl->setRate(speed * SMSGetAnmFrameRate());
 			return 0;
 		}
 	}
@@ -102,7 +102,8 @@ end:
 void TFruitsBoat::traceBckTrack()
 {
 	mBckTrackCtrl->update();
-	mBckTrack->setFrame(mBckTrackCtrl->getFrame());
+	f32 frame = mBckTrackCtrl->getFrame();
+	mBckTrack->setFrame(frame);
 
 	J3DTransformInfo info0;
 	mBckTrack->getTransform(0, &info0);
@@ -228,6 +229,7 @@ void TFruitsBoat::init(TLiveManager* manager)
 		mAttackHeight = 300.0f;
 		calcEntryRadius();
 		break;
+	case 3:
 	default:
 		mMapCollisionManager
 		    = new TMapCollisionManager(1, "/scene/fruitsboatd", this);
@@ -255,7 +257,7 @@ void TFruitsBoat::init(TLiveManager* manager)
 	mMarchSpeed = getSaveLoadParam()->mSLMoveSpeed.get();
 	mTurnSpeed  = getSaveLoadParam()->mSLRotSpeed.get();
 
-	offLiveFlag(LIVE_FLAG_UNK8);
+	offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 	onLiveFlag(LIVE_FLAG_UNK20);
 	offLiveFlag(LIVE_FLAG_UNK100);
 	mMActor->setLightType(2);
@@ -273,7 +275,7 @@ void TFruitsBoat::setGroundCollision()
 	JGeometry::TVec3<f32> diff = mPosition;
 	diff.sub(*gpMarioPos);
 
-	if (mColCount != 0 || diff.length() < 1000.0f
+	if (mColCount != 0 || JGeometry::TUtil<f32>::sqrt(diff.squared()) < 1000.0f
 	    || (SMS_GetYoshi()->isHatched()
 	        && mPosition.x - 1000.0f < SMS_GetYoshi()->getTranslation().x
 	        && mPosition.x + 1000.0f > SMS_GetYoshi()->getTranslation().x
@@ -288,14 +290,13 @@ void TFruitsBoat::setGroundCollision()
 void TFruitsBoat::calcRootMatrix()
 {
 	J3DModel* model = getModel();
-	MsMtxSetRotRPH(model->getBaseTRMtx(), mRotation.x, mRotation.y,
-	               mRotation.z);
+	MtxPtr mtx      = model->getBaseTRMtx();
+	MsMtxSetRotRPH(mtx, mRotation.x, mRotation.y, mRotation.z);
 
 	Mtx roll;
 	MTXRotAxisRad(roll, &mRollAxis, DEG_TO_RAD(mRollAngle));
-	MTXConcat(roll, model->getBaseTRMtx(), model->getBaseTRMtx());
-	MTXTransApply(model->getBaseTRMtx(), model->getBaseTRMtx(), mPosition.x,
-	              mPosition.y, mPosition.z);
+	MTXConcat(roll, mtx, mtx);
+	MTXTransApply(mtx, mtx, mPosition.x, mPosition.y, mPosition.z);
 	model->setBaseScale(mScaling);
 }
 
@@ -445,6 +446,7 @@ void TFruitsBoatManager::createModelData()
 		createModelDataArray(entry);
 		break;
 	}
+	case 3:
 	default: {
 		static const TModelDataLoadEntry entry[]
 		    = { { "ShipDolpic4.bmd", 0x10210000, 0 }, { 0 } };
