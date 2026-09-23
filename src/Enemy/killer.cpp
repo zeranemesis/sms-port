@@ -170,17 +170,20 @@ void TKiller::init(TLiveManager* manager)
 	offLiveFlag(LIVE_FLAG_UNK800);
 	onHitFlag(HIT_FLAG_UNK40000000);
 
-	J3DModel* model = mMActor->getModel();
-	if (!model->getSkinDeform())
-		model->setSkinDeform(new J3DSkinDeform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
-	mMActor->resetDL();
+	// TODO: frame is 8 bytes too small
+	J3DModel* model = getMActor()->getModel();
+	if (!model->getSkinDeform()) {
+		J3DSkinDeform* deform = new J3DSkinDeform;
+		model->setSkinDeform(deform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
+	}
+	getMActor()->resetDL();
 
 	if (mInstanceIndex == 0) {
 		for (u8 i = 0; i < getModel()->getModelData()->getJointNum(); ++i)
 			;
 	}
 
-	mMActor->setJointCallback(1, KillerBodyCallback);
+	getMActor()->setJointCallback(1, KillerBodyCallback);
 	unk188 = 0.0f;
 }
 
@@ -190,30 +193,30 @@ void TKiller::setMActorAndKeeper()
 	mMActor       = mMActorKeeper->createMActor("killer_model1.bmd", 3);
 	mMActorKeeper->createMActor("downkiller_model1.bmd", 3);
 
-	u16 noseMatIdx = getActorKeeper()
+	s32 noseMatIdx = getActorKeeper()
 	                     ->getMActor("killer_model1.bmd")
 	                     ->getModel()
 	                     ->getModelData()
 	                     ->getMaterialName()
 	                     ->getIndex("_nosemat1");
-	u16 eyesMatIdx = getActorKeeper()
+	s32 eyesMatIdx = getActorKeeper()
 	                     ->getMActor("killer_model1.bmd")
 	                     ->getModel()
 	                     ->getModelData()
 	                     ->getMaterialName()
 	                     ->getIndex("_eyesmat1");
-	u16 bodyMatIdx = getActorKeeper()
+	s32 bodyMatIdx = getActorKeeper()
 	                     ->getMActor("killer_model1.bmd")
 	                     ->getModel()
 	                     ->getModelData()
 	                     ->getMaterialName()
 	                     ->getIndex("_body1");
 
-	SMS_InitPacket_OneTevColor(mMActor->getModel(), noseMatIdx, GX_TEVREG0,
+	SMS_InitPacket_OneTevColor(getMActor()->getModel(), noseMatIdx, GX_TEVREG0,
 	                           &mNoseColor);
-	SMS_InitPacket_OneTevColor(mMActor->getModel(), eyesMatIdx, GX_TEVREG0,
+	SMS_InitPacket_OneTevColor(getMActor()->getModel(), eyesMatIdx, GX_TEVREG0,
 	                           &mEyesColor);
-	SMS_InitPacket_OneTevColor(mMActor->getModel(), bodyMatIdx, GX_TEVREG0,
+	SMS_InitPacket_OneTevColor(getMActor()->getModel(), bodyMatIdx, GX_TEVREG0,
 	                           &mBodyColor);
 	SMS_InitPacket_OneTevColor(
 	    getActorKeeper()->getMActor("downkiller_model1.bmd")->getModel(),
@@ -239,9 +242,9 @@ void TKiller::genEventCoin()
 	if (unk1A6)
 		num = 8;
 
+	Mtx mtx;
 	for (int i = 0; i < num; ++i) {
 		JGeometry::TVec3<f32> offset(0.0f, 0.0f, 30.0f);
-		Mtx mtx;
 		MsMtxSetRotY(mtx, 360.0f * (1.0f / num) * (i + 1));
 		MTXMultVec(mtx, &offset, &offset);
 		TMapObjBase* coin = gpItemManager->makeObjAppear(
@@ -346,10 +349,10 @@ void TKiller::changeOut()
 	onLiveFlag(LIVE_FLAG_DEAD);
 	genEventCoin();
 	onHitFlag(HIT_FLAG_NO_COLLISION);
-	mPosition = mJuiceBlock->mPosition;
+	mPosition = mJuiceBlock->getPosition();
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
 	                                            &mPosition, 0, nullptr);
-	mMActor->setFrameRate(SMSGetAnmFrameRate(), 0);
+	getMActor()->setFrameRate(SMSGetAnmFrameRate(), 0);
 	mJuiceBlock->kill();
 	mJuiceBlock = nullptr;
 }
@@ -406,9 +409,9 @@ bool TKiller::isFindMario(f32 param_1)
 
 	f32 searchHeight = prms->mSLSearchHeight.get();
 
-	if (abs(SMS_GetMarioPos().y - mPosition.y) < searchHeight) {
-
-		JGeometry::TVec3<f32> marioPos = SMS_GetMarioPos();
+	if (fabs(SMS_GetMarioY() - mPosition.y) < searchHeight) {
+		JGeometry::TVec3<f32> marioPos(SMS_GetMarioX(), SMS_GetMarioY(),
+		                               SMS_GetMarioZ());
 
 		f32 searchLength = prms->mSLSearchLength.get();
 		f32 searchAngle  = prms->mSLSearchAngle.get();
@@ -429,9 +432,8 @@ DEFINE_NERVE(TNerveKillerExplosion, TLiveActor)
 	TKiller* self = (TKiller*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->unk20C = ((TKillerSaveLoadParams*)self->getSaveParam())
-		                   ->mSLBombRange.get()
-		               * self->getBodyScale() / self->getAttackRadius();
+		self->unk20C = ((TKillerSaveLoadParams*)self->getSaveParam())->mSLBombRange.get()
+		               * self->getBodyScale() / self->mAttackRadius;
 		self->mRotation.x = 0.0f;
 		self->setDeadAnm();
 		if (!self->isAirborne()) {

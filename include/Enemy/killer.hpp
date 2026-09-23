@@ -96,6 +96,12 @@ public:
 	void setColorType();
 	bool isRollFly();
 
+	// fabricated
+	TKillerSaveLoadParams* getSaveParam2() const
+	{
+		return (TKillerSaveLoadParams*)getSaveParam();
+	}
+
 	static bool mSerialBomb;
 	static bool mTrampleDie;
 	static bool mRollSw;
