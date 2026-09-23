@@ -247,9 +247,10 @@ bool TYumbo::isFindOutMario() const
 	    < getSaveLoadParam()->mSLSearchHeight.get()) {
 		JGeometry::TVec3<f32> target(gpMarioPos->x, mPosition.y,
 		                             gpMarioPos->z);
-		if (isInSight(target, getSaveLoadParam()->mSLSearchLength.get(),
-		              getSaveLoadParam()->mSLSearchAngle.get(),
-		              getSaveLoadParam()->mSLSearchAware.get()))
+		f32 length = getSaveLoadParam()->mSLSearchLength.get();
+		f32 angle  = getSaveLoadParam()->mSLSearchAngle.get();
+		f32 aware  = getSaveLoadParam()->mSLSearchAware.get();
+		if (isInSight(target, length, angle, aware))
 			return true;
 		return false;
 	}
@@ -258,11 +259,11 @@ bool TYumbo::isFindOutMario() const
 
 bool TYumbo::isWantToAppear() const
 {
-	if (getSaveLoadParam()->mSLGiveUpHeight.get()
-	    <= fabsf(gpMarioPos->y - mPosition.y))
+	f32 giveUpHeight = getSaveLoadParam()->mSLGiveUpHeight.get();
+	if (giveUpHeight <= fabsf(gpMarioPos->y - mPosition.y))
 		return true;
 
-	JGeometry::TVec3<f32> diff = *gpMarioPos;
+	JGeometry::TVec3<f32> diff = SMS_GetMarioPos();
 	diff -= mPosition;
 	diff.y      = 0.0f;
 	f32 giveUp = getSaveLoadParam()->mSLGiveUpLength.get();
@@ -429,6 +430,9 @@ DEFINE_NERVE(TNerveYumboDancing, TLiveActor)
 	if (spine->getTime() == 0)
 		self->setBckAnm(2);
 
+	// TODO: the target inlines MsGetRotFromZaxisY through lookatMario here, we
+	// hit the inline depth limit instead. Spelling the lookatMario body out
+	// here matches (99.6%), which hints at a different inline structure.
 	self->lookatMario();
 	if (self->isFindOutMario()) {
 		spine->pushAfterCurrent(&TNerveYumboHiding::theNerve());
