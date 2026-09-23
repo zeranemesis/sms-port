@@ -71,7 +71,8 @@ void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_CALC_ANIM) {
 		TPosition3f mtx;
-		mtx.translation(mPosition);
+		mtx.identity33();
+		mtx.setTrans(mPosition);
 		mActor->getModel()->setBaseScale(mScaling);
 		MTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
 		mActor->getModel()->calc();
@@ -94,10 +95,13 @@ void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TYumboSeed::checkHitActors()
 {
-	for (int i = 0; i < mColCount; ++i) {
-		if (mCollisions[i]->mActorType == 0x80000001) {
+	THitActor** end = mCollisions + mColCount;
+	for (THitActor** it = mCollisions; it != end; ++it) {
+		switch ((*it)->mActorType) {
+		case 0x80000001:
 			SMS_SendMessageToMario(this, 0xE);
 			mSeedFlags |= SEED_FLAG_UNUSED;
+			break;
 		}
 	}
 }
