@@ -6,6 +6,7 @@
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
@@ -66,7 +67,7 @@ void TAnimalBird::init(TLiveManager* manager)
 
 void TAnimalBird::initTevColor(const GXColorS10* color)
 {
-	u16 idx = getModel()->getModelData()->getMaterialName()->getIndex(cMatName);
+	int idx = getModel()->getModelData()->getMaterialName()->getIndex(cMatName);
 	SMS_InitPacket_OneTevColor(getModel(), idx, GX_TEVREG1, color);
 }
 
@@ -80,9 +81,9 @@ void TAnimalBird::initCollision()
 
 void TAnimalBird::initParams()
 {
-	mHomePosition = mPosition;
+	mHomePosition.set(mPosition);
 	mHomePosition.y += 90.0f;
-	mHomeRotation = mRotation;
+	mHomeRotation.set(mRotation);
 	mHitPoints    = getMaxHitPoints();
 	unk178        = 0;
 	unk17C        = 0;
@@ -101,7 +102,7 @@ void TAnimalBird::load(JSUMemoryInputStream& stream)
 	TSpineEnemy::load(stream);
 
 	s32 eventId;
-	stream.read(&eventId, 4);
+	stream >> eventId;
 	if (eventId >= 0)
 		mItem = TMapObjBaseManager::newAndRegisterObjByEventID(eventId,
 		                                                       "鳥用");
@@ -121,7 +122,7 @@ void TAnimalBird::load(JSUMemoryInputStream& stream)
 	case 0x20000010:
 		mColorType = 0;
 		if (TFlagManager::smInstance->getBlueCoinFlag(
-		        gpMarDirector->getCurrentMap(), eventId))
+		        SMSGetMarDirector()->getCurrentMap(), eventId))
 			onLiveFlag(LIVE_FLAG_DEAD);
 		break;
 	}
@@ -132,8 +133,8 @@ void TAnimalBird::load(JSUMemoryInputStream& stream)
 void TAnimalBird::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	MSoundSESystem::MSRandPlay::registerTrans(0x3869, &mPosition);
-	MSoundSESystem::MSRandPlay::registerTrans(0x3870, &mPosition);
+	MSoundSESystem::MSRandPlay::registerTrans(MSD_SE_OBJ_BIRD_DOL_FLYING1, &mPosition);
+	MSoundSESystem::MSRandPlay::registerTrans(MSD_SE_OBJ_BIRD_DOL_CHUN, &mPosition);
 }
 
 BOOL TAnimalBird::receiveMessage(THitActor* sender, u32 message)
@@ -144,9 +145,10 @@ BOOL TAnimalBird::receiveMessage(THitActor* sender, u32 message)
 
 void TAnimalBird::calcRootMatrix()
 {
-	if (mHolder)
-		MTXCopy(mHolder->getTakingMtx(), getModel()->getBaseTRMtx());
-	else
+	if (mHolder) {
+		MtxPtr takingMtx = mHolder->getTakingMtx();
+		getModel()->setBaseTRMtx(takingMtx);
+	} else
 		TSpineEnemy::calcRootMatrix();
 
 	getModel()->getBaseTRMtx()[1][3] += 35.0f;
@@ -159,14 +161,16 @@ void TAnimalBird::moveObject()
 
 void TAnimalBird::bind()
 {
-	if (isCheckWithWireBinder())
-		mWireBinder->bind(this);
-	else
+	if (!isCheckWithWireBinder())
 		TLiveActor::bind();
+	else
+		mWireBinder->bind(this);
 }
 
 const char** TAnimalBird::getBasNameTable() const { return bird_bastable; }
 
+// TODO: the target calls theNerve() and getLatestNerve() out of line for all
+// four checks when this gets inlined into bind(), we still inline the first.
 bool TAnimalBird::isOnGroundNerve() const
 {
 	bool result = mSpine->getLatestNerve()
@@ -180,17 +184,17 @@ bool TAnimalBird::isOnGroundNerve() const
 	return result;
 }
 
+// TODO: frame is 8 bytes too big, everything else matches
 bool TAnimalBird::isFindMario() const
 {
-	if (fabs(SMS_GetMarioPos().y - mPosition.y)
-	    > getBirdParams()->mSearchHeight.get())
+	if (getBirdParams()->mSearchHeight.get()
+	    < fabs(SMS_GetMarioPos().y - mPosition.y))
 		return false;
 
 	return isInSight(SMS_GetMarioPos(),
 	                 mRandomScale * getBirdParams()->mSearchLength.get(),
 	                 mRandomScale * getBirdParams()->mSearchAngle.get(),
-	                 mRandomScale * getBirdParams()->mSearchAware.get())
-	       != false;
+	                 mRandomScale * getBirdParams()->mSearchAware.get());
 }
 
 bool TAnimalBird::isCheckWithWireBinder() const
@@ -201,15 +205,15 @@ bool TAnimalBird::isCheckWithWireBinder() const
 	return result;
 }
 
+void TAnimalBird::doFlyToCurPathNode()
+{
+	// TODO: not yet decompiled
+}
+
 bool TAnimalBird::doLanding(bool param_1)
 {
 	// TODO: not yet decompiled
 	return false;
-}
-
-void TAnimalBird::doFlyToCurPathNode()
-{
-	// TODO: not yet decompiled
 }
 
 TAnimalBirdParams::TAnimalBirdParams(const char* path)
@@ -250,8 +254,8 @@ void TAnimalBirdManager::load(JSUMemoryInputStream& stream)
 void TAnimalBirdManager::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	MSoundSESystem::MSRandPlay::createRandPlayVec(0x3869, mObjNum);
-	MSoundSESystem::MSRandPlay::createRandPlayVec(0x3870, mObjNum);
+	MSoundSESystem::MSRandPlay::createRandPlayVec(MSD_SE_OBJ_BIRD_DOL_FLYING1, mObjNum);
+	MSoundSESystem::MSRandPlay::createRandPlayVec(MSD_SE_OBJ_BIRD_DOL_CHUN, mObjNum);
 }
 
 void TAnimalBirdManager::createModelData()
