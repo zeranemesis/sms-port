@@ -373,7 +373,7 @@ void Hx_RemoveResource(void)
 	hx.hasResourceEx = 0;
 }
 
-void Hx_StartWipe(u8 type, int param)
+void Hx_StartWipe(int type, int param)
 {
 	if (VIGetTvFormat() == VI_PAL)
 		hx.isPal = 1;
@@ -409,9 +409,9 @@ static u8 handle_type[] = {
 	0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
 };
 
-u8 Hx_GetWipeType(int type) { return handle_type[type]; }
+int Hx_GetWipeType(int type) { return handle_type[type]; }
 
-u8 Hx_UpdateWipe(f32 delta)
+u32 Hx_UpdateWipe(f32 delta)
 {
 	ReInitializeGX();
 	switch (hx.state) {

@@ -12,9 +12,9 @@ extern "C" {
 
 int Hx_MovieStartSyncEx(void);
 void Hx_MovieStartSync(void);
-u8 Hx_UpdateWipe(f32 delta);
-u8 Hx_GetWipeType(int type);
-void Hx_StartWipe(u8 type, int param);
+u32 Hx_UpdateWipe(f32 delta);
+int Hx_GetWipeType(int type);
+void Hx_StartWipe(int type, int param);
 void Hx_RemoveResource(void);
 void Hx_ProvideResourceEx(void* resource);
 void Hx_ProvideResource(void* resource, u32 size);
