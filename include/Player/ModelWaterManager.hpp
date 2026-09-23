@@ -58,6 +58,8 @@ public:
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	void onWaterHitCounter();
+	// fabricated
+	s16 getWaterHitCounter() const { return mWaterHitCounter; }
 
 public:
 	// TODO: the methods of this class live in Enemy/BossHanachanSub.cpp and

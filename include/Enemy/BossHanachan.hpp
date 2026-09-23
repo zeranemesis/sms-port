@@ -213,8 +213,9 @@ public:
 	/* 0x138 */ JGeometry::TVec3<f32> unk138;
 	/* 0x144 */ f32 unk144;
 	/* 0x148 */ f32 unk148;
-	/* 0x14C */ MtxPtr mLegMtxL3;
-	/* 0x150 */ MtxPtr mLegMtxR3;
+	// indexed by foot in TBossHanachan::emitParticle_, so this is an array:
+	// [0] is the L3 leg joint, [1] the R3 one (same order as mFootHitActor)
+	/* 0x14C */ MtxPtr mLegMtx[2];
 	/* 0x154 */ JGeometry::TVec3<f32> unk154;
 };
 
