@@ -49,11 +49,25 @@ public:
 
 class TWaterHitActor : public THitActor {
 public:
+	TWaterHitActor() { }
+	TWaterHitActor(const char* name)
+	    : THitActor(name)
+	    , mWaterHitCounter(0)
+	{
+	}
+
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	void onWaterHitCounter() { unk68 = 0x3C; }
+	void onWaterHitCounter();
 
 public:
-	/* 0x68 */ int unk68;
+	// TODO: the methods of this class live in Enemy/BossHanachanSub.cpp and
+	// treat this as a halfword counter (sth), while the water particle code
+	// reads a whole word at the same offset. Something about this class is
+	// still wrong, the union just lets both kinds of users compile.
+	union {
+		/* 0x68 */ int unk68;
+		/* 0x68 */ s16 mWaterHitCounter;
+	};
 };
 
 class TModelWaterManager;
