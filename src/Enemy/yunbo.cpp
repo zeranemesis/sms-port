@@ -6,6 +6,7 @@
 #include <Map/Map.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
 #include <Player/MarioAccess.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
@@ -302,20 +303,21 @@ void TYumbo::shotSeeds()
 
 	JGeometry::TVec3<f32> velocity = *gpMarioPos;
 	velocity -= mPosition;
-	velocity.y += 200.0f * (0.5f + rand() * (1.0f / 32768.0f));
+	velocity.y += 200.0f * (0.5f + MsRandF());
 	velocity.setLength(getSaveLoadParam()->mShootSpeed.get());
 
+	f32 angleY = MsGetRotFromZaxisY(velocity);
 	JGeometry::TQuat4<f32> yaw;
-	yaw.setEulerY(-(0.017453294f * MsGetRotFromZaxisY(velocity)));
-	yaw.rotate(velocity);
+	yaw.setEulerY(-(0.017453294f * angleY));
+	yaw.rotate(velocity, velocity);
 
 	JGeometry::TQuat4<f32> spin;
-	spin.setEulerZ(6.2831855f * (rand() * (1.0f / 32768.0f)));
+	spin.setEulerZ(6.2831855f * MsRandF());
 	JGeometry::TQuat4<f32> tilt;
 	tilt.setEulerX(-3.1415927f * getSaveLoadParam()->mShootAngleX.get());
 	JGeometry::TQuat4<f32> rot;
 	rot.mul(spin, tilt);
-	rot.rotate(velocity);
+	rot.rotate(velocity, velocity);
 
 	seed->startToMove(mPosition, velocity,
 	                  getSaveLoadParam()->mSeedLife.get());
