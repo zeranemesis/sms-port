@@ -117,6 +117,7 @@ public:
 	static u32 getBstSwitch(u32 sound_id);
 	static u32 getSwitch(u32 sound_id, u32 mask, u32 offset);
 	bool gateCheck(u32);
+	f32 getDistPowFromCamera(const Vec&);
 
 	bool resetAudioAll(u16);
 
