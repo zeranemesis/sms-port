@@ -85,8 +85,8 @@ void TBigWindmill::control()
 
 	f32 angle = mRotation.z + sAngleAdd;
 	for (int i = 0; i < 4; ++i) {
-		f32 rad    = 0.017453294f * angle;
 		MtxPtr mtx = unk138[i]->getModel()->getAnmMtx(0);
+		f32 rad    = 0.017453294f * angle;
 		mtx[0][3]  = sRadius * cosf(rad) + mPosition.x;
 		mtx[1][3]  = sRadius * sinf(rad) + mPosition.y - mYOffset;
 		mtx[2][3]  = mPosition.z - sSubZ;
@@ -292,14 +292,15 @@ u32 TBiancoMiniWindmill::touchWater(THitActor* water)
 
 void TBiancoMiniWindmill::calc()
 {
-	TMtx34f mtx;
-	mtx.identity();
+	TMtx34f rot;
+	rot.identity();
+	MtxPtr mtx = rot;
 	MsMtxSetRotZ(mtx, unk150);
 	MTXConcat(getModel()->getAnmMtx(0), mtx, mtx);
 	MtxPtr base = getModel()->getAnmMtx(1);
-	mtx.ref(0, 3) = base[0][3];
-	mtx.ref(1, 3) = base[1][3];
-	mtx.ref(2, 3) = base[2][3];
+	mtx[0][3]   = base[0][3];
+	mtx[1][3]   = base[1][3];
+	mtx[2][3]   = base[2][3];
 	MTXCopy(mtx, getModel()->getAnmMtx(1));
 
 	if (gpMSound->getDistPowFromCamera(unk15C->mPosition) < 36000000.0f)
@@ -582,7 +583,7 @@ void TLampSeesaw::load(JSUMemoryInputStream& stream)
 	stream.read(&depth, 4);
 	unk13C = mInitialPosition.y - depth;
 	stream.read(&unk140, 4);
-	unk140 = unk140 * 0.0001f;
+	unk140 *= 0.0001f;
 }
 
 TLampSeesaw::TLampSeesaw(const char* name)
@@ -868,7 +869,8 @@ void TWoodLog::control()
 
 	Mtx inv;
 	MTXInverse(getModel()->getAnmMtx(0), inv);
-	JGeometry::TVec3<f32> marioPos = *gpMarioPos;
+	JGeometry::TVec3<f32> marioPos;
+	marioPos.set(SMS_GetMarioPos());
 	JGeometry::TVec3<f32> local;
 	MTXMultVec(inv, &marioPos, &local);
 
