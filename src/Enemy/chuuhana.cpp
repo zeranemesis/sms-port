@@ -274,16 +274,7 @@ void TChuuHana::reset()
 	unk198      = 0.0f;
 	unk1A0      = 0;
 	unk224      = 0;
-	unk1A4      = mCheckOnPanelTime;
-
-	JGeometry::TVec3<f32> point;
-	getTracer()
-	    ->getGraph()
-	    ->getGraphNode(
-	        TMsRange<s32>(0, getTracer()->getGraph()->getNodeNum()).rand())
-	    .getPoint(&point);
-	setGoalPath(TPathNode(point));
-	unk1B2 = 1;
+	setSafeGoal();
 }
 
 void TChuuHana::setBckAnm(int index)
@@ -442,20 +433,63 @@ void TChuuHana::checkOnPanel()
 	// TODO: UNUSED in the target (0x148 bytes), not yet reconstructed
 }
 
-bool TChuuHana::willFall(long)
+// TODO: fake pragma. In the target TUtil<f32>::sqrt is inlined here, which
+// presumably makes willFall too big to be auto-inlined into the nerves; in
+// our build sqrt stays out-of-line (unknown why) and willFall would get
+// inlined into TNerveChuuHanaAttack::execute without this.
+#pragma dont_inline on
+bool TChuuHana::willFall(long time)
 {
-	// TODO: not yet reconstructed
+	f32 radius = mSmallMirrorR;
+	if (mInstanceIndex > 0)
+		radius = mMediumMirrorR;
+	if (mInstanceIndex > 2)
+		radius = mLargeMirrorR;
+
+	if (time == mCheckOnPanelTimeRoll)
+		radius += 250.0f;
+
+	if (unk218 != nullptr) {
+		if (mPosition.distance(unk218->mPosition) > radius) {
+			setSafeGoal();
+			return true;
+		}
+	}
+
+	unk1B2 = 0;
 	return false;
 }
+#pragma dont_inline off
 
+// TODO: matches except for a 0x10 byte smaller stack frame
 void TChuuHana::setGoal()
 {
-	// TODO: not yet reconstructed
+	JGeometry::TVec3<f32> goal;
+	goal.set(mPosition);
+	TMsRange<f32> range(-30.0f, 30.0f);
+	f32 angle = range.rand();
+	JGeometry::TVec3<f32> dir(0.0f, 0.0f, 1.0f);
+	Mtx mtx;
+	MsMtxSetRotRPH(mtx, mRotation.x, mRotation.y + angle, mRotation.z);
+	MTXMultVec(mtx, &dir, &dir);
+	goal.x += 1000.0f * dir.x;
+	goal.z += 1000.0f * dir.z;
+	setGoalPath(TPathNode(goal));
+	unk1A4 = mCheckOnPanelTime;
+	unk1B2 = 0;
 }
 
 void TChuuHana::setSafeGoal()
 {
-	// TODO: UNUSED in the target (0x13C bytes), not yet reconstructed
+	unk1A4 = mCheckOnPanelTime;
+	JGeometry::TVec3<f32> point;
+	getTracer()
+	    ->getGraph()
+	    ->getGraphNode(
+	        TMsRange<s32>(0, getTracer()->getGraph()->getNodeNum()).rand())
+	    .getPoint(&point);
+	setGoalPath(TPathNode(point));
+	unk1B2 = 1;
 }
 
 void TChuuHana::rolling()
