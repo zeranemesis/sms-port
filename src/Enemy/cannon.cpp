@@ -8,6 +8,7 @@ public:
 	bool isHitVallid(u32);
 	bool isObject();
 	bool isInhibitedForceMove();
+	BOOL receiveMessage(THitActor*, u32);
 	void startChorobeiShout();
 
 private:
@@ -33,5 +34,18 @@ bool TCannon::isObject()
 }
 
 bool TCannon::isInhibitedForceMove() { return true; }
+
+BOOL TCannon::receiveMessage(THitActor* sender, u32 message)
+{
+	if (sender->mActorType == 0x40000235 && message == 4) {
+		if (mHolder == nullptr) {
+			mHolder = reinterpret_cast<TTakeActor*>(sender);
+			return TRUE;
+		}
+	}
+	if (message == 0xF)
+		return TRUE;
+	return FALSE;
+}
 
 void TCannon::startChorobeiShout() { }
