@@ -7,6 +7,12 @@ void TEffectEnemyManager::initSetEnemies() {}
 
 void TEffectEnemyManager::loadAfter() { JDrama::TNameRef::loadAfter(); }
 
+void TEffectEnemy::init(TLiveManager* manager)
+{
+	TWalkerEnemy::init(manager);
+	mActorType = 0x10000005;
+}
+
 void TEffectEnemy::reset() { TWalkerEnemy::reset(); }
 
 void TEffectEnemy::setDeadAnm()

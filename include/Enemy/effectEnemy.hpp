@@ -17,6 +17,7 @@
 class TEffectEnemy : public TWalkerEnemy {
 public:
 	TEffectEnemy(const char* name);
+	virtual void init(TLiveManager*);
 	virtual void reset();
 	virtual void setDeadAnm();
 	virtual void behaveToWater(THitActor*);
