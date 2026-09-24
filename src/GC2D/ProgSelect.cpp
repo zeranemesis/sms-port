@@ -81,24 +81,10 @@ void TProgSelect::perform(u32 cue, JDrama::TGraphics* graphics)
 		           || thing()) {
 			{
 				if (!mSelection) {
-					snprintf(unk1C, 256,
-					         "GM[0]画面表示モードは\n"
-					         "FX[24]FY[24]CC[ffff00]"
-					         "プログレッシブモード"
-					         "FX[20]FY[20]CC[ffffff]に\n"
-					         "セットされました。");
-					// TODO: GMSP01 asm calls OSSetEuRgb60Mode(1) here instead
-					// of OSSetProgressiveMode(1), and fetches its string via
-					// SMSGetMessageData rather than a literal -- needs
-					// proper re-decompilation for this version.
+					snprintf(unk1C, 256, SMSGetMessageData(unk130, 3));
 					OSSetEuRgb60Mode(1);
 				} else {
-					snprintf(unk1C, 256,
-					         "GM[0]画面表示モードは\n"
-					         "FX[24]FY[24]CC[ffff00]"
-					         "インターレースモード"
-					         "FX[20]FY[20]CC[ffffff]に\n"
-					         "セットされました。");
+					snprintf(unk1C, 256, SMSGetMessageData(unk130, 2));
 					OSSetEuRgb60Mode(0);
 				}
 				mHideTextBoxes = true;
