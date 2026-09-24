@@ -1,13 +1,14 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Enemy/SmallEnemy.hpp>
 
-class TCannon : public TSpineEnemy {
+class TCannon : public TSmallEnemy {
 public:
 	TCannon(const char*);
 	bool isCollidMove(THitActor*);
 	bool isHitVallid(u32);
 	bool isObject();
-	bool isInhibitedForceMove();
+	BOOL isInhibitedForceMove();
 	BOOL receiveMessage(THitActor*, u32);
 	void startChorobeiShout();
 
@@ -33,7 +34,7 @@ bool TCannon::isObject()
 	return false;
 }
 
-bool TCannon::isInhibitedForceMove() { return true; }
+BOOL TCannon::isInhibitedForceMove() { return TRUE; }
 
 BOOL TCannon::receiveMessage(THitActor* sender, u32 message)
 {
