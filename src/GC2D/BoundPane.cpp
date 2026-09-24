@@ -51,12 +51,13 @@ bool TBoundPane::update()
 			unk24 = false;
 		}
 
-		f32 fVar4 = unk48.x * unk28 * unk28
-		            + unk38.x * (1.0f - unk28) * (1.0f - unk28)
-		            + unk40.x * (1.0f - unk28) * 2.0f * unk28;
-		f32 fVar1 = unk48.y * unk28 * unk28
-		            + unk38.y * (1.0f - unk28) * (1.0f - unk28)
-		            + unk40.y * (1.0f - unk28) * 2.0f * unk28;
+		f32 fVar3 = unk28;
+		f32 fVar2 = 1.0f - fVar3;
+		f32 fVar5 = fVar3 * fVar3;
+		f32 fVar6 = fVar2 * fVar2;
+		f32 fVar7 = 2.0f * fVar2 * fVar3;
+		f32 fVar4 = unk38.x * fVar6 + unk40.x * fVar7 + unk48.x * fVar5;
+		f32 fVar1 = unk38.y * fVar6 + unk40.y * fVar7 + unk48.y * fVar5;
 
 		fVar4 += fVar4 > 0.0f ? 0.5f : -0.5f;
 		fVar1 += fVar1 > 0.0f ? 0.5f : -0.5f;
@@ -74,12 +75,13 @@ bool TBoundPane::update()
 			unk25 = false;
 		}
 
-		f32 fVar4 = unk60.x * unk30 * unk30
-		            + unk50.x * (1.0f - unk30) * (1.0f - unk30)
-		            + unk58.x * (1.0f - unk30) * 2.0f * unk30;
-		f32 fVar1 = unk60.y * unk30 * unk30
-		            + unk50.y * (1.0f - unk30) * (1.0f - unk30)
-		            + unk58.y * (1.0f - unk30) * 2.0f * unk30;
+		f32 fVar3 = unk30;
+		f32 fVar2 = 1.0f - fVar3;
+		f32 fVar5 = fVar3 * fVar3;
+		f32 fVar6 = fVar2 * fVar2;
+		f32 fVar7 = 2.0f * fVar2 * fVar3;
+		f32 fVar4 = unk50.x * fVar6 + unk58.x * fVar7 + unk60.x * fVar5;
+		f32 fVar1 = unk50.y * fVar6 + unk58.y * fVar7 + unk60.y * fVar5;
 
 		fVar4 += fVar4 > 0.0f ? 0.5f : -0.5f;
 		fVar1 += fVar1 > 0.0f ? 0.5f : -0.5f;

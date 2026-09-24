@@ -26,9 +26,9 @@ bool TQuestionManager::request(JGeometry::TVec3<f32> param_1, f32 param_2)
 {
 	// TODO: inline for horizontal distance?
 	if (unk12 < 0x20) {
+		const f32 xDiff = gpMarioPos->x - param_1.x;
 		const f32 zDiff = gpMarioPos->z - param_1.z;
 		const f32 zDiffSquared = zDiff * zDiff;
-		const f32 xDiff = gpMarioPos->x - param_1.x;
 		if (xDiff * xDiff + zDiffSquared < unk14 * unk14) {
 			unk1C[unk12].unk0 = param_1;
 			unk1C[unk12].unkC = param_2;

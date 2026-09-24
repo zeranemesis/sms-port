@@ -205,8 +205,6 @@ bool TGCLogoDir::direct_nlogo()
 			mLogoShowTimer = 0;
 		}
 		break;
-	}
-
 	case STATE_SHOW_LOGO:
 		if (checkProgressiveSelect(this)) {
 			mLogoShowTimer = 0;

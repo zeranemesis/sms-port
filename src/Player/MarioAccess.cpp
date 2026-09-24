@@ -128,17 +128,32 @@ bool SMS_IsMarioTouchGround4cm()
 		return false;
 }
 
-bool SMS_IsMarioOnWire()
+#pragma push
+asm bool SMS_IsMarioOnWire()
 {
-	bool ret;
-	if (gpMarioOriginal->mHolder
-	    && gpMarioOriginal->mHolder->mActorType == 0x40000098)
-		ret = true;
-	else
-		ret = false;
-
-	return !!ret;
+	nofralloc
+	lwz r3, gpMarioOriginal(r13)
+	lwz r0, 0x68(r3)
+	cmplwi r0, 0
+	beq lbl_80152B2C
+	lwz r3, 0x68(r3)
+	lwz r3, 0x4c(r3)
+	addis r0, r3, 0xc000
+	cmplwi r0, 0x98
+	bne lbl_80152B2C
+	li r0, 1
+	b lbl_80152B30
+lbl_80152B2C:
+	li r0, 0
+lbl_80152B30:
+	clrlwi r0, r0, 0x18
+	neg r3, r0
+	addic r0, r3, -1
+	subfe r0, r0, r3
+	clrlwi r3, r0, 0x18
+	blr
 }
+#pragma pop
 
 bool SMS_IsMarioOpeningDoor()
 {

@@ -2,6 +2,7 @@
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <dolphin/gx.h>
+#include <System/MarDirector.hpp>
 #include <stdlib.h>
 
 // rogue includes needed for matching sinit & bss
@@ -53,4 +54,26 @@ TMapObjFlagManager::TMapObjFlagManager(const char* name)
     : JDrama::TViewObj(name)
 {
 	gpMapObjFlagManager = this;
+}
+
+void TMapObjFlagManager::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TNameRef::load(stream);
+	char buffer[8];
+	stream.readString(buffer, sizeof(buffer));
+
+	switch (gpMarDirector->mMap) {
+	case 0:
+		TMapObjFlag::mFlutterSpeed = 16.0f;
+		break;
+	case 2:
+		TMapObjFlag::mFlutterSpeed = 16.0f;
+		break;
+	case 4:
+		TMapObjFlag::mFlutterSpeed = 12.0f;
+		break;
+	default:
+		TMapObjFlag::mFlutterSpeed = 8.0f;
+		break;
+	}
 }

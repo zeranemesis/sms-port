@@ -7,11 +7,6 @@
 class TLiveActor;
 class TLiveManager;
 
-class TBossHanachan {
-public:
-	static void staticLoadParticle();
-};
-
 DECLARE_NERVE(TNerveSBH_Fall, TLiveActor);
 DECLARE_NERVE(TNerveSBH_SleepContinue, TLiveActor);
 DECLARE_NERVE(TNerveBossHanachanDead, TLiveActor);
@@ -54,6 +49,8 @@ enum EnumBossHanachanStopMotionBlendOnOff {
 };
 
 class TBossHanachan : public TSpineEnemy {
+public:
+	static void staticLoadParticle();
 public:
 	TBossHanachan(const char*);
 
