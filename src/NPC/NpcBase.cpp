@@ -42,11 +42,11 @@ f32 TBaseNPC::getAnmOffDist_()
 	}
 
 	if (isNerveMaybeDontCalcAnim0()) {
-		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
+		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
 		if (bVar3 && fVar1 < fVar2)
 			fVar1 = fVar2;
 	} else if (isNerveMaybeDontCalcAnim1()) {
-		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
+		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
 		if (bVar3 && fVar1 < fVar2)
 			fVar1 = fVar2;
 	}
