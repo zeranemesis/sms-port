@@ -53,6 +53,11 @@ public:
 	void isDamageToCannon();
 
 	static bool mSerialBomb;
+
+public:
+	// TODO: fields between 0x194 and 0x19C, and past 0x19D, are unknown
+	/* 0x194 */ char unk194[0x19C - 0x194];
+	/* 0x19C */ u8 unk19C;
 };
 
 DECLARE_NERVE(TNerveBombHeiExplosion, TLiveActor);
