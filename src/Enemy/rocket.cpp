@@ -1,6 +1,16 @@
 
 #include <Enemy/Rocket.hpp>
 
+class TRocketManager : public TEnemyManager {
+public:
+	void loadAfter();
+};
+
+void TRocketManager::loadAfter()
+{
+	JDrama::TNameRef::loadAfter();
+}
+
 static const char* rocket_bastable[] = {
 	nullptr,
 	nullptr,
