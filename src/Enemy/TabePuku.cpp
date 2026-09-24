@@ -1,8 +1,10 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Enemy/SmallEnemy.hpp>
 
 class TTabePuku {
 public:
+	bool isFindMario(float);
 	void forceKill();
 	void behaveToWater(THitActor*);
 	void reset();
@@ -12,6 +14,11 @@ public:
 };
 
 void TTabePuku::forceKill() { }
+
+bool TTabePuku::isFindMario(float distance)
+{
+	return reinterpret_cast<TSmallEnemy*>(this)->isFindMarioFromParam(distance);
+}
 
 void TTabePuku::behaveToWater(THitActor*) { }
 
