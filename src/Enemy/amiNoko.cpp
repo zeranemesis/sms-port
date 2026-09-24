@@ -7,7 +7,14 @@ public:
 	const char** getBasNameTable() const;
 };
 
+class TAmiNokoManager {
+public:
+	TSpineEnemy* createEnemyInstance();
+};
+
 bool TAmiNoko::isCollidMove(THitActor*) { return false; }
+
+TSpineEnemy* TAmiNokoManager::createEnemyInstance() { return nullptr; }
 
 static const char* amiNoko_bastable[] = {
 	nullptr,
