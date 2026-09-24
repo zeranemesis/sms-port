@@ -762,6 +762,15 @@ void TMarDirector::nextStateInitialize(u8 next_state)
 		unkAC->mCardSave->init(unk261);
 		for (int i = 0; i < 4; ++i)
 			JUTGamePad::CRumble::stopMotor(unk18[i]->mPortNum);
+		int cardSaveMode = unk261;
+		switch (cardSaveMode) {
+		case 3:
+		case 4:
+			if (gpMSound->gateCheck(0x4849))
+				MSoundSESystem::MSoundSE::startSoundSystemSE(0x4849, 0,
+				                                            nullptr, 0);
+			break;
+		}
 		unk18[0]->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 		break;
 

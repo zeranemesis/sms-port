@@ -14,6 +14,18 @@ public:
 	void touchPlayer(THitActor*);
 	void control();
 	TCogwheelScale(const char*);
+
+public:
+	/* 0x138 */ f32 unk138;
+	/* 0x13C */ f32 unk13C;
+	/* 0x140 */ f32 unk140;
+	/* 0x144 */ f32 unk144;
+	/* 0x148 */ f32 unk148;
+	/* 0x14C */ f32 unk14C;
+	/* 0x150 */ f32 unk150;
+	/* 0x154 */ u8 unk154;
+	/* 0x155 */ u8 padding155[3];
+	/* 0x158 */ void* unk158;
 };
 
 class TCogwheel : public TMapObjBase {

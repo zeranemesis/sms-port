@@ -30,6 +30,14 @@ public:
 	void setGroundCollision();
 	void initMapObj();
 	THangingBridgeBoard(const char*);
+
+public:
+	/* 0x194 */ u32 unk194;
+	/* 0x198 */ u32 unk198;
+	/* 0x19C */ u32 unk19C;
+	/* 0x1A0 */ u32 unk1A0;
+	/* 0x1A4 */ JGeometry::TVec3<f32> unk1A4[2];
+	/* 0x1BC */ TMapObjBase* unk1BC;
 };
 
 class THangingBridge : public JDrama::TViewObj {
