@@ -12,6 +12,7 @@ public:
 	TRocket(const char* name = "ロケット");
 	virtual ~TRocket() { }
 	virtual const char** getBasNameTable() const;
+	virtual void behaveToWater(THitActor*);
 
 	// TODO: add other methods
 	bool isAttack();
