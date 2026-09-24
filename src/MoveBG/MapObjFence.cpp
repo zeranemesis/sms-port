@@ -1,4 +1,3 @@
-
 #include <MoveBG/MapObjFence.hpp>
 
 void TFenceWaterH::changeStatusToWait()
@@ -13,3 +12,5 @@ void TFenceWaterH::changeStatusToWait()
 TFenceWater::~TFenceWater() { }
 
 TFenceWaterH::~TFenceWaterH() { }
+
+void TFenceWater::draw() const {}
