@@ -769,8 +769,10 @@ void MSound::stopAllSeInCategory(u8 param_1, u32 param_2) { }
 void MSound::setCategoryAllVolume(u8 category, f32 volume, u32 param_3,
                                   u8 param_4)
 {
-	for (JAISound* sound         = unk0->getLinkBuffer(category)->mUsedHead;
-	     sound != nullptr; sound = sound->getNextSound())
+	u32 count = 0;
+	for (JAISound* sound = unk0->getLinkBuffer(category)->mUsedHead;
+	     sound != nullptr && count < 100;
+	     sound = sound->getNextSound(), ++count)
 		sound->setVolume(volume, param_3, param_4);
 }
 
