@@ -45,13 +45,17 @@ void TQuestionManager::makeDL(JDrama::TGraphics* param_1) const
 {
 	for (int i = 0; i < unk12; ++i) {
 		TQuestionRequest& req    = unk1C[i];
+		JGeometry::TVec3<f32> quad[4];
+		JGeometry::TVec3<f32> v2;
 		JGeometry::TVec3<f32> v1 = req.unk0;
 		f32 f                    = req.unkC;
 		v1.y += f;
-		JGeometry::TVec3<f32> v2;
 		MTXMultVec(param_1->mViewMtx, &v1, &v2);
-		JGeometry::TVec3<f32> v3(v2.x - f, v2.y + f, v2.z + f);
-		unk20->request(&v3);
+		quad[0].set(v2.x - f, v2.y + f, v2.z + f);
+		quad[1].set(v2.x + f, v2.y + f, v2.z + f);
+		quad[2].set(v2.x + f, v2.y - f, v2.z + f);
+		quad[3].set(v2.x - f, v2.y - f, v2.z + f);
+		unk20->request(quad);
 	}
 	unk20->setEnd();
 }
