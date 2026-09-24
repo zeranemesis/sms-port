@@ -14,4 +14,10 @@ TGuide::TGuide(const char* name)
 {
 }
 
+void TGuide::startMoveCursor()
+{
+	unk10  = 9;
+	unk164 = 0;
+}
+
 TGuide::~TGuide() { }
