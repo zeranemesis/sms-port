@@ -1251,11 +1251,11 @@ void TNozzleBox::touchPlayer(THitActor*)
 	    && !TFlagManager::smInstance->getNozzleRight(
 	        gpMarDirector->getCurrentMap(), 1)
 	    && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0057, true);
+		gpMarDirector->getConsole()->startAppearBalloon(0x5A, true);
 		unk166 = true;
 	}
 	if (!unk15C && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0056, true);
+		gpMarDirector->getConsole()->startAppearBalloon(0x59, true);
 		unk166 = true;
 	}
 }

@@ -1,7 +1,7 @@
 
 #include <Enemy/Rocket.hpp>
 
-class TRocketManager : public TEnemyManager {
+class TRocketManager : public TSmallEnemyManager {
 public:
 	void loadAfter();
 };
