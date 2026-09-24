@@ -1,5 +1,6 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Enemy/WireBinder.hpp>
 #include <Strategic/Spine.hpp>
 
 class TNerveWireTrapWait {
@@ -14,4 +15,21 @@ BOOL TNerveWireTrapWait::execute(TSpineBase<TLiveActor>* spine) const
 	if (waitTime < spine->getTime())
 		return TRUE;
 	return FALSE;
+}
+
+class TWireTrap : public TSpineEnemy {
+public:
+	TWireTrap(const char*);
+	TWireBinder* getWireBinder() const;
+	JGeometry::TVec3<f32>* getWireDir() const;
+};
+
+TWireBinder* TWireTrap::getWireBinder() const
+{
+	return (TWireBinder*)mBinder;
+}
+
+JGeometry::TVec3<f32>* TWireTrap::getWireDir() const
+{
+	return (JGeometry::TVec3<f32>*)((char*)mBinder + 8);
 }
