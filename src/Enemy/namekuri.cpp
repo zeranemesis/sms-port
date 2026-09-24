@@ -619,10 +619,12 @@ bool TNameKuri::isHitValid(u32 param_1)
 	if (param_1 == 15)
 		unk198 = 0;
 
-	if (checkLiveFlag(2))
+	u32 liveFlags = mLiveFlag;
+	if (liveFlags & LIVE_FLAG_HIDDEN)
 		return false;
-	else
-		return true;
+	if (param_1 == 11)
+		mLiveFlag = liveFlags | LIVE_FLAG_HIDDEN;
+	return true;
 }
 
 bool TNameKuri::isCollidMove(THitActor* param_1)
