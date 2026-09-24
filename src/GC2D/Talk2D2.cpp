@@ -13,6 +13,8 @@ void* TTalk2D2::cColorTable;
 // emitted .text order recovered from build/GMSP01/asm/GC2D/Talk2D2.s and
 // mario.MAP, which is the REVERSE of the declaration order in the header.
 
+TTalk2D2::~TTalk2D2() { }
+
 // TODO: not yet decompiled.
 void TTalk2D2::openWindow(s8, f32) {}
 
