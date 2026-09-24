@@ -39,7 +39,6 @@ public:
 
 	void checkHitActors();
 	void calcRootMatrix(TBoid*);
-	void calcRootMatrixOnTaking();
 
 	void onFlag(int flag) { mFlags |= flag; }
 	void offFlag(int flag) { mFlags &= ~flag; }
@@ -76,9 +75,6 @@ public:
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual TRealoidActor* createRealoidActor(MActor*);
 
-	void initBoids();
-	void performItem(u32, JDrama::TGraphics*);
-	void loadItem(JSUMemoryInputStream&);
 
 public:
 	/* 0x158 */ int mType;

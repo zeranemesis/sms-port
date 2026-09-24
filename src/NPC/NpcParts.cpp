@@ -72,7 +72,7 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 			TNPCManager* manager    = (TNPCManager*)unk60->getManager();
 			SDLModelData* modelData = manager->getPartsSDLModelData(puVar3);
 			unk0[i][j] = new TSharedParts(unk60, iVar6, modelData, 3);
-			if (initInfo->unk4[j]->unk2B)
+			if (puVar6->unk2B)
 				SMS_UnifyMaterial(unk0[i][j]->getMActor()->getModel());
 
 			switch (unk60->getActorType()) {

@@ -151,7 +151,6 @@ public:
 	static int checkWallList(const TBGCheckList*, TBGWallCheckRecord*);
 
 	void init(JSUMemoryInputStream&);
-	void initAllCheckDataAndList();
 	void initMoveCollision();
 	void initGrid(TBGCheckListRoot*);
 

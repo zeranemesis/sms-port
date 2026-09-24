@@ -4,7 +4,6 @@ TProcessMeter::TProcessMeter(s32 r4)
 {
 	_000 = 0x28;
 #ifdef VERSION_GMSP01
-	// PAL's taller framebuffer puts the meter 10 lines lower
 	_004 = 0x1C2;
 #else
 	_004 = 0x1B8;

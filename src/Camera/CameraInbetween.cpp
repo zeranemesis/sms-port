@@ -1,6 +1,8 @@
 #include <Camera/CameraInbetween.hpp>
 #include <Camera/cameralib.hpp>
 
+template <> s16 CLBRoundf<s16>(f32);
+
 // TODO: move to cameralib & replace CLBAbs with this
 #define ABS(x) ((x) >= 0 ? (x) : -(x))
 
@@ -16,17 +18,12 @@ TCameraInbetween::TCameraInbetween()
 {
 }
 
-void TCameraInbetween::calcPolarData_()
-{
-	CLBCrossToPolar(mAt, mPos, &unk8, &unkC, &unkE);
-	CLBCrossToPolar(unk30, mAt, &unk10, &unk14, &unk16);
-}
-
 void TCameraInbetween::warpPosAndAt(const Vec& pos, const Vec& at)
 {
 	mPos.set(pos);
 	mAt.set(at);
-	calcPolarData_();
+	CLBCrossToPolar(mAt, mPos, &unk8, &unkC, &unkE);
+	CLBCrossToPolar(unk30, mAt, &unk10, &unk14, &unk16);
 }
 
 void TCameraInbetween::addMoveCameraAndMario(const Vec& offset)
@@ -34,7 +31,8 @@ void TCameraInbetween::addMoveCameraAndMario(const Vec& offset)
 	mPos += offset;
 	mAt += offset;
 	unk30 += offset;
-	calcPolarData_();
+	CLBCrossToPolar(mAt, mPos, &unk8, &unkC, &unkE);
+	CLBCrossToPolar(unk30, mAt, &unk10, &unk14, &unk16);
 }
 
 void TCameraInbetween::startCameraInbetween(int frames)
@@ -42,7 +40,8 @@ void TCameraInbetween::startCameraInbetween(int frames)
 	mFramesRemaining = frames;
 	unk0             = frames;
 	unk3C            = 0;
-	calcPolarData_();
+	CLBCrossToPolar(mAt, mPos, &unk8, &unkC, &unkE);
+	CLBCrossToPolar(unk30, mAt, &unk10, &unk14, &unk16);
 }
 
 void TCameraInbetween::initCameraInbetween(const JGeometry::TVec3<f32>& pos,
@@ -52,7 +51,8 @@ void TCameraInbetween::initCameraInbetween(const JGeometry::TVec3<f32>& pos,
 	mPos.set(pos);
 	mAt.set(at);
 	unk30.set(param_3);
-	calcPolarData_();
+	CLBCrossToPolar(mAt, mPos, &unk8, &unkC, &unkE);
+	CLBCrossToPolar(unk30, mAt, &unk10, &unk14, &unk16);
 }
 
 void TCameraInbetween::execCameraInbetween(const JGeometry::TVec3<f32>& pos,
@@ -101,14 +101,3 @@ void TCameraInbetween::execCameraInbetween(const JGeometry::TVec3<f32>& pos,
 	unk30.set(param_3);
 }
 
-void TCameraInbetween::execInbetweenAndCalcPosAndAt(
-    const JGeometry::TVec3<f32>& param_1, const JGeometry::TVec3<f32>& param_2,
-    const JGeometry::TVec3<f32>& param_3, f32 param_4, f32 param_5, f32 param_6,
-    f32 param_7, JGeometry::TVec3<f32>* param_8, JGeometry::TVec3<f32>* param_9)
-{
-}
-
-void TCameraInbetween::setInbetModePosAngleY(
-    TCameraInbetween::EnumAngleInbetMode, s16, s16)
-{
-}

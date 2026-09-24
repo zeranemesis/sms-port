@@ -87,7 +87,6 @@ public:
 	bool isNerveCanGoToWet() const;
 	bool isNerveCanGoToSink() const;
 	bool isNerveCanGoToTaken() const;
-	bool isNerveCanGoToThrow() const;
 	bool isNerveCanGoToMad() const;
 	bool isNerveCanGoToBlown() const;
 
@@ -205,9 +204,11 @@ public:
 	bool isClean() const { return mPollutionAmount == 0.0f; }
 
 	enum {
-		LIVE_FLAG_DONT_TALK   = LIVE_FLAG_ABOVE_4000(0x10000),
-		LIVE_FLAG_SINK_BOTTOM = LIVE_FLAG_ABOVE_4000(0x800000),
-		LIVE_FLAG_DONT_THROW  = LIVE_FLAG_ABOVE_4000(0x20000000),
+		LIVE_FLAG_DONT_TALK = VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000)),
+		LIVE_FLAG_SINK_BOTTOM
+		= VERSION_SELECT(GMSJ01(0x800000), GMSP01(0x1000000)),
+		LIVE_FLAG_DONT_THROW
+		= VERSION_SELECT(GMSJ01(0x20000000), GMSP01(0x40000000)),
 	};
 
 private:
@@ -218,7 +219,6 @@ private:
 	void setMtxEffect_();
 	void initSinkNpc_();
 	void changeNerveFromTalk_();
-	void changeNerveToWet_();
 	void changeNerveToMad_();
 	void releaseTaken_();
 	void behaveToBeTaken_(THitActor*);
@@ -239,29 +239,7 @@ private:
 		if (mDamageParticleForbidCount != 0)
 			mDamageParticleForbidCount -= 1;
 	}
-	f32 getAnmOffDist_()
-	{
-		bool bVar3 = false;
-		f32 fVar1  = gpCamera->mFar;
-		u32 uVar5  = unkD0->getCurrentAnmKind();
-		f32 fVar2  = mPtrSaveNormal->mSLDanceAnmOffDist.get();
-		if (checkActionFlag(NPC_ACTION_HAPPY | NPC_ACTION_DANCE)
-		    || mActorType == 0x400000D || uVar5 || uVar5 == 23) {
-			bVar3 = true;
-		}
-
-		if (!isNerveMaybeDontCalcAnim0() && !isNerveMaybeDontCalcAnim1()) {
-			fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
-			if (bVar3 && fVar1 < fVar2)
-				fVar1 = fVar2;
-		} else {
-			fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
-			if (bVar3 && fVar1 < fVar2)
-				fVar1 = fVar2;
-		}
-
-		return fVar1;
-	}
+	f32 getAnmOffDist_();
 	void setNpcAnm_(EnumNpcAnmKind, EnumNpcStopMotionBlendOnOff);
 	void requestNpcAnm_(EnumNpcAnmKind, EnumNpcStopMotionBlendOnOff);
 	void setKeepAnm_();

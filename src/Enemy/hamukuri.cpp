@@ -1749,8 +1749,7 @@ void TDangoHamuKuri::reset()
 	mPrev = nullptr;
 	mNext = nullptr;
 	mBoss = nullptr;
-	// TODO: rand interval
-	unk20C = MsRandF(0.0f, 1.0f);
+	unk20C = TMsRange<f32>(0.0f, 1.0f).rand();
 	mMActor->calc();
 }
 
@@ -2540,7 +2539,7 @@ DEFINE_NERVE(TNerveDangoHamuKuriWait, TLiveActor)
 		self->setWaitAnm();
 		self->getMActor()
 		    ->getFrameCtrl(ANM_TYPE_BCK)
-		    ->setFrame(MsRandF(0.0f, 30.0f));
+		    ->setFrame(TMsRange<f32>(0.0f, 30.0f).rand());
 	}
 
 	return false;

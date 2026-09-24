@@ -39,8 +39,8 @@ void TMapWarp::watchToWarp()
 			unk8 = warp;
 
 			// TODO: inlines
-			JGeometry::TVec3<f32> marioPos = SMS_GetMarioPos();
-			marioPos += unk4[checkData->getData()].unk8;
+			JGeometry::TVec3<f32> marioPos
+			    = SMS_GetMarioPos() + unk4[checkData->getData()].unk8;
 			SMS_MarioWarpRequest(marioPos,
 			                     (*gpMarioAngleY * 180.0f) / 32768.0f);
 		}

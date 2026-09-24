@@ -1,6 +1,8 @@
 #include <GC2D/Coord2D.hpp>
 #include <Camera/cameralib.hpp>
 
+template <> BOOL CLBChaseGeneralConstantSpecifySpeed<f32>(f32*, f32, f32);
+
 TCoord2D::TCoord2D()
 {
 	mCurrentPos.zero();

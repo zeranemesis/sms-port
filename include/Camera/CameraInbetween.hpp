@@ -6,12 +6,7 @@
 
 class TCameraInbetween {
 public:
-	enum EnumAngleInbetMode {
-
-	};
-
 	TCameraInbetween();
-	void calcPolarData_();
 	void warpPosAndAt(const Vec&, const Vec&);
 	void addMoveCameraAndMario(const Vec&);
 	void startCameraInbetween(int);
@@ -21,13 +16,6 @@ public:
 	void execCameraInbetween(const JGeometry::TVec3<f32>&,
 	                         const JGeometry::TVec3<f32>&,
 	                         const JGeometry::TVec3<f32>&);
-	void execInbetweenAndCalcPosAndAt(const JGeometry::TVec3<f32>&,
-	                                  const JGeometry::TVec3<f32>&,
-	                                  const JGeometry::TVec3<f32>&, f32, f32,
-	                                  f32, f32, JGeometry::TVec3<f32>*,
-	                                  JGeometry::TVec3<f32>*);
-	void setInbetModePosAngleY(TCameraInbetween::EnumAngleInbetMode, s16, s16);
-
 	bool isThing() const { return unk44 != 0.0f ? true : false; }
 
 	s32 getUnk4() const { return mFramesRemaining; }

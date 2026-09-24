@@ -379,13 +379,13 @@ bool CPolarSubCamera::isMarioReadyGun_() const
 bool CPolarSubCamera::isMarioAimWithGun_() const
 {
 	return isMarioReadyGun_()
-	       && unk120->checkFrameMeaning(TMarioGamePad::MEANING_R);
+	       && unk120->checkMeaning(TMarioGamePad::MEANING_R);
 }
 
 bool CPolarSubCamera::isMarioCrabWalk_() const
 {
 	return isMarioReadyGun_()
-	       && unk120->checkFrameMeaning(TMarioGamePad::MEANING_CAM_L);
+	       && unk120->checkMeaning(TMarioGamePad::MEANING_CAM_L);
 }
 
 void CPolarSubCamera::execInvalidAutoChase_()

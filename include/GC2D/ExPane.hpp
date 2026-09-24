@@ -16,7 +16,6 @@ class J2DPane;
  */
 class TExPane {
 public:
-	TExPane(JUTTexture*, GXCullMode);
 	TExPane(J2DScreen*, u32);
 
 	/// Performs one frame of the animations.

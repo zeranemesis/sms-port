@@ -25,7 +25,7 @@ static const char* MtxCalcTypeName[] = {
 // but it actually gets inlined :(
 void CPolarSubCamera::calcTowerCenterPos_(Vec* result)
 {
-	static const char* sPositionNameTable[6] = {
+	static const char* sPositionNameTable[5] = {
 		"塔カメラＡ中心", "塔カメラＢ中心", "塔カメラＣ中心",
 		"塔カメラＤ中心", "塔カメラＥ中心",
 	};

@@ -327,7 +327,8 @@ void TPollutionLayer::initLayerInfo(const TPollutionLayerInfo* param_1)
 	if (getPollutionType() == POLLUTION_TYPE_UNK7) {
 		mPollutedThreshold       = 200;
 		mPerFrameChangeThreshold = 160;
-	} else if (getPollutionType() == POLLUTION_TYPE_FIRE) {
+	} else if (getPollutionType() == POLLUTION_TYPE_FIRE
+	           || getPollutionType() == POLLUTION_TYPE_ELECTRIC) {
 		mPollutedThreshold       = 128;
 		mPerFrameChangeThreshold = 128;
 	} else {

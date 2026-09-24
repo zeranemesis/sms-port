@@ -229,8 +229,6 @@ f32 TModelWaterManager::getWPGravity(int i) const
 		return mWaterParticleTypes[mParticleTypeSOA[i]]->mGravity.get();
 }
 
-void TModelWaterManager::getWaterAlpha() const { }
-
 bool TModelWaterManager::askHitWaterParticleOnGround(
     const JGeometry::TVec3<f32>& param_1)
 {
@@ -321,8 +319,6 @@ void TModelWaterManager::splashGround(int i)
 	    mWaterParticleTypes[mParticleTypeSOA[i]]->mCleanSize.get() * 10.0f);
 }
 
-void TModelWaterManager::touchingExec(int i) { }
-
 // TODO: contents of this inline are a wild guess
 void TModelWaterManager::splashWall(int i)
 {
@@ -332,11 +328,6 @@ void TModelWaterManager::splashWall(int i)
 	    mParticlePositionSOA[i].x, mParticlePositionSOA[i].y,
 	    mParticlePositionSOA[i].z,
 	    mWaterParticleTypes[mParticleTypeSOA[i]]->mCleanSize.get() * 32.0f);
-}
-
-void TModelWaterManager::splashWallPosSize(const JGeometry::TVec3<f32>& param_1,
-                                           f32 param_2)
-{
 }
 
 struct UnknownMWMStruct {
@@ -1560,18 +1551,18 @@ void TModelWaterManager::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_CALC_VIEW) {
 		if (unk5D60 & 0x80)
-			TTimeRec::startTimer(0xFF, 0x00, 0x00, 0xFE);
+			TTimeRec::snapCPUTime(JUtility::TColor(0xFF, 0x00, 0x00, 0xFE));
 
 		calcDrawVtx(graphics->mViewMtx);
 		calcVMAll(graphics->mViewMtx);
 
 		if (unk5D60 & 0x80)
-			TTimeRec::endTimer();
+			TTimeRec::snapCPUTime(0);
 	}
 
 	if (cue & CUE_DRAW) {
 		if (unk5D60 & 0x80)
-			TTimeRec::snapGxTimeStart(0xFF, 0x00, 0x00, 0xFD);
+			TTimeRec::snapGXTimeSt(JUtility::TColor(0xFF, 0x00, 0x00, 0xFD));
 
 		drawSilhouette(r29);
 		drawWaterVolume(r29);
@@ -1584,12 +1575,12 @@ void TModelWaterManager::perform(u32 cue, JDrama::TGraphics* graphics)
 			drawShineShadowVolume(graphics->mViewMtx);
 
 		if (unk5D60 & 0x80)
-			TTimeRec::snapGxTimeEnd();
+			TTimeRec::snapGXTimeSt(0);
 	}
 
 	if (cue & CUE_DRAW_INIT) {
 		if (unk5D60 & 0x80)
-			TTimeRec::snapGxTimeStart(0xFF, 0x00, 0x00, 0xFC);
+			TTimeRec::snapGXTimeSt(JUtility::TColor(0xFF, 0x00, 0x00, 0xFC));
 
 		drawRefracAndSpec();
 
@@ -1597,6 +1588,6 @@ void TModelWaterManager::perform(u32 cue, JDrama::TGraphics* graphics)
 			drawShineShadowVolume(graphics->mViewMtx);
 
 		if (unk5D60 & 0x80)
-			TTimeRec::snapGxTimeEnd();
+			TTimeRec::snapGXTimeSt(0);
 	}
 }

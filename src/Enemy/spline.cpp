@@ -20,9 +20,6 @@ TSplinePath::TSplinePath(int param_1)
 		mXs[i] = mYs[i] = mZs[i] = i;
 }
 
-// BUG: UNUSED symbol size tells us they even forgot to delete the arrays -_-
-TSplinePath::~TSplinePath() { }
-
 void TSplinePath::makeTable(f32* parametrization, f32* coords, f32* param_3)
 {
 	param_3[0]             = 0.0f;
@@ -120,9 +117,3 @@ f32 TSplinePath::calcSpline(f32 t, f32* parametrization, f32* coords,
 	return dt * c + coords[l];
 }
 
-// NOTE: order of floats in sdata2 is wrong because of lack of inlines
-static void dummy(f32* f)
-{
-	*f = 1.0f;
-	*f = 3.0f;
-}

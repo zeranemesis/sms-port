@@ -121,9 +121,7 @@ public:
 	static f32 mFireArea;
 	static s32 mFireEffectWaitTime;
 	static f32 mThunderArea;
-	static u32 mThunderScaleRate;
 	static f32 mGlassWallArea;
-	static u32 mGlassWallScaleRate;
 	static s32 mGlassWallEffectTime;
 	static int mEffectTime;
 

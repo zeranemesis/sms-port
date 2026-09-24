@@ -13,9 +13,6 @@ public:
 	bool isMarioIndoor() const;
 	bool isMarioSlider() const;
 	bool isMarioLeanMirror() const;
-	bool isMarioBathtub() const;
-	bool isMarioDoorDemoStart() const;
-	bool isMarioDoorDemoEnd() const;
 	bool isMarioClimb(u32) const;
 
 	void addMoveCameraAndMario(const Vec& v) { unk0 += v; }

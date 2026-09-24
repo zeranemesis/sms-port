@@ -6,6 +6,11 @@
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <System/THPRender.hpp>
 #include <System/Application.hpp>
+#ifdef VERSION_GMSP01
+#include <System/FlagManager.hpp>
+#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+#include <JSystem/JSupport/JSUMemoryOutputStream.hpp>
+#endif
 
 // TODO: removeme
 static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
@@ -36,7 +41,7 @@ TMovieSubTitle::TMovieSubTitle(const TTHPRender* param_1)
 
 void TMovieSubTitle::setupResource(const char* param_1, JKRArchive* param_2)
 {
-	if (is_longheight_movie(gpApplication.getMovie()))
+	if (is_longheight_movie(SMSGetApplication()->getMovie()))
 		unk14 = new J2DSetScreen("demo_1.blo", param_2);
 	else
 		unk14 = new J2DSetScreen("demo_2.blo", param_2);
@@ -46,7 +51,7 @@ void TMovieSubTitle::setupResource(const char* param_1, JKRArchive* param_2)
 	unk18 = (J2DTextBox*)unk14->search('me_a');
 	unk1C = (J2DTextBox*)unk14->search('me_b');
 
-	char buffer[256];
+	char buffer[0x400];
 
 	// inline?
 	memset(buffer, ' ', ARRAY_COUNT(buffer));
@@ -121,11 +126,78 @@ const TMessageLoader::EntryInfo* TMovieSubTitle::getCurEntry() const
 
 void TMovieSubTitle::setCurMessage()
 {
+#ifdef VERSION_GMSP01
+	const TMessageLoader::EntryInfo* entry = nullptr;
+	if (unk20->getMessageNum() > unk24
+	    && TFlagManager::getInstance()->getFlag(0x90001))
+		entry = unk20->getMessageEntry(unk24);
+
+	const u8* message = unk20->getMessageData() + entry->unk0;
+	u8 code;
+	u8 length;
+	u8 color[4];
+	bool hasColor;
+	JSUMemoryInputStream input(message, 0x400);
+	JSUMemoryOutputStream output(unk18->getStringPtr(), 0x400);
+	char markup[0x100];
+
+	while (input.getPosition() != input.getLength()) {
+		input.read(&code, 1);
+
+		if (code == '\n') {
+			output.write(&code, 1);
+			continue;
+		}
+		if (code == '\0') {
+			output.write(&code, 1);
+			return;
+		}
+		if (code == 0x1A) {
+			input.read(&length, 1);
+			input.skip(length - 2);
+			continue;
+		}
+
+		hasColor = true;
+		switch (code) {
+		case '@': color[0] = 100; color[1] = 255; color[2] = 100; break;
+		case '#': color[0] = 255; color[1] = 160; color[2] = 100; break;
+		case '%': color[0] = 255; color[1] = 255; color[2] = 0; break;
+		case '*':
+		case '+':
+		case '<':
+		case '>':
+		case 0xA5:
+			color[0] = 220;
+			color[1] = 220;
+			color[2] = 220;
+			break;
+		case 'n': color[0] = 110; color[1] = 230; color[2] = 255; break;
+		default: hasColor = false; break;
+		}
+
+		if (hasColor) {
+			color[3] = 255;
+			snprintf(markup, 0xFF,
+			         "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]",
+			         color[0], color[1], color[2]);
+			output.write(markup, 0x1D);
+		}
+		output.write(&code, 1);
+		if (hasColor) {
+			snprintf(markup, 0xFF,
+			         "\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]\033GM[1]");
+			output.write(markup, 0x1E);
+		}
+	}
+
+	snprintf(unk1C->getStringPtr(), 0x400, "%s", unk18->getStringPtr());
+#else
 	const char* msg
 	    = (const char*)(unk20->getMessageData() + getCurEntry()->unk0);
-
 	snprintf(unk18->getStringPtr(), 256, "%s", msg);
 	snprintf(unk1C->getStringPtr(), 256, "%s", msg);
+#endif
 }
 
 void TMovieSubTitle::makeBmgName(char* buffer, int, const char* param_3)

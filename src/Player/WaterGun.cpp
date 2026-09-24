@@ -1681,6 +1681,35 @@ TNozzleBase* TWaterGun::getCurrentNozzle() const
 	return mNozzleList[mCurrentNozzle];
 }
 
+bool TWaterGun::isEmitting()
+{
+	const TWaterGun* self = this;
+
+	if (mCurrentWater == 0)
+		return false;
+
+	u8 gameState = gpMarDirector->unk124;
+	if (gameState == 3 || gameState == 4)
+		return false;
+	bool isStateOneOrTwo = true;
+	if (gameState != 1 && gameState != 2)
+		isStateOneOrTwo = false;
+	if (isStateOneOrTwo)
+		return false;
+
+	if (self->getCurrentNozzle()->getNozzleKind() == 1) {
+		TNozzleTrigger* trig = (TNozzleTrigger*)self->getCurrentNozzle();
+		if (trig->unk385 == TNozzleTrigger::ACTIVE)
+			return true;
+		return false;
+	}
+
+	if (self->getCurrentNozzle()->unk378 > 0.0f)
+		return true;
+
+	return false;
+}
+
 void TWaterGun::setAmountToRate(f32 rate)
 {
 	// volatile u32 unused2[7]; // TODO: possibly inlined function
@@ -1760,8 +1789,8 @@ void TWaterGun::rotateProp(f32 rotation)
 	if (mCurrentNozzle == 5) {
 		unk1CD2 += rotation * mWatergunParams.mNozzleAngleYSpeed.get();
 		unk1CD2 *= mWatergunParams.mNozzleAngleYBrake.get();
-		if (mWatergunParams.mHoverRotMax.get() < unk1CD2) {
-			unk1CD2 = mWatergunParams.mHoverRotMax.get();
+		if (mWatergunParams.mNozzleAngleYSpeedMax.get() < unk1CD2) {
+			unk1CD2 = mWatergunParams.mNozzleAngleYSpeedMax.get();
 		}
 		unk1CD0 = unk1CD0 + unk1CD2;
 	} else {

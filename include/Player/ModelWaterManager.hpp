@@ -86,15 +86,12 @@ public:
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	f32 getWPGravity(int) const;
-	void getWaterAlpha() const;
 	bool askHitWaterParticleOnGround(const JGeometry::TVec3<f32>&);
 	void makeEmit(const TWaterEmitInfo&);
 	u8 emitRequest(const TWaterEmitInfo&);
 	void splashSound(const JGeometry::TVec3<f32>&, f32) const;
 	void splashGround(int);
-	void touchingExec(int);
 	void splashWall(int);
-	void splashWallPosSize(const JGeometry::TVec3<f32>&, f32);
 	f32 getPlaneFriction(const TBGCheckData*);
 	f32 getPlaneFall(const TBGCheckData*);
 	f32 getPlaneVanishSpeed(const TBGCheckData*);

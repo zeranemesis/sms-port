@@ -257,7 +257,6 @@ public:
 	               const JGeometry::TVec3<f32>&, f32, TBGWallCheckRecord*);
 	bool checkWalls(JGeometry::TVec3<f32>*, TBGWallCheckRecord*, f32);
 	bool behaveHitWallOnFlying(const TBGCheckData*);
-	void calcShadowPos();
 	void calcRipplePos();
 	f32 getGravityY() const;
 	MtxPtr getTailMtx() const;

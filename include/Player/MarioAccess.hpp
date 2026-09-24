@@ -74,7 +74,6 @@ bool SMS_IsMarioStatusTypeSwimming();
 bool SMS_IsMarioStatusTypeJumping();
 bool SMS_IsMarioStatusWaiting();
 
-TLiveActor* SMS_GetMarioLiveActor();
 THitActor* SMS_GetMarioHitActor();
 bool SMS_AskJumpIntoWaterEffectExist();
 TYoshi* SMS_GetYoshi();

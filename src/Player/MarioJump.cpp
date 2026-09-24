@@ -17,7 +17,7 @@ BOOL TMario::startJumpWall()
 {
 	if (mWallPlane != NULL) {
 		const JGeometry::TVec3<f32>& normal = mWallPlane->getNormal();
-		s16 angle = matan(mWallPlane->mMinY, normal.x) + 0x8000;
+		s16 angle = matan(normal.z, normal.x) + 0x8000;
 		emitParticle(PARTICLE_MS_WALLKICK_A, angle);
 		emitParticle(PARTICLE_MS_WALLKICK_B, angle);
 	}
@@ -84,10 +84,6 @@ void TMario::doJumping()
 		setAttackHeight(mDeParams.mPushupHeight.get());
 	}
 }
-
-void TMario::checkJumpingThrowStart() { }
-
-void TMario::askStrongGroundTouch() { }
 
 BOOL TMario::jumpingBasic(int statusOnGround, int animation, int processArg)
 {
@@ -511,8 +507,6 @@ BOOL TMario::jumpDownCommon(int param_1, int animation, float velocity)
 	return result;
 }
 
-void TMario::checkWallJumping() { }
-
 BOOL TMario::jumpShortBackDown()
 {
 	if (mStatusTimer == 0) {
@@ -906,7 +900,7 @@ BOOL TMario::rocketCheck()
 		if (!isUpperState(UPPER_STATE_PUMPING))
 			bVar2 = false;
 
-		if (!mWaterGun->canSpray())
+		if (!mWaterGun->isEmitting())
 			bVar2 = false;
 	} else {
 		bVar2 = false;

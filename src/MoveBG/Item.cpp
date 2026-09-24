@@ -196,7 +196,7 @@ TItem::TItem(const char* name)
 
 void TCoin::taken(THitActor* param_1)
 {
-	u8 thing = gpApplication.mCurrArea.unk0;
+	u8 thing = SMSGetApplication()->mCurrArea.getStage();
 	TFlagManager::getInstance()->incGoldCoinFlag(SMS_getShineStage(thing), 1);
 
 	SMSGetMSound()->startSoundActor(MSD_SE_SY_COIN, &mPosition, 0, nullptr, 0,
@@ -331,8 +331,6 @@ void TFlowerCoin::load(JSUMemoryInputStream& stream)
 	TCoin::load(stream);
 	stream >> unk158;
 }
-
-void TCoinEmpty::warning() { }
 
 void TCoinEmpty::appear() { }
 
@@ -713,9 +711,11 @@ s32 TShine::appearWithTimeCallback(u32 param_1, u32 param_2)
 	TShine* shine = (TShine*)param_1;
 	if (param_2 == 0) {
 		shine->appearWithTime(shine->unk18C, -1, -1, -1);
-		gpMarDirector->unk4E |= 1;
+		gpMarDirector->onDemoFlag(
+		    TMarDirector::DEMO_FLAG_SHINE_GET_STOP_THE_WORLD);
 	} else if (param_2 == 1) {
-		gpMarDirector->unk4E &= ~1;
+		gpMarDirector->offDemoFlag(
+		    TMarDirector::DEMO_FLAG_SHINE_GET_STOP_THE_WORLD);
 	}
 	return 0;
 }
@@ -1251,11 +1251,11 @@ void TNozzleBox::touchPlayer(THitActor*)
 	    && !TFlagManager::smInstance->getNozzleRight(
 	        gpMarDirector->getCurrentMap(), 1)
 	    && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0057, true);
+		gpMarDirector->getConsole()->startAppearBalloon(0x5A, true);
 		unk166 = true;
 	}
 	if (!unk15C && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0056, true);
+		gpMarDirector->getConsole()->startAppearBalloon(0x59, true);
 		unk166 = true;
 	}
 }

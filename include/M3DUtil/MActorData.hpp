@@ -90,7 +90,7 @@ public:
 
 	void createSampleModelData(J3DModelData*);
 	void addFileTable(const char*);
-	char* getSimpleName(const char*);
+	inline char* getSimpleName(const char*);
 	void addFileNum(const char*);
 	void init(const char*, const char**);
 	void addIncidentalAnm(const char*, int);

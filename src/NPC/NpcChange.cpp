@@ -142,8 +142,6 @@ bool TBaseNPC::isNerveCanGoToTaken() const
 	return result;
 }
 
-bool TBaseNPC::isNerveCanGoToThrow() const { }
-
 bool TBaseNPC::isNerveCanGoToMad() const
 {
 	bool result                         = false;
@@ -202,8 +200,6 @@ void TBaseNPC::changeNerveFromTalk_()
 	offLiveFlag(LIVE_FLAG_UNK2000000);
 }
 
-void TBaseNPC::changeNerveToWet_() { }
-
 void TBaseNPC::changeNerveToMad_()
 {
 	if (mSpine->getCurrentNerve() == &TNerveNPCWet::theNerve()) {
@@ -249,7 +245,7 @@ void TBaseNPC::behaveToBeTaken_(THitActor* param_1)
 	offLiveFlag(LIVE_FLAG_UNK10 | LIVE_FLAG_UNK20000 | LIVE_FLAG_UNK400000);
 	if (mActorType == 0x4000018) {
 		peachParasolOut_();
-		mBalloonCtrl->setNextMessage(0xE004F, 0x2EE);
+		mBalloonCtrl->setNextMessage(0x52, 0x2EE);
 	}
 
 	mSpine->setNext(&TNerveNPCWaitContinue::theNerve());

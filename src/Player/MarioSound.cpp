@@ -10,8 +10,6 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-void TMario::startVoiceYoshi(u32 param_1) { }
-
 // TODO: fake!! use a real inline!
 static void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
                                  u32 param_4)
@@ -24,7 +22,7 @@ void TMario::soundMovement()
 	bool hasShineHolder = true;
 	u32 curStatus       = mStatus;
 
-	if (SMSGetMSound()->unkA8 & 1)
+	if (SMSGetMSound()->mSeGateMask & MSSeGate_Continuous)
 		mSoundValues.unk18 = 0;
 	else
 		mSoundValues.unk18 = 1;
@@ -483,7 +481,7 @@ void TMario::soundMovement()
 			}
 		} else if (curStatus == MARIO_STATUS_FORCE_JUMP
 		           && mSoundValues.unk00 != MARIO_STATUS_FORCE_JUMP
-		           && gpApplication.mCurrArea.getStage() == 2) {
+		           && SMSGetApplication()->mCurrArea.getStage() == 2) {
 			SMSGetMSound()->startSoundActor(MSD_SE_MA_ROPE_JUMP_C, &mPosition,
 			                                0, nullptr, 0, 4);
 			if (mHealth > 2) {
@@ -680,8 +678,6 @@ void TMario::animSound()
 		                     mModel->getFrameCtrl(0).getRate(), mSoundFlags, 4);
 	}
 }
-
-void TMario::soundHitBound() { }
 
 void TMario::soundTorocco()
 {

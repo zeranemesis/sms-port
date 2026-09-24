@@ -127,7 +127,11 @@ void TEnemyMario::initValues()
 	unk468 = 0.0f;
 	unk46C = 0.0f;
 
+#ifdef VERSION_GMSP01
+	mAnmSound = new MAnmSoundMario(SMSGetMSound());
+#else
 	mAnmSound = new MAnmSound(SMSGetMSound());
+#endif
 	mAnmSound->initAnmSound(nullptr, 1, 0.0f);
 	unk4EC          = 0;
 	mBlendLogicOp   = 10;
@@ -266,12 +270,6 @@ BOOL TEnemyMario::canJumpToNode() const
 	return mEMario->getTracer()->getGraph()->getGraphNode(nodeIndex).checkFlag(
 	    2);
 }
-
-// UNUSED in retail (inlined away), size 0x8 = 2 PPC instructions. A plain
-// bit-test compiles to 7 (MWCC's neg/subic/subfe bool normalization). 2 instrs
-// is just a load + blr, i.e. no room to mask — the real body must return a
-// non-normalized value. Exact form is TODO (dead code, no callsite to anchor).
-bool TEnemyMario::isDispPencil() const { return false; }
 
 void TEnemyMario::initEnemyValues()
 {

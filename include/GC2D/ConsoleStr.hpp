@@ -38,19 +38,20 @@ public:
 	static JUTPoint cShineGetLeft3;
 
 public:
-	/* 0x10 */ J2DSetScreen* unk10;
-	/* 0x14 */ J2DSetScreen* unk14;
-	u8 unk18Pad[0x3C];
+	/* 0x10 */ s32 mGoPaneCount;
+	/* 0x14 */ s32 mShinePaneCount;
+	/* 0x18 */ s32 mMissPaneCount;
+	/* 0x1C */ s32 mMissBaseRotation[12];
+	/* 0x4C */ J2DSetScreen* unk4C;
+	/* 0x50 */ J2DSetScreen* unk50;
 	/* 0x54 */ f32 unk18;
 	/* 0x58 */ int unk1C;
 	/* 0x5C */ u32 unk20;
 	/* 0x60 */ u32 unk24;
-	/* 0x64 */ TBoundPane* unk28[3];
-	/* 0x70 */ JUTPoint unk34[66];
-	/* Retail contains additional pane storage before these members. */
-	u8 unk244Pad[0x5C4];
-	/* 0x844 */ TBoundPane* unk244[9];
-	/* 0x868 */ TBoundPane* unk268[5];
+	/* 0x64 */ TBoundPane* unk28[11];
+	/* 0x90 */ JUTPoint unk34[0xF2];
+	/* 0x820 */ TBoundPane* unk244[11];
+	/* 0x84C */ TBoundPane* unk268[12];
 	/* 0x87C */ TExPane* unk27C[5];
 	/* 0x890 */ TExPane* unk290[2];
 	/* 0x898 */ TExPane* unk298;
@@ -58,11 +59,7 @@ public:
 	/* 0x8A0 */ J2DTextBox* unk2A0[2];
 	/* 0x8A8 */ u8 unk2A8;
 	/* 0x8A9 */ u8 unk2A9;
-	/* 0x8AC */ void* unk2AC;
-	/* 0x8B0 */ void* unk2B0;
-	/* 0x8B4 */ void* unk2B4;
-	/* Retail pane/state storage omitted from the current source model. */
-	u8 unk2C0[0x20];
+	/* 0x8AC */ void* unk2AC[11];
 	/* 0x8D8 */ int unk2B8;
 	/* 0x8DC */ int unk2BC;
 };

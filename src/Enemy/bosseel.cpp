@@ -133,8 +133,6 @@ void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
 	mSharedParts->getMActor()->perform(cue, graphics);
 }
 
-void TBEelTearsDrop::generate(JGeometry::TVec3<f32>& position) { }
-
 TBEelTearsSaveLoadParams::TBEelTearsSaveLoadParams(const char* path)
     : TSpineEnemyParams(path)
     , PARAM_INIT(mSLTearsUpSpeed, 5.0f)
@@ -476,8 +474,6 @@ void TBEelTears::setBubble()
 	onLiveFlag(LIVE_FLAG_HIDDEN);
 	mRecoverCollision->mColliding = true;
 }
-
-void TBEelTears::setRecoverTears() { }
 
 void TBEelTears::deadEffect()
 {
@@ -856,8 +852,6 @@ BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 	}
 	return result;
 }
-
-void TBossEelTooth::updateTremble() { }
 
 void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 {
@@ -1617,8 +1611,6 @@ bool TBossEel::canEatMario()
 		return true;
 	return false;
 }
-
-BOOL TBossEel::isEyeBlurOn() { }
 
 void TBossEel::shedTears(MtxPtr spawnMtx)
 {

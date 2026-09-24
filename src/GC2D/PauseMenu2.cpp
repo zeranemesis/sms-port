@@ -57,14 +57,14 @@ TPauseMenu2::TPauseMenu2(const char* pName)
     , mBounceAnim(0.0f)
     , mFadeAnim(0.0f)
     , mFirstItemAngle(0)
-    , unkFC(6)
+    , unk100(6)
     , mEffectKeyFrame(3)
     , mEffectStretch(129)
     , mNumItems(3)
     , mPressedB(false)
     , mSelectionConfirmed(false)
     , mEmitter(nullptr)
-    , unk114(0)
+    , unk118(0)
 {
 }
 
@@ -76,7 +76,7 @@ void TPauseMenu2::load(JSUMemoryInputStream& pStream)
 	mScreen          = new J2DSetScreen("pause_1.blo", arch);
 	mScreen->setCullBack(GX_CULL_BACK);
 
-	if (gpApplication.mCurrArea.unk0 <= 1) {
+	if (SMSGetApplication()->mCurrArea.getStage() <= 1) {
 		// Hide "Exit Area" option in Delfino Plaza.
 		mNumItems = 2;
 	}
@@ -466,7 +466,7 @@ void TPauseMenu2::perform(u32 cue, JDrama::TGraphics* graphics)
 					} else {
 						// Loop animation.
 						mBounceAnim = -0.5f;
-						unkFC       = -unkFC;
+						unk100      = -unk100;
 					}
 
 					mBounceAnim += 0.5f;

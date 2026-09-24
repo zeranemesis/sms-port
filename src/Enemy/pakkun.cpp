@@ -331,9 +331,6 @@ void TPakkun::setDeadAnm()
 	}
 }
 
-// UNUSED
-bool TPakkun::isHideEnd() const { return false; }
-
 void TPakkun::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (!checkLiveFlag(LIVE_FLAG_UNK200)) {
@@ -370,10 +367,6 @@ void TPakkun::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 	}
 }
-
-// UNUSED
-// TODO: Reconstruct the original 0x98-byte body.
-void TPakkun::createPakkunSmoke(JGeometry::TVec3<f32>&) { }
 
 // UNUSED
 void TPakkun::seedPollute(JGeometry::TVec3<f32>& position)

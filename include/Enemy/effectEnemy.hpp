@@ -17,11 +17,21 @@
 class TEffectEnemy : public TWalkerEnemy {
 public:
 	TEffectEnemy(const char* name);
+	virtual void init(TLiveManager*);
+	virtual void kill();
+	virtual void reset();
+	virtual void setDeadAnm();
+	virtual void behaveToWater(THitActor*);
+
+public:
+	/* 0x194 */ u32 unk194;
 };
 
 class TEffectEnemyManager : public TSmallEnemyManager {
 public:
 	virtual void initSetEnemies();
+	virtual TSpineEnemy* createEnemyInstance();
+	virtual void loadAfter();
 };
 
 #endif // ENEMY_EFFECT_ENEMY_HPP

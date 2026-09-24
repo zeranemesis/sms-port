@@ -1,4 +1,7 @@
 #include <MoveBG/MapObjRicco.hpp>
+#include <MoveBG/MapObjManager.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/MActorUtil.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
@@ -70,7 +73,7 @@ f32 TRiccoWatermill::mSubmarineSurfaceTransY;
 
 u32 TRiccoWatermill::touchWater(THitActor*)
 {
-	if (mState != 5)
+	if (mState == 5)
 		return TRUE;
 
 	unk140 = 5;
@@ -115,8 +118,7 @@ TRiccoWatermill::TRiccoWatermill(const char* name)
 BOOL TFruitSwitch::receiveMessage(THitActor* sender, u32 message)
 {
 	if (message == 1) {
-		// TODO: unverified animation name
-		startBck("FruitSwitchPush");
+		startBck("riccoswitch");
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 
 		if (mMapCollisionManager->unk8)
@@ -128,3 +130,37 @@ BOOL TFruitSwitch::receiveMessage(THitActor* sender, u32 message)
 
 	return FALSE;
 }
+
+TCraneUpDown::~TCraneUpDown() { }
+
+TSurfGesoObj::~TSurfGesoObj() { }
+
+void TSurfGesoObj::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	if (strcmp(getUnkF4(), "SurfGesoRed") == 0) {
+		mTevColor.r = 0xFF;
+		mTevColor.g = 0xB4;
+		mTevColor.b = 0xFF;
+		mTevColor.a = 0xFF;
+	} else if (strcmp(getUnkF4(), "SurfGesoYellow") == 0) {
+		mTevColor.r = 0xFF;
+		mTevColor.g = 0xFF;
+		mTevColor.b = 0x7D;
+		mTevColor.a = 0xFF;
+	} else if (strcmp(getUnkF4(), "SurfGesoGreen") == 0) {
+		mTevColor.r = 0xB4;
+		mTevColor.g = 0xFF;
+		mTevColor.b = 0xB4;
+		mTevColor.a = 0xFF;
+	}
+
+	SDLModelData* modelData = gpMapObjManager->mSurfGessoModelData;
+	MActorAnmData* anmData = gpMapObjManager->getMActorAnmData();
+	mMActor = SMS_MakeMActorFromSDLModelData(modelData, anmData, 3);
+	TMapObjBase::initPacketMatColor(getModel(), GX_TEVREG1, &mTevColor);
+	mMActor->setBck("surfgeso_run1");
+}
+
+TFruitLauncher::~TFruitLauncher() { }

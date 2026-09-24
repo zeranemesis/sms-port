@@ -24,9 +24,9 @@ public:
 	// preceding 0x68 (0x28,0x2c) not yet placed relative to THitActor base.
 	/* 0x68 */ f32 unk68;
 	/* 0x6C */ f32 unk6C;
-	/* 0x70 */ f32 unk70;
-	/* 0x74 */ f32 unk74;
-	/* 0x78 */ f32 unk78;
+	/* 0x70 */ u32 unk70;
+	/* 0x74 */ u32 unk74;
+	/* 0x78 */ u32 unk78;
 	/* 0x7C */ f32 unk7C;
 	/* 0x80 */ f32 unk80;
 	/* 0x84 */ f32 unk84;
@@ -67,6 +67,7 @@ public:
 	};
 
 	TMapObjFlagManager(const char* name = "旗管理");
+	virtual ~TMapObjFlagManager();
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);

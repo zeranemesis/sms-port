@@ -21,48 +21,43 @@ void MAnmSound::animeLoop(Vec* position, f32 frame, f32 speed, u32 ground_no,
 		                ground_no, param_5);
 }
 
-// TODO: find a home for this
-static u32 get_thing(u32 param_1)
-{
-	u32 uVar1 = param_1 >> 30;
-	u32 uVar2 = param_1 >> 12 & 0xF;
-
-	if (uVar1 == 0)
-		return uVar2;
-
-	if (uVar1 == 2)
-		return 0x10;
-
-	if (uVar1 == 3)
-		return 0x11;
-
-	return 0xffffffff;
-}
-
 void MAnmSound::startAnimSound(void* interface, u32 id,
                                JAISoundHandle* out_handle, JAIActor* actor,
                                u8 camera_idx)
 {
-	if (MSGMSound->gateCheck(id)) {
-		switch (get_thing(id)) {
-		case 0:
-			if ((actor->mGroundNumber & 0x1000) == 0x1000)
-				return;
-			break;
-
-		case 7: {
-			u32 bVar2 = actor->mGroundNumber >> 24;
-			u32 a     = bVar2 & 0xF;
-			u8 b      = bVar2 >> 4;
-			MSGMSound->startMarioVoice(id, a, b);
-			return;
-		}
-		}
-
+	if (MSGMSound->gateCheck(id))
 		MSoundSESystem::MSoundSE::startSoundActorInner(id, out_handle, actor, 0,
 		                                               camera_idx);
+}
+
+#ifdef VERSION_GMSP01
+void MAnmSoundMario::startAnimSound(void* interface, u32 id,
+                                    JAISoundHandle* out_handle,
+                                    JAIActor* actor, u8 camera_idx)
+{
+	if (!MSGMSound->gateCheck(id))
+		return;
+
+	s32 soundType = (id >> 12) & 0xF;
+	u32 category = id >> 30;
+	if (category == 2)
+		soundType = 0x10;
+	else if (category == 3)
+		soundType = 0x11;
+	else if (category != 0)
+		soundType = -1;
+
+	if (soundType == 7) {
+		u32 groundNumber = actor->mGroundNumber;
+		MSGMSound->startMarioVoice(
+		    id, static_cast<s16>((groundNumber >> 24) & 0xF),
+		    static_cast<u8>(groundNumber >> 28));
+	} else if (soundType != 0 || !(actor->mGroundNumber & 0x1000)) {
+		MSoundSESystem::MSoundSE::startSoundActorInner(
+		    id, out_handle, actor, 0, camera_idx);
 	}
 }
+#endif
 
 void MAnmSound::setSpeedModifySound(JAISound* sound,
                                     JAIAnimeFrameSoundData* frame_data,

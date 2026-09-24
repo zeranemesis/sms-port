@@ -25,7 +25,6 @@ public:
 	void mtxEffectShow();
 
 	// Unused
-	void addDirty();
 
 	// Fabricated
 	bool isModelActive(u16 type) { return unk4 & type ? true : false; }

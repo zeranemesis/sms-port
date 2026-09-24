@@ -3,6 +3,8 @@
 #include <Enemy/Graph.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
 
 // @non-matching -- the issue seems to stem from the JDrama TNameRefGen
 // search/push_back calls.
@@ -102,8 +104,18 @@ void TRiccoHook::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TSpineEnemy::perform(cue, graphics);
 	mHookTake->perform(cue, graphics);
-	if ((cue & CUE_MOVE) && mTimer > 0) {
-		mTimer--;
+	if (cue & CUE_MOVE) {
+		if (mTimer > 0) {
+			mTimer--;
+		} else {
+			if (mInstanceIndex & 1) {
+				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE1,
+				                                &mPosition, 0, nullptr, 0, 4);
+			} else {
+				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE2,
+				                                &mPosition, 0, nullptr, 0, 4);
+			}
+		}
 	}
 }
 

@@ -3,6 +3,7 @@
 #include <math.h>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
 
 // This unit is reverse_fn_order: with -inline deferred MWCC emits functions in
 // the reverse of their source order, so the source runs backwards relative to
@@ -90,3 +91,62 @@ void TMapObjWave::perform(u32 cue, JDrama::TGraphics* graphics)
 		draw();
 	}
 }
+
+void TMapObjWave::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TNameRef::load(stream);
+
+	mWaveSpan        = 5200.0f;
+	mWaveHeight      = 200.0f;
+	mHalfWaveSpan    = mWaveSpan * 0.5f;
+	mInvHalfWaveSpan = 1.0f / mHalfWaveSpan;
+	mWaveCount       = mWaveSpan / mWaveHeight;
+	unk94            = (u32)JKRFileLoader::getGlbResource("/scene/map/map/wave.bti");
+	mTexSpeed        = 0.0015f;
+	mWaveTexScale    = 0.0012f;
+	mWaveTexScale2   = 0.0015f;
+	unk4C            = 400.0f;
+	unk50            = 150.0f;
+	mAngleSpeed0     = 0.02f;
+	mAngleSpeed1     = 0.03f;
+
+	switch (gpMarDirector->mMap) {
+	case 3:
+	case 30:
+		unk2C = 25.0f;
+		unk30 = 20.0f;
+		unk34 = 0.0f;
+		unk38 = 0.0f;
+		break;
+	case 4:
+		unk2C = 40.0f;
+		unk30 = 30.0f;
+		unk34 = 5.0f;
+		unk38 = 0.0f;
+		break;
+	case 13:
+		unk2C = 30.0f;
+		unk30 = 25.0f;
+		unk34 = 5.0f;
+		unk38 = 0.0f;
+		break;
+	case 9:
+	case 52:
+		unk2C = 10.0f;
+		unk30 = 15.0f;
+		unk34 = 0.0f;
+		unk38 = 0.0f;
+		break;
+	default:
+		unk2C = 30.0f;
+		unk30 = 25.0f;
+		unk34 = 0.0f;
+		unk38 = 0.0f;
+		break;
+	}
+
+	mAmplitude0 = unk2C;
+	mAmplitude1 = unk30;
+}
+
+TMapObjWave::~TMapObjWave() { }

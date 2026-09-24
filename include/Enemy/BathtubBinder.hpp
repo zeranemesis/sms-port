@@ -15,7 +15,7 @@ public:
 	TBathtubBinder();
 	virtual ~TBathtubBinder();
 
-	void init(f32, f32, f32, f32, f32);
+	bool init(f32, f32, f32, f32, f32);
 	virtual void bind(TLiveActor*);
 
 	// TODO: not yet decompiled (see BathtubBinder.cpp) - needs two joint/name

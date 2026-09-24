@@ -260,9 +260,6 @@ void TAnimalBase::getRotationFlyToDir(JGeometry::TVec3<f32>* current_rot,
 	                                         0.1f * speedX);
 }
 
-// UNUSED (Size: 0x4a0 in MAP)
-void TAnimalBase::flyToCurPathNode(f32 a1, f32 a2) { }
-
 void TAnimalBase::execWalk(bool moving)
 {
 	TAnimalSaveIndividual* save = ((TAnimalManagerBase*)mManager)->mAnimalSave;
@@ -309,5 +306,3 @@ void TAnimalBase::execWalk(bool moving)
 	mLinearVelocity = tmp;
 }
 
-// UNUSED (Size: 0x5c in MAP)
-void TAnimalBase::animalWalkIn() { }

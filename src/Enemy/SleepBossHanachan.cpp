@@ -1,13 +1,21 @@
 #include <Enemy/SleepBossHanachan.hpp>
+#include <Enemy/BossHanachan.hpp>
 
-// symbol confirmed by reading the disassembly (li r3, sleepBossHanachan_bastable@sda21)
-extern const char* sleepBossHanachan_bastable[];
+static const char* sleepBossHanachan_bastable[] = {
+	"/scene/sleepBossHanachan/bas/demohanatyan_fall.bas",
+	nullptr,
+};
 
 void TSleepBossHanachan::calcRootMatrix() {}
 
 const char** TSleepBossHanachan::getBasNameTable() const
 {
 	return sleepBossHanachan_bastable;
+}
+
+int TNerveSBH_SleepContinue::execute(TSpineBase<TLiveActor>*) const
+{
+	return false;
 }
 
 // TODO: the remaining 12 functions in this unit (TSleepBossHanachan::init,

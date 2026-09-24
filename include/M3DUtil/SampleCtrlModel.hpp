@@ -10,14 +10,6 @@ class SampleCtrlJoint;
 class SampleCtrlMaterial;
 class SampleCtrlShape;
 
-// TODO: unused and probably not reconstructable
-class SampleCtrlModel {
-public:
-	SampleCtrlModel(J3DModel*);
-
-	virtual ~SampleCtrlModel() { }
-};
-
 class SampleCtrlModelData {
 public:
 	SampleCtrlModelData(J3DModelData*);

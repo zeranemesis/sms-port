@@ -1990,7 +1990,7 @@ void TMario::thinkSituation()
 		if (mAnimationId != ANIM_THROWN)
 			startSoundActor(MSD_SE_MV10B_CRY_JUMP_01);
 		gpCamera->unk64 |= CPolarSubCamera::CAMERA_FLAG_HELL_DEAD_DEMO;
-		gpMarDirector->unk4E |= 0x8;
+		gpMarDirector->onDemoFlag(TMarDirector::DEMO_FLAG_HELL_DEAD);
 		return;
 	}
 
@@ -2291,7 +2291,6 @@ void TMario::getOffYoshi(bool fly)
 
 	setAnimation(ANIM_JUMP, 1.0f);
 	unk78 &= ~0x100;
-	mPosition.y += 100.0f;
 	mForwardVel = -8.0f;
 
 	mWaterGun->changeNozzle(TWaterGun::Hover, true);

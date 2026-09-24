@@ -4,6 +4,7 @@
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjBlock.hpp>
 #include <MoveBG/Item.hpp>
+#include <dolphin/gx/GXStruct.h>
 
 class JAISound;
 class TFruitLauncher;
@@ -27,6 +28,7 @@ public:
 
 class TCraneUpDown : public TMapObjBase {
 public:
+	~TCraneUpDown();
 	void control();
 	void initMapObj();
 	TCraneUpDown(const char* name = "上下クレーン");
@@ -73,8 +75,12 @@ public:
 
 class TSurfGesoObj : public TItem {
 public:
+	~TSurfGesoObj();
 	void initMapObj();
 	TSurfGesoObj(const char* name = "イカサーフィン");
+
+public:
+	/* 0x154 */ GXColorS10 mTevColor;
 };
 
 class TFruitSwitch : public TMapObjBase {
@@ -90,6 +96,7 @@ public:
 
 class TFruitLauncher : public TMapObjBase {
 public:
+	~TFruitLauncher();
 	void appearFruit() const;
 	void fireObj();
 	void loadAfter();

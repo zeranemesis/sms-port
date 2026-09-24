@@ -14,7 +14,6 @@ public:
 	TMapCollisionManager(u16, const char*, const TLiveActor*);
 	void init(const char* file, u16, const char* path);
 	void createCollision(const char*, u8);
-	void getFileName(const char*, char*);
 	void changeCollision(u32);
 
 	// fabricated

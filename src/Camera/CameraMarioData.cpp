@@ -6,6 +6,8 @@
 #include <Map/MapData.hpp>
 #include <Camera/cameralib.hpp>
 
+template <> f32 CLBCalcRatio<s16>(s16, s16, s16);
+
 TCameraMarioData* gpCameraMario;
 
 TCameraMarioData::TCameraMarioData()
@@ -106,12 +108,6 @@ bool TCameraMarioData::isMarioLeanMirror() const
 	}
 	return result;
 }
-
-bool TCameraMarioData::isMarioBathtub() const { }
-
-bool TCameraMarioData::isMarioDoorDemoStart() const { }
-
-bool TCameraMarioData::isMarioDoorDemoEnd() const { }
 
 bool TCameraMarioData::isMarioClimb(u32 status) const
 {

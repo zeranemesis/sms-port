@@ -56,41 +56,42 @@ public:
 
 	// "Pause" letters.
 	/* 0x20 */ J2DPicture* mPauseLetters[5];
-	/* 0x34 */ JUTRect mOrigLetterBounds[5];
-	/* 0x84 */ f32 mOrigLetterAngles[5];
+	/* 0x34 */ u32 unk34;
+	/* 0x38 */ JUTRect mOrigLetterBounds[5];
+	/* 0x88 */ f32 mOrigLetterAngles[5];
 
 	// Menu items.
-	/* 0x98 */ J2DPicture* mMenuItems[3];
-	/* 0xA4 */ JUTRect mOrigItemBounds[3];
+	/* 0x9C */ J2DPicture* mMenuItems[3];
+	/* 0xA8 */ JUTRect mOrigItemBounds[3];
 
 	// Stage and scenario name.
-	/* 0xD4 */ J2DTextBox* mStageName;
-	/* 0xD8 */ J2DPane* mStagePane;
-	/* 0xDC */ J2DTextBox* mScenarioName;
+	/* 0xD8 */ J2DTextBox* mStageName;
+	/* 0xDC */ J2DPane* mStagePane;
+	/* 0xE0 */ J2DTextBox* mScenarioName;
 
 	// Menu option items.
-	/* 0xE0 */ u8 mSelectedItem;
-	/* 0xE4 */ u32 mItemColor;
-	/* 0xE8 */ f32 mBounceAnim;
+	/* 0xE4 */ u8 mSelectedItem;
+	/* 0xE8 */ u32 mItemColor;
+	/* 0xEC */ f32 mBounceAnim;
 
 	// Appear/disappear animation.
-	/* 0xEC */ f32 mFadeAnim;
-	/* 0xF0 */ u8 mBackgroundAlpha;
-	/* 0xF4 */ f32 mBackgroundFadeInSpeed;
-	/* 0xF8 */ s16 mFirstItemAngle;
-	/* 0xFC */ u32 unkFC; // unused?
+	/* 0xF0 */ f32 mFadeAnim;
+	/* 0xF4 */ u8 mBackgroundAlpha;
+	/* 0xF8 */ f32 mBackgroundFadeInSpeed;
+	/* 0xFC */ s16 mFirstItemAngle;
+	/* 0x100 */ u32 unk100; // unused?
 
 	// "Spark" effect for the bouncing animation.
-	/* 0x100 */ s16 mEffectKeyFrame;
-	/* 0x102 */ u16 mEffectStretch;
+	/* 0x104 */ s16 mEffectKeyFrame;
+	/* 0x106 */ u16 mEffectStretch;
 
-	/* 0x104 */ s32 mNumItems;
-	/* 0x108 */ bool mPressedB;
-	/* 0x109 */ bool mSelectionConfirmed;
-	/* 0x10C */ TMarioGamePad* mGamePad;
-	/* 0x110 */ JPABaseEmitter* mEmitter;
-	/* 0x114 */ u32 unk114; // unused?
-	/* 0x118 */ TCardSave* mCardSave;
+	/* 0x108 */ s32 mNumItems;
+	/* 0x10C */ bool mPressedB;
+	/* 0x10D */ bool mSelectionConfirmed;
+	/* 0x110 */ TMarioGamePad* mGamePad;
+	/* 0x114 */ JPABaseEmitter* mEmitter;
+	/* 0x118 */ u32 unk118; // unused?
+	/* 0x11C */ TCardSave* mCardSave;
 };
 
 #endif

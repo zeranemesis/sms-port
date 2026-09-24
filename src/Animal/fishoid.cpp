@@ -13,6 +13,7 @@
 #include <Strategic/ObjManager.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
+#include <System/MarDirector.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <M3DUtil/InfectiousStrings.hpp>
@@ -104,15 +105,27 @@ void TRealoidActor::checkHitActors()
 	for (; it != end; ++it) {
 		switch ((*it)->getActorType()) {
 		case 0x80000001:
-			SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
+			bool shouldSkipMessage = true;
+			bool isTalk = shouldSkipMessage;
+			u8 state = gpMarDirector->unk124;
+			if (state != 1 && state != 2)
+				isTalk = false;
+			if (!isTalk) {
+				bool isDemo = true;
+				u8 demoState = gpMarDirector->unk124;
+				if (demoState != 3 && demoState != 4)
+					isDemo = false;
+				if (!isDemo)
+					shouldSkipMessage = false;
+			}
+			if (!shouldSkipMessage)
+				SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 			break;
 		}
 	}
 }
 
 MtxPtr TRealoidActor::getTakingMtx() { return unk78; }
-
-void TRealoidActor::calcRootMatrixOnTaking() { }
 
 TRealoid::TRealoid(const char* name)
     : TSpineEnemy(name)
@@ -206,8 +219,6 @@ void TFishoid::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
-void TFishoid::performItem(u32, JDrama::TGraphics*) { }
-
 void TFishoid::init(TLiveManager* manager)
 {
 	mManager = manager;
@@ -216,8 +227,6 @@ void TFishoid::init(TLiveManager* manager)
 	initHitActor(0, 1, 0, 0.0f, 0.0f, 0.0f, 0.0f);
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
-
-void TFishoid::initBoids() { }
 
 void TFishoid::load(JSUMemoryInputStream& stream)
 {
@@ -255,8 +264,6 @@ void TFishoid::load(JSUMemoryInputStream& stream)
 		unk15C->mPosition = realoid->mPosition;
 	}
 }
-
-void TFishoid::loadItem(JSUMemoryInputStream&) { }
 
 TRealoidActor* TFishoid::createRealoidActor(MActor* actor)
 {

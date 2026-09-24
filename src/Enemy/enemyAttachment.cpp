@@ -124,10 +124,15 @@ void TEnemyAttachment::set()
 	mRotation = unk160->getRotation();
 }
 
+#pragma dont_inline on
+void TEnemyAttachment::setBehavior() { }
+#pragma dont_inline off
+
 void TEnemyAttachment::moveObject()
 {
 	if (unk150 == 1) {
 		set();
+		setBehavior();
 	} else {
 		calcRideMomentum();
 		sendMessage();
@@ -145,7 +150,7 @@ void TEnemyAttachment::sendMessage()
 		}
 
 		if (mCollisions[i] != unk160) {
-			((TLiveActor*)mCollisions[i])->kill();
+			kill();
 		}
 	}
 }

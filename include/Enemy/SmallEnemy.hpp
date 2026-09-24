@@ -145,9 +145,15 @@ public:
 	virtual void forceKill();
 	virtual void setMActorAndKeeper();
 	virtual void initAttacker(THitActor*) { unk184 = 1; }
-	virtual bool isHitValid(u32)
+	virtual bool isHitValid(u32 message)
 	{
-		return checkLiveFlag(LIVE_FLAG_HIDDEN) ? false : true;
+		if (checkLiveFlag(LIVE_FLAG_HIDDEN))
+			return false;
+
+		if (message == HIT_MESSAGE_UNKB)
+			onLiveFlag(LIVE_FLAG_HIDDEN);
+
+		return true;
 	}
 	virtual bool isCollidMove(THitActor*);
 	virtual BOOL isInhibitedForceMove() { return FALSE; }
@@ -201,7 +207,8 @@ public:
 	}
 
 	enum {
-		LIVE_FLAG_MELT_ON_DEATH = LIVE_FLAG_ABOVE_4000(0x10000),
+		LIVE_FLAG_MELT_ON_DEATH
+		= VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000)),
 	};
 
 public:

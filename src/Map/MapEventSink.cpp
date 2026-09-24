@@ -367,7 +367,18 @@ bool TMapEventSinkBianco::watch()
 
 void TMapEventSinkBianco::loadAfter()
 {
-	TMapEventSinkInPollutionReset::loadAfter();
+	JDrama::TNameRef::loadAfter();
+	for (int i = 0; i < mBuildingNum; ++i) {
+		TPollutionObj* obj
+		    = gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2);
+		gpPollution->getCounterObj().registerPollutionObj(obj, &obj->mCounter);
+	}
+	for (int i = 0; i < mBuildingNum; ++i) {
+		gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2)->alive();
+		gpPollution->getLayer(unk60[i].unk0)
+		    ->getObj(unk60[i].unk2 + 1)
+		    ->kill();
+	}
 
 	TMapStaticObj* ref
 	    = static_cast<TMapStaticObj*>(JDrama::TNameRefGen::search("鏡内地形"));
