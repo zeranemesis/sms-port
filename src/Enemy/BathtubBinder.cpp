@@ -29,7 +29,7 @@ bool TBathtubBinder::init(f32 a, f32 b, f32 c, f32 d, f32 e)
 	unk10 = b;
 	unk14 = c;
 	unk18 = d;
-	unk1C = d / (b + d);
+	unk1C = unk18 / (unk10 + unk18);
 	if (unk4 == nullptr)
 		unk8 = 0;
 	return unk4 != nullptr;

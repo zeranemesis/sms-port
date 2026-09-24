@@ -1,7 +1,7 @@
 
-#include <Enemy/SmallEnemy.hpp>
+#include <Enemy/WalkerEnemy.hpp>
 
-class THauntLeg : public TSmallEnemy {
+class THauntLeg : public TWalkerEnemy {
 public:
 	THauntLeg(const char*);
 	virtual void setRunAnm();
