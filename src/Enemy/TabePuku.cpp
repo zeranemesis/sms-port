@@ -79,10 +79,9 @@ bool TTabePuku::doKeepDistance()
 	return false;
 }
 
-bool TTabePuku::isFindMario(float param_1)
+bool TTabePuku::isFindMario(float distance)
 {
-	// TODO: not yet decompiled
-	return false;
+	return isFindMarioFromParam(distance);
 }
 
 void TTabePuku::forceKill()
@@ -137,10 +136,7 @@ void TTabePuku::perform(u32 cue, JDrama::TGraphics* graphics)
 	// TODO: not yet decompiled
 }
 
-void TTabePuku::reset()
-{
-	// TODO: not yet decompiled
-}
+void TTabePuku::reset() { mScaledBodyRadius = 130.0f; }
 
 void TTabePuku::init(TLiveManager* liveManager)
 {
