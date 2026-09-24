@@ -1772,8 +1772,6 @@ bool TFireWanwan::behaveHitWallOnFlying(const TBGCheckData* check_data)
 	return false;
 }
 
-void TFireWanwan::calcShadowPos() { }
-
 void TFireWanwan::calcRipplePos()
 {
 	MtxPtr mtx = getModel()->getAnmMtx(mCenterJointIdx);

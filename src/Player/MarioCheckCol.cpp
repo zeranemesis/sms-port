@@ -68,8 +68,6 @@ void TMario::hitPushup(THitActor* actor)
 	hitNormal(actor);
 }
 
-void TMario::hitPull(THitActor*) { }
-
 void TMario::hitMario(THitActor* actor)
 {
 	if (mHeldObject != actor && mHolder != actor)
@@ -95,8 +93,6 @@ void TMario::hitNpc(THitActor* actor)
 	if (((TLiveActor*)actor)->checkLiveFlag(LIVE_FLAG_UNK100000))
 		wantToTakeActor(actor);
 }
-
-void TMario::hitPool(THitActor*) { }
 
 void TMario::wantToTakeActor(THitActor* actor)
 {
@@ -222,8 +218,6 @@ void TMario::hitPickUpEnemy(THitActor* actor)
 	if (((TSmallEnemy*)actor)->doKeepDistance())
 		keepDistance(*actor, 0.0f);
 }
-
-void TMario::hitSurfingBoard(THitActor*) { }
 
 // As in we pull but don't "keep" the object, cuz it's a tentacle/tail?
 void TMario::hitNoKeepPull(THitActor* actor)

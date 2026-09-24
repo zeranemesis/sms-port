@@ -28,7 +28,6 @@ public:
 	void initTable();
 	void clearHitNum();
 	void checkActorsHit();
-	void checkGroup(TIdxGroupObj*);
 	void checkGroupPlayer(TIdxGroupObj*);
 	void clearGroup(TIdxGroupObj*);
 	void entryGroup(TIdxGroupObj*);

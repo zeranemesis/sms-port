@@ -58,8 +58,6 @@ public:
 		return THitActor::receiveMessage(sender, message);
 	}
 
-	void generate(JGeometry::TVec3<f32>&);
-
 public:
 	/* 0x68 */ TSharedParts* mSharedParts;
 	/* 0x6C */ bool mActive;
@@ -103,7 +101,6 @@ public:
 	virtual void setMActorAndKeeper();
 
 	void deadEffect();
-	void setRecoverTears();
 	void setBubble();
 
 public:
@@ -189,7 +186,6 @@ public:
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 
-	void updateTremble();
 	void changeToothAlpha(u8);
 
 public:
@@ -362,7 +358,6 @@ public:
 	void generateVortex();
 	void forceShedTears(bool);
 	void shedTears(MtxPtr);
-	BOOL isEyeBlurOn();
 	bool canEatMario();
 	void forceEat();
 	void updateTearsCnt();

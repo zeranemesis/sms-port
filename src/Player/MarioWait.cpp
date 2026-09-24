@@ -76,8 +76,6 @@ BOOL TMario::canPut()
 	return 1;
 }
 
-void TMario::checkPutStart() { }
-
 BOOL TMario::waitingCommonEvents()
 {
 	if (mInput & 0x2) {

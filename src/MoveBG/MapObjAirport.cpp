@@ -5,6 +5,7 @@
 #include <Camera/CameraShake.hpp>
 #include <System/MarDirector.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <MSound/MSound.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -73,6 +74,7 @@ bool TAirportEventSink::watch()
 		                              0.0f, true, nullptr, 0, nullptr,
 		                              JDrama::TFlagT<u16>(0));
 		getPollution()->getLayer(0)->startDecay();
+		SMSGetMSound()->startSoundSystemSE(0x484D, 0, nullptr, 0);
 		return true;
 	}
 

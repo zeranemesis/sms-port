@@ -151,8 +151,6 @@ void TMarioEffect::setJumpIntoWaterEffectSmall()
 	unk6C[idx] = 1;
 }
 
-int TMarioEffect::getJumpIntoWaterModelData() { }
-
 void TMarioEffect::startDashEffect()
 {
 	unk80->setBck("01_waterboost_in");

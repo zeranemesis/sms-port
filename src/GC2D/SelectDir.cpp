@@ -75,7 +75,11 @@ void* TSelectDir::setupThreadFunc(void* param_1)
 
 int TSelectDir::rsetup()
 {
-	void* arcData = SMSLoadArchive("/data/select.arc", 0, 0, 0);
+	static const char* selectNames[] = {
+	    "/data/select_en.arc", "/data/select_ge.arc", "/data/select_fr.arc",
+	    "/data/select_sp.arc", "/data/select_it.arc"};
+	void* arcData = SMSLoadArchive(
+	    selectNames[TFlagManager::smInstance->getFlag(0xA0001)], 0, 0, 0);
 
 	JKRMemArchive* archive = new JKRMemArchive;
 	if (!archive->mountFixed(arcData, MBF_0))

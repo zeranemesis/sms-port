@@ -25,7 +25,6 @@ inline static s16 clapAlpha(s16 alpha)
  */
 class TExPane {
 public:
-	TExPane(JUTTexture*, GXCullMode);
 	TExPane(J2DScreen*, u32);
 
 	/// Performs one frame of the animations.

@@ -20,8 +20,6 @@ public:
 		unk110.set(1.0f, 1.0f, 1.0f);
 		unk11C.zero();
 	}
-	TMareWallRock(const char* name);
-
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);

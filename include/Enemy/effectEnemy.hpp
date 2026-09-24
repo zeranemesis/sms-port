@@ -17,11 +17,15 @@
 class TEffectEnemy : public TWalkerEnemy {
 public:
 	TEffectEnemy(const char* name);
+	virtual void reset();
+	virtual void setDeadAnm();
+	virtual void behaveToWater(THitActor*);
 };
 
 class TEffectEnemyManager : public TSmallEnemyManager {
 public:
 	virtual void initSetEnemies();
+	virtual void loadAfter();
 };
 
 #endif // ENEMY_EFFECT_ENEMY_HPP

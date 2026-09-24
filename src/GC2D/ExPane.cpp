@@ -13,8 +13,6 @@ TExPane::TExPane(J2DScreen* param_1, u32 param_2)
 	mAlphaAnimPending  = false;
 }
 
-TExPane::TExPane(JUTTexture*, GXCullMode) { }
-
 bool TExPane::update()
 {
 	if (mOffsetAnimPending) {

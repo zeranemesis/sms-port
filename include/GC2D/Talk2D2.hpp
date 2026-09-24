@@ -16,6 +16,7 @@ extern TTalk2D2* gpTalk2D;
 class TTalk2D2 : public JDrama::TViewObj {
 public:
 	TTalk2D2(const char* name = "<TTalk2D2>");
+	virtual ~TTalk2D2();
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();

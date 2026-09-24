@@ -53,13 +53,4 @@ public:
 	virtual void makeDL() = 0;
 };
 
-class TGDLDynamic {
-public:
-	class TGDLStaticAlt {
-	public:
-		void makeDL();
-		~TGDLStaticAlt();
-	};
-};
-
 #endif

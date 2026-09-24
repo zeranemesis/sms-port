@@ -177,7 +177,7 @@ public:
 		TParamRT<f32> mWaistPitch;
 		TParamRT<s16> mWaistRollMax;
 		TParamRT<s16> mWaistPitchMax;
-		TParamRT<s32> mRoll;
+		TParamRT<f32> mRoll;
 		TParamRT<f32> mPitch;
 		TParamRT<s16> mRollMax;
 		TParamRT<s16> mPitchMax;
@@ -776,12 +776,10 @@ public:
 
 	// Jump stuff
 	BOOL startJumpWall();
-	void checkJumpingThrowStart();
 	void doSlipJumping();
 	void doSpinJumping();
 	void setJumpingAttackArea();
 	void doJumping();
-	void askStrongGroundTouch();
 	BOOL jumpingBasic(int, int, int);
 	BOOL considerJumpRotate();
 	BOOL checkBackTrig();
@@ -796,7 +794,6 @@ public:
 	BOOL jumpCatch();
 	BOOL jumpingThrow();
 	BOOL jumpDownCommon(int, int, f32);
-	void checkWallJumping();
 	BOOL jumpShortBackDown();
 	BOOL jumpShortForeDown();
 	BOOL jumpBackDown();
@@ -1112,7 +1109,6 @@ public:
 	BOOL startTalking();
 	bool canSleep();
 	BOOL canPut();
-	void checkPutStart();
 	BOOL waitingCommonEvents();
 	void stopCommon(int anim_id, int status_on_end);
 	void changeMontemanWaitingAnim();
@@ -1164,7 +1160,6 @@ public:
 	void stageSetting();
 	void resetHistory();
 	void hitNoKeepPull(THitActor*);
-	void hitSurfingBoard(THitActor*);
 	void hitPickUpEnemy(THitActor*);
 	void hangPole(THitActor*);
 	void hitBrakable(THitActor*);
@@ -1172,10 +1167,8 @@ public:
 	void hitBarrel(THitActor*);
 	void hitWantToTake(THitActor*);
 	void wantToTakeActor(THitActor*);
-	void hitPool(THitActor*);
 	void hitNpc(THitActor*);
 	void hitMario(THitActor*);
-	void hitPull(THitActor*);
 	void hitPushup(THitActor*);
 	void hitHipDrop(THitActor*);
 	void hitNormal(THitActor*);
@@ -1189,10 +1182,8 @@ public:
 	u32 startVoiceIfNoVoice(u32);
 	u32 startVoice(u32);
 	void soundTorocco();
-	void soundHitBound();
 	void animSound();
 	void soundMovement();
-	void startVoiceYoshi(u32);
 	bool checkStatusType(s32 flag) const
 	{
 		return mStatus & flag ? true : false;

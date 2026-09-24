@@ -169,8 +169,6 @@ void TBathtub::calcBathtubData() { }
 
 void TBathtub::setupCollisions_() { }
 
-void TBathtub::removeCollisions_() { } // Unused
-
 void TBathtub::startDemo() { }
 
 bool TBathtub::allowsTumble() const
@@ -400,17 +398,19 @@ bool TBathtub::isKillerAttackable() const { return unk248 <= 0; }
 
 u8 TBathtub::getNumKillerBurstable() const
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0
-	    || !bathtubKoopaAllowsLaunch())
-		return 0;
+    if (reinterpret_cast<const u8*>(this)[0x299] != 0
+        || !bathtubKoopaAllowsLaunch() || unk248 > 0)
+        return 0;
 
 	int count = getNumGripsDead();
 	if (count >= 4)
 		return 8;
 	if (!allowsTumble() && unk250 == 0 && unk258 == 0) {
-		switch (count) {
-		case 2:
-			return 6;
+        switch (count) {
+        case 1:
+            return 4;
+        case 2:
+            return 6;
 		case 3:
 		case 4:
 			return 8;

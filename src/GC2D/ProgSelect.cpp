@@ -6,6 +6,22 @@
 #include <JSystem/J2D/J2DPrint.hpp>
 #include <System/Application.hpp>
 #include <System/MarioGamePad.hpp>
+#include <GC2D/MessageUtil.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+
+void TProgSelect::setLang(s32 lang)
+{
+	static const char* filename[] = {
+	    "/nintendo/progmessage_en.bmg", "/nintendo/progmessage_ge.bmg",
+	    "/nintendo/progmessage_fr.bmg", "/nintendo/progmessage_sp.bmg",
+	    "/nintendo/progmessage_it.bmg",
+	};
+
+	unk130 = JKRFileLoader::getGlbResource(filename[lang]);
+	snprintf(unk1C, 0x100, SMSGetMessageData(unk130, 0));
+	snprintf(unk120[0]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 4));
+	snprintf(unk120[1]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 1));
+}
 
 TProgSelect::TProgSelect(u8 param_1, const char* name)
     : JDrama::TViewObj(name)

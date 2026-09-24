@@ -29,7 +29,7 @@ public:
 	virtual void behaveToHitGround();
 	virtual void behaveToHitWall(const TBGCheckData*);
 	virtual void forceKill();
-	virtual void setBehavior() { }
+	virtual void setBehavior();
 	virtual void recoverScale();
 	virtual f32 getNowGravity() { return mGravity; }
 

@@ -102,8 +102,6 @@ TMapWire* TWireBinder::getWire() const
 	return gpMapWireManager->getWire(mWireNumber);
 }
 
-void TWireBinder::isStartWire(const JGeometry::TVec3<f32>&, f32) const { }
-
 bool TWireBinder::isEndWire(const JGeometry::TVec3<f32>& param_1,
                             f32 param_2) const
 {
@@ -113,6 +111,3 @@ bool TWireBinder::isEndWire(const JGeometry::TVec3<f32>& param_1,
 	return fabsf(posInWire - targetPos) < 0.015f;
 }
 
-void TWireBinder::getStartRangePos(f32) { }
-
-void TWireBinder::getEndRangePos(f32) { }

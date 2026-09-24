@@ -34,7 +34,7 @@ BOOL TMario::barWait()
 	mPosition.y = mHolder->mPosition.y + mHolderHeightDiff;
 	mPosition.z = mHolder->mPosition.z;
 
-	if ((mInput & 0x10000) || mHolderHeightDiff > 100.0f) {
+	if ((mInput & 0x8000) || mHolderHeightDiff > 100.0f) {
 		setPlayerVelocity(-2.0f);
 		mPosition.x -= 200.0f * JMASSin(mFaceAngle.y);
 		mPosition.z -= 200.0f * JMASCos(mFaceAngle.y);

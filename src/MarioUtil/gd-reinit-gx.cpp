@@ -12,14 +12,14 @@ static Mtx IdentityMtx                                   = {
 static GXColor ColorBlack = { 0, 0, 0, 0 };
 static GXColor ColorWhite = { 0xff, 0xff, 0xff, 0xff };
 
-static void ReInitGenMode();
+static inline void ReInitGenMode();
 static void ReInitGeometry();
-static void ReInitLighting();
+static inline void ReInitLighting();
 static void ReInitTransform();
-static void ReInitTexture();
+static inline void ReInitTexture();
 static void ReInitTevStages();
-static void ReInitIndStages();
-static void ReInitPixelProc();
+static inline void ReInitIndStages();
+static inline void ReInitPixelProc();
 
 extern "C" void ReInitializeGX()
 {

@@ -260,6 +260,10 @@ bool TGCLogoDir::direct_nlogo()
 		}
 
 		switch (nextState) {
+		case STATE_ASK_PROGRESSIVE:
+			mProgSelect->setLang(TFlagManager::smInstance->getFlag(0xA0001));
+			mProgSelect->unkC.set(0);
+			break;
 		case STATE_FADE_OUT:
 			SMSGetApplication()->getFader()->startWipe(15, 0.4f, 0.0f);
 			break;

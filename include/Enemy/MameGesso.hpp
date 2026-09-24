@@ -69,10 +69,8 @@ public:
 	virtual BOOL isInhibitedForceMove();
 	virtual bool doKeepDistance();
 
-	void rebirth();
 	void calcObjCollision();
 	void entryObjCollision();
-	void checkMarioState();
 
 	TMameGessoSaveLoadParams* getSaveLoadParam() const
 	{

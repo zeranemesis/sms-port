@@ -2540,7 +2540,7 @@ DEFINE_NERVE(TNerveDangoHamuKuriWait, TLiveActor)
 		self->setWaitAnm();
 		self->getMActor()
 		    ->getFrameCtrl(ANM_TYPE_BCK)
-		    ->setFrame(MsRandF(0.0f, 30.0f));
+		    ->setFrame(TMsRange<f32>(0.0f, 30.0f).rand());
 	}
 
 	return false;

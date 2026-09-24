@@ -70,6 +70,7 @@ void SMSSetupGCLogoRenderingInfo(JDrama::TDisplay* param_1)
 	param_1->offFlag(0x8);
 }
 
+#pragma dont_inline on
 void SMSSetupTitleRenderMode(GXRenderModeObj* rmo)
 {
 #ifdef VERSION_GMSP01
@@ -106,6 +107,7 @@ void SMSSetupTitleRenderMode(GXRenderModeObj* rmo)
 	JDrama::CopyRenderModeVFilter(rmo, noFilter ? SMSVFilter_non
 	                                            : SMSVFilter_flicker);
 }
+#pragma dont_inline off
 
 void SMSSetupTitleRenderingInfo(JDrama::TDisplay* param_1)
 {

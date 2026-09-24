@@ -229,8 +229,6 @@ f32 TModelWaterManager::getWPGravity(int i) const
 		return mWaterParticleTypes[mParticleTypeSOA[i]]->mGravity.get();
 }
 
-void TModelWaterManager::getWaterAlpha() const { }
-
 bool TModelWaterManager::askHitWaterParticleOnGround(
     const JGeometry::TVec3<f32>& param_1)
 {
@@ -321,8 +319,6 @@ void TModelWaterManager::splashGround(int i)
 	    mWaterParticleTypes[mParticleTypeSOA[i]]->mCleanSize.get() * 10.0f);
 }
 
-void TModelWaterManager::touchingExec(int i) { }
-
 // TODO: contents of this inline are a wild guess
 void TModelWaterManager::splashWall(int i)
 {
@@ -332,11 +328,6 @@ void TModelWaterManager::splashWall(int i)
 	    mParticlePositionSOA[i].x, mParticlePositionSOA[i].y,
 	    mParticlePositionSOA[i].z,
 	    mWaterParticleTypes[mParticleTypeSOA[i]]->mCleanSize.get() * 32.0f);
-}
-
-void TModelWaterManager::splashWallPosSize(const JGeometry::TVec3<f32>& param_1,
-                                           f32 param_2)
-{
 }
 
 struct UnknownMWMStruct {

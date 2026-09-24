@@ -133,7 +133,6 @@ public:
 	f32 getStickPower();
 	void kill();
 	void initEnemyValues();
-	bool isDispPencil() const;
 	BOOL canJumpToNode() const;
 
 	bool checkEMFlag(u32 flag) const { return mEMFlags & flag ? true : false; }

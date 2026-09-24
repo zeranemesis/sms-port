@@ -72,7 +72,6 @@ public:
 	virtual void appear();
 	virtual void makeObjAppeared();
 
-	void warning();
 };
 
 class TCoinRed : public TCoin {

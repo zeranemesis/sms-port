@@ -133,8 +133,8 @@ void TObjHitCheck::entryActor(THitActor* actor, TObjCheckList* head)
 	}
 }
 
-u32 TObjHitCheck::getTableIndex(const JGeometry::TVec3<f32>& pos,
-                                f32 entry_radius, u32* out)
+inline u32 TObjHitCheck::getTableIndex(const JGeometry::TVec3<f32>& pos,
+                                       f32 entry_radius, u32* out)
 {
 	f32 fVar1 = abs(pos.x) + abs(pos.y) + abs(pos.z);
 
@@ -196,7 +196,7 @@ void TObjHitCheck::entryGroup(TIdxGroupObj* group)
 	}
 }
 
-void TObjHitCheck::clearGroup(TIdxGroupObj* group)
+inline void TObjHitCheck::clearGroup(TIdxGroupObj* group)
 {
 	TIdxGroupObj::iterator end = group->getChildren().end();
 
@@ -224,8 +224,6 @@ void TObjHitCheck::checkGroupPlayer(TIdxGroupObj* group)
 	}
 }
 
-void TObjHitCheck::checkGroup(TIdxGroupObj* group) { }
-
 void TObjHitCheck::checkActorsHit()
 {
 	initTable();
@@ -233,13 +231,13 @@ void TObjHitCheck::checkActorsHit()
 	if (!(gpStrategy->unk50 & 0x800))
 		entryGroup(gpStrategy->unk10[3]);
 	if (!(gpStrategy->unk50 & 0x100))
-		entryGroup(gpStrategy->unk10[7]);
+		checkAndEntryGroup(gpStrategy->unk10[7]);
 	if (!(gpStrategy->unk50 & 0x200))
-		entryGroup(gpStrategy->unk10[8]);
+		checkAndEntryGroup(gpStrategy->unk10[8]);
 	if (!(gpStrategy->unk50 & 0x400))
-		entryGroup(gpStrategy->unk10[9]);
+		checkAndEntryGroup(gpStrategy->unk10[9]);
 	if (!(gpStrategy->unk50 & 0x40))
-		entryGroup(gpStrategy->unk10[6]);
+		checkAndEntryGroup(gpStrategy->unk10[6]);
 
 	if (!(gpStrategy->unk50 & 0x80)
 	    && gpModelWaterManager->askDoWaterHitCheck())

@@ -11,7 +11,6 @@ MActor* SMS_MakeMActorFromSDLModelData(SDLModelData*, MActorAnmData*, u32);
 SDLModelData* SMS_MakeSDLModelData(const char*, u32);
 MActor** SMS_MakeMActorsWithAnmData(const char*, MActorAnmData*, int, u32, u32);
 MActor* SMS_MakeMActorWithAnmData(const char*, MActorAnmData*, u32, u32);
-MActor** SMS_MakeMActors(const char*, const char*, int, u32, u32);
 MActor* SMS_MakeMActor(const char*, const char*, u32, u32);
 
 #endif

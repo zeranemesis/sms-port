@@ -32,7 +32,6 @@ public:
 	bool appearFromEgg(const JGeometry::TVec3<f32>&, f32, TEggYoshi*);
 	void calcAnim();
 	void changeAnimation(int id);
-	void appear();
 	bool disappear();
 	void doEat(u32 fruitID);
 	void doSearch();
@@ -55,10 +54,8 @@ public:
 	void thinkHoldOut();
 	void thinkEat();
 	void thinkUpper();
-	void thinkJumpEnd(u16, u16*);
 	void viewCalc();
 	void emitTongue();
-	void startVoice(u32);
 
 	// fabricated
 	MtxPtr getTongueMtx() const

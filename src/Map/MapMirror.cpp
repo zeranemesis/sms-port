@@ -257,18 +257,21 @@ bool TMirrorModelManager::isInMirror(JGeometry::TVec3<f32>& param_1) const
 
 void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	JGeometry::TVec3<f32> local_44 = *gpMarioPos;
-	unk18 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_44));
-	if (!(unk18 != -1 ? true : false)
-	    && !gpMarioGroundPlane[0]->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
-		unk24->unk84 = gpMarioGroundPlane[1]->mNormal;
-		unk24->unk90 = gpMarioGroundPlane[1]->mPlaneDistance;
+	if (cue & CUE_MOVE) {
+		JGeometry::TVec3<f32> local_44 = *gpMarioPos;
+		unk18 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_44));
+		if (!(unk18 != -1 ? true : false)
+		    && !gpMarioGroundPlane[0]->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
+			unk24->unk84 = gpMarioGroundPlane[1]->mNormal;
+			unk24->unk90 = gpMarioGroundPlane[1]->mPlaneDistance;
 
-		JGeometry::TVec3<f32> local_7C;
-		local_7C.set(unk24->unk84);
-		f32 fVar4 = (local_7C.dot(gpCamera->unk124) - -unk24->unk90) * -2.0f;
-		unk24->unk98.scaleAdd(fVar4, gpCamera->unk124, local_7C);
-		// TODO: awful vector math, one of unused functions inlined
+			JGeometry::TVec3<f32> local_7C;
+			local_7C.set(unk24->unk84);
+			f32 fVar4
+			    = (local_7C.dot(gpCamera->unk124) - -unk24->unk90) * -2.0f;
+			unk24->unk98.scaleAdd(fVar4, gpCamera->unk124, local_7C);
+			// TODO: awful vector math, one of unused functions inlined
+		}
 	}
 
 	if (unk18 != -1) {

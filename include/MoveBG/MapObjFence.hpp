@@ -55,6 +55,7 @@ public:
 
 class TFenceWater : public TFence {
 public:
+	~TFenceWater();
 	void draw() const;
 	BOOL receiveMessage(THitActor* sender, u32 message);
 	void changeStatusToGo();
@@ -71,6 +72,7 @@ public:
 
 class TFenceWaterH : public TFenceWater {
 public:
+	~TFenceWaterH();
 	void control();
 	void changeStatusToGo();
 	void changeStatusToWait();

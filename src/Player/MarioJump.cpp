@@ -85,10 +85,6 @@ void TMario::doJumping()
 	}
 }
 
-void TMario::checkJumpingThrowStart() { }
-
-void TMario::askStrongGroundTouch() { }
-
 BOOL TMario::jumpingBasic(int statusOnGround, int animation, int processArg)
 {
 	doJumping();
@@ -510,8 +506,6 @@ BOOL TMario::jumpDownCommon(int param_1, int animation, float velocity)
 	}
 	return result;
 }
-
-void TMario::checkWallJumping() { }
 
 BOOL TMario::jumpShortBackDown()
 {

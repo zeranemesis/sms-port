@@ -8,6 +8,8 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <dolphin/gx.h>
 
+TMapWireManager* gpMapWireManager;
+
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>

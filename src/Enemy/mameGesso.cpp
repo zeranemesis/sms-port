@@ -172,8 +172,6 @@ void TMameGesso::calcRootMatrix()
 	}
 }
 
-void TMameGesso::rebirth() { }
-
 void TMameGesso::reset()
 {
 	TWalkerEnemy::reset();
@@ -333,8 +331,6 @@ bool TMameGesso::doKeepDistance()
 	else
 		return false;
 }
-
-void TMameGesso::checkMarioState() { }
 
 const char** TMameGesso::getBasNameTable() const { return mameGesso_bastable; }
 

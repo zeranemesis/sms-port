@@ -128,3 +128,9 @@ BOOL TFruitSwitch::receiveMessage(THitActor* sender, u32 message)
 
 	return FALSE;
 }
+
+TCraneUpDown::~TCraneUpDown() { }
+
+TSurfGesoObj::~TSurfGesoObj() { }
+
+TFruitLauncher::~TFruitLauncher() { }

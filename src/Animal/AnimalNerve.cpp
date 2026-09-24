@@ -8,7 +8,7 @@
 #include <Camera/cameralib.hpp>
 #include <Strategic/Spine.hpp>
 
-f32 calcDist(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
+static inline f32 calcDist(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
 {
 	JGeometry::TVec3<f32> diff = a;
 	diff.sub(b);
@@ -42,7 +42,7 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 			int lo     = CLBPalFrame<int>(150);
 			int* timer = actor->mFrameTimer;
 			timer[0]   = 0;
-			timer[1]   = MsRandI(hi, lo);
+			timer[1]   = MsRandI(lo, hi);
 		}
 
 		int* timer = actor->mFrameTimer;
@@ -63,7 +63,7 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 				int lo     = CLBPalFrame<int>(150);
 				int* timer = actor->mFrameTimer;
 				timer[0]   = 0;
-				timer[1]   = MsRandI(hi, lo);
+				timer[1]   = MsRandI(lo, hi);
 			}
 			break;
 		}

@@ -46,8 +46,6 @@ bool TPollutionPos::isSame(int x, int z, f32 y) const
 	return false;
 }
 
-void TPollutionPos::subtractFromYMap(int x, int z, f32 y) const { }
-
 bool TPollutionPos::isProhibit(int x, int z) const
 {
 	if (x < 0 || mWidth <= x || z < 0 || mHeight <= z) {

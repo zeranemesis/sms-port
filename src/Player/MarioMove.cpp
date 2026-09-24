@@ -2291,7 +2291,6 @@ void TMario::getOffYoshi(bool fly)
 
 	setAnimation(ANIM_JUMP, 1.0f);
 	unk78 &= ~0x100;
-	mPosition.y += 100.0f;
 	mForwardVel = -8.0f;
 
 	mWaterGun->changeNozzle(TWaterGun::Hover, true);

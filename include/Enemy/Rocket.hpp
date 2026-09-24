@@ -14,6 +14,11 @@ public:
 
 	// TODO: add other methods
 	bool isAttack();
+
+public:
+	/* 0x194 */ u8 unk194[0x1A0 - 0x194];
+	/* 0x1A0 */ u8 unk1A0;
+	/* 0x1A1 */ u8 unk1A1;
 };
 
 #endif

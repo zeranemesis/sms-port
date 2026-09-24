@@ -28,7 +28,6 @@ public:
 	void control();
 	void calcBathtubData();
 	void setupCollisions_();
-	void removeCollisions_(); // Unused
 	void startDemo();
 	bool allowsTumble() const;
 	void calcRootMatrix();

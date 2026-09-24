@@ -20,25 +20,6 @@ TNpcCoin::TNpcCoin(int param_1)
 	unk0->kill();
 }
 
-void TNpcCoin::execAppearCoin_()
-{
-	if (unk0 != nullptr) {
-		unk0->appear();
-		unk0->mPosition = unk8;
-		unk0->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
-		unk0 = nullptr;
-	} else {
-		TMapObjBase* coin = gpItemManager->makeObjAppear(unk8.x, unk8.y, unk8.z,
-		                                                 0x2000000E, true);
-		if (coin != nullptr)
-			coin->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
-	}
-
-	if (SMSGetMSound()->gateCheck(MSD_SE_NPC_APPEAR_ITEM))
-		MSoundSESystem::MSoundSE::startSoundNpcActor(MSD_SE_NPC_APPEAR_ITEM,
-		                                             &unk8, 0, nullptr, 0, 4);
-}
-
 void TNpcCoin::requestAppearCoin(const Vec& param_1, f32 param_2, int param_3)
 {
 	unk4 = param_3;
@@ -52,8 +33,23 @@ void TNpcCoin::requestAppearCoin(const Vec& param_1, f32 param_2, int param_3)
 	if (unk4 == 0) {
 		if (gpMarDirector->isTalkOrDemoModeNow())
 			unk4 = 1;
-		else
-			execAppearCoin_();
+		else {
+			if (unk0 != nullptr) {
+				unk0->appear();
+				unk0->mPosition = unk8;
+				unk0->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
+				unk0 = nullptr;
+			} else {
+				TMapObjBase* coin = gpItemManager->makeObjAppear(
+				    unk8.x, unk8.y, unk8.z, 0x2000000E, true);
+				if (coin != nullptr)
+					coin->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
+			}
+
+			if (SMSGetMSound()->gateCheck(MSD_SE_NPC_APPEAR_ITEM))
+				MSoundSESystem::MSoundSE::startSoundNpcActor(
+				    MSD_SE_NPC_APPEAR_ITEM, &unk8, 0, nullptr, 0, 4);
+		}
 	}
 }
 
@@ -62,8 +58,23 @@ void TNpcCoin::updateCoin()
 	if (unk4 > 0) {
 		if (!gpMarDirector->isTalkOrDemoModeNow()) {
 			unk4 -= 1;
-			if (unk4 == 0)
-				execAppearCoin_();
+			if (unk4 == 0) {
+				if (unk0 != nullptr) {
+					unk0->appear();
+					unk0->mPosition = unk8;
+					unk0->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
+					unk0 = nullptr;
+				} else {
+					TMapObjBase* coin = gpItemManager->makeObjAppear(
+					    unk8.x, unk8.y, unk8.z, 0x2000000E, true);
+					if (coin != nullptr)
+						coin->setVelocityAndFlag10(unk14.x, unk14.y, unk14.z);
+				}
+
+				if (SMSGetMSound()->gateCheck(MSD_SE_NPC_APPEAR_ITEM))
+					MSoundSESystem::MSoundSE::startSoundNpcActor(
+					    MSD_SE_NPC_APPEAR_ITEM, &unk8, 0, nullptr, 0, 4);
+			}
 		}
 	}
 }

@@ -80,28 +80,15 @@ public:
 
 	void resetBathtubKiller();
 	void generateItemBathtubKiller();
-	void killBathtubKiller();
 	void breakBathtubKiller();
-	void explodeBathtubKiller();
-	void makeNoseColor();
 	f32 getBathtubY();
 	void makeInitialVelocity(JGeometry::TVec3<f32>);
-	void moveParabolic();
 	void moveChasing();
-	void moveStraight();
-	void makeVelocityQuat();
-	void makeAccelerationQuat();
 	void makeQuat(JGeometry::TVec3<f32>, f32, f32);
-	void makeScrewQuat(JGeometry::TVec3<f32>, f32, f32);
-	void setNormalBathtubKillerAnm();
-	void setChaseBathtubKillerAnm();
-	void setStraightBathtubKillerAnm();
 	void setDeadBathtubKillerAnm();
-	void updateTimers();
 	bool isAttackable();
 	bool isAboided();
 	bool canChase();
-	void generateExplosion();
 
 	// fabricated
 	TBathtubKillerParams* getSaveParam2() const
@@ -151,7 +138,6 @@ public:
 	virtual void createModelData();
 	virtual TSpineEnemy* createEnemyInstance();
 
-	void generateMushroom(JGeometry::TVec3<f32>);
 	int countActiveKillers();
 	int countActiveShineKillers();
 

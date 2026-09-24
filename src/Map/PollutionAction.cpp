@@ -19,9 +19,7 @@ s32 TPollutionLayer::mSpreadFrequency     = 3;
 f32 TPollutionLayer::mFireArea            = 1600.0f;
 s32 TPollutionLayer::mFireEffectWaitTime  = 20;
 f32 TPollutionLayer::mThunderArea         = 1000.0f;
-u32 TPollutionLayer::mThunderScaleRate    = 0; // UNUSED
 f32 TPollutionLayer::mGlassWallArea       = 1000.0f;
-u32 TPollutionLayer::mGlassWallScaleRate  = 0; // UNUSED
 s32 TPollutionLayer::mGlassWallEffectTime = 120;
 
 void TPollutionLayer::changeType(u16 type) { mPollutionType = type; }

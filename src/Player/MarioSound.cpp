@@ -10,8 +10,6 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-void TMario::startVoiceYoshi(u32 param_1) { }
-
 // TODO: fake!! use a real inline!
 static void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
                                  u32 param_4)
@@ -680,8 +678,6 @@ void TMario::animSound()
 		                     mModel->getFrameCtrl(0).getRate(), mSoundFlags, 4);
 	}
 }
-
-void TMario::soundHitBound() { }
 
 void TMario::soundTorocco()
 {

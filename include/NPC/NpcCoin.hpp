@@ -8,7 +8,6 @@ class TMapObjBase;
 class TNpcCoin {
 public:
 	TNpcCoin(int);
-	void execAppearCoin_();
 	void requestAppearCoin(const Vec&, f32, int);
 	void updateCoin();
 

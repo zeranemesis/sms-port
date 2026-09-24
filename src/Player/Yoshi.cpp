@@ -44,8 +44,6 @@ static const GXColor bodyColor[4] = {
 	{ 0xFF, 0xA0, 0xBE, 0xFF },
 };
 
-void TYoshi::startVoice(u32 param_1) { }
-
 BOOL YoshiHeadCtrl(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
@@ -384,8 +382,6 @@ void TYoshi::getEmitPosDir(JGeometry::TVec3<f32>* dir,
 
 void TYoshi::setEggYoshiPtr(TEggYoshi* egg) { mEgg = egg; }
 
-void TYoshi::appear() { }
-
 bool TYoshi::appearFromEgg(const JGeometry::TVec3<f32>& pos, f32 yrot,
                            TEggYoshi* egg)
 {
@@ -485,8 +481,6 @@ void TYoshi::getOff(bool param_1)
 	SMSGetMSound()->unk88 = 1;
 	MSBgm::setStageBgmYoshiPercussion(false);
 }
-
-void TYoshi::thinkJumpEnd(u16, u16*) { }
 
 // TODO: tons of missing inlines
 void TYoshi::thinkAnimation()

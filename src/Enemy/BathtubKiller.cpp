@@ -310,8 +310,6 @@ void TBathtubKiller::generateItemBathtubKiller()
 	}
 }
 
-void TBathtubKiller::killBathtubKiller() { }
-
 void TBathtubKiller::breakBathtubKiller()
 {
 	bool dying = mSpine->getCurrentNerve()
@@ -323,8 +321,6 @@ void TBathtubKiller::breakBathtubKiller()
 	if (!dying)
 		mSpine->pushNerve(&TNerveBathtubKillerBreak::theNerve());
 }
-
-void TBathtubKiller::explodeBathtubKiller() { }
 
 void TBathtubKiller::bind() { }
 
@@ -339,21 +335,11 @@ void TBathtubKiller::perform(u32 cue, JDrama::TGraphics* graphics)
 		    = static_cast<TBathtub*>(JDrama::TNameRefGen::search("バスタブ"));
 }
 
-void TBathtubKiller::makeNoseColor() { }
-
 f32 TBathtubKiller::getBathtubY() { return 0.0f; }
 
 void TBathtubKiller::makeInitialVelocity(JGeometry::TVec3<f32>) { }
 
-void TBathtubKiller::moveParabolic() { }
-
 void TBathtubKiller::moveChasing() { }
-
-void TBathtubKiller::moveStraight() { }
-
-void TBathtubKiller::makeVelocityQuat() { }
-
-void TBathtubKiller::makeAccelerationQuat() { }
 
 void TBathtubKiller::makeQuat(JGeometry::TVec3<f32> axis, f32 moveAmountY,
                               f32 moveAmountX)
@@ -390,8 +376,6 @@ void TBathtubKiller::makeQuat(JGeometry::TVec3<f32> axis, f32 moveAmountY,
 	mQuat.normalize();
 }
 
-void TBathtubKiller::makeScrewQuat(JGeometry::TVec3<f32>, f32, f32) { }
-
 f32 TBathtubKiller::getGravityY() const
 {
 	return getSaveParam2()->mSLFlyingGravityY.get();
@@ -418,12 +402,6 @@ const char** TBathtubKiller::getBasNameTable() const
 	return bathtubkiller_bastable;
 }
 
-void TBathtubKiller::setNormalBathtubKillerAnm() { }
-
-void TBathtubKiller::setChaseBathtubKillerAnm() { }
-
-void TBathtubKiller::setStraightBathtubKillerAnm() { }
-
 void TBathtubKiller::setDeadBathtubKillerAnm()
 {
 	mMActor = getActorKeeper()->getMActor("bathtubdownkiller_model1.bmd");
@@ -437,15 +415,11 @@ void TBathtubKiller::setDeadBathtubKillerAnm()
 	mNoseColor = mBodyColor;
 }
 
-void TBathtubKiller::updateTimers() { }
-
 bool TBathtubKiller::isAttackable() { return false; }
 
 bool TBathtubKiller::isAboided() { return false; }
 
 bool TBathtubKiller::canChase() { return false; }
-
-void TBathtubKiller::generateExplosion() { }
 
 DEFINE_NERVE(TNerveBathtubKillerWander, TLiveActor) { return FALSE; }
 
@@ -545,8 +519,6 @@ void TBathtubKillerManager::loadAfter()
 	for (int i = 0; i < 1; ++i)
 		SMS_LoadParticle(loopFilenames[i], 0x1BD + i);
 }
-
-void TBathtubKillerManager::generateMushroom(JGeometry::TVec3<f32>) { }
 
 int TBathtubKillerManager::countActiveKillers()
 {

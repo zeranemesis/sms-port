@@ -1,6 +1,30 @@
 #include <Enemy/effectEnemy.hpp>
+#include <System/Particles.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
 
 void TEffectEnemyManager::initSetEnemies() {}
+
+void TEffectEnemyManager::loadAfter() { JDrama::TNameRef::loadAfter(); }
+
+void TEffectEnemy::reset() { TWalkerEnemy::reset(); }
+
+void TEffectEnemy::setDeadAnm()
+{
+	gpMarioParticleManager->emitAndBindToPosPtr(0x8B, &mPosition, 0, nullptr);
+	if (gpMSound->gateCheck(0x28C5))
+		MSoundSESystem::MSoundSE::startSoundActor(0x28C5, &mPosition, 0, nullptr,
+		                                          0, 4);
+	onLiveFlag(LIVE_FLAG_UNK20000);
+}
+
+void TEffectEnemy::behaveToWater(THitActor* actor)
+{
+	if (mHitPoints > 1)
+		TSmallEnemy::behaveToWater(actor);
+	else
+		kill();
+}
 
 // TODO: the remaining 17 functions in this unit were not attempted in the
 // time budget available for this pass: TEffectEnemy::TEffectEnemy(const

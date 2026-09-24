@@ -332,8 +332,10 @@ void TPoiHana::setDeadAnm()
 
 bool TPoiHana::isHitValid(u32 param_1)
 {
-	if (param_1 == 11)
+	if (param_1 == 11) {
+		onLiveFlag(LIVE_FLAG_HIDDEN);
 		return true;
+	}
 
 	if (mSpine->getCurrentNerve() == &TNervePoihanaFreeze::theNerve()) {
 		setBckAnm(3);

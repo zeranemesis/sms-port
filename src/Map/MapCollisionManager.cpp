@@ -13,8 +13,6 @@ void TMapCollisionManager::changeCollision(u32 i)
 	}
 }
 
-void TMapCollisionManager::getFileName(const char*, char*) { }
-
 #pragma dont_inline on
 void TMapCollisionManager::createCollision(const char* param_1, u8 param_2)
 {

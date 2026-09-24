@@ -13,7 +13,6 @@ public:
 	void makeBlockNoCard();
 	void makeBlockNormal();
 	void makeBlockRock();
-	void pushed();
 	TFileLoadBlock(const char* name = "ファイル読み込みブロック");
 
 	enum {

@@ -5,7 +5,10 @@
 #include <Camera/cameralib.hpp>
 #include <JSystem/JGeometry/JGUtil.hpp>
 
-TCameraMultiPlayer::TCameraMultiPlayer(u8 max_player_count)
+template <> f32 CLBCalcRatio<f32>(f32, f32, f32);
+template <> s16 CLBLinearInbetween<s16>(s16, s16, f32);
+
+inline TCameraMultiPlayer::TCameraMultiPlayer(u8 max_player_count)
     : mMaxPlayers(max_player_count)
     , mPlayerCount(0)
     , mPlayers(nullptr)
@@ -13,8 +16,8 @@ TCameraMultiPlayer::TCameraMultiPlayer(u8 max_player_count)
 	mPlayers = new TMultiPlayerData[max_player_count];
 }
 
-bool TCameraMultiPlayer::addPlayer(const JGeometry::TVec3<f32>* param_1,
-                                   f32 param_2, f32 param_3)
+inline bool TCameraMultiPlayer::addPlayer(
+    const JGeometry::TVec3<f32>* param_1, f32 param_2, f32 param_3)
 {
 	bool added;
 	if (mPlayerCount >= mMaxPlayers)

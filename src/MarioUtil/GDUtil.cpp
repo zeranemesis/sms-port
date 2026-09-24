@@ -53,6 +53,3 @@ void TGDLStatic::make()
 	GDSetCurrent(prev);
 }
 
-void TGDLDynamic::TGDLStaticAlt::makeDL() { }
-
-TGDLDynamic::TGDLStaticAlt::~TGDLStaticAlt() { }

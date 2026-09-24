@@ -115,26 +115,7 @@ public:
 	f32 getPressureMax();
 	void init();
 	void initInLoadAfter();
-	bool isEmitting()
-	{
-		// TODO: more inlines!
-		const TWaterGun* self = this;
-
-		if (mCurrentWater == 0)
-			return false;
-
-		if (self->getCurrentNozzle()->getNozzleKind() == 1) {
-			TNozzleTrigger* trig = (TNozzleTrigger*)self->getCurrentNozzle();
-			if (trig->unk385 == TNozzleTrigger::ACTIVE)
-				return true;
-			return false;
-		}
-
-		if (self->getCurrentNozzle()->unk378 > 0.0f)
-			return true;
-
-		return false;
-	}
+	bool isEmitting();
 	BOOL isPressureOn();
 	void movement();
 	void rotateProp(f32);

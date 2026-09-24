@@ -47,8 +47,6 @@ bool SMS_AskJumpIntoWaterEffectExist()
 
 THitActor* SMS_GetMarioHitActor() { return (THitActor*)gpMarioAddress; }
 
-TLiveActor* SMS_GetMarioLiveActor() { return (TLiveActor*)gpMarioAddress; }
-
 bool SMS_IsMarioStatusTypeJumping()
 {
 	return gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_JUMPING);

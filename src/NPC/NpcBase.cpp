@@ -30,6 +30,30 @@ TNpcSaveNormal* TBaseNPC::mPtrSaveNormal = nullptr;
 s16 TBaseNPC::mAngleYDiffWhenTaken       = 0;
 TBaseNPC* gpCurrentNpc                   = nullptr;
 
+f32 TBaseNPC::getAnmOffDist_()
+{
+	bool bVar3 = false;
+	f32 fVar1  = gpCamera->mFar;
+	u32 uVar5  = unkD0->getCurrentAnmKind();
+	f32 fVar2  = mPtrSaveNormal->mSLDanceAnmOffDist.get();
+	if (checkActionFlag(NPC_ACTION_HAPPY | NPC_ACTION_DANCE)
+	    || mActorType == 0x400000D || uVar5 == 10 || uVar5 == 23) {
+		bVar3 = true;
+	}
+
+	if (!isNerveMaybeDontCalcAnim0() && !isNerveMaybeDontCalcAnim1()) {
+		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
+		if (bVar3 && fVar1 < fVar2)
+			fVar1 = fVar2;
+	} else {
+		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
+		if (bVar3 && fVar1 < fVar2)
+			fVar1 = fVar2;
+	}
+
+	return fVar1;
+}
+
 TBaseNPC::TBaseNPC(u32 param_1, const char* name)
     : TSpineEnemy(name)
     , unk150(nullptr)

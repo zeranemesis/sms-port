@@ -21,9 +21,6 @@ public:
 		return unk1C->mChildren[0]->mChildren[i];
 	}
 
-	void watchMapEvent();
-	void controlMapEvent();
-
 	bool stateIs(u32 state) const { return unk18 == state ? true : false; }
 
 public:

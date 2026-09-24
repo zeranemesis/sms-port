@@ -142,8 +142,6 @@ bool TBaseNPC::isNerveCanGoToTaken() const
 	return result;
 }
 
-bool TBaseNPC::isNerveCanGoToThrow() const { }
-
 bool TBaseNPC::isNerveCanGoToMad() const
 {
 	bool result                         = false;
@@ -201,8 +199,6 @@ void TBaseNPC::changeNerveFromTalk_()
 
 	offLiveFlag(LIVE_FLAG_UNK2000000);
 }
-
-void TBaseNPC::changeNerveToWet_() { }
 
 void TBaseNPC::changeNerveToMad_()
 {

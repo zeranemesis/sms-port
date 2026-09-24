@@ -25,7 +25,6 @@ struct TAnmBtpMapping {
 class TLodAnm {
 public:
 	TLodAnm(TLiveActor*, const TLodAnmIndex*, int, f32);
-	void execChangeLod();
 	bool setBckAndBtpAnm(int);
 	bool setBtpAnm_(int);
 	bool setBckAnm_(int);

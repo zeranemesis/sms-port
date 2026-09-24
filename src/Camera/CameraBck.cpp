@@ -57,10 +57,6 @@ bool TCameraBck::isFileExist(const char* name) const
 	return unk0->checkAnmFileExist(name, ANM_TYPE_BCK);
 }
 
-void TCameraBck::getDemoFileName() const { }
-
-void TCameraBck::isNowDemo() const { }
-
 void TCameraBck::startDemo(const char* name,
                            const JGeometry::TVec3<f32>* offset)
 {
@@ -81,17 +77,12 @@ int TCameraBck::getTotalDemoFrames() const
 	return total;
 }
 
-void TCameraBck::isDemoFinished() const { }
-
 void TCameraBck::endDemo() { unk0->setBckFromIndex(-1); }
-
-void TCameraBck::restartDemo() { }
 
 bool TCameraBck::updateDemo(JGeometry::TVec3<f32>* pos,
                             JGeometry::TVec3<f32>* lookat,
                             JGeometry::TVec3<f32>* up, f32* out_y_scale)
 {
-
 	unk0->calcAnm();
 
 	if (pos != nullptr)

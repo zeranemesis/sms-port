@@ -219,7 +219,7 @@ void MActorAnmData::addFileNum(const char* name)
 		++mBlkNum;
 }
 
-char* MActorAnmData::getSimpleName(const char* file_name)
+inline char* MActorAnmData::getSimpleName(const char* file_name)
 {
 	u32 length = strlen(file_name) - (strlen(strrchr(file_name, '.')) - 1);
 	char* simple_name = new char[length];

@@ -88,4 +88,3 @@ bool TLodAnm::setBckAndBtpAnm(int param_1)
 	return result;
 }
 
-void TLodAnm::execChangeLod() { }

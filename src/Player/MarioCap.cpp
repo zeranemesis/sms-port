@@ -119,9 +119,6 @@ void TMarioCap::createMirrorCap()
 	}
 }
 
-// UNUSED
-void TMarioCap::addDirty() { }
-
 void TMarioCap::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	// Unused stack space
