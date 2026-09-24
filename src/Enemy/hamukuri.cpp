@@ -194,16 +194,15 @@ void THamuKuriManager::loadAfter()
 	}
 }
 
-static const char* anmlist[] = {
-	"hamukuri_walk",
-	"hamukuri_run",
-	// TODO: this shouldn't be here but rodata ordering looks like it should?!
-	// "default.bmd",
-	"hanekuri_wait",
-};
-
 void THamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3023 in the map is UNUSED and 3 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hamukuri_walk",
+		"hamukuri_run",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "default.bmd",
 		  J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
@@ -373,6 +372,12 @@ TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 
 void THaneHamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3101 in the map is UNUSED and 2 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hanekuri_wait",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "hanekuri.bmd", 0x10250000, 0 },
 		{ nullptr, 0, 0 },
