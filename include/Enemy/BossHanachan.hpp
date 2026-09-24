@@ -68,6 +68,8 @@ public:
 	void execWalk(bool);
 	bool checkFallDecideAndSetup();
 	void removeAllMapCollision();
+	virtual void kill();
+	virtual BOOL hasMapCollision() const;
 
 public:
 	// Object size (0x1C4) verified from `li r3, 0x1C4` before
