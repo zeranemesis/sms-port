@@ -1,11 +1,14 @@
 #include <Enemy/TinKoopa.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/CoasterKiller.hpp>
+#include <Enemy/EffectObj.hpp>
 #include <Enemy/Graph.hpp>
 #include <Camera/CameraShake.hpp>
 #include <GC2D/GCConsole2.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <Map/MapCollisionEntry.hpp>
@@ -55,6 +58,7 @@ static const char* TTinKoopa_jointNameTable[] = {
 };
 
 static int TTinKoopa_jointIndexTable[15];
+static int TTinKoopa_breakingAnimationTable[] = { 0, 4, 11, 9, 10, 0 };
 
 TTinKoopaParams::TTinKoopaParams(const char* path)
     : TSpineEnemyParams(path)
@@ -116,8 +120,7 @@ const char* TTinKoopa_getPartsFileName(int index)
 
 int TTinKoopa_getBreakingAnimationIndex(int index)
 {
-	static int table[] = { 0, 4, 11, 9, 10, 0 };
-	return table[index];
+	return TTinKoopa_breakingAnimationTable[index];
 }
 
 u32 TTinKoopa_getActorType(int index)
@@ -387,7 +390,34 @@ void TTinKoopaPartsBase::resetTinKoopaPartsBase()
 
 void TTinKoopaPartsBase::startBreaking()
 {
-	// TODO: not decompiled yet
+	mIsBreaking = 1;
+	int jointIndex = TTinKoopa_jointIndexTable[mIndex];
+	MtxPtr jointMtx = mOwner->getModel()->getAnmMtx(jointIndex);
+	mPosition.x = jointMtx[0][3];
+	mPosition.y = jointMtx[1][3];
+	mPosition.z = jointMtx[2][3];
+
+	if (mBreakActor == nullptr)
+		return;
+
+	mBreakActor->setBckFromIndex(TTinKoopa_getBreakingAnimationIndex(mIndex));
+	MtxPtr breakMtx = mBreakActor->getModel()->getBaseTRMtx();
+	breakMtx[0][3] = mPosition.x;
+	breakMtx[1][3] = mPosition.y;
+	breakMtx[2][3] = mPosition.z;
+	PSMTXCopy(breakMtx, mBreakActor->getModel()->getBaseTRMtx());
+
+	if (mBreakActor != nullptr) {
+		if (mIndex == 1) {
+			emitPartsTrackEffects(breastTrackJointNameTable, 6);
+		} else if (mIndex == 2) {
+			emitPartsTrackEffects(bellyTrackJointNameTable, 6);
+		} else if (mIndex == 3) {
+			emitPartsTrackEffects(rightArmTrackJointNameTable, 4);
+		} else if (mIndex == 4) {
+			emitPartsTrackEffects(leftArmTrackJointNameTable, 4);
+		}
+	}
 }
 
 void TTinKoopaPartsBase::emitPartsTrackEffects()
@@ -395,20 +425,71 @@ void TTinKoopaPartsBase::emitPartsTrackEffects()
 	// TODO: UNUSED in the map (size 0x2fc), contents unknown
 }
 
+#pragma dont_inline on
 void TTinKoopaPartsBase::emitPartsTrackEffects(const char** joints, int num)
 {
-	// TODO: not decompiled yet
+	mBreakActor->getModel()->calc();
+	JUTNameTab* jointName = mBreakActor->getModel()->getModelData()->getJointName();
+	for (int i = 0; i < num; ++i) {
+		int jointIndex = jointName->getIndex(joints[i]);
+		if (jointIndex >= 0) {
+			MtxPtr jointMtx = mBreakActor->getModel()->getAnmMtx(jointIndex);
+			unk108[i].set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+			gpMarioParticleManager->emitAndBindToPosPtr(0xF4, &unk108[i], 0,
+			                                            mOwner);
+		} else {
+			break;
+		}
+	}
 }
+#pragma dont_inline off
 
 void TTinKoopaPartsBase::emitPartsDisappearEffects()
 {
-	// TODO: not decompiled yet
+	if (mBreakActor == nullptr
+	    || !mBreakActor->checkCurBckFromIndex(
+	        TTinKoopa_getBreakingAnimationIndex(mIndex)))
+		return;
+	if (!mBreakActor->getFrameCtrl(0)->checkPass(60))
+		return;
+
+	if (mIndex == 1) {
+		emitPartsDisappearEffects(breastTrackJointNameTable, 6, 4.0f);
+	} else if (mIndex == 2) {
+		emitPartsDisappearEffects(bellyTrackJointNameTable, 6, 4.0f);
+	} else if (mIndex == 3) {
+		emitPartsDisappearEffects(rightArmTrackJointNameTable, 4, 3.0f);
+	} else if (mIndex == 4) {
+		emitPartsDisappearEffects(leftArmTrackJointNameTable, 4, 3.0f);
+	}
+
+	mOwner->mBreakingParts = nullptr;
 }
 
 void TTinKoopaPartsBase::emitPartsDisappearEffects(const char** joints,
                                                    int num, f32 param_3)
 {
-	// TODO: not decompiled yet
+	JUTNameTab* jointNames
+	    = mBreakActor->getModel()->getModelData()->getJointName();
+	JGeometry::TVec3<f32> effectScale = mScaling;
+	effectScale.x *= param_3;
+	effectScale.y *= param_3;
+	effectScale.z *= param_3;
+
+	for (int i = 0; i < num; ++i) {
+		int jointIndex = jointNames->getIndex(joints[i]);
+		if (jointIndex < 0)
+			break;
+
+		MtxPtr jointMtx = mBreakActor->getModel()->getAnmMtx(jointIndex);
+		unk108[i].set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+		TEffectExplosion* explosion = static_cast<TEffectExplosion*>(
+		    gpConductor->makeOneEnemyAppear(unk108[i],
+		                                   "エフェクト爆発マネージャー", 1));
+		if (explosion == nullptr)
+			break;
+		explosion->generate(unk108[i], effectScale);
+	}
 }
 
 BOOL TTinKoopaPartsBase::receiveMessage(THitActor* sender, u32 message)
@@ -687,7 +768,123 @@ void TTinKoopa::startTinKoopaMessage(u32)
 
 void TTinKoopa::emitTinKoopaEffects()
 {
-	// TODO: not decompiled yet
+	MtxPtr jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]);
+	mEffectJoint0Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]);
+	mEffectJoint1Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]);
+	mEffectJoint3Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]);
+	mEffectJoint4Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+
+	const void* secondaryOwner = (const char*)this + 0x1FC;
+	gpMarioParticleManager->emitAndBindToPosPtr(0x1AC, &mEffectJoint1Pos, 1,
+	                                             this);
+	if (mPhase > 1)
+		gpMarioParticleManager->emitAndBindToMtxPtr(
+		    0x1AD, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]), 1,
+		    this);
+	if (mPhase > 2)
+		gpMarioParticleManager->emitAndBindToMtxPtr(
+		    0x1AE, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]), 1,
+		    this);
+
+	if (mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	    && mPhase <= 0)
+		gpMarioParticleManager->emitAndBindToMtxPtr(
+		    0x1AF, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 1,
+		    this);
+
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1B0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]), 1, this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1B0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]), 1,
+	    secondaryOwner);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1B1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[10]), 1,
+	    this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1B2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]), 1,
+	    this);
+
+	if (mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
+		gpMarioParticleManager->emitAndBindToPosPtr(0x1B3, &mEffectJoint1Pos, 1,
+		                                             this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    0x1B3, &mEffectJoint1Pos, 1, secondaryOwner);
+		gpMarioParticleManager->emitAndBindToPosPtr(0x1B4, &mEffectJoint1Pos, 1,
+		                                             this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    0x1B4, &mEffectJoint1Pos, 1, secondaryOwner);
+	}
+	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	     && mPhase <= 1)
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
+		gpMarioParticleManager->emitAndBindToPosPtr(0x1B5, &mEffectJoint3Pos, 1,
+		                                             this);
+	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	     && mPhase <= 2)
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    0x1B5, &mEffectJoint4Pos, 1, secondaryOwner);
+	if (((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	      && mPhase > 0)
+	     || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	     || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
+	    && (mPhase == 1 || mPhase == 2)) {
+		jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]);
+		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B6, jointMtx, 1, this);
+		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B7, jointMtx, 1, this);
+	}
+	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	     && mPhase <= 2)
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
+		gpMarioParticleManager->emitAndBindToPosPtr(0x1B8, &mEffectJoint0Pos, 1,
+		                                             this);
+	if (mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
+		jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[10]);
+		gpMarioParticleManager->emitAndBindToMtxPtr(0x1BA, jointMtx, 1, this);
+		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B9, jointMtx, 1, this);
+	}
+
+	if (mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
+		if ((mPhase == 0 || mPhase == 3)
+		    && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
+			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+		if ((mPhase == 1 || mPhase == 2)
+		    && getMActor()->getFrameCtrl(0)->checkPass(104.0f))
+			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+
+		if ((mPhase == 0 || mPhase == 3)
+		    && getMActor()->getFrameCtrl(0)->checkPass(108.0f))
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    0xF0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
+			    this);
+		if (mPhase == 0 && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    0xF1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
+			    this);
+		if (mPhase == 3 && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    0xF1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]), 0,
+			    this);
+		if (mPhase == 1 && getMActor()->getFrameCtrl(0)->checkPass(106.0f))
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    0xF2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]), 0,
+			    this);
+		if (mPhase == 2 && getMActor()->getFrameCtrl(0)->checkPass(106.0f))
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    0xF2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
+			    this);
+	}
+
+	if (mBreakingParts != nullptr)
+		mBreakingParts->emitPartsDisappearEffects();
 }
 
 TTinKoopaManager::TTinKoopaManager(const char* name)
