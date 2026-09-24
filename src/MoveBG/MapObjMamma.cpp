@@ -1,4 +1,5 @@
 #include <MoveBG/MapObjMamma.hpp>
+#include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MSound/MSound.hpp>
@@ -6,6 +7,8 @@
 // NOTE: this TU uses -inline deferred, so definitions are emitted in
 // reverse source order; keep them in reverse of marioEU.MAP address order
 // (TSandEgg < TLeanMirror < TSandBomb in the map).
+
+f32 TMapObjBall::getDepthAtFloating() { return unk18C; }
 
 f32 TSandBase::mScaleMin = 0.00001f;
 
