@@ -6,18 +6,116 @@
 #include <Strategic/Spine.hpp>
 #include <math.h>
 
-// TODO: this function is left nonmatching. It picks between several
-// walk/run animation-blend states based on mMarchSpeed vs.
-// mChangeSaveParams->mSLWalkAnmMarchSpeed/mSLRunAnmMarchSpeed, calling
-// setHeadAndBodyAnm and copying frames between old/new anims, then updates
-// every part's frame controller rate and calls a still-unidentified virtual
-// on TBossHanachanPartsBase (vtable slot 0xF4, distinct from setAnm_ at
-// 0xFC) before calling MActor::frameUpdate() on every part. Needs a closer
-// look at TBossHanachanPartsBase's virtual table before it can be
-// reconstructed safely -- see m2c draft for the shape of the logic.
 void TBossHanachan::changeAnmRateAndFrameUpdate_()
 {
-	// TODO: not yet implemented, see comment above.
+	TBossHanachanPartsBase* parts[9];
+	parts[0] = mHead;
+	for (int i = 0; i < 8; i++)
+		parts[i + 1] = mBody[i];
+
+	bool setFrameRate = true;
+	f32 frameRate = SMSGetAnmFrameRate();
+	f32 rate = frameRate;
+	const JDrama::TNerveBase<TLiveActor>* currentNerve
+	    = mSpine->getCurrentNerve();
+
+	if (currentNerve == &TNerveBossHanachanTumble::theNerve()) {
+		for (int i = 0; i < 9; i++)
+			parts[i]->mNonstopMotionBlend->unk28 = 0.0f;
+		for (int i = 0; i < 9; i++)
+			parts[i]->changeTumbleAnmRate_();
+		setFrameRate = false;
+	} else {
+		int currentAnm = mHead->mCurAnm;
+		f32 walkSpeed = mChangeSaveParams->mSLWalkAnmMarchSpeed.get();
+		f32 runSpeed = mChangeSaveParams->mSLRunAnmMarchSpeed.get();
+
+		if (currentAnm < BH_ANM_KIND_UNK0
+		    || currentAnm > BH_ANM_KIND_UNK1) {
+			for (int i = 0; i < 9; i++)
+				parts[i]->mNonstopMotionBlend->unk28 = 0.0f;
+			rate = SMSGetAnmFrameRate();
+		} else if (mMarchSpeed <= walkSpeed) {
+			for (int i = 0; i < 9; i++)
+				parts[i]->mNonstopMotionBlend->unk28 = 0.0f;
+			if (currentAnm == BH_ANM_KIND_UNK1) {
+				setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
+				                  BH_STOP_MOTION_BLEND_OFF);
+				mHead->copyFrameFromOldAnmToNewAnm_();
+				for (int i = 0; i < 8; i++)
+					mBody[i]->copyFrameFromOldAnmToNewAnm_();
+			} else if (currentAnm != BH_ANM_KIND_UNK0) {
+				setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
+				                  BH_STOP_MOTION_BLEND_ON);
+			}
+		} else if (mMarchSpeed < runSpeed) {
+			for (int i = 0; i < 9; i++)
+				parts[i]->mNonstopMotionBlend->unk28 = 0.0f;
+			if (currentAnm == BH_ANM_KIND_UNK0) {
+				setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
+				                  BH_STOP_MOTION_BLEND_OFF);
+				mHead->copyFrameFromOldAnmToNewAnm_();
+				for (int i = 0; i < 8; i++)
+					mBody[i]->copyFrameFromOldAnmToNewAnm_();
+			} else if (currentAnm != BH_ANM_KIND_UNK1) {
+				setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
+				                  BH_STOP_MOTION_BLEND_ON);
+			}
+		} else {
+			f32 ratio = CLBCalcRatio(walkSpeed, runSpeed, mMarchSpeed);
+			if (currentAnm == BH_ANM_KIND_UNK1) {
+				if (mHead->mOldAnm == BH_ANM_KIND_UNK0) {
+					rate = 1.0f - ratio;
+				} else {
+					setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
+					                  BH_STOP_MOTION_BLEND_OFF);
+					mHead->copyFrameFromOldAnmToNewAnm_();
+					for (int i = 0; i < 8; i++)
+						mBody[i]->copyFrameFromOldAnmToNewAnm_();
+					rate = ratio;
+				}
+			} else if (currentAnm == BH_ANM_KIND_UNK0) {
+				if (mHead->mOldAnm == BH_ANM_KIND_UNK1) {
+					rate = ratio;
+				} else {
+					setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
+					                  BH_STOP_MOTION_BLEND_OFF);
+					mHead->copyFrameFromOldAnmToNewAnm_();
+					for (int i = 0; i < 8; i++)
+						mBody[i]->copyFrameFromOldAnmToNewAnm_();
+					rate = 1.0f - ratio;
+				}
+			} else {
+				for (int i = 0; i < 9; i++)
+					parts[i]->mNonstopMotionBlend->unk28 = 0.0f;
+				setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
+				                  BH_STOP_MOTION_BLEND_ON);
+			}
+			if (currentAnm == BH_ANM_KIND_UNK0
+			    || currentAnm == BH_ANM_KIND_UNK1) {
+				for (int i = 0; i < 9; i++)
+					parts[i]->mNonstopMotionBlend->unk28 = rate;
+			}
+		}
+
+		if (currentAnm >= BH_ANM_KIND_UNK0
+		    && currentAnm <= BH_ANM_KIND_UNK1) {
+			f32 minRate = mChangeSaveParams->mSLWalkBckRateMin.get();
+			rate = mMarchSpeed * SMSGetAnmFrameRate()
+			        * mChangeSaveParams->mSLWalkBckRateMagnif.get();
+			if (rate < minRate)
+				rate = minRate;
+		}
+	}
+
+	if (setFrameRate) {
+		for (int i = 0; i < 9; i++)
+			parts[i]->getMActor()->getFrameCtrl(0)->setRate(rate);
+	}
+	for (int i = 0; i < 9; i++) {
+		parts[i]->updateAnmSound();
+		parts[i]->getMActor()->frameUpdate();
+	}
 }
 
 bool TBossHanachan::isAllBckAlreadyEnd(EnumBossHanachanAnmKind anm) const
