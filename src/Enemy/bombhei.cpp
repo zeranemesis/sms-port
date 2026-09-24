@@ -2,6 +2,7 @@
 class TBombHei {
 public:
 	void setWalkAnm();
+	void setAfterDeadEffect();
 	const char** getBasNameTable() const;
 };
 
@@ -23,3 +24,5 @@ void TBombHei::setWalkAnm()
 	reinterpret_cast<SetBckAnm>((*reinterpret_cast<void***>(this))[100])(this,
 	                                                                    4);
 }
+
+void TBombHei::setAfterDeadEffect() { }
