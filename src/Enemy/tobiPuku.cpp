@@ -49,17 +49,7 @@ static BOOL TobiPukuRollCallback(J3DNode* param_1, BOOL param_2)
 	if (param_2 == 0) {
 		TTobiPuku* puku = gpCurTobiPuku;
 		if (puku != nullptr) {
-			bool roll;
-			if (puku->mSpine->getCurrentNerve()
-			        == &TNerveTobiPukuLand::theNerve()
-			    || puku->mSpine->getCurrentNerve()
-			           == &TNerveTobiPukuPrepareFly::theNerve()
-			    || puku->mSpine->getCurrentNerve()
-			           == &TNerveTobiPukuReturnLaunch::theNerve())
-				roll = true;
-			else
-				roll = false;
-			if (!roll)
+			if (!puku->isRoll())
 				return true;
 			MtxPtr mA = gpCurTobiPuku->getMActor()->getModel()->getAnmMtx(
 			    ((J3DJoint*)param_1)->getJntNo());
@@ -440,7 +430,15 @@ bool TTobiPuku::canBound()
 	return result;
 }
 
-bool TTobiPuku::isRoll() { return false; }
+bool TTobiPuku::isRoll()
+{
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuLand::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTobiPukuPrepareFly::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTobiPukuReturnLaunch::theNerve())
+		return true;
+	else
+		return false;
+}
 
 void TTobiPuku::behaveToWater(THitActor* param_1)
 {
