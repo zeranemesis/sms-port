@@ -458,8 +458,8 @@ void TModelWaterManager::move()
 				    = mParticleVelocitySOA[i].x * getPlaneFriction(unk2914[i])
 				      + unk2914[i]->getNormal().x;
 				mParticleVelocitySOA[i].y = getWPGravity(i);
-				mParticleVelocitySOA[i].x
-				    = mParticleVelocitySOA[i].x * getPlaneFriction(unk2914[i])
+				mParticleVelocitySOA[i].z
+				    = mParticleVelocitySOA[i].z * getPlaneFriction(unk2914[i])
 				      + unk2914[i]->getNormal().z;
 
 				mParticlePositionSOA[i].x += mParticleVelocitySOA[i].x;
@@ -1104,7 +1104,7 @@ void TModelWaterManager::drawWaterVolume(MtxPtr param_1)
 		GXSetBlendMode(GX_BM_BLEND, GX_BL_DSTALPHA, GX_BL_ONE, GX_LO_NOOP);
 		GXSetColorUpdate(GX_FALSE);
 		GXSetAlphaUpdate(GX_TRUE);
-		GXSetDstAlpha(GX_TRUE, 0);
+		GXSetDstAlpha(GX_FALSE, 0);
 		if (unk5D60 & 0x10)
 			for (int i = 0; i < unk5D63; ++i)
 				drawTouchingMask();

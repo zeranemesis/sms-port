@@ -109,7 +109,7 @@ BOOL TMario::checkSwimJump()
 			s16 diff = mModelFaceAngle - mIntendedYaw;
 			if (diff < -0x5555 || diff > 0x5555)
 				doJump = true;
-			if (doJump == true) {
+			if (doJump == 1U) {
 				inOutWaterEffect(mFloorPosition.z);
 				changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
 				return 1;
