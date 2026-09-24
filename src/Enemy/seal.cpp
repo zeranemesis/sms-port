@@ -3,9 +3,15 @@
 
 class TSealManager : public TEnemyManager {
 public:
+	TSealManager(const char*);
 	void createModelData();
 	void load(JSUMemoryInputStream&);
 };
+
+TSealManager::TSealManager(const char* name)
+    : TEnemyManager(name)
+{
+}
 
 void TSealManager::createModelData()
 {
