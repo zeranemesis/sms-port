@@ -900,7 +900,7 @@ BOOL TMario::rocketCheck()
 		if (!isUpperState(UPPER_STATE_PUMPING))
 			bVar2 = false;
 
-		if (!mWaterGun->canSpray())
+		if (!mWaterGun->isEmitting())
 			bVar2 = false;
 	} else {
 		bVar2 = false;
