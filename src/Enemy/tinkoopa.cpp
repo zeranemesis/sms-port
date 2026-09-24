@@ -29,8 +29,11 @@ const char** TTinKoopa::getBasNameTable() const { return tinkoopa_bastable; }
 
 class TTinKoopaManager {
 public:
+	bool hasMapCollision() const;
 	void* createEnemyInstance();
 };
+
+bool TTinKoopaManager::hasMapCollision() const { return true; }
 
 bool TTinKoopa::hasMapCollision() const { return true; }
 
