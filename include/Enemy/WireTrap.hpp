@@ -49,6 +49,9 @@ private:
 	// TODO: remaining TWireTrap fields (mode/timer at 0x160/0x164 relative to
 	// TSpineEnemy base, plus scale/vec fields around 0x24-0x5c) are not yet
 	// reconstructed; only functions not touching them are implemented so far.
+public:
+	/* 0x150 */ u8 unk150[0x24];
+	/* 0x174 */ int mWaitTime; // compared against the spine timer in TNerveWireTrapWait
 };
 
 #endif
