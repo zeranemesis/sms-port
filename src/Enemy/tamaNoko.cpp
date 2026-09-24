@@ -850,7 +850,7 @@ DEFINE_NERVE(TNerveTamaNokoThrown, TLiveActor)
 		f32 fVar4 = params->mSLThrownVY.get();
 
 		self->setVelocity(
-		    JGeometry::TVec3<f32>(fVar3 * fVar2 * c, fVar4, fVar3 * fVar2 * s));
+		    JGeometry::TVec3<f32>(fVar3 * fVar2 * s, fVar4, fVar3 * fVar2 * c));
 
 		self->mPosition.y += 2.0f;
 
