@@ -9,6 +9,7 @@ class THanaSambo {
 public:
 	void behaveToWater(THitActor*);
 	bool isCollidMove(THitActor*);
+	BOOL isHitValid(u32);
 };
 
 class TSamboFlower {
@@ -25,6 +26,15 @@ public:
 void THanaSambo::behaveToWater(THitActor*) { }
 
 bool THanaSambo::isCollidMove(THitActor*) { return false; }
+
+BOOL THanaSambo::isHitValid(u32 message)
+{
+	if (message == 0xB) {
+		reinterpret_cast<TLiveActor*>(this)->onLiveFlag(LIVE_FLAG_HIDDEN);
+		return TRUE;
+	}
+	return FALSE;
+}
 
 void TSamboFlower::control() { }
 
