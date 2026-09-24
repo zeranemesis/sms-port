@@ -27,7 +27,7 @@ TMapObjFlag::TMapObjFlag(const char* name)
 	unk80 = 130.0f;
 	unk84 = 20.0f;
 	unk88 = 4.0f * ((f32)rand() * 0.000030517578f);
-	unkBC = 0;
+	unkBC = 1;
 	unkB8 = 0.0f;
 	unkA8 = 0.0f;
 	unk98 = 0.0f;
