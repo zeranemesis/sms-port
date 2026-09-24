@@ -285,7 +285,7 @@ void TNormalLift::readRailFlag()
 	if (!unk138->unk0)
 		return;
 
-	if (!graph->isDummy())
+	if (graph->isDummy())
 		return;
 
 	TRailNode* railNode = graph->getCurrentNode().getRailNode();
