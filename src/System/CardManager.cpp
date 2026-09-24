@@ -11,14 +11,22 @@ const char CardFileName[0x20] = "super_mario_sunshine\0\0\0\0\0\0\0\0\0\0\0";
 const char* titles[] = {
 	"スーパーマリオサンシャイン", "Super Mario Sunshine",
 	"Super Mario Sunshine",       "Super Mario Sunshine",
+#ifdef VERSION_GMSJ01
 	"Super Mario Sunshine",       "Super Mario Sunshine",
 	"Super Mario Sunshine",
+#else
+	"Super Mario Sunshine",
+#endif
 };
 
 const char* comments[] = {
 	"%d月%d日のセーブデータです", "Last saved on %d/%d", "Last saved on %d/%d",
+#ifdef VERSION_GMSJ01
 	"Last saved on %d/%d",        "Last saved on %d/%d", "Last saved on %d/%d",
 	"Last saved on %d/%d",
+#else
+	"Last saved on %d/%d",        "Last saved on %d/%d",
+#endif
 };
 
 static u32 CalcCheckSum(const void* data, u32 size)
