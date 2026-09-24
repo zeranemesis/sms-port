@@ -394,7 +394,7 @@ void TCoinBlue::load(JSUMemoryInputStream& stream)
 {
 	TCoin::load(stream);
 	if (TFlagManager::getInstance()->getBlueCoinFlag(
-	        gpMarDirector->getCurrentMap(), getEventId()))
+	        SMSGetMarDirector()->getCurrentMap(), getEventId()))
 		makeObjDead();
 }
 

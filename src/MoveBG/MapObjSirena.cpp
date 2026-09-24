@@ -112,7 +112,7 @@ void TRoulette::moveObject()
 {
 	TLiveActor::moveObject();
 	if (unk142 != 0)
-		mRotation.x += unk13C;
+		mRotation.y += unk13C;
 
 	if (unk141 != 0 && unk140 != 0) {
 		gpMarioOriginal->mGamePad->onNeutralMarioKey();
@@ -823,7 +823,7 @@ void TDonchou::loadAfter()
 {
 	TMapObjBase::loadAfter();
 	if (SMSGetApplication()->mCurrArea.getStage() == 14
-	    && gpMarDirector->getCurrentStage() == 0) {
+	    && SMSGetMarDirector()->getCurrentStage() == 0) {
 		unk144
 		    = static_cast<TSlotDrum*>(JDrama::TNameRefGen::search("srotdram"));
 		unk148 = static_cast<TItemSlotDrum*>(
