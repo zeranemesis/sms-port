@@ -5,6 +5,17 @@
 
 void TEffectEnemyManager::initSetEnemies() {}
 
+TEffectEnemy::TEffectEnemy(const char* name)
+    : TWalkerEnemy(name)
+    , unk194(0)
+{
+}
+
+TSpineEnemy* TEffectEnemyManager::createEnemyInstance()
+{
+	return new TEffectEnemy("エフェクト敵");
+}
+
 void TEffectEnemyManager::loadAfter() { JDrama::TNameRef::loadAfter(); }
 
 void TEffectEnemy::init(TLiveManager* manager)
@@ -39,11 +50,11 @@ void TEffectEnemy::behaveToWater(THitActor* actor)
 		kill();
 }
 
-// TODO: the remaining 17 functions in this unit were not attempted in the
-// time budget available for this pass: TEffectEnemy::TEffectEnemy(const
-// char*), ::init, ::setMActorAndKeeper, ::kill, ::forceKill, ::perform,
+// TODO: the remaining functions in this unit were not attempted in the
+// time budget available for this pass: ::init, ::setMActorAndKeeper,
+// ::kill, ::forceKill, ::perform,
 // ::reset, ::behaveToWater, ::sendAttackMsgToMario, ::setDeadAnm,
 // ::~TEffectEnemy, TEffectEnemyManager::~TEffectEnemyManager, ::load,
-// ::loadAfter, ::createEnemyInstance, and __sinit_effectEnemy_cpp (a 764B
+// and __sinit_effectEnemy_cpp (a 764B
 // static-initializer block that almost certainly builds a params/name
 // table and would require reading many constants out of the binary).
