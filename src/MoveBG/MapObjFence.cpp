@@ -22,3 +22,8 @@ TFenceWater::~TFenceWater() { }
 TFenceWaterH::~TFenceWaterH() { }
 
 void TFenceWater::draw() const {}
+
+void TRailFence::initMapCollisionData()
+{
+	TMapObjBase::initMapCollisionData();
+}
