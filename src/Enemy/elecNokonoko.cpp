@@ -1,5 +1,11 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Strategic/Spine.hpp>
+
+class TNerveElecCarapaceWait {
+public:
+	int execute(TSpineBase<TLiveActor>*) const;
+};
 
 class TElecNokonoko {
 public:
@@ -38,3 +44,10 @@ public:
 void TElecCarapace::rebirth() { }
 
 void TElecCarapace::recoverScale() { }
+
+int TNerveElecCarapaceWait::execute(TSpineBase<TLiveActor>* spine) const
+{
+	if (spine->getTime() > 60)
+		return 1;
+	return 0;
+}

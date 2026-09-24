@@ -19,3 +19,5 @@ static const char* gorogoro_bastable[] = { nullptr, nullptr, nullptr, nullptr };
 const char** TGorogoro::getBasNameTable() const { return gorogoro_bastable; }
 
 void TRollEnemy::bound() { }
+
+bool TRollEnemy::isRolling() { return false; }
