@@ -15,6 +15,13 @@ void TEffectEnemy::init(TLiveManager* manager)
 
 void TEffectEnemy::reset() { TWalkerEnemy::reset(); }
 
+void TEffectEnemy::kill()
+{
+	setDeadAnm();
+	onLiveFlag(LIVE_FLAG_DEAD);
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
 void TEffectEnemy::setDeadAnm()
 {
 	gpMarioParticleManager->emitAndBindToPosPtr(0x8B, &mPosition, 0, nullptr);
