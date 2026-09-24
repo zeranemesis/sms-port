@@ -1750,7 +1750,7 @@ void TDangoHamuKuri::reset()
 	mNext = nullptr;
 	mBoss = nullptr;
 	// TODO: rand interval
-	unk20C = MsRandF(0.0f, 1.0f);
+	unk20C = MsRandF();
 	mMActor->calc();
 }
 
