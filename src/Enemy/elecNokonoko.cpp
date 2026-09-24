@@ -1,5 +1,6 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Enemy/EnemyAttachment.hpp>
 #include <Strategic/Spine.hpp>
 
 class TNerveElecCarapaceWait {
@@ -37,9 +38,15 @@ const char** TElecNokonoko::getBasNameTable() const { return dennoko_bastable; }
 
 class TElecCarapace {
 public:
+	void kill();
 	void rebirth();
 	void recoverScale();
 };
+
+void TElecCarapace::kill()
+{
+	reinterpret_cast<TEnemyAttachment*>(this)->TEnemyAttachment::kill();
+}
 
 void TElecCarapace::rebirth() { }
 
