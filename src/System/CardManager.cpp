@@ -506,11 +506,7 @@ s32 TCardManager::setCardStat_(CARDFileInfo* file)
 
 void TCardManager::buildHeader_(HeaderData* header)
 {
-	int iVar8 = 0;
-	if (TFlagManager::getInstance()->getFlag(0xA0001) != 0x100) {
-		iVar8 = TFlagManager::getInstance()->getFlag(0xA0001);
-		++iVar8;
-	}
+	int iVar8 = TFlagManager::getInstance()->getFlag(0xA0001);
 
 	snprintf(header->mTitle, 0x20, titles[iVar8]);
 	OSCalendarTime auStack_54;

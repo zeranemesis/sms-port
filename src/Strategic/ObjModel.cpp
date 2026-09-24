@@ -162,8 +162,10 @@ MActor* TMActorKeeper::createMActor(const char* model_data_name, u32 flags)
 MActor* TMActorKeeper::createMActorFromAllBmd(u32 flags)
 {
 	int num = mModelDataKeeper->getModelDataNum();
+	MActor* actor = nullptr;
 	for (int i = 0; i < num; ++i)
-		createMActorFromNthData(i, flags);
+		actor = createMActorFromNthData(i, flags);
+	return actor;
 }
 
 TMActorKeeper::TMActorKeeper(TLiveManager* param_1, u16 param_2)
