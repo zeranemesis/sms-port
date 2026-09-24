@@ -1,7 +1,10 @@
 
+#include <Enemy/SmallEnemy.hpp>
+
 class TYumbo {
 public:
 	void reset();
+	void setDeadAnm();
 	const char** getBasNameTable() const;
 };
 
@@ -24,3 +27,8 @@ static const char* sambohead_bastable[] = {
 const char** TYumbo::getBasNameTable() const { return sambohead_bastable; }
 
 void TYumbo::reset() { }
+
+void TYumbo::setDeadAnm()
+{
+	reinterpret_cast<TSmallEnemy*>(this)->setBckAnm(3);
+}
