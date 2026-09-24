@@ -736,7 +736,7 @@ TBossPakkun::TBossPakkun(const char* name)
     , unk1B8(0)
     , unk1BC(0)
     , unk1C0(0)
-    , unk1C4(1)
+    , unk1C4(0)
     , unk1CC(0)
 {
 	offLiveFlag(LIVE_FLAG_UNK100);
@@ -886,11 +886,12 @@ void TBossPakkun::rumblePad(int type, const JGeometry::TVec3<f32>& position)
 
 void TBossPakkun::showMessage(u32 message)
 {
+	u32 index = message - 0xe0000;
 	u32 mask;
-	if (message == 1)
+	if (index == 1)
 		mask = 0;
 	else
-		mask = 1 << message;
+		mask = 1 << index;
 
 	if (!(unk1C0 & mask)) {
 		TGCConsole2* console = gpMarDirector->getConsole();
@@ -1104,9 +1105,8 @@ const char** TBossPakkun::getBasNameTable() const
 
 void TBossPakkun::setGroundCollision()
 {
-	if (!mSpine->isNerve(&TNerveBPDie::theNerve())
-	    && !mSpine->isNerve(&TNerveBPTumbleOut::theNerve())
-	    && mMapCollisionManager != nullptr) {
+	const TNerveBase<TLiveActor>* dieNerve = &TNerveBPDie::theNerve();
+	if (!mSpine->isNerve(dieNerve) && mMapCollisionManager != nullptr) {
 		TPosition3f collisionMtx;
 		collisionMtx.set(getModel()->getAnmMtx(2));
 		if (mMapCollisionManager->unk8 != nullptr)
@@ -1663,11 +1663,11 @@ DEFINE_NERVE(TNerveBPTumbleOut, TLiveActor)
 		if (actor->checkCurBckFromIndex(14)) {
 			boss->changeBck(22);
 			if (!boss->is2ndFightNow()) {
-				boss->unk1C4 -= 1;
-				if (boss->unk1C4 <= 0) {
-					gpMarDirector->getConsole()->startAppearBalloon(1,
+				boss->unk1C4 += 1;
+				if (boss->unk1C4 >= 3) {
+					gpMarDirector->getConsole()->startAppearBalloon(0xe0001,
 					                                                true);
-					boss->unk1C4 = 3;
+					boss->unk1C4 = 0;
 				}
 			}
 		} else {

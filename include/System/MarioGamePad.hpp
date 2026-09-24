@@ -73,7 +73,6 @@ public:
 	{
 		reset();
 	}
-	virtual ~TMarioGamePad() { }
 
 	enum PadMeanings {
 		MEANING_START       = 0x1,
@@ -170,6 +169,13 @@ public:
 		u32 prevMeaning = mMeaning;
 		mMeaning        = 0;
 		return prevMeaning;
+	}
+
+	// Fabricated
+	void resetButtons()
+	{
+		mButton.mTrigger = 0;
+		mButton.mRelease = 0;
 	}
 
 	// Fabricated

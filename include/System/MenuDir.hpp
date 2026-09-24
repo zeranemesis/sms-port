@@ -37,7 +37,6 @@ public:
 	/* 0x48 */ u32 unk48;
 	/* 0x4C */ u32 unk4C;
 	/* 0x50 */ bool unk50;
-	// TODO: tail is 4 bytes bigger in retail (new TMenuDirector is 0x58)
 	/* 0x54 */ u32 unk54;
 };
 
