@@ -69,6 +69,13 @@ void TSandBombBase::withered()
 	unk144->sleep();
 }
 
+void TSandCastle::calcRootMatrix()
+{
+	if (mState == 2)
+		return;
+	TMapObjBase::calcRootMatrix();
+}
+
 u32 TLeanMirror::getSDLModelFlag() const
 {
 	return 0;
