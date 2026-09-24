@@ -45,11 +45,12 @@ BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
 					}
 
 					if (0.000030517578f * (f32)rand() < unkF8) {
+						const JGeometry::TVec3<f32>* position = &sender->getPosition();
 						gpMarioParticleManager->emitWithRotate(
-						    0x1DD, &sender->getPosition(), 0, unk74, 0, 2,
+						    0x1DD, position, 0, unk74, 0, 2,
 						    nullptr);
 						gpMarioParticleManager->emitWithRotate(
-						    0x1DE, &sender->getPosition(), 0, unk74, 0, 2,
+						    0x1DE, position, 0, unk74, 0, 2,
 						    nullptr);
 					}
 
