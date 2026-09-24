@@ -11,6 +11,7 @@ class TRocket : public TSmallEnemy {
 public:
 	TRocket(const char* name = "ロケット");
 	virtual ~TRocket() { }
+	virtual const char** getBasNameTable() const;
 
 	// TODO: add other methods
 	bool isAttack();
