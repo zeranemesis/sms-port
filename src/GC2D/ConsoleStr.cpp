@@ -25,8 +25,8 @@ JUTPoint TConsoleStr::cShineGetLeft3(-200, 65);
 
 TConsoleStr::TConsoleStr(const char* name)
     : JDrama::TViewObj(name)
-    , unk10(nullptr)
-    , unk14(nullptr)
+    , unk4C(nullptr)
+    , unk50(nullptr)
     , unk20(0xB4)
 	, unk24(0)
 	, unk2A8(0)
@@ -40,42 +40,76 @@ f32 TConsoleStr::getWipeCloseTime() { return 30.0f / SMSGetVSyncTimesPerSec(); }
 
 void TConsoleStr::load(JSUMemoryInputStream& stream)
 {
+	switch (TFlagManager::getInstance()->getFlag(0xA00001)) {
+	case 0:
+		mGoPaneCount = 3;
+		mShinePaneCount = 6;
+		mMissPaneCount = 7;
+		break;
+	case 1:
+		mGoPaneCount = 4;
+		mShinePaneCount = 11;
+		mMissPaneCount = 12;
+		break;
+	case 2:
+		mGoPaneCount = 11;
+		mShinePaneCount = 11;
+		mMissPaneCount = 8;
+		break;
+	case 3:
+		mGoPaneCount = 10;
+		mShinePaneCount = 11;
+		mMissPaneCount = 10;
+		break;
+	case 4:
+		mGoPaneCount = 4;
+		mShinePaneCount = 10;
+		mMissPaneCount = 7;
+		break;
+	default:
+		mGoPaneCount = 11;
+		mShinePaneCount = 11;
+		mMissPaneCount = 12;
+		break;
+	}
+
 	JKRArchive* arch = SMSSwitch2DArchive("guide", gArBkConsole);
 	JDrama::TViewObj::load(stream);
-	unk10 = new J2DSetScreen("big_tx_1.blo", arch);
-	unk10->setCullBack(GX_CULL_BACK);
-	unk14 = new J2DSetScreen("scenario_demo_1.blo", arch);
-	unk14->setCullBack(GX_CULL_BACK);
+	unk4C = new J2DSetScreen("big_tx_1.blo", arch);
+	unk4C->setCullBack(GX_CULL_BACK);
+	unk50 = new J2DSetScreen("scenario_demo_1.blo", arch);
+	unk50->setCullBack(GX_CULL_BACK);
 
-	for (int i = 0; i < 3; ++i) {
-		unk28[i] = new TBoundPane(unk10, 'go00' + i);
+	for (s32 i = 0; i < mGoPaneCount; ++i) {
+		unk28[i] = new TBoundPane(unk4C, 'go00' + i);
 		unk28[i]->unk0->hide();
 	}
 
-	for (int i = 0; i < 9; ++i) {
-		unk244[i] = new TBoundPane(unk10, 'sg00' + i);
+	for (s32 i = 0; i < mShinePaneCount; ++i) {
+		unk244[i] = new TBoundPane(unk4C, 'sg00' + i);
+	}
+
+	for (s32 i = 0; i < mMissPaneCount; ++i) {
+		unk268[i] = new TBoundPane(unk4C, 'ms00' + i);
+		mMissBaseRotation[i] = (s32)unk268[i]->getPane()->getRotation();
 	}
 
 	for (int i = 0; i < 5; ++i) {
-		unk268[i] = new TBoundPane(unk10, 'ms00' + i);
+		unk27C[i] = new TExPane(unk4C, 're00' + i);
 	}
 
-	for (int i = 0; i < 5; ++i) {
-		unk27C[i] = new TExPane(unk10, 're00' + i);
-	}
-
-	unk2A0[0] = (J2DTextBox*)unk14->search('\0map');
+	unk2A0[0] = (J2DTextBox*)unk50->search('\0map');
 	SMSMakeTextBuffer(unk2A0[0], 0x80);
-	unk2A0[1] = (J2DTextBox*)unk14->search('stry');
+	unk2A0[1] = (J2DTextBox*)unk50->search('stry');
 	SMSMakeTextBuffer(unk2A0[1], 0x80);
 
 	for (int i = 0; i < 2; ++i) {
-		unk290[i] = new TExPane(unk14, 'msk1' + i);
+		unk290[i] = new TExPane(unk50, 'msk1' + i);
 		unk2A0[i]->setFont(gpSystemFont);
 	}
 
-	unk298 = new TExPane(unk14, 'wp_l');
-	unk29C = new TExPane(unk14, 'wp_r');
+	unk298 = new TExPane(unk50, 'wp_l');
+	unk29C = new TExPane(unk50, 'wp_r');
 
 	u32 uVar1     = SMS_getShineStage(gpMarDirector->mMap);
 	u32 uVar9     = TFlagManager::getInstance()->getFlag(0x40003);
@@ -100,9 +134,8 @@ void TConsoleStr::load(JSUMemoryInputStream& stream)
 void TConsoleStr::loadAfter()
 {
 	JDrama::TViewObj::loadAfter();
-	unk2AC = 0;
-	unk2B0 = 0;
-	unk2B4 = 0;
+	for (s32 i = 0; i < mGoPaneCount; ++i)
+		unk2AC[i] = nullptr;
 }
 
 void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -201,7 +234,7 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 
 		if (!unk2A9 && gpMarDirector->mState != 4) {
-			if (unk2AC)
+			if (unk2AC[0])
 				;
 
 			// TODO: uknown stuff
@@ -210,7 +243,7 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 
 		if (unk2A9 && gpMarDirector->mState != 4) {
-			if (unk2AC)
+			if (unk2AC[0])
 				;
 
 			// TODO: uknown stuff
@@ -258,9 +291,9 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 
 		local_1a0.setup2D();
 		if (unk2B8 == 4) {
-			unk14->draw(0, 0, &local_1a0);
+			unk50->draw(0, 0, &local_1a0);
 		} else {
-			unk10->draw(0, 0, &local_1a0);
+			unk4C->draw(0, 0, &local_1a0);
 		}
 
 		local_1a0.setup2D();
@@ -276,12 +309,10 @@ void TConsoleStr::startAppearReady()
 	unk2B8 = 1;
 	unk18  = 0.0f;
 	unk2A9 = 0;
-	unk28[0]->unk0->hide();
-	unk28[1]->unk0->hide();
-	unk28[2]->unk0->hide();
-	unk28[0]->unk0->mAlpha = 0xff;
-	unk28[1]->unk0->mAlpha = 0xff;
-	unk28[2]->unk0->mAlpha = 0xff;
+	for (s32 i = 0; i < mGoPaneCount; ++i) {
+		unk28[i]->getPane()->hide();
+		unk28[i]->getPane()->setAlpha(0xff);
+	}
 }
 
 void TConsoleStr::startAppearGo()
@@ -292,12 +323,10 @@ void TConsoleStr::startAppearGo()
 	unk2B8 = 1;
 	unk18  = 0.0f;
 	unk2A9 = 0;
-	unk28[0]->getPane()->hide();
-	unk28[1]->getPane()->hide();
-	unk28[2]->getPane()->hide();
-	unk28[0]->getPane()->setAlpha(0xff);
-	unk28[1]->getPane()->setAlpha(0xff);
-	unk28[2]->getPane()->setAlpha(0xff);
+	for (s32 i = 0; i < mGoPaneCount; ++i) {
+		unk28[i]->getPane()->hide();
+		unk28[i]->getPane()->setAlpha(0xff);
+	}
 }
 
 void TConsoleStr::startAppearShineGet()
@@ -316,15 +345,14 @@ void TConsoleStr::startAppearMiss()
 		return;
 
 	if (unk2B8 == 1) {
-		unk28[0]->getPane()->hide();
-		unk28[1]->getPane()->hide();
-		unk28[2]->getPane()->hide();
+		for (s32 i = 0; i < mGoPaneCount; ++i)
+			unk28[i]->getPane()->hide();
 	}
 
 	unk2B8 = 3;
 	unk18  = 0.0f;
 
-	for (int i = 0; i < 5; ++i) {
+	for (s32 i = 0; i < mMissPaneCount; ++i) {
 		unk268[i]->getPane()->hide();
 		unk268[i]->getPane()->setAlpha(0);
 	}
@@ -445,7 +473,7 @@ bool TConsoleStr::processShineGet(int param_1)
 {
 	bool result = true;
 
-	for (int i = 0; i < 9; ++i) {
+	for (s32 i = 0; i < mShinePaneCount; ++i) {
 		if (param_1 == 6 * i) {
 			unk244[i]->getPane()->show();
 			unk244[i]->setPanePosition(0x28, cShineGetRight1, cShineGetLeft1,
@@ -510,7 +538,7 @@ bool TConsoleStr::processMiss(int param_1)
 {
 	bool result = true;
 
-	for (int i = 0; i < 5; ++i) {
+	for (s32 i = 0; i < mMissPaneCount; ++i) {
 		if (param_1 == i * 10) {
 			unk268[i]->getPane()->show();
 			unk268[i]->setPanePosition(0x3C, JUTPoint(0, -270),
@@ -558,7 +586,8 @@ bool TConsoleStr::processMiss(int param_1)
 			}
 		} else {
 			if (param_1 < i * 10) {
-				unk268[i]->getPane()->mRotation = (i - param_1) * 6;
+				unk268[i]->getPane()->mRotation =
+				    mMissBaseRotation[i] + (i * 10 - param_1) * 6;
 			}
 
 			result = false;
