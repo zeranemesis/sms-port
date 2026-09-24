@@ -4,6 +4,10 @@
 
 class JPABaseEmitter;
 class JPABaseParticle;
+class TNerveChuuHanaFall {
+public:
+	int execute(TSpineBase<TLiveActor>*) const;
+};
 
 class TChuuHana {
 public:
@@ -46,4 +50,9 @@ void TChuuHanaAseParCallback::draw(JPABaseEmitter*, JPABaseParticle*) { }
 BOOL TNerveChuuHanaObject::execute(TSpineBase<TLiveActor>*) const
 {
 	return FALSE;
+}
+
+int TNerveChuuHanaFall::execute(TSpineBase<TLiveActor>*) const
+{
+	return 0;
 }
