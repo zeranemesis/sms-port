@@ -1,5 +1,6 @@
 
 #include <Enemy/Enemy.hpp>
+#include <Enemy/SmallEnemy.hpp>
 
 class TSamboHead;
 TSamboHead* gpCurSamboHead;
@@ -18,6 +19,7 @@ public:
 class TSamboHead {
 public:
 	void calcRootMatrix();
+	void setDeadAnm();
 };
 
 void THanaSambo::behaveToWater(THitActor*) { }
@@ -30,4 +32,9 @@ void TSamboHead::calcRootMatrix()
 {
 	gpCurSamboHead = this;
 	reinterpret_cast<TSpineEnemy*>(this)->TSpineEnemy::calcRootMatrix();
+}
+
+void TSamboHead::setDeadAnm()
+{
+	reinterpret_cast<TSmallEnemy*>(this)->setBckAnm(3);
 }
