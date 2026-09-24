@@ -25,7 +25,8 @@ void TMirrorActor::checkIsInMirror()
 	}
 
 	if (unk1A & 2) {
-		if (!gpMirrorModelManager->isUnk18Present() && !(unk1A & 4)) {
+		if (!gpMirrorModelManager->isUnk18Present() && !(unk1A & 4)
+		    && !(unk1A & 0x20)) {
 			if (unk14->getShapePacket(0)->isVisible())
 				SMS_HideAllShapePacket(unk14);
 			unk18 = 0;
@@ -49,7 +50,8 @@ void TMirrorActor::checkIsInMirror()
 	int uVar4 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_18));
 	if (uVar4 != gpMirrorModelManager->unk18) {
 		unk18 = 0;
-	} else if (!gpMirrorModelManager->isUnk18Present() && !(unk1A & 4)) {
+	} else if (!gpMirrorModelManager->isUnk18Present() && !(unk1A & 4)
+	           && !(unk1A & 0x20)) {
 		unk18 = 0;
 	} else if (gpMirrorModelManager->isUnk18Present()
 	           && !gpMirrorModelManager->isUpperThanMirrorPlane(local_18)) {
