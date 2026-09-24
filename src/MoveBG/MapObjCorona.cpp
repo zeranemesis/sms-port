@@ -31,7 +31,7 @@ void TBathtub::loadAfter()
 
 void TBathtub::hipdrop(const JGeometry::TVec3<f32>& position)
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+	if (unk29A != 0)
 		return;
 
 	u8* params = reinterpret_cast<u8*>(unk16C);
