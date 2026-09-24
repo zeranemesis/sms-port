@@ -6,6 +6,11 @@ public:
 	void control();
 };
 
+class TKoopa {
+public:
+	BOOL receiveMessage(THitActor*, u32);
+};
+
 class TKoopaManager {
 public:
 	void* createEnemyInstance();
@@ -17,6 +22,12 @@ public:
 };
 
 void TKoopaParts::control() { }
+
+BOOL TKoopa::receiveMessage(THitActor* sender, u32 message)
+{
+	return reinterpret_cast<TSpineEnemy*>(this)->TSpineEnemy::receiveMessage(
+	    sender, message);
+}
 
 void* TKoopaManager::createEnemyInstance() { return nullptr; }
 
