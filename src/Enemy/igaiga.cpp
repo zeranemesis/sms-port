@@ -23,6 +23,12 @@ void TRollEnemy::bound() { }
 
 bool TRollEnemy::isRolling() { return false; }
 
+void TRollEnemy::rollSE() { }
+
+void TRollEnemy::boundSE() { }
+
+void TRollEnemy::setAfterDeadEffect() { }
+
 void TRollEnemy::attackToMario()
 {
 	SMS_SendMessageToMario(this, 0xE);
