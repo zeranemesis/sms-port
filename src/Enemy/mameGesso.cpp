@@ -177,7 +177,8 @@ void TMameGesso::reset()
 	TWalkerEnemy::reset();
 
 	// TODO: still don't know the real rand function/class...
-	unk1CC    = MsRandF(0, unk194->mSLGenerateInterval.get());
+	f32 interval = unk194->mSLGenerateInterval.get();
+	unk1CC = MsRandF() * interval;
 	unk1D0    = 0;
 	unk1E8    = 0.0f;
 	unk1EC    = 1;
