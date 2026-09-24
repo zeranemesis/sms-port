@@ -8,7 +8,12 @@ public:
 	virtual void setWalkAnm();
 	virtual void setWaitAnm();
 	virtual void setGenerateAnm();
+	const char** getBasNameTable() const;
 };
+
+static const char* hauntleg_bastable[] = { nullptr, nullptr, nullptr };
+
+const char** THauntLeg::getBasNameTable() const { return hauntleg_bastable; }
 
 void THauntLeg::setRunAnm() { setBckAnm(1); }
 void THauntLeg::setWalkAnm() { setBckAnm(1); }
