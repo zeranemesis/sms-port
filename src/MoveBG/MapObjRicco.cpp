@@ -70,7 +70,7 @@ f32 TRiccoWatermill::mSubmarineSurfaceTransY;
 
 u32 TRiccoWatermill::touchWater(THitActor*)
 {
-	if (mState != 5)
+	if (mState == 5)
 		return TRUE;
 
 	unk140 = 5;
