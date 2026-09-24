@@ -1,4 +1,6 @@
 #include <Animal/BeeHive.hpp>
+#include <Animal/boid.hpp>
+#include <Strategic/ObjManager.hpp>
 
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP
 // and vtable data. Only trivial destructors are matched so far; the rest
@@ -44,7 +46,13 @@ DEFINE_NERVE(TNerveBeeHiveFall, TLiveActor)
 
 void TBeeHiveManager::createModelData()
 {
-	// TODO: not yet decompiled
+	static const TModelDataLoadEntry entry[] = {
+		{ "bee_body.bmd", 0x10210000, 0 },
+		{ "bee_nest.bmd", 0x10210000, 0 },
+		{ "bee_nest_break.bmd", 0x10210000, 0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
 }
 
 void TBeeHiveManager::load(JSUMemoryInputStream& stream)
@@ -63,9 +71,15 @@ void TBeeHive::getCenterOfGravity() const
 	// TODO: not yet decompiled
 }
 
-void TBeeHive::appearBee(int param_1)
+void TBeeHive::appearBee(int index)
 {
-	// TODO: not yet decompiled
+	TRealoidActor* bee = getRealoid(index);
+	if (!(bee->mFlags & TRealoidActor::FLAG_UNK4)
+	    && (bee->mFlags & TRealoidActor::FLAG_UNK2)) {
+		bee->offFlag(TRealoidActor::FLAG_UNK2);
+		bee->offHitFlag(HIT_FLAG_NO_COLLISION);
+		unk150->getBoid(index)->mPosition = mPosition;
+	}
 }
 
 void TBeeHive::doWait()
@@ -78,15 +92,9 @@ void TBeeHive::calcRootMatrix()
 	// TODO: not yet decompiled
 }
 
-void TBeeHive::controlSound()
-{
-	// TODO: not yet decompiled
-}
+// TODO: TBeeHive::controlSound() not yet decompiled (left undefined so control() does not inline an empty stub)
 
-void TBeeHive::controlCollision()
-{
-	// TODO: not yet decompiled
-}
+// TODO: TBeeHive::controlCollision() not yet decompiled (left undefined so control() does not inline an empty stub)
 
 void TBeeHive::bind()
 {
@@ -95,12 +103,15 @@ void TBeeHive::bind()
 
 void TBeeHive::control()
 {
-	// TODO: not yet decompiled
+	controlCollision();
+	TLiveActor::control();
+	controlSound();
 }
 
 void TBeeHive::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// TODO: not yet decompiled
+	TRealoid::perform(cue, graphics);
+	TSpineEnemy::perform(cue, graphics);
 }
 
 BOOL TBeeHive::receiveMessage(THitActor* sender, u32 message)
