@@ -7,8 +7,13 @@
 bool TBombHei::mSerialBomb;
 
 static const char* bombhei_bastable[] = {
-	// TODO: recover actual .bas paths from .rodata
-	0,
+	"/scene/bombhei/bas/downnejibomb_down1.bas",
+	nullptr,
+	nullptr,
+	"/scene/bombhei/bas/nejibomb_land1.bas",
+	nullptr,
+	nullptr,
+	"/scene/bombhei/bas/nejibomb_stop_down1.bas",
 };
 
 DEFINE_NERVE(TNerveBombHeiExplosion, TLiveActor)
@@ -53,10 +58,7 @@ DEFINE_NERVE(TNerveBombHeiGenerate, TLiveActor)
 	return FALSE;
 }
 
-const char** TBombHei::getBasNameTable() const
-{
-	return (const char**)bombhei_bastable;
-}
+const char** TBombHei::getBasNameTable() const { return bombhei_bastable; }
 
 void TBombHei::isDamageToCannon()
 {
@@ -125,10 +127,7 @@ void TBombHei::setFreezeAnm()
 	// TODO: not yet decompiled
 }
 
-void TBombHei::setWalkAnm()
-{
-	// TODO: not yet decompiled
-}
+void TBombHei::setWalkAnm() { setBckAnm(4); }
 
 void TBombHei::genEventCoin()
 {
@@ -199,11 +198,7 @@ void TBombHei::setAfterDeadEffect()
 	// TODO: not yet decompiled
 }
 
-bool TBombHei::doKeepDistance()
-{
-	// TODO: not yet decompiled
-	return false;
-}
+bool TBombHei::doKeepDistance() { return unk19C; }
 
 TBombHei::~TBombHei()
 {

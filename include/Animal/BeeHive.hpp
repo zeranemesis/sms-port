@@ -52,6 +52,14 @@ public:
 	void controlSound();
 	void controlCollision();
 	void receiveMessageFromChild(TBee*);
+
+public:
+	// TODO: fields between 0x158 and 0x1A0, 0x1AC and past 0x1B8 are unknown
+	/* 0x158 */ char unk158[0x1A0 - 0x158];
+	/* 0x1A0 */ JGeometry::TVec3<f32> mSoundPos;
+	/* 0x1AC */ char unk1AC[4];
+	/* 0x1B0 */ int mCollisionIdx;
+	/* 0x1B4 */ int mBeeNum;
 };
 
 // ============= nerves =============

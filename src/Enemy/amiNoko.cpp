@@ -31,6 +31,10 @@ f32 TAmiNoko::getGravityY() const
 	return mGravity;
 }
 
+// TODO: weak in the original (inline in the class body); defined out of line
+// until the vtable/dtor of TAmiNoko are emitted by this TU.
+bool TAmiNoko::isCollidMove(THitActor*) { return false; }
+
 TSmallEnemy* TAmiNokoManager::createEnemyInstance() { return 0; }
 
 void TAmiNokoManager::createModelData()

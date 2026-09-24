@@ -1,4 +1,7 @@
 #include <Animal/BeeHive.hpp>
+#include <Animal/boid.hpp>
+#include <Strategic/ObjManager.hpp>
+#include <MSound/MSound.hpp>
 
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP
 // and vtable data. Only trivial destructors are matched so far; the rest
@@ -44,7 +47,13 @@ DEFINE_NERVE(TNerveBeeHiveFall, TLiveActor)
 
 void TBeeHiveManager::createModelData()
 {
-	// TODO: not yet decompiled
+	static const TModelDataLoadEntry entry[] = {
+		{ "bee_body.bmd", 0x10210000, 0 },
+		{ "bee_nest.bmd", 0x10210000, 0 },
+		{ "bee_nest_break.bmd", 0x10210000, 0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
 }
 
 void TBeeHiveManager::load(JSUMemoryInputStream& stream)
@@ -63,9 +72,15 @@ void TBeeHive::getCenterOfGravity() const
 	// TODO: not yet decompiled
 }
 
-void TBeeHive::appearBee(int param_1)
+void TBeeHive::appearBee(int index)
 {
-	// TODO: not yet decompiled
+	TRealoidActor* bee = getRealoid(index);
+	if (!(bee->mFlags & TRealoidActor::FLAG_UNK4)
+	    && (bee->mFlags & TRealoidActor::FLAG_UNK2)) {
+		bee->offFlag(TRealoidActor::FLAG_UNK2);
+		bee->offHitFlag(HIT_FLAG_NO_COLLISION);
+		unk150->getBoid(index)->mPosition = mPosition;
+	}
 }
 
 void TBeeHive::doWait()
@@ -80,12 +95,59 @@ void TBeeHive::calcRootMatrix()
 
 void TBeeHive::controlSound()
 {
-	// TODO: not yet decompiled
+	if (mBeeNum == 0)
+		return;
+
+	f32 x = 0.0f;
+	f32 y = x;
+	f32 z = x;
+	int count = 0;
+	for (int i = 0; i < mBeeNum; ++i) {
+		TRealoidActor* bee = getRealoid(i);
+		if (!(bee->mFlags & TRealoidActor::FLAG_UNK2_OR_UNK4)) {
+			x += bee->mPosition.x;
+			y += bee->mPosition.y;
+			z += bee->mPosition.z;
+			++count;
+		}
+	}
+
+	if (count == 0)
+		return;
+
+	f32 inv = 1.0f / count;
+	mSoundPos.x = x * inv;
+	mSoundPos.y = y * inv;
+	mSoundPos.z = z * inv;
+	gpMSound->startBeeSe((Vec*)&mSoundPos, count);
 }
 
 void TBeeHive::controlCollision()
 {
-	// TODO: not yet decompiled
+	int idx = mCollisionIdx;
+	int num = mBeeNum;
+
+	TRealoidActor* bee = getRealoid(idx);
+	bee->checkHitActors();
+	bee->onHitFlag(HIT_FLAG_CANNOT_ATTACK);
+
+	// TODO: this first wrap is dead but reproduces a dead compare in the
+	// target (and keeps control() from inlining us); probably an inline
+	// "next index" helper in the original.
+	int next = idx + 1;
+	if (num <= next)
+		next = 0;
+
+	if (num <= ++mCollisionIdx)
+		mCollisionIdx = 0;
+
+	next = mCollisionIdx;
+	if (num <= next)
+		next = 0;
+
+	TRealoidActor* nextBee = getRealoid(next);
+	if (!(nextBee->mFlags & TRealoidActor::FLAG_UNK2_OR_UNK4))
+		nextBee->offHitFlag(HIT_FLAG_CANNOT_ATTACK);
 }
 
 void TBeeHive::bind()
@@ -95,12 +157,15 @@ void TBeeHive::bind()
 
 void TBeeHive::control()
 {
-	// TODO: not yet decompiled
+	controlCollision();
+	TLiveActor::control();
+	controlSound();
 }
 
 void TBeeHive::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// TODO: not yet decompiled
+	TRealoid::perform(cue, graphics);
+	TSpineEnemy::perform(cue, graphics);
 }
 
 BOOL TBeeHive::receiveMessage(THitActor* sender, u32 message)
