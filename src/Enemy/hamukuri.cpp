@@ -1482,7 +1482,7 @@ void TDoroHaneKuri::attackToMario()
 			mSpine->pushNerve(&TNerveDoroHaneRise::theNerve());
 			onHaveCap();
 			MtxPtr mtx = mMActor->getModel()->getAnmMtx(unk1AC);
-			unk200.set(mtx[3][0], mtx[3][1], mtx[3][2]);
+			unk200.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 			gpMarioParticleManager->emitAndBindToPosPtr(0xCD, &unk200, 0,
 			                                            nullptr);
 		}
@@ -1582,11 +1582,9 @@ void THaneHamuKuri2::walkBehavior(int param_1, f32 param_2)
 		unk234 -= 1.0f;
 
 	unk210      = MsSin(unk20C * 360.0f / flyBaseFrequency) * flyBaseAmplitude;
-	mPosition.y = unk210 + unk230 + unk234;
-	mTurnSpeed
-	    = ((THaneHamuKuriSaveLoadParams*)getSaveParam())->mSLTurnSpeedLow.get();
-	mMarchSpeed = ((THaneHamuKuriSaveLoadParams*)getSaveParam())
-	                  ->mSLMarchSpeedLow.get();
+	mPosition.y = unk210 + (unk230 + unk234);
+	mTurnSpeed  = getSaveParam2()->mSLTurnSpeedLow.get();
+	mMarchSpeed = getSaveParam2()->mSLMarchSpeedLow.get();
 
 	if (!isBckAnm(4))
 		TWalkerEnemy::walkBehavior(param_1, param_2);
