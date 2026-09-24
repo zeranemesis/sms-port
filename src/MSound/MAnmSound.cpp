@@ -30,6 +30,35 @@ void MAnmSound::startAnimSound(void* interface, u32 id,
 		                                               camera_idx);
 }
 
+#ifdef VERSION_GMSP01
+void MAnmSoundMario::startAnimSound(void* interface, u32 id,
+                                    JAISoundHandle* out_handle,
+                                    JAIActor* actor, u8 camera_idx)
+{
+	if (!MSGMSound->gateCheck(id))
+		return;
+
+	s32 soundType = (id >> 12) & 0xF;
+	u32 category = id >> 30;
+	if (category == 2)
+		soundType = 0x10;
+	else if (category == 3)
+		soundType = 0x11;
+	else if (category != 0)
+		soundType = -1;
+
+	if (soundType == 7) {
+		u32 groundNumber = actor->mGroundNumber;
+		MSGMSound->startMarioVoice(
+		    id, static_cast<s16>((groundNumber >> 24) & 0xF),
+		    static_cast<u8>(groundNumber >> 28));
+	} else if (soundType != 0 || !(actor->mGroundNumber & 0x1000)) {
+		MSoundSESystem::MSoundSE::startSoundActorInner(
+		    id, out_handle, actor, 0, camera_idx);
+	}
+}
+#endif
+
 void MAnmSound::setSpeedModifySound(JAISound* sound,
                                     JAIAnimeFrameSoundData* frame_data,
                                     f32 speed)

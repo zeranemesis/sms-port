@@ -127,7 +127,11 @@ void TEnemyMario::initValues()
 	unk468 = 0.0f;
 	unk46C = 0.0f;
 
+#ifdef VERSION_GMSP01
+	mAnmSound = new MAnmSoundMario(SMSGetMSound());
+#else
 	mAnmSound = new MAnmSound(SMSGetMSound());
+#endif
 	mAnmSound->initAnmSound(nullptr, 1, 0.0f);
 	unk4EC          = 0;
 	mBlendLogicOp   = 10;

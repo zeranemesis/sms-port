@@ -209,9 +209,17 @@ void TYoshi::init(TMario* param_1)
 	for (int i = 0; i < 2; ++i)
 		mMirrorModels[i]->getModelData()->onFlag1OnAllShapes();
 
+#ifdef VERSION_GMSP01
+	mBodyAnmSound = new MAnmSoundMario(SMSGetMSound());
+#else
 	mBodyAnmSound = new MAnmSound(SMSGetMSound());
+#endif
 	mBodyAnmSound->initAnmSound(nullptr, 1, 0.0f);
+#ifdef VERSION_GMSP01
+	mTongueAnmSound = new MAnmSoundMario(SMSGetMSound());
+#else
 	mTongueAnmSound = new MAnmSound(SMSGetMSound());
+#endif
 	mTongueAnmSound->initAnmSound(nullptr, 1, 0.0f);
 
 	{

@@ -8,6 +8,7 @@
 #include <JSystem/JAudio/JAInterface/JAISound.hpp>
 #include <JSystem/JAudio/JAInterface/JAIAnimation.hpp>
 #include <MSound/MSound.hpp>
+#include <version.h>
 
 class JAIActor;
 class JAIAnimeFrameSoundData;
@@ -25,6 +26,20 @@ public:
 	void setSpeedModifySound(JAISound* sound,
 	                         JAIAnimeFrameSoundData* frame_data, f32 speed);
 };
+
+#ifdef VERSION_GMSP01
+class MAnmSoundMario : public MAnmSound {
+public:
+	MAnmSoundMario(MSound* sound)
+	    : MAnmSound(sound)
+	{
+	}
+
+	virtual void startAnimSound(void* interface, u32 id,
+	                            JAISoundHandle* out_handle, JAIActor* actor,
+	                            u8 camera_idx);
+};
+#endif
 
 class MAnmSoundNPC : public MAnmSound {
 public:
