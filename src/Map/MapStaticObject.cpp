@@ -408,7 +408,7 @@ TMapStaticObj::TMapStaticObj(const char* name)
     , mMActor(nullptr)
     , mCollisionManager(nullptr)
     , mSoundId(-1)
-    , unk7C(0)
+    , unk7C(-1)
 {
 }
 

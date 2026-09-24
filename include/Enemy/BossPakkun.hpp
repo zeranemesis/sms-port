@@ -166,7 +166,7 @@ public:
 		if (is2ndFightNow()) {
 			const TNerveBase<TLiveActor>* flyNerve = &TNerveBPFly::theNerve();
 			if (mSpine->isNerve(flyNerve))
-				showMessage(0xe0002);
+				showMessage(2);
 		}
 	}
 

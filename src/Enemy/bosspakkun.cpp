@@ -886,12 +886,11 @@ void TBossPakkun::rumblePad(int type, const JGeometry::TVec3<f32>& position)
 
 void TBossPakkun::showMessage(u32 message)
 {
-	u32 index = message - 0xe0000;
 	u32 mask;
-	if (index == 1)
+	if (message == 1)
 		mask = 0;
 	else
-		mask = 1 << index;
+		mask = 1 << (message & 0x1f);
 
 	if (!(unk1C0 & mask)) {
 		TGCConsole2* console = gpMarDirector->getConsole();

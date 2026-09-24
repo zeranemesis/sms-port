@@ -734,7 +734,7 @@ void TSmallEnemy::changeOut()
 	                                nullptr, 0, 4);
 
 	kill();
-	mJuiceBlock->mPosition = mPosition;
+	mPosition = mJuiceBlock->mPosition;
 
 	gpMarioParticleManager->emitAndBindToPosPtr(0xCD, &mPosition, 0, nullptr);
 	getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
