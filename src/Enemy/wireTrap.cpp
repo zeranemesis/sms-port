@@ -1,4 +1,5 @@
 #include <Enemy/WireTrap.hpp>
+#include <Strategic/Spine.hpp>
 
 // TODO: TWireTrapManager::createModelData, ::load, ctor and most of TWireTrap
 // are not yet reconstructed. Only the small accessor functions below have
@@ -8,6 +9,14 @@
 // been reverse-engineered yet. They exist only so theNerve() can be emitted
 // and inlined at TWireTrap::getNerveFromMode's call sites, matching the
 // target's control flow there. Do not treat these as matching nerve bodies.
+DEFINE_NERVE(TNerveWireTrapWait, TLiveActor)
+{
+	TWireTrap* self = (TWireTrap*)spine->getBody();
+	if (self->mWaitTime < spine->getTime())
+		return TRUE;
+	return FALSE;
+}
+
 DEFINE_NERVE(TNerveWireTrapSearch, TLiveActor)
 {
 	return FALSE;

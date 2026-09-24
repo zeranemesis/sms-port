@@ -224,12 +224,16 @@ public:
 	TBossHanachan(const char* name = "ボスハナチャン");
 	virtual ~TBossHanachan() { }
 
+	// TODO: kill() is declared first so that it is the key function and the
+	// vtable (+ inline dtor) gets emitted in BossHanachanMain.cpp while
+	// perform() is not decompiled yet. All of these are overrides, so the
+	// order does not affect the vtable layout.
+	virtual void kill();
+	virtual BOOL hasMapCollision() const;
 	virtual void perform(u32, JDrama::TGraphics*);
 	virtual void init(TLiveManager*);
 	virtual void bind();
 	virtual void moveObject();
-	virtual void kill();
-	virtual BOOL hasMapCollision() const;
 
 	void removeAllMapCollision();
 	void execDamage();

@@ -272,5 +272,6 @@ BOOL TMareEventPoint::receiveMessage(THitActor* sender, u32 message)
 
 void TMareEventPoint::load(JSUMemoryInputStream& stream)
 {
-	// TODO: unconfirmed
+	JDrama::TActor::load(stream);
+	initHitActor(0x40000236, 0, 0, 0.0f, 0.0f, 300.0f, 600.0f);
 }
