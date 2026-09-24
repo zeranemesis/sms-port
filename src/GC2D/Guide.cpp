@@ -1,5 +1,8 @@
 
 #include <GC2D/Guide.hpp>
+#include <System/Application.hpp>
+
+static u8 setup_wait;
 
 TGuide::TGuide(const char* name)
     : TViewObj(name)
@@ -18,6 +21,16 @@ void TGuide::startMoveCursor()
 {
 	unk10  = 9;
 	unk164 = 0;
+}
+
+JKRMemArchive* TGuide::setup(JKRMemArchive* archive)
+{
+	if (archive != nullptr)
+		SMSMountAramArchive(archive, gArBkGuide);
+	else
+		setup_wait = 0x10;
+	unkC4 = 0;
+	return archive;
 }
 
 TGuide::~TGuide() { }

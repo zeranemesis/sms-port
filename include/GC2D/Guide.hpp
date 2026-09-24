@@ -17,7 +17,7 @@ public:
 	void load(JSUMemoryInputStream& stream);
 	void resetObjects();
 	void resetScore();
-	void setup(JKRMemArchive*);
+	JKRMemArchive* setup(JKRMemArchive*);
 	void setup2(JKRMemArchive*);
 	void startMoveCursor();
 	void startMoveCursor2();
