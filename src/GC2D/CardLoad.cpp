@@ -115,24 +115,14 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		unkC8[i] = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
 	}
 
-	for (int i = 0; i < 11; ++i) {
-		unk20C[i] = 25 * i + 150;
-		if (i > 4)
-			unk20C[i] += 20;
-		unk222[i] = 4;
-	}
-
-	for (int i = 0; i < 13; ++i) {
-		unk22E[i] = 400 * i;
-		unk248[i] = 4;
-	}
+	setupTitleScreen();
 
 	unk208 = unk34->search('ROOT');
 
 	unkF0 = new TExPane(unk34, 'titl');
 	unkF4 = new TExPane(unk34, 'nint');
 
-	for (int i = 0; i < 11; ++i) {
+	for (int i = 0; i < unk7D4; ++i) {
 		int key;
 		if (i < 9)
 			key = 's_01' + i;
@@ -144,7 +134,7 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		unk124[i] = unkF8[i]->getPane()->getBounds();
 	}
 
-	for (int i = 0; i < 13; ++i) {
+	for (int i = 0; i < 18; ++i) {
 		int key;
 		if (i < 9)
 			key = 'p_01' + i;
@@ -329,7 +319,33 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk750 = (J2DPicture*)unk28->search('\0n_c');
 }
 
-void TCardLoad::setupTitleScreen() { }
+void TCardLoad::setupTitleScreen()
+{
+	switch (TFlagManager::getInstance()->getFlag(0xA0001)) {
+	case 2:
+		unk7D4 = 15;
+		break;
+	case 3:
+		unk7D4 = 12;
+		break;
+	case 4:
+		unk7D4 = 10;
+		break;
+	default:
+		unk7D4 = 11;
+		break;
+	}
+
+	for (int i = 0; i < unk7D4; ++i) {
+		unk20C[i] = 25 * i + 150;
+		unk222[i] = 4;
+	}
+
+	for (int i = 0; i < 18; ++i) {
+		unk22E[i] = 400 * i;
+		unk248[i] = 4;
+	}
+}
 
 void TCardLoad::setupScoreScreen()
 {
@@ -691,7 +707,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			           || unk38->getTrigger() & 0x1000) {
 				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
 				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->getPane()->setAlpha(0);
 				unk258 = 0;
 				if (unk18 < 4)
@@ -719,7 +735,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			    || unk38->getTrigger() & 0x1000) {
 				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
 				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->getPane()->setAlpha(0);
 				unk258 = 0;
 				unkBC  = 0;
@@ -794,7 +810,7 @@ bool TCardLoad::titleDraw()
 		break;
 
 	case 1:
-		for (int i = 0; i < 13; ++i) {
+		for (int i = 0; i < 18; ++i) {
 			switch (unk248[i]) {
 			case 4:
 				if (unk258 > unk22E[i]) {
@@ -813,9 +829,9 @@ bool TCardLoad::titleDraw()
 				break;
 
 			case 1:
-				if (i == 12) {
+				if (i == 17) {
 					unk258 = 0;
-					for (int j = 0; j < 13; ++j)
+					for (int j = 0; j < 18; ++j)
 						unk1D4[j]->setPaneAlpha(40, 255, 180);
 					unk18 = 3;
 				}
@@ -829,7 +845,7 @@ bool TCardLoad::titleDraw()
 	case 3:
 		if (unk258 > 160) {
 			bool any = true;
-			for (int i = 0; i < 13; ++i) {
+			for (int i = 0; i < 18; ++i) {
 				any &= unk1D4[i]->update();
 				JUtility::TColor col
 				    = ((J2DPicture*)unk1D4[i]->getPane())->mBlack;
@@ -842,7 +858,7 @@ bool TCardLoad::titleDraw()
 			}
 
 			if (any) {
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->setPaneAlpha(140, 0, 255);
 				unk258 = 0;
 				unk18  = 2;
@@ -855,7 +871,7 @@ bool TCardLoad::titleDraw()
 		u16 alpha = unkF0->getPane()->getAlpha() + 1;
 		if (alpha > 255) {
 			bool any = true;
-			for (int i = 0; i < 13; ++i)
+			for (int i = 0; i < 18; ++i)
 				any &= unk1D4[i]->update();
 			if (any) {
 				unkBC = 0;
@@ -867,7 +883,7 @@ bool TCardLoad::titleDraw()
 	} break;
 
 	case 4: {
-		for (int i = 0; i < 13; ++i) {
+		for (int i = 0; i < unk7D4; ++i) {
 			switch (unk222[i]) {
 			case 0:
 				if (unkF8[i]->update()) {
