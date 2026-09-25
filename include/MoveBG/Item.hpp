@@ -72,6 +72,9 @@ public:
 	virtual void appear();
 	virtual void makeObjAppeared();
 
+	// The link map lists warning__10TCoinEmptyFv as an UNUSED 0x4-byte method
+	// of this class, i.e. an empty body that was always inlined away.
+	void warning();
 };
 
 class TCoinRed : public TCoin {
