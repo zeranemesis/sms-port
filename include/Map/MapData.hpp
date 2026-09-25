@@ -170,7 +170,7 @@ public:
 
 	bool isLegal() const
 	{
-		return checkFlag(BG_CHECK_FLAG_ILLEGAL) == 1 ? false : true;
+		return isIllegalData() == 1 ? false : true;
 	}
 
 	bool isSand() const

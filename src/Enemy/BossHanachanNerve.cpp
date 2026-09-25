@@ -1,182 +1,121 @@
 #include <Enemy/BossHanachan.hpp>
-#include <Strategic/Spine.hpp>
+#include <Enemy/BossHanachanChangeSaveParams.hpp>
+#include <GC2D/GCConsole2.hpp>
+#include <MSound/MSModBgm.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <MSound/MSModBgm.hpp>
-#include <MSound/BackgroundMusic.hpp>
+#include <Strategic/Spine.hpp>
 #include <System/MarDirector.hpp>
-#include <GC2D/GCConsole2.hpp>
 
-const TNerveBossHanachanGraphWander& TNerveBossHanachanGraphWander::theNerve()
+// TODO: __sinit_BossHanachanNerve_cpp is nonmatching -- calling MSBgm::startBGM
+// here pulls in static-local JALList<T> registration objects for many
+// unrelated sound-group types, and their sinit emission order does not yet
+// match the target. Needs deeper investigation into MSBgm/MSound sinit
+// ordering, not specific to this TU's own code.
+
+DEFINE_NERVE(TNerveBossHanachanDead, TLiveActor)
 {
-	static TNerveBossHanachanGraphWander instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanGraphWander::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	if (spine->getTime() == 0)
-		self->setHeadAndBodyAnm(ANM_KIND_0, STOP_MOTION_BLEND_ON);
-
-	self->execWalk(true);
-
-	if (self->checkFallDecideAndSetup()) {
-		spine->pushAfterCurrent(&TNerveBossHanachanTumble::theNerve());
-		return TRUE;
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	boss->considerSetAnm(BH_NERVE_ANM_DEAD);
+	if (!boss->checkLiveFlag(LIVE_FLAG_UNK40000)
+	    && boss->isAllBckAlreadyEnd(BH_ANM_KIND_UNKF)) {
+		boss->onLiveFlag(LIVE_FLAG_UNK40000);
+		boss->removeAllMapCollision();
 	}
-
-	return FALSE;
+	return false;
 }
 
-const TNerveBossHanachanTumble& TNerveBossHanachanTumble::theNerve()
+DEFINE_NERVE(TNerveBossHanachanSnort, TLiveActor)
 {
-	static TNerveBossHanachanTumble instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanTumble::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	if (spine->getTime() == 0)
-		self->setTumbleAnm(STOP_MOTION_BLEND_ON);
-	else
-		self->considerSetAnm(NERVE_ANM_TUMBLE);
-
-	self->execSlip();
-
-	if (self->getMarchSpeed() == 0.0f && self->isTumbleCompletelyAllBody()) {
-		gpMarDirector->getConsole()->startAppearBalloon(7, true);
-		spine->pushAfterCurrent(&TNerveBossHanachanDown::theNerve());
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-const TNerveBossHanachanDown& TNerveBossHanachanDown::theNerve()
-{
-	static TNerveBossHanachanDown instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanDown::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	self->considerSetAnm(NERVE_ANM_DOWN);
-
-	if (spine->getTime() >= *(const s16*)(self->mUnk1C0 + 0x1a8)) {
-		self->setAnmTimerWhenGetUp();
-		spine->pushAfterCurrent(&TNerveBossHanachanGetUp::theNerve());
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-const TNerveBossHanachanGetUp& TNerveBossHanachanGetUp::theNerve()
-{
-	static TNerveBossHanachanGetUp instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanGetUp::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	self->considerSetAnm(NERVE_ANM_GETUP);
-
-	if (self->isFinishedGetUp()) {
-		self->setRandomWeakBodyIndex();
-		self->setAnmTimerWhenSnort();
-		spine->pushAfterCurrent(&TNerveBossHanachanSnort::theNerve());
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-const TNerveBossHanachanDamage& TNerveBossHanachanDamage::theNerve()
-{
-	static TNerveBossHanachanDamage instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanDamage::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	self->considerSetAnm(NERVE_ANM_DAMAGE);
-	self->execSlip();
-
-	if (self->getMarchSpeed() == 0.0f
-	    && spine->getTime() >= *(const s16*)(self->mUnk1C0 + 0x1bc)) {
-		self->setAnmTimerWhenGetUp();
-		spine->pushAfterCurrent(&TNerveBossHanachanGetUp::theNerve());
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-const TNerveBossHanachanSnort& TNerveBossHanachanSnort::theNerve()
-{
-	static TNerveBossHanachanSnort instance;
-	return instance;
-}
-
-BOOL TNerveBossHanachanSnort::execute(TSpineBase<TLiveActor>* spine) const
-{
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	if (spine->getTime() == 0xc8) {
-		if (self->checkLiveFlag(LIVE_FLAG_UNK20000)) {
-			self->offLiveFlag(LIVE_FLAG_UNK20000);
-			MSBgm::startBGM(MSD_BGM_BOSSGESO_2DN3RD);
-		}
-
-		switch (self->getHitPoints()) {
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	if (spine->getTime() == 200 && boss->checkLiveFlag(LIVE_FLAG_UNK20000)) {
+		boss->offLiveFlag(LIVE_FLAG_UNK20000);
+		MSBgm::startBGM(0x80010029);
+		switch (boss->mHitPoints) {
 		case 2:
-			gpMSound->unk98->changeTempo(0, 1);
+			SMSGetMSound()->unk98->changeTempo(0, 1);
 			break;
 		case 1:
-			gpMSound->unk98->changeTempo(1, 1);
+			SMSGetMSound()->unk98->changeTempo(1, 1);
 			break;
 		}
 	}
 
-	self->considerSetAnm(NERVE_ANM_SNORT);
-
-	if (self->isAllBckAlreadyEnd(ANM_KIND_E)) {
-		self->goToInitialRecoverGraphNode();
+	boss->considerSetAnm(BH_NERVE_ANM_SNORT);
+	if (boss->isAllBckAlreadyEnd(BH_ANM_KIND_UNKE)) {
+		boss->goToInitialRecoverGraphNode();
 		spine->pushAfterCurrent(&TNerveBossHanachanGraphWander::theNerve());
-		return TRUE;
+		return true;
 	}
-
-	return FALSE;
+	return false;
 }
 
-const TNerveBossHanachanDead& TNerveBossHanachanDead::theNerve()
+DEFINE_NERVE(TNerveBossHanachanDamage, TLiveActor)
 {
-	static TNerveBossHanachanDead instance;
-	return instance;
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	boss->considerSetAnm(BH_NERVE_ANM_DAMAGE);
+	boss->execSlip();
+	if (boss->mMarchSpeed == 0.0f
+	    && spine->getTime() >= boss->mChangeSaveParams->mSLDamageFrames.get()) {
+		boss->setAnmTimerWhenGetUp();
+		spine->pushAfterCurrent(&TNerveBossHanachanGetUp::theNerve());
+		return true;
+	}
+	return false;
 }
 
-BOOL TNerveBossHanachanDead::execute(TSpineBase<TLiveActor>* spine) const
+DEFINE_NERVE(TNerveBossHanachanGetUp, TLiveActor)
 {
-	TBossHanachan* self = (TBossHanachan*)spine->getBody();
-
-	self->considerSetAnm(NERVE_ANM_DEAD);
-
-	if (!(self->mLiveFlag & LIVE_FLAG_UNK40000)) {
-		if (self->isAllBckAlreadyEnd(ANM_KIND_F)) {
-			self->mLiveFlag |= LIVE_FLAG_UNK40000;
-			self->removeAllMapCollision();
-		}
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	boss->considerSetAnm(BH_NERVE_ANM_GET_UP);
+	if (boss->isFinishedGetUp()) {
+		boss->setRandomWeakBodyIndex();
+		boss->setAnmTimerWhenSnort();
+		spine->pushAfterCurrent(&TNerveBossHanachanSnort::theNerve());
+		return true;
 	}
+	return false;
+}
 
-	return FALSE;
+DEFINE_NERVE(TNerveBossHanachanDown, TLiveActor)
+{
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	boss->considerSetAnm(BH_NERVE_ANM_DOWN);
+	if (spine->getTime() >= boss->mChangeSaveParams->mSLDownFrames.get()) {
+		boss->setAnmTimerWhenGetUp();
+		spine->pushAfterCurrent(&TNerveBossHanachanGetUp::theNerve());
+		return true;
+	}
+	return false;
+}
+
+DEFINE_NERVE(TNerveBossHanachanTumble, TLiveActor)
+{
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	if (spine->getTime() == 0)
+		boss->setTumbleAnm(BH_STOP_MOTION_BLEND_ON);
+	else
+		boss->considerSetAnm(BH_NERVE_ANM_TUMBLE);
+
+	boss->execSlip();
+	if (boss->mMarchSpeed == 0.0f && boss->isTumbleCompletelyAllBody()) {
+		gpMarDirector->getConsole()->startAppearBalloon(7, true);
+		spine->pushAfterCurrent(&TNerveBossHanachanDown::theNerve());
+		return true;
+	}
+	return false;
+}
+
+DEFINE_NERVE(TNerveBossHanachanGraphWander, TLiveActor)
+{
+	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
+	if (spine->getTime() == 0)
+		boss->setHeadAndBodyAnm(BH_ANM_KIND_UNK0, BH_STOP_MOTION_BLEND_ON);
+
+	boss->execWalk(true);
+	if (boss->checkFallDecideAndSetup()) {
+		spine->pushAfterCurrent(&TNerveBossHanachanTumble::theNerve());
+		return true;
+	}
+	return false;
 }

@@ -1,8 +1,10 @@
 #include <System/MarNameRefGen.hpp>
 #include <Enemy/EffectObj.hpp>
+#include <Enemy/ElecNokonoko.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/Gesso.hpp>
 #include <Enemy/HamuKuri.hpp>
+#include <Enemy/HauntLeg.hpp>
 #include <Enemy/Launcher.hpp>
 #include <Enemy/MameGesso.hpp>
 #include <Enemy/NameKuri.hpp>
@@ -146,9 +148,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	// if ( strcmp(name, "EffectEnemy") == 0)
 	//     return new TEffectEnemy("エフェクト敵");
 
-	// TODO:
-	// if ( strcmp(name, "HauntLegManager") == 0)
-	//     return new THauntLegManager;
+	if (strcmp(name, "HauntLegManager") == 0)
+		return new THauntLegManager;
 
 	if (strcmp(name, "HamuKuriManager") == 0)
 		return new THamuKuriManager;
@@ -267,13 +268,11 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	if (strcmp(name, "MameGesso") == 0)
 		return new TMameGesso;
 
-	// TODO:
-	// if ( strcmp(name, "ElecNokonokoManager") == 0)
-	//     return new TElecNokonokoManager;
+	if (strcmp(name, "ElecNokonokoManager") == 0)
+		return new TElecNokonokoManager;
 
-	// TODO:
-	// if ( strcmp(name, "ElecNokonoko") == 0)
-	//     return new TElecNokonoko;
+	if (strcmp(name, "ElecNokonoko") == 0)
+		return new TElecNokonoko;
 
 	if (strcmp(name, "TelesaManager") == 0)
 		return new TTelesaManager;

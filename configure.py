@@ -1123,7 +1123,11 @@ config.libs = [
             PCHObject(NonMatching, "GC2D/SunGlass.cpp"),
             PCHObject(Matching, "GC2D/ShineFader.cpp"),
             PCHObject(NonMatching, "GC2D/ProgSelect.cpp"),
-            Object(NonMatching, "GC2D/hx_wiper.c"),
+            # NOTE: nothing in hx_wiper.c is ever inlined, not even empty
+            # static functions, so auto-inlining must have been off for it.
+            # It is also compiled as C++: the map lists the C++-mangled local
+            # statics of the MSL sqrtf/sqrt inlines (sqrtf__Ff, sqrt__Ff).
+            Object(NonMatching, "GC2D/hx_wiper.c", cflags=["-lang=c++", *cflags_game_base, "-opt all,nostrength", "-inline noauto,deferred"]),
             PCHObject(NonMatching, "GC2D/MovieSubtitle.cpp"),
             PCHObject(NonMatching, "GC2D/Option.cpp"),
             PCHObject(NonMatching, "GC2D/MovieRumble.cpp"),

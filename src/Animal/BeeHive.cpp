@@ -1,95 +1,239 @@
-
-#include <dolphin/types.h>
-#include <Animal/fishoid.hpp>
-#include <Enemy/EnemyManager.hpp>
-#include <Strategic/LiveActor.hpp>
+#include <Animal/BeeHive.hpp>
+#include <Animal/boid.hpp>
 #include <Strategic/ObjManager.hpp>
+#include <MSound/MSound.hpp>
 
-struct TBeeHiveActorState {
-	u8 pad0[0x64];
-	u32 unk64;
-	u8 pad68[0x0C];
-	u32 unk74;
-};
+// TODO: this entire translation unit is freshly scaffolded from mario.MAP
+// and vtable data. Only trivial destructors are matched so far; the rest
+// are placeholder stubs. TBeeHive is inferred to extend TRealoid (like
+// TFishoid) based on the createRealoidActor(MActor*) override in the
+// vtable; this has not been cross-checked in a debugger/Ghidra.
 
-struct TBeeHiveSpawnData {
-	u8 pad0[0x14];
-	u8* entries;
-};
+DEFINE_NERVE(TNerveBeeHiveReset, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
 
-struct TBeeHiveSpawnEntry {
-	void* unk0;
-	void* unk4;
-	void* unk8;
-	u8 padC[0x44];
-};
+DEFINE_NERVE(TNerveBeeHiveWait, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
 
-class TBeeHive {
-public:
-	u8 pad0[0x10];
-	void* unk10;
-	void* unk14;
-	void* unk18;
-	u8 pad1C[0x134];
-	TBeeHiveSpawnData* spawnData;
-	TBeeHiveActorState** actors;
+DEFINE_NERVE(TNerveBeeHiveMarioWaterIn, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
 
-	void appearBee(int index);
-	void controlCollision();
-	void controlSound();
-	void control();
-	void perform(u32 cue, JDrama::TGraphics* graphics);
-};
+DEFINE_NERVE(TNerveBeeHiveAttack, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveBeeHiveBreak, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveBeeHiveFall, TLiveActor)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
+
+void TBeeHiveManager::createModelData()
+{
+	static const TModelDataLoadEntry entry[] = {
+		{ "bee_body.bmd", 0x10210000, 0 },
+		{ "bee_nest.bmd", 0x10210000, 0 },
+		{ "bee_nest_break.bmd", 0x10210000, 0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
+}
+
+void TBeeHiveManager::load(JSUMemoryInputStream& stream)
+{
+	// TODO: not yet decompiled
+}
+
+TBeeHiveManager::TBeeHiveManager(const char* name)
+    : TEnemyManager(name)
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::getCenterOfGravity() const
+{
+	// TODO: not yet decompiled
+}
 
 void TBeeHive::appearBee(int index)
 {
-	TBeeHiveActorState* actor = actors[index];
-	if (actor->unk74 & 4)
-		return;
-	if (!(actor->unk74 & 2))
+	TRealoidActor* bee = getRealoid(index);
+	if (!(bee->mFlags & TRealoidActor::FLAG_UNK4)
+	    && (bee->mFlags & TRealoidActor::FLAG_UNK2)) {
+		bee->offFlag(TRealoidActor::FLAG_UNK2);
+		bee->offHitFlag(HIT_FLAG_NO_COLLISION);
+		unk150->getBoid(index)->mPosition = mPosition;
+	}
+}
+
+void TBeeHive::doWait()
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::calcRootMatrix()
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::controlSound()
+{
+	if (mBeeNum == 0)
 		return;
 
-	actor->unk74 &= ~2u;
-	actor->unk64 &= ~1u;
+	f32 x = 0.0f;
+	f32 y = x;
+	f32 z = x;
+	int count = 0;
+	for (int i = 0; i < mBeeNum; ++i) {
+		TRealoidActor* bee = getRealoid(i);
+		if (!(bee->mFlags & TRealoidActor::FLAG_UNK2_OR_UNK4)) {
+			x += bee->mPosition.x;
+			y += bee->mPosition.y;
+			z += bee->mPosition.z;
+			++count;
+		}
+	}
 
-	TBeeHiveSpawnEntry* entry
-	    = reinterpret_cast<TBeeHiveSpawnEntry*>(spawnData->entries + index * 0x50);
-	entry->unk0 = unk10;
-	entry->unk4 = unk14;
-	entry->unk8 = unk18;
+	if (count == 0)
+		return;
+
+	f32 inv = 1.0f / count;
+	mSoundPos.x = x * inv;
+	mSoundPos.y = y * inv;
+	mSoundPos.z = z * inv;
+	gpMSound->startBeeSe((Vec*)&mSoundPos, count);
+}
+
+void TBeeHive::controlCollision()
+{
+	int idx = mCollisionIdx;
+	int num = mBeeNum;
+
+	TRealoidActor* bee = getRealoid(idx);
+	bee->checkHitActors();
+	bee->onHitFlag(HIT_FLAG_CANNOT_ATTACK);
+
+	// TODO: this first wrap is dead but reproduces a dead compare in the
+	// target (and keeps control() from inlining us); probably an inline
+	// "next index" helper in the original.
+	int next = idx + 1;
+	if (num <= next)
+		next = 0;
+
+	if (num <= ++mCollisionIdx)
+		mCollisionIdx = 0;
+
+	next = mCollisionIdx;
+	if (num <= next)
+		next = 0;
+
+	TRealoidActor* nextBee = getRealoid(next);
+	if (!(nextBee->mFlags & TRealoidActor::FLAG_UNK2_OR_UNK4))
+		nextBee->offHitFlag(HIT_FLAG_CANNOT_ATTACK);
+}
+
+void TBeeHive::bind()
+{
+	// TODO: not yet decompiled
 }
 
 void TBeeHive::control()
 {
 	controlCollision();
-	reinterpret_cast<TLiveActor*>(this)->TLiveActor::control();
+	TLiveActor::control();
 	controlSound();
 }
 
 void TBeeHive::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	reinterpret_cast<TRealoid*>(this)->TRealoid::perform(cue, graphics);
-	reinterpret_cast<TSpineEnemy*>(this)->TSpineEnemy::perform(cue, graphics);
+	TRealoid::perform(cue, graphics);
+	TSpineEnemy::perform(cue, graphics);
 }
 
-class TBeeHiveManager : public TEnemyManager {
-public:
-	TBeeHiveManager(const char*);
-	virtual void createModelData();
-};
-
-void TBeeHiveManager::createModelData()
+BOOL TBeeHive::receiveMessage(THitActor* sender, u32 message)
 {
-	static const TModelDataLoadEntry entry[] = {
-	    {"bee_body.bmd", 0x10210000, 0},
-	    {"bee_nest.bmd", 0x10210000, 0},
-	    {"bee_nest_break.bmd", 0x10210000, 0},
-	    {nullptr, 0, 0},
-	};
-	createModelDataArray(entry);
+	// TODO: not yet decompiled
+	return FALSE;
 }
 
-TBeeHiveManager::TBeeHiveManager(const char* name)
-	: TEnemyManager(name)
+TRealoidActor* TBeeHive::createRealoidActor(MActor* actor)
 {
+	// TODO: not yet decompiled
+	return 0;
+}
+
+void TBeeHive::load(JSUMemoryInputStream& stream)
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::receiveMessageFromChild(TBee* bee)
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::reset()
+{
+	// TODO: not yet decompiled
+}
+
+void TBeeHive::init(TLiveManager* liveManager)
+{
+	// TODO: not yet decompiled
+}
+
+TBeeHive::TBeeHive(const char* name)
+    : TRealoid(name)
+{
+	// TODO: not yet decompiled
+}
+
+TBee::TBee(MActor* actor)
+    : TRealoidActor(actor)
+{
+	// TODO: not yet decompiled
+}
+
+BOOL TBee::receiveMessage(THitActor* sender, u32 message)
+{
+	// TODO: not yet decompiled
+	return FALSE;
+}
+
+void TBee::init()
+{
+	// TODO: not yet decompiled
+}
+
+TBeeHiveManager::~TBeeHiveManager()
+{
+	// TODO: not yet decompiled
+}
+
+TBeeHive::~TBeeHive()
+{
+	// TODO: not yet decompiled
+}
+
+TBee::~TBee()
+{
+	// TODO: not yet decompiled
 }

@@ -13,7 +13,7 @@ public:
 	bool reset(const JGeometry::TVec3<f32>&);
 
 	void bind(TLiveActor*);
-	JGeometry::TVec3<f32> getDir() const { return mDir; }
+	const JGeometry::TVec3<f32>& getDir() const { return mDir; }
 	JGeometry::TVec3<f32> getDirAtPos(const JGeometry::TVec3<f32>&, f32) const;
 	void getPoint(JGeometry::TVec3<f32>*, f32) const;
 	void getPoint(JGeometry::TVec3<f32>*, const JGeometry::TVec3<f32>&) const;

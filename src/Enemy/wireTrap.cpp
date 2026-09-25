@@ -1,35 +1,57 @@
-
-#include <Enemy/Enemy.hpp>
-#include <Enemy/WireBinder.hpp>
+#include <Enemy/WireTrap.hpp>
 #include <Strategic/Spine.hpp>
 
-class TNerveWireTrapWait {
-public:
-	BOOL execute(TSpineBase<TLiveActor>*) const;
-};
+// TODO: TWireTrapManager::createModelData, ::load, ctor and most of TWireTrap
+// are not yet reconstructed. Only the small accessor functions below have
+// been verified against the target assembly so far.
 
-BOOL TNerveWireTrapWait::execute(TSpineBase<TLiveActor>* spine) const
+// TODO: execute() bodies below are placeholders -- their real logic has not
+// been reverse-engineered yet. They exist only so theNerve() can be emitted
+// and inlined at TWireTrap::getNerveFromMode's call sites, matching the
+// target's control flow there. Do not treat these as matching nerve bodies.
+DEFINE_NERVE(TNerveWireTrapWait, TLiveActor)
 {
-	const int waitTime = *reinterpret_cast<const int*>(
-	    reinterpret_cast<const char*>(spine->getBody()) + 0x174);
-	if (waitTime < spine->getTime())
+	TWireTrap* self = (TWireTrap*)spine->getBody();
+	if (self->mWaitTime < spine->getTime())
 		return TRUE;
 	return FALSE;
 }
 
-class TWireTrap : public TSpineEnemy {
-public:
-	TWireTrap(const char*);
-	TWireBinder* getWireBinder() const;
-	JGeometry::TVec3<f32>* getWireDir() const;
-};
+DEFINE_NERVE(TNerveWireTrapSearch, TLiveActor)
+{
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveWireTrapOnewayMove, TLiveActor)
+{
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveWireTrapReturnMove, TLiveActor)
+{
+	return FALSE;
+}
 
 TWireBinder* TWireTrap::getWireBinder() const
 {
 	return (TWireBinder*)mBinder;
 }
 
-JGeometry::TVec3<f32>* TWireTrap::getWireDir() const
+TNerveBase<TLiveActor>* TWireTrap::getNerveFromMode(int mode)
 {
-	return (JGeometry::TVec3<f32>*)((char*)mBinder + 8);
+	switch (mode) {
+	case 0:
+		return (TNerveBase<TLiveActor>*)&TNerveWireTrapReturnMove::theNerve();
+	case 1:
+		return (TNerveBase<TLiveActor>*)&TNerveWireTrapOnewayMove::theNerve();
+	case 2:
+		return (TNerveBase<TLiveActor>*)&TNerveWireTrapSearch::theNerve();
+	default:
+		return nullptr;
+	}
+}
+
+const JGeometry::TVec3<f32>& TWireTrap::getWireDir() const
+{
+	return getWireBinder()->getDir();
 }
