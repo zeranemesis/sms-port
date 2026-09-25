@@ -1,6 +1,9 @@
 
 #include <dolphin/mtx.h>
 
+// rogue include: dummy string pair, needed to match the .rodata prologue
+#include <System/DummyStrings.hpp>
+
 class TBossWanwan {
 public:
 	void kill();

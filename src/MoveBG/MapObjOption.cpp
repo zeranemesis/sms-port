@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <MoveBG/MapObjOption.hpp>
 #include <Map/MapCollisionEntry.hpp>
 #include <MarioUtil/RumbleMgr.hpp>
@@ -7,10 +11,8 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JParticle/JPAResourceManager.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 void TFileLoadBlock::makeBlockNoCard() { }
 

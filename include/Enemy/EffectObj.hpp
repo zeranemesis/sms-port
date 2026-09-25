@@ -21,7 +21,10 @@ public:
 
 class TEffectPinnaFunsui : public TSimpleEffect {
 public:
-	TEffectPinnaFunsui(const char* name = "ピンナ噴水エフェクト");
+	TEffectPinnaFunsui(const char* name = "ピンナ噴水エフェクト")
+	    : TSimpleEffect(name)
+	{
+	}
 
 	virtual void loadAfter();
 	virtual void emitEffect();
@@ -29,7 +32,10 @@ public:
 
 class TEffectBiancoFunsui : public TSimpleEffect {
 public:
-	TEffectBiancoFunsui(const char* name = "ビアンコ噴水エフェクト");
+	TEffectBiancoFunsui(const char* name = "ビアンコ噴水エフェクト")
+	    : TSimpleEffect(name)
+	{
+	}
 
 	virtual void loadAfter();
 	virtual void emitEffect();
@@ -111,7 +117,10 @@ public:
 
 class TEffectColumWater : public TEffectModel {
 public:
-	TEffectColumWater(const char* name = "エフェクト水柱");
+	TEffectColumWater(const char* name = "エフェクト水柱")
+	    : TEffectModel(name)
+	{
+	}
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -131,7 +140,10 @@ public:
 
 class TEffectBombColumWater : public TEffectModel {
 public:
-	TEffectBombColumWater(const char* name = "エフェクト爆発水柱");
+	TEffectBombColumWater(const char* name = "エフェクト爆発水柱")
+	    : TEffectModel(name)
+	{
+	}
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -150,7 +162,10 @@ public:
 
 class TEffectColumSand : public TEffectModel {
 public:
-	TEffectColumSand(const char* name = "エフェクト砂柱");
+	TEffectColumSand(const char* name = "エフェクト砂柱")
+	    : TEffectModel(name)
+	{
+	}
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -169,7 +184,10 @@ public:
 
 class TEffectExplosion : public TEffectModel {
 public:
-	TEffectExplosion(const char* name = "エフェクト爆発");
+	TEffectExplosion(const char* name = "エフェクト爆発")
+	    : TEffectModel(name)
+	{
+	}
 	virtual void init(TLiveManager*);
 	virtual void reset();
 

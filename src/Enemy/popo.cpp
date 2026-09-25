@@ -1,5 +1,8 @@
 #include <Enemy/popo.hpp>
 
+// rogue include: dummy string pair, needed to match the .rodata prologue
+#include <System/DummyStrings.hpp>
+
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP and
 // m2c drafts. Only trivial functions have been matched so far; most bodies
 // below are placeholders and are known non-matching.

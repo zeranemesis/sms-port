@@ -58,9 +58,8 @@ JUTPoint TGCConsole2::cCoinBotPoint(0, 0);
 
 // fabricated
 static inline void setEmitterToPaneCenter(JPABaseEmitter* emitter,
-                                          J2DPane* pane)
+                                          const JUTRect& bounds)
 {
-	JUTRect bounds(pane->mGlobalBounds);
 	emitter->mGlobalTranslation.set(bounds.x1 + bounds.getWidth() * 0.5f,
 	                                bounds.y1 + bounds.getHeight() * 0.5f,
 	                                0.0f);
@@ -122,9 +121,9 @@ static inline bool isMountedYoshi(TMario* mario)
 // fabricated
 static inline void updateWaterGaugeFill(TGCConsole2* console)
 {
-	TMario* mario       = gpMarioOriginal;
-	TWaterGun* waterGun = mario->mWaterGun;
-	TNozzleBase* nozzle = waterGun->getCurrentNozzle();
+	TMario* mario             = gpMarioOriginal;
+	const TWaterGun* waterGun = mario->mWaterGun;
+	TNozzleBase* nozzle       = waterGun->getCurrentNozzle();
 	s32 currentWater    = waterGun->mCurrentWater;
 	s32 maxWater        = nozzle->mEmitParams.mAmountMax.get();
 	u8 currentNozzle    = waterGun->mCurrentNozzle;
@@ -392,6 +391,60 @@ static inline void playLifeChangeSound(u32 sound)
 }
 
 // fabricated
+// TODO: same guard as playLifeChangeSound, but the target picks the sound id
+// from the air mode *inside* the guard (a `playLifeChangeSound(airMode ?
+// 0x480C : 0x4823)` argument would be evaluated before it).
+static inline void playLifeChangeSoundByMode(bool airMode)
+{
+	if (gpMarDirector->mState == TMarDirector::STATE_UNK4
+	    && gpMarDirector->unk124 == 0) {
+		if (airMode)
+			SMSGetMSound()->startSoundSystemSE(0x480c, 0, nullptr, 0);
+		else
+			SMSGetMSound()->startSoundSystemSE(0x4823, 0, nullptr, 0);
+	}
+}
+
+// fabricated
+// TODO: the target keeps the nested JUtility::TColor::set calls out-of-line
+// (bl set__Q28JUtility6TColorFUcUcUcUc), which only happens one inline level
+// deeper than a direct expansion (see AGENT_MATCHING_TIPS inline ladder:
+// pass 3 permits callees of at most 3 statements, and set() has 4).
+// Splitting the colour block into these two small helpers buys that level.
+static inline void updateLifeMeterPaneColorsHigh(TGCConsole2* console,
+                                                  bool airMode)
+{
+	if (airMode) {
+		((J2DPicture*)console->unk178->getPane())->mWhite =
+		    JUtility::TColor(0, 0xff, 0xff, 0xff);
+		((J2DPicture*)console->unk17C[0])->mWhite =
+		    JUtility::TColor(0, 0xff, 0xff, 0xff);
+	} else {
+		((J2DPicture*)console->unk178->getPane())->mWhite =
+		    JUtility::TColor(0xff, 0xff, 0xff, 0xff);
+		((J2DPicture*)console->unk17C[0])->mWhite =
+		    JUtility::TColor(0xff, 0xff, 0xff, 0xff);
+	}
+}
+
+// fabricated (see updateLifeMeterPaneColorsHigh)
+static inline void updateLifeMeterPaneColorsLow(TGCConsole2* console,
+                                                bool airMode)
+{
+	if (airMode) {
+		((J2DPicture*)console->unk178->getPane())->mWhite =
+		    JUtility::TColor(0, 0xa0, 0xff, 0xff);
+		((J2DPicture*)console->unk17C[0])->mWhite =
+		    JUtility::TColor(0, 0x80, 0x80, 0xff);
+	} else {
+		((J2DPicture*)console->unk178->getPane())->mWhite =
+		    JUtility::TColor(0x80, 0x80, 0x80, 0xff);
+		((J2DPicture*)console->unk17C[0])->mWhite =
+		    JUtility::TColor(0x80, 0x80, 0x80, 0xff);
+	}
+}
+
+// fabricated
 static inline void updateLifeMeterState(TGCConsole2* console)
 {
 	u8 amount;
@@ -576,7 +629,8 @@ static inline void updateLifeMeterState(TGCConsole2* console)
 			++console->unk1CC[0];
 			console->unk17C[console->unk1CC[0] * 2]->show();
 			playLifeChangeSound(0x4801);
-		} else if (console->unk1CC[0] > 0) {
+		} else if (console->unk1CC[0] != amount) {
+			playLifeChangeSoundByMode(airMode);
 			console->unk17C[console->unk1CC[0] * 2]->hide();
 			console->unk17C[console->unk1CC[0] * 2]->setBounds(
 			    JUTRect(console->unk1D0[console->unk1CC[0]].x1,
@@ -589,34 +643,21 @@ static inline void updateLifeMeterState(TGCConsole2* console)
 			            console->unk1D0[console->unk1CC[0]].x2,
 			            console->unk1D0[console->unk1CC[0]].y2));
 			--console->unk1CC[0];
-			playLifeChangeSound(0x4823);
+			if (console->unk1CC[0] == 0) {
+				console->unk17C[0]->hide();
+				console->unk17C[0]->setBounds(
+				    JUTRect(console->unk1D0[0].x1, console->unk1D0[0].y1,
+				            console->unk1D0[0].x2, console->unk1D0[0].y2));
+				console->unk17C[1]->setBounds(
+				    JUTRect(console->unk1D0[0].x1, console->unk1D0[0].y1,
+				            console->unk1D0[0].x2, console->unk1D0[0].y2));
+			}
 		}
 		console->unk1C = console->unk1CC[0];
-		if (console->unk1CC[0] >= 4) {
-			if (airMode) {
-				((J2DPicture*)console->unk178->getPane())->mWhite = 0x00FFFFFF;
-				((J2DPicture*)console->unk178->getPane())->mBlack = 0x003CFF00;
-				((J2DPicture*)console->unk17C[0])->mWhite         = 0x00FFFFFF;
-				((J2DPicture*)console->unk17C[0])->mBlack         = 0x003CFF00;
-			} else {
-				((J2DPicture*)console->unk178->getPane())->mWhite = 0xFFFFFFFF;
-				((J2DPicture*)console->unk178->getPane())->mBlack = 0;
-				((J2DPicture*)console->unk17C[0])->mWhite         = 0xFFFFFFFF;
-				((J2DPicture*)console->unk17C[0])->mBlack         = 0;
-			}
-		} else {
-			if (airMode) {
-				((J2DPicture*)console->unk178->getPane())->mWhite = 0x0010FFFF;
-				((J2DPicture*)console->unk178->getPane())->mBlack = 0x003CFF00;
-				((J2DPicture*)console->unk17C[0])->mWhite         = 0x0010FFFF;
-				((J2DPicture*)console->unk17C[0])->mBlack         = 0x003CFF00;
-			} else {
-				((J2DPicture*)console->unk178->getPane())->mWhite = 0x7F7F7FFF;
-				((J2DPicture*)console->unk178->getPane())->mBlack = 0;
-				((J2DPicture*)console->unk17C[0])->mWhite         = 0x7F7F7FFF;
-				((J2DPicture*)console->unk17C[0])->mBlack         = 0;
-			}
-		}
+		if (console->unk1CC[0] >= 4)
+			updateLifeMeterPaneColorsHigh(console, airMode);
+		else
+			updateLifeMeterPaneColorsLow(console, airMode);
 	}
 }
 
@@ -922,6 +963,9 @@ static inline void updateJetCounterAnimation(TGCConsole2* console)
 }
 
 // fabricated
+// TODO: the target keeps this inline *inside* updateCounterState's else branch;
+// calling a separate helper from there exceeds MWCC's inline statement budget
+// one level below perform, so the body is spelled out there instead.
 static inline void updateCounterState(TGCConsole2* console)
 {
 	TFlagManager* flags = TFlagManager::smInstance;
@@ -938,46 +982,41 @@ static inline void updateCounterState(TGCConsole2* console)
 		console->unk20 = coins;
 	}
 
-	bool waitForStarHud
-	    = gpMarioOriginal->mStatus == 0xC400201
-	      && gpMarDirector->mState != TMarDirector::STATE_PAUSE_MENU
-	      && !console->unk50 && !console->unk140->isInterpolatorAtZero();
-	if (waitForStarHud) {
-		++console->unk30;
-		if (console->unk30 > 0xc8) {
-			console->startAppearStar();
-			console->startAppearMario(false);
-			console->unk70 = 0xffff;
-			console->unk59 = 0;
-			console->unk30 = 0;
+	if (gpMarioOriginal->mStatus == 0xC400201
+	    && gpMarDirector->mState != TMarDirector::STATE_PAUSE_MENU
+	    && !console->unk50) {
+		if (!console->unk140->isInterpolatorAtZero()) {
+			++console->unk30;
+			if (console->unk30 > 0xc8) {
+				console->startAppearStar();
+				console->startAppearMario(false);
+				console->unk70 = 0xffff;
+				console->unk59 = 0;
+				console->unk30 = 0;
+			}
 		}
 	} else {
 		console->unk30 = 0;
+
+		if (console->unk34)
+			return;
+		if (!console->unk140->isInterpolatorAtZero())
+			return;
+		if (console->unk60)
+			return;
+		if (gpMarDirector->mState == TMarDirector::STATE_PAUSE_MENU
+		    || gpMarDirector->mState == TMarDirector::STATE_CARD_SAVE)
+			return;
+		if (console->unk50 || console->unk16C != 0 || console->unk8A != 0)
+			return;
+		if (gpMarDirector->unk124 == 2)
+			return;
+
+		console->startDisappearStar();
+		if (console->unk3A8->getPane()->isVisible() && !console->unk3B)
+			console->startDisappearMario();
+		console->unk5A = 0;
 	}
-
-}
-
-// fabricated
-static inline void updateStarHudAutoHide(TGCConsole2* console)
-{
-	if (console->unk34)
-		return;
-	if (!console->unk140->isInterpolatorAtZero())
-		return;
-	if (console->unk60)
-		return;
-	if (gpMarDirector->mState == TMarDirector::STATE_PAUSE_MENU
-	    || gpMarDirector->mState == TMarDirector::STATE_CARD_SAVE)
-		return;
-	if (console->unk50 || console->unk16C != 0 || console->unk8A != 0)
-		return;
-	if (gpMarDirector->unk124 == 2)
-		return;
-
-	console->startDisappearStar();
-	if (console->unk3A8->getPane()->isVisible() && !console->unk3B)
-		console->startDisappearMario();
-	console->unk5A = 0;
 }
 
 // fabricated
@@ -1185,7 +1224,6 @@ static inline void updateJetAppearState(TGCConsole2* console)
 {
 	if (console->unk3D && console->processAppearJet(console->unk72++)) {
 		console->unk3D = 0;
-		console->unk72 = 0;
 	}
 }
 
@@ -1194,7 +1232,6 @@ static inline void updateRedCoinAppearState(TGCConsole2* console)
 {
 	if (console->unk3C && console->processAppearRed(console->unk74++)) {
 		console->unk3C = 0;
-		console->unk74 = 0;
 	}
 }
 
@@ -1203,17 +1240,14 @@ static inline void updateTimerAppearState(TGCConsole2* console)
 {
 	if (console->unk3E && console->processAppearTimer(console->unk76++)) {
 		console->unk3E = 0;
-		console->unk76 = 0;
 	}
 }
 
 // fabricated
 static inline void updateTelopState(TGCConsole2* console, u32 flags)
 {
-	if (console->unk3F && console->unk44C->update()) {
-		console->unk44C->getPane()->hide();
-		console->unk3F = 0;
-	}
+	// TODO: the `unk3F && unk44C->update()` block that used to live here is
+	// emitted by the original after the timer block in perform() instead.
 
 	if (console->unk42) {
 		if (console->unk520->update()) {
@@ -1229,10 +1263,11 @@ static inline void updateTelopState(TGCConsole2* console, u32 flags)
 	if (console->unk44 && console->unk520->getPane()->isVisible()) {
 		++console->unk80;
 		if (console->processDrawTelop(flags)) {
-			console->unk534 = console->unk524->getPane()->mBounds;
+			// TODO: this looks like a local copy of the pane bounds in the
+			// original (JUTRect::copy to a stack temp), not a member store.
+			JUTRect bounds(console->unk524->getPane()->mBounds);
 			console->unk568 = console->unk544.x2;
-			console->unk534.add(console->mTelopTextWidth + console->unk534.x2,
-			                    0);
+			console->unk534.add(console->mTelopTextWidth + bounds.x2, 0);
 
 			if (console->unk56D) {
 				console->unk56D = 0;
@@ -1344,11 +1379,8 @@ static inline void updateMarioAppearState(TGCConsole2* console)
 		if (++console->unk70 > 0x190)
 			console->startDisappearMario();
 	}
-
-	if (console->unk3B && console->unk3A8->update()) {
-		console->unk3B = 0;
-		console->unk3A8->getPane()->hide();
-	}
+	// TODO: the `unk3B && unk3A8->update()` block is emitted by the original
+	// in perform() after updateMarioLifeCounter(), see there.
 }
 
 // fabricated
@@ -2116,6 +2148,9 @@ void TGCConsole2::endCameraDemo()
 		startAppearCoin();
 }
 
+// TODO: figure out inlining without pragmas - the original perform() calls this
+// out-of-line, ours inlines it unless the definition is fenced like this.
+#pragma dont_inline on
 void TGCConsole2::startAppearTank()
 {
 	if (unk45 || TFlagManager::smInstance->getBool(0x30002)) {
@@ -2136,6 +2171,7 @@ void TGCConsole2::startAppearTank()
 	unk274->getPane()->show();
 	unk29C->getPane()->show();
 }
+#pragma dont_inline off
 
 void TGCConsole2::startDisappearTank()
 {
@@ -2280,12 +2316,12 @@ void TGCConsole2::countShine()
 
 void TGCConsole2::countBlueCoin()
 {
-	// TODO: match remains partial; register homes and floating-point digit
-	// conversion differ from retail.
-	int count   = 0;
-	int display = 0;
+	// TODO: match remains partial; retail keeps `hundreds` live in f31 across
+	// the first changeTexture() and runs one callee-saved register shorter
+	// (0x160 frame with individual saves instead of `stmw`).
 	if (TFlagManager::smInstance->getFlag(0x40001) != unk168) {
 		unk168++;
+		int count = 0;
 
 		for (int i = 0x46; i < 0x56; ++i) {
 			if (TFlagManager::smInstance->getFlag(0x10000 + i))
@@ -2296,54 +2332,53 @@ void TGCConsole2::countBlueCoin()
 				count++;
 		}
 
-		display = unk168 - count * 10;
+		int display = unk168 - count * 10;
 		if (display < 0)
 			display = 0;
 
-		int ones;
-		if (display >= 100) {
-			int hundreds = (int)((f32)display * 0.01f);
-			int rem      = display - hundreds * 100;
-			int tens     = (int)((f32)rem * 0.1f);
-			ones          = rem % 10;
-			((J2DPicture*)unk154[0]->getPane())
-			    ->changeTexture(unkE0[hundreds]->getTexInfo(), 0);
-			((J2DPicture*)unk154[1]->getPane())
-			    ->changeTexture(unkE0[tens]->getTexInfo(), 0);
-			((J2DPicture*)unk154[2]->getPane())
-			    ->changeTexture(unkE0[ones]->getTexInfo(), 0);
-			J2DPane* showPane = unk154[2]->getPane();
-			if (!showPane->isVisible())
-				showPane->show();
-		} else {
+		if (display < 100) {
 			int tens = (int)((f32)display * 0.1f);
-			ones     = display % 10;
 			((J2DPicture*)unk154[0]->getPane())
 			    ->changeTexture(unkE0[tens]->getTexInfo(), 0);
+			int ones = display % 10;
 			((J2DPicture*)unk154[1]->getPane())
 			    ->changeTexture(unkE0[ones]->getTexInfo(), 0);
 			J2DPane* hidePane = unk154[2]->getPane();
 			if (hidePane->isVisible())
 				hidePane->hide();
+		} else {
+			int hundreds = (int)((f32)display * 0.01f);
+			((J2DPicture*)unk154[0]->getPane())
+			    ->changeTexture(unkE0[hundreds]->getTexInfo(), 0);
+			int rem = display - hundreds * 100;
+			int tens = (int)((f32)rem * 0.1f);
+			((J2DPicture*)unk154[1]->getPane())
+			    ->changeTexture(unkE0[tens]->getTexInfo(), 0);
+			int ones = rem % 10;
+			((J2DPicture*)unk154[2]->getPane())
+			    ->changeTexture(unkE0[ones]->getTexInfo(), 0);
+			J2DPane* showPane = unk154[2]->getPane();
+			if (!showPane->isVisible())
+				showPane->show();
 		}
 
 		if (unk160->getPane()->isVisible()) {
-			JUTRect rect = unk154[1]->getPane()->getBounds();
+			JUTRect rect = unk154[1]->getPane()->getGlobalBounds();
 			JGeometry::TVec3<f32> pos;
 			pos.x = rect.x1 + 0.5f * (rect.x2 - rect.x1);
 			pos.y = rect.y1 + 0.5f * (rect.y2 - rect.y1);
 			pos.z = 0.0f;
 			gpEmitterManager4D2->createEmitter(pos, 0x1fc, 0, 0);
+
+			if (display % 10 == 0) {
+				rect = unk154[0]->getPane()->getGlobalBounds();
+				pos.x = rect.x1 + 0.5f * (rect.x2 - rect.x1);
+				pos.y = rect.y1 + 0.5f * (rect.y2 - rect.y1);
+				pos.z = 0.0f;
+				gpEmitterManager4D2->createEmitter(pos, 0x1fc, 0, 0);
+			}
 		} else {
 			startAppearStar();
-		}
-		if (ones == 0) {
-			JUTRect rect = unk154[0]->getPane()->getBounds();
-			JGeometry::TVec3<f32> pos;
-			pos.x = rect.x1 + 0.5f * (rect.x2 - rect.x1);
-			pos.y = rect.y1 + 0.5f * (rect.y2 - rect.y1);
-			pos.z = 0.0f;
-			gpEmitterManager4D2->createEmitter(pos, 0x1fc, 0, 0);
 		}
 
 		unk170 = display;
@@ -3882,17 +3917,17 @@ bool TGCConsole2::processAppearBalloon()
 bool TGCConsole2::processDisappearBalloon()
 {
 	bool isFinished = false;
+	int height;
+	int nextHeight;
 
 	JUTRect bounds = unk3B0->getBounds();
-	int height     = bounds.getHeight();
+	height = bounds.getHeight();
 
-	JUTRect contents  = unk3B0->getContentsBounds();
-	int contentHeight = contents.getHeight();
-
-	if (contentHeight > 0) {
-		int nextHeight = height - unk3CC;
-		if (contentHeight - unk3CC < 0)
-			nextHeight += unk3CC - contentHeight;
+	JUTRect contents = unk3B0->getContentsBounds();
+	if (contents.getHeight() > 0) {
+		nextHeight = height - unk3CC;
+		if (contents.getHeight() - unk3CC < 0)
+			nextHeight += unk3CC - contents.getHeight();
 
 		unk3B0->resize(unk3BC.getWidth(), nextHeight);
 
@@ -4198,19 +4233,19 @@ void TGCConsole2::perform(u32 flags, JDrama::TGraphics* graphics)
 		}
 
 		updateLifeMeterState(this);
-		updateStarHudAutoHide(this);
+		updateCounterState(this);
 		if (unk35) {
 			bool done = true;
-			if (!unk140->update())
-				done = false;
-			if (!unk160->update())
-				done = false;
-			if (!unk108->update())
-				done = false;
+			done &= unk108->update();
+			done &= unk140->update();
+			done &= unk160->update();
 
-			setEmitterToPaneCenter(unk124, unkCC->getPane());
-			setEmitterToPaneCenter(unk164, unk14C->getPane());
-			setEmitterToPaneCenter(unk144, unk12C->getPane());
+			JUTRect bounds(unkCC->getPane()->mGlobalBounds);
+			setEmitterToPaneCenter(unk124, bounds);
+			bounds = unk14C->getPane()->mGlobalBounds;
+			setEmitterToPaneCenter(unk164, bounds);
+			bounds = unk12C->getPane()->mGlobalBounds;
+			setEmitterToPaneCenter(unk144, bounds);
 
 			if (done) {
 				unk140->getPane()->hide();
@@ -4226,13 +4261,6 @@ void TGCConsole2::perform(u32 flags, JDrama::TGraphics* graphics)
 		updateShineAppearState(this);
 
 		updateWaterGaugeFill(this);
-		updateCounterState(this);
-		updateJetAppearState(this);
-
-		updateRedCoinCounter(this);
-		updateRedCoinAppearState(this);
-		updateTimerAppearState(this);
-		updateTelopState(this, flags);
 
 		if (!unk46 && SMS_CheckMarioFlag(0x10000) && !unk45 && !unk50)
 			startAppearTank();
@@ -4253,6 +4281,26 @@ void TGCConsole2::perform(u32 flags, JDrama::TGraphics* graphics)
 		updateMarioAppearState(this);
 
 		updateMarioLifeCounter(this);
+
+		if (unk3B && unk3A8->update()) {
+			unk3B = 0;
+			unk3A8->getPane()->hide();
+		}
+
+		updateTelopState(this, flags);
+
+		updateJetAppearState(this);
+
+		updateRedCoinCounter(this);
+		updateRedCoinAppearState(this);
+
+		if (unk58 && unk428->update())
+			unk58 = 0;
+
+		updateTimerAppearState(this);
+
+		if (unk3F && unk44C->update())
+			unk3F = 0;
 
 		if (!unk3F && unk4A)
 			setTimer(-1);

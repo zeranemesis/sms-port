@@ -1,5 +1,10 @@
 #include <Enemy/TabePuku.hpp>
 
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP
 // and m2c drafts. Only trivial destructors are matched so far; the rest
 // are placeholder stubs. TTabePuku's instance member layout has not been

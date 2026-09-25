@@ -8,7 +8,10 @@ class SampleCtrlModelData;
 
 class TModelGate : public TTakeActor {
 public:
-	TModelGate(const char* name = "<TModelGate>");
+	TModelGate(const char* name = "<TModelGate>")
+	    : TTakeActor(name)
+	{
+	}
 
 	virtual MtxPtr getTakingMtx();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);

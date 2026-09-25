@@ -16,7 +16,10 @@ public:
 	void calc();
 	void control();
 	void load(JSUMemoryInputStream&);
-	TCraneRotY(const char* name = "Ｙ軸回転クレーン");
+	TCraneRotY(const char* name = "Ｙ軸回転クレーン")
+	    : TMapObjBase(name)
+	{
+	}
 
 public:
 	/* 0x138 */ f32 unk138;
@@ -31,7 +34,10 @@ public:
 	~TCraneUpDown();
 	void control();
 	void initMapObj();
-	TCraneUpDown(const char* name = "上下クレーン");
+	TCraneUpDown(const char* name = "上下クレーン")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TCraneCargo : public TLeanBlock {
@@ -77,7 +83,10 @@ class TSurfGesoObj : public TItem {
 public:
 	~TSurfGesoObj();
 	void initMapObj();
-	TSurfGesoObj(const char* name = "イカサーフィン");
+	TSurfGesoObj(const char* name = "イカサーフィン")
+	    : TItem(name)
+	{
+	}
 
 public:
 	/* 0x154 */ GXColorS10 mTevColor;
@@ -88,7 +97,10 @@ public:
 	void pullUp();
 	void pushDown();
 	BOOL receiveMessage(THitActor* sender, u32 message);
-	TFruitSwitch(const char* name = "フルーツスイッチ");
+	TFruitSwitch(const char* name = "フルーツスイッチ")
+	    : TMapObjBase(name)
+	{
+	}
 
 public:
 	/* 0x138 */ TFruitLauncher* mLauncher;
@@ -100,7 +112,10 @@ public:
 	void appearFruit() const;
 	void fireObj();
 	void loadAfter();
-	TFruitLauncher(const char* name = "フルーツ発射口");
+	TFruitLauncher(const char* name = "フルーツ発射口")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 #endif

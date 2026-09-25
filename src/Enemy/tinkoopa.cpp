@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <Enemy/TinKoopa.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/CoasterKiller.hpp>
@@ -21,10 +25,8 @@
 #include <System/MarDirector.hpp>
 #include <System/Particles.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 // TODO: this translation unit is freshly scaffolded from marioEU.MAP. Class
 // layouts only contain the fields verified so far; the effect emitters, the

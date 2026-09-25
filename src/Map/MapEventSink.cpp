@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <Map/MapEventSink.hpp>
 #include <Map/PollutionManager.hpp>
 #include <Map/MapCollisionEntry.hpp>
@@ -20,10 +24,8 @@
 #include <JSystem/JParticle/JPAResourceManager.hpp>
 #include <Jsystem/JDrama/JDRNameRefGen.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 u32 TMapEventSink::mCleanedDegree = 10;
 

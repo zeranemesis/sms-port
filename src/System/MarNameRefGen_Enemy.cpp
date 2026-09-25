@@ -36,6 +36,10 @@
 #include <Animal/Butterfly.hpp>
 #include <Animal/fishoid.hpp>
 
+// rogue include: puts the dummy string pair and the MActor mtx-calc names in
+// .rodata ahead of the real name table, which is what the original TU did
+#include <M3DUtil/InfectiousStrings.hpp>
+
 JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 {
 
@@ -57,25 +61,27 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	if (strcmp(name, "FruitsBoat") == 0)
 		return new TFruitsBoat("フルーツの船");
 
-	if (strcmp(name, "FruitsBoatG") == 0)
+	// PAL names the three colour variants B/C/D; the G/P/Y spelling seen in
+	// other dumps of this function does not exist in the PAL string pool.
+	if (strcmp(name, "FruitsBoatB") == 0)
 		return new TFruitsBoat("フルーツの船");
 
-	if (strcmp(name, "FruitsBoatP") == 0)
+	if (strcmp(name, "FruitsBoatC") == 0)
 		return new TFruitsBoat("フルーツの船");
 
-	if (strcmp(name, "FruitsBoatY") == 0)
+	if (strcmp(name, "FruitsBoatD") == 0)
 		return new TFruitsBoat("フルーツの船");
 
 	if (strcmp(name, "FruitsBoatManager") == 0)
 		return new TFruitsBoatManager(0, "フルーツの船マネージャー");
 
-	if (strcmp(name, "FruitsBoatGManager") == 0)
+	if (strcmp(name, "FruitsBoatManagerB") == 0)
 		return new TFruitsBoatManager(1, "フルーツの船マネージャー");
 
-	if (strcmp(name, "FruitsBoatPManager") == 0)
+	if (strcmp(name, "FruitsBoatManagerC") == 0)
 		return new TFruitsBoatManager(2, "フルーツの船マネージャー");
 
-	if (strcmp(name, "FruitsBoatYManager") == 0)
+	if (strcmp(name, "FruitsBoatManagerD") == 0)
 		return new TFruitsBoatManager(3, "フルーツの船マネージャー");
 
 	if (strcmp(name, "AnimalMew") == 0)

@@ -43,6 +43,116 @@ If a Vec struct that contains 3 floats is copied via it's compiler-generated cop
 
 Same logic applies to a Color struct that contains four 8-bit ints: if the ints are initialized one by one, then the compiler will not be able to optimize it to simple bit manipulations in integral registers and will keep the struct on the stack.
 
+## A constructor that is only *declared* in the header is never inlined
+
+This one produced large, systematic wins on the `TMarNameRefGen::getNameRef_*` factory functions, so it is worth checking early in any TU that instantiates many small game classes.
+
+The failure mode looks like this in the diff: at a `new TSomeObj` site the ROM calls the *base* constructor and then re-stores the vtable, while our build calls the *derived* constructor out of line.
+
+```
+bl TMapObjBase::TMapObjBase(const char*)   ; ROM: base ctor, then...
+lis r3, __vt__11TCoverFruit@ha             ; ...vtable and vtable+0x24 stores
+addi r3, r3, __vt__11TCoverFruit@l
+stw r3, 0(r30)
+addi r0, r3, 0x24
+stw r0, 0x20(r30)
+```
+
+versus our single
+
+```
+bl TCoverFruit::TCoverFruit(const char*)   ; ours: out-of-line, body not visible
+```
+
+MWCC only inlines a member function when its definition is visible in the translation unit.
+A header that merely declares `TCoverFruit(const char* name = "...");` gives the compiler nothing to inline, so it emits (or calls) a weak out-of-line symbol instead — even though the ROM has no such symbol at all.
+
+The reconstruction is the obvious one: define the constructor inline in the header, forwarding to the base.
+
+```cpp
+TCoverFruit(const char* name = "フタのフルーツ")
+    : TMapObjBase(name)
+{
+}
+```
+
+The `stw r0, 0x20(r30)` store of `vtable + 0x24` is *not* something the derived constructor has to write by hand: it is what MWCC emits automatically after a base constructor call, so an empty forwarding body reproduces the whole sequence.
+
+How to tell the two cases apart, per class:
+
+- No `__ct__<len><Class>F...` symbol in `config/GMSP01/symbols.txt` means the ROM never emitted an out-of-line copy, so the constructor was inline in the original header. Define it there.
+- A `__ct__` symbol means the constructor really is out of line. Leave it in the `.cpp`; defining it in the header as well is a compile error (`redefined`).
+
+When a class has a real body (member initialisers, extra statements), that body has to move into the header too, otherwise the factory still cannot inline it and the fix does nothing.
+
+A useful sweep: classes declared as `class X : public Y {` followed by a bare `X(const char* name = "...");` line.
+`tools/find_bare_ctors.py` lists them and cross-references `symbols.txt` to classify each one.
+In this repository that pattern covered 245 classes, 23 of which had no `__ct__` symbol and 19 of those were actually instantiated.
+
+Beware that a class with a complex constructor body (calls, casts) will not be inlined even when declared in the header, and then the ROM *would* have a `__ct__` symbol for it.
+Those cases are not this pattern; leave them alone.
+
+## Recovering a name-factory function from the ROM
+
+`TMarNameRefGen::getNameRef_*` are long `if (strcmp(...)) return new T...;` chains.
+When one of them is badly reconstructed, do not guess branch by branch: extract the whole table from the original and rewrite the function from it.
+
+`tools/branch_table.py <target .s>` prints, in ROM order, one row per `strcmp` site:
+
+```
+STRING                          SIZE    CONSTRUCTED BY                        NAME ARG
+'BossGesso'                     0x1b0   __ct__10TBossGessoFPCc                 '\u30dc\u30b9\u30b2\u30c3\u30b5\u30fc'
+```
+
+- `STRING` is the comparison key, `SIZE` the `li r3, 0x...` passed to `operator new` (i.e. `sizeof` the class), `CONSTRUCTED BY` the constructor that is actually called, and `NAME ARG` the string loaded into `r4` just before that call.
+
+Three things this immediately exposes, all of which had been wrong in `getNameRef_BossEnemy`:
+
+- branches that do not exist in the ROM at all (fabricated `LimitKoopa*`, `HinoKuri2`, ...). Every extra branch is a few wrong instructions plus a string constant that shifts all later `.rodata` offsets.
+- branches present in the ROM but commented out as `TODO` in our source.
+- the class a name maps to. `"SleepBossHanachan"` does **not** build a `TSleepBossHanachan`: the ROM calls `TSpineEnemy("?")` and then stores `__vt__24TDemoBossHanachan`, i.e. the class is `TDemoBossHanachan` and the string is only a scene name.
+
+The comparison key and the name argument are not always in `.rodata`.
+Short strings (`"EMario"`, `"Koopa"`, `"OilBall"`, ...) live in `.sdata2` and are loaded with `li r4, "@NNNN"@sda21`, so a script that only scans `.rodata` will wrongly report them as absent, and dtk does not dump `.sdata2` in the `.s` file at all.
+Read it from the extracted object instead:
+
+```
+build/binutils/powerpc-eabi-objdump.exe -s -j .sdata2 build/GMSP01/obj/<unit>.o
+build/binutils/powerpc-eabi-objdump.exe -t build/GMSP01/obj/<unit>.o   # symbol -> offset
+```
+
+`.sdata2` can also hold non-strings: the `?` used as a name for six classes in that factory is the one-character string at offset 0x08, not a literal question mark in the source.
+
+Note that the constructor shown in the table is often the **base** constructor, because the derived constructor is inlined (see the section above).
+Size the class from the `operator new` immediate, and take the derived class from the vtable stored right after the base call.
+
+### The `.rodata` prologue every name factory starts with
+
+Once the branches line up, every `getNameRef_*` still shows a uniform shift of *all* its string offsets, because the original `.rodata` opens with a fixed run of constants that nothing in the function references:
+
+```
++0x00  12 zero bytes                  (dummyMactorStringValue1)
++0x0C  "メモリが足りません\n"           (SMS_NO_MEMORY_MESSAGE)
++0x20  "MActorMtxCalcType_Basic ..."   } the four
++0x50  "MActorMtxCalcType_Softimage..."} MtxCalcTypeName
++0x88  "MActorMtxCalcType_MotionBlend..."} entries
++0xBC  "MActorMtxCalcType_User ..."
++0xE0  <- the first real name
+```
+
+That is exactly what `M3DUtil/InfectiousStrings.hpp` pulls in (it includes `System/DummyStrings.hpp` first, so the pair lands ahead of the four names), and ~30 retail TUs in this repository already include it for this reason.
+
+Adding `#include <M3DUtil/InfectiousStrings.hpp>` to a factory makes its `.rodata` prologue byte-identical to the target's and removes the shift on every string reference in the function.
+
+This barely moves the fuzzy percentage, because a wrong 16-bit offset still earns most of the byte credit, so do not judge it by the score: compare the two `.rodata` dumps directly.
+
+```
+build/binutils/powerpc-eabi-objdump.exe -s -j .rodata build/GMSP01/src/<unit>.o
+build/binutils/powerpc-eabi-objdump.exe -s -j .rodata build/GMSP01/obj/<unit>.o
+```
+
+What is left after that is TU-specific: `MarNameRefGen_MapObj` still needs 24 more bytes (12 zero bytes then three `1.0f`) at `+0xE0`, which come from some static of the original file that has not been identified yet.
+
 ## MWCC 1.2.5 stack padding bugs
 
 Our version of MWCC has a bug where the backend allocates more stack than necessary.

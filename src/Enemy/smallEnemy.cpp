@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <System/DummyStrings.hpp>
+
 #include <Enemy/SmallEnemy.hpp>
 #include <Enemy/Graph.hpp>
 #include <Enemy/Conductor.hpp>
@@ -36,8 +40,6 @@
 // TODO: this definitely means that the no memory msg & zeros are from a
 // different header than mtx calc types
 
-static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
-static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
 
 // NOTE: has to be here for proper rodata order
 #include <Map/MapCollisionEntry.hpp>

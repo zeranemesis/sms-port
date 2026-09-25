@@ -1,4 +1,7 @@
 #include <MoveBG/MapObjMamma.hpp>
+
+// rogue include: dummy string pair, needed to match the .rodata prologue
+#include <System/DummyStrings.hpp>
 #include <MoveBG/MapObjBall.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>

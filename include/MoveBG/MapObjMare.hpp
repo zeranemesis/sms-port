@@ -44,7 +44,10 @@ public:
 	void draw() const;
 	void control();
 	void initMapObj();
-	TMapObjElasticCode(const char* name = "ゴムひも");
+	TMapObjElasticCode(const char* name = "ゴムひも")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TMapObjGrowTree : public TMapObjBase {
@@ -72,7 +75,10 @@ public:
 	void touchPlayer(THitActor*);
 	void control();
 	void load(JSUMemoryInputStream&);
-	TMapObjPuncher(const char* name = "パンチャー");
+	TMapObjPuncher(const char* name = "パンチャー")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TMuddyBoat : public TMapObjBase {
@@ -95,7 +101,10 @@ class TMareFall : public TMapObjBase {
 public:
 	void calc();
 	void load(JSUMemoryInputStream&);
-	TMareFall(const char* name = "マーレ滝");
+	TMareFall(const char* name = "マーレ滝")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TMareCork : public TMapObjBase {
@@ -105,14 +114,20 @@ public:
 	void calcRootMatrix();
 	MtxPtr getTakingMtx();
 	void drawObject(JDrama::TGraphics*);
-	TMareCork(const char* name = "マーレコルク");
+	TMareCork(const char* name = "マーレコルク")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TMareEventPoint : public THitActor {
 public:
 	BOOL receiveMessage(THitActor* sender, u32 message);
 	void load(JSUMemoryInputStream&);
-	TMareEventPoint(const char* name = "イベントポイント");
+	TMareEventPoint(const char* name = "イベントポイント")
+	    : THitActor(name)
+	{
+	}
 };
 
 #endif

@@ -1,5 +1,10 @@
 #include <MoveBG/MapObjMare.hpp>
 
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 
@@ -73,10 +78,6 @@ void TCogwheel::initDraw() const
 void TCogwheel::rebound()
 {
 	// TODO: unconfirmed
-}
-
-TMapObjElasticCode::TMapObjElasticCode(const char* name) : TMapObjBase(name)
-{
 }
 
 void TMapObjElasticCode::initMapObj()
@@ -156,8 +157,6 @@ void TWireBell::initDraw() const
 	// TODO: unconfirmed
 }
 
-TMapObjPuncher::TMapObjPuncher(const char* name) : TMapObjBase(name) { }
-
 void TMapObjPuncher::load(JSUMemoryInputStream& stream)
 {
 	// TODO: unconfirmed
@@ -231,8 +230,6 @@ void TMuddyBoat::bindToWall(const JGeometry::TVec3<float>& param_1,
 	// TODO: unconfirmed
 }
 
-TMareFall::TMareFall(const char* name) : TMapObjBase(name) { }
-
 void TMareFall::calc()
 {
 	// TODO: unconfirmed
@@ -244,8 +241,6 @@ void TMareFall::load(JSUMemoryInputStream& stream)
 	// TODO: unconfirmed
 	TMapObjBase::load(stream);
 }
-
-TMareCork::TMareCork(const char* name) : TMapObjBase(name) { }
 
 void TMareCork::loadAfter()
 {
@@ -273,8 +268,6 @@ void TMareCork::drawObject(JDrama::TGraphics* param_1)
 {
 	// TODO: unconfirmed
 }
-
-TMareEventPoint::TMareEventPoint(const char* name) : THitActor(name) { }
 
 BOOL TMareEventPoint::receiveMessage(THitActor* sender, u32 message)
 {

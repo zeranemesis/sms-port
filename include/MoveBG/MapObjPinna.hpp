@@ -85,19 +85,28 @@ public:
 	void touchActor(THitActor*);
 	void kill();
 	void load(JSUMemoryInputStream&);
-	TBalloonKoopaJr(const char* name = "風船（クッパＪｒ）");
+	TBalloonKoopaJr(const char* name = "風船（クッパＪｒ）")
+	    : TMapObjGeneral(name)
+	{
+	}
 };
 
 class TPinnaEntrance : public TMapObjBase {
 public:
 	void loadAfter();
-	TPinnaEntrance(const char* name = "ピンナ入り口");
+	TPinnaEntrance(const char* name = "ピンナ入り口")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TWaterRecoverObj : public TMapObjBase {
 public:
 	void touchPlayer(THitActor*);
-	TWaterRecoverObj(const char* name = "水回復オブジェ");
+	TWaterRecoverObj(const char* name = "水回復オブジェ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TAmiKing : public TMapObjBase {
@@ -109,7 +118,10 @@ public:
 	void calcRootMatrix();
 	void bind();
 	void touchPlayer(THitActor*);
-	TAmiKing(const char* name = "アミキング");
+	TAmiKing(const char* name = "アミキング")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TPinnaCoaster : public TMapObjBase {

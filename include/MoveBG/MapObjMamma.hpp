@@ -39,7 +39,10 @@ public:
 	void grow();
 	void control();
 	void initMapObj();
-	TSandLeafBase(const char* name = "すなやまの芽の土台");
+	TSandLeafBase(const char* name = "すなやまの芽の土台")
+	    : TSandBase(name)
+	{
+	}
 };
 
 class TSandBomb : public TSandLeaf {
@@ -121,7 +124,10 @@ public:
 	void putOnLight(TLiveActor*);
 	void perform(u32 cue, JDrama::TGraphics* graphics);
 	void load(JSUMemoryInputStream&);
-	TShiningStone(const char* name = "太陽石");
+	TShiningStone(const char* name = "太陽石")
+	    : THitActor(name)
+	{
+	}
 };
 
 class TMammaBlockRotate : public TMapObjBase {
@@ -137,7 +143,10 @@ class TMammaYacht : public TMapObjBase {
 public:
 	void control();
 	void initMapObj();
-	TMammaYacht(const char* name = "砂の城");
+	TMammaYacht(const char* name = "砂の城")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TSandBird : public TJointCoin {
@@ -186,7 +195,10 @@ public:
 class TSandEgg : public TMapObjBase {
 public:
 	u32 getSDLModelFlag() const;
-	TSandEgg(const char* name = "すなのたまご");
+	TSandEgg(const char* name = "すなのたまご")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 #endif

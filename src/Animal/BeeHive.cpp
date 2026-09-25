@@ -1,4 +1,10 @@
 #include <Animal/BeeHive.hpp>
+
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <Animal/boid.hpp>
 #include <Strategic/ObjManager.hpp>
 #include <MSound/MSound.hpp>

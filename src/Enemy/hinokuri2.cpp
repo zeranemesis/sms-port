@@ -104,11 +104,6 @@ THino2Params::THino2Params(const char* path)
 	TParams::load(mPrmPath);
 }
 
-THinokuri2Manager::THinokuri2Manager(const char* name)
-    : TEnemyManager(name)
-{
-}
-
 void THinokuri2Manager::createModelData()
 {
 	static const TModelDataLoadEntry entry[] = {

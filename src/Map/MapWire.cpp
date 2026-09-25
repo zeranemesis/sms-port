@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <System/DummyStrings.hpp>
+
 #include <Map/MapWire.hpp>
 
 #include <dolphin/mtx.h>
@@ -15,10 +19,8 @@
 #include <MoveBG/MapObjManager.hpp>
 #include <Player/MarioAccess.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <System/DummyStrings.hpp>
 
 TMapWirePoint::TMapWirePoint()
 {

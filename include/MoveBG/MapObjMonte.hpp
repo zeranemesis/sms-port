@@ -9,14 +9,20 @@
 class TMapObjMonteRoot : public TMapObjBase {
 public:
 	void initMapObj();
-	TMapObjMonteRoot(const char* name = "根っこ");
+	TMapObjMonteRoot(const char* name = "根っこ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TJumpMushroom : public TMapObjBase {
 public:
 	BOOL receiveMessage(THitActor*, unsigned long);
 	void load(JSUMemoryInputStream&);
-	TJumpMushroom(const char* name = "ジャンプきのこ");
+	TJumpMushroom(const char* name = "ジャンプきのこ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class THangingBridgeBoard : public TLeanBlock {
@@ -76,7 +82,10 @@ public:
 	f32 getRadiusAtY(f32) const;
 	void touchActor(THitActor*);
 	void initMapObj();
-	TGoalFlag(const char* name = "ゴールフラグ");
+	TGoalFlag(const char* name = "ゴールフラグ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TFluff : public TMapObjBase {

@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <MoveBG/MapObjItem2.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <Map/Map.hpp>
@@ -14,10 +18,8 @@
 #include <JSystem/JParticle/JPAEmitter.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 TMushroom1up::TMushroom1up(int param_1, const char* name)
     : TMapObjBase(name)
