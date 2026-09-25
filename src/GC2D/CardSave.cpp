@@ -912,14 +912,14 @@ s8 TCardSave::drawMessageBM(TEProgress param_1)
 
 			if (unk308 == 0 || unk308 == 6 || unk308 == 8) {
 				if (getBookmarkInfo().unk0 == 1) {
-					strncpy(unk124->getStringPtr(), "こわれています", 0x14);
-					strncpy(unk128->getStringPtr(), "こわれています", 0x14);
+					setMessage(unk124, 0x14, 0);
+					setMessage(unk128, 0x14, 0);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
 				} else if (getBookmarkInfo().unk18 == 0) {
-					strncpy(unk124->getStringPtr(), "NEW", 0x14);
-					strncpy(unk128->getStringPtr(), "NEW", 0x14);
+					setMessage(unk124, 0x14, 0x19);
+					setMessage(unk128, 0x14, 0x19);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
