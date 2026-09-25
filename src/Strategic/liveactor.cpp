@@ -2,6 +2,7 @@
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/question.hpp>
 #include <Strategic/Spine.hpp>
+#include <Strategic/spcinterp.hpp>
 #include <Strategic/Binder.hpp>
 #include <System/MarDirector.hpp>
 #include <MarioUtil/MtxUtil.hpp>
@@ -36,7 +37,7 @@ TLiveActor::TLiveActor(const char* name)
 	mAnmSoundPath  = nullptr;
 	mBinder        = nullptr;
 	mSpine         = nullptr;
-	unk90          = nullptr;
+	mInterp         = nullptr;
 
 	mLinearVelocity.setAll(0.0f);
 	mAngularVelocity.setAll(0.0f);
@@ -230,19 +231,19 @@ void TLiveActor::bind()
 
 void TLiveActor::control()
 {
-	// TODO: what is unk90???
-	if (unk90 == nullptr || *(int*)((char*)unk90 + 4) == 0) {
+	if (mInterp == nullptr || mInterp->mStepsToDo == 0) {
 		if (mSpine)
 			mSpine->update();
 	} else {
 		if (!mSpine) {
-			if (unk90 && *(int*)((char*)unk90 + 4) != 0) {
-				// call on unk90
-			}
-		} else if (mSpine->isIdle()) {
-			// call on unk90
-		} else {
+			if (mInterp != nullptr
+			    && *(s32*)((u8*)mInterp + 4) != 0)
+				mInterp->update();
+		} else if (mSpine->getCurrentNerve() != nullptr
+		           || mSpine->getVertebraeCount() > 0) {
 			mSpine->update();
+		} else {
+			mInterp->update();
 		}
 	}
 }
