@@ -285,6 +285,7 @@ BOOL TBGTakeHit::receiveMessage(THitActor* sender, u32 message)
 			if (mOwner->isThing3()) {
 				mHolder = casted;
 				mOwner->changeStateAndFixNodes(3);
+				mOwner->getOwner()->unk1A0 = 1;
 				return true;
 			}
 		}

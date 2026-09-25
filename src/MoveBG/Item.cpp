@@ -4,6 +4,7 @@
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MSound/MSound.hpp>
+#include <MSound/MSoundBGM.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <System/Application.hpp>
 #include <System/StageUtil.hpp>
@@ -738,6 +739,7 @@ void TShine::appearSimple(int param_1)
 
 	SMSGetMSound()->startSoundActor(MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr,
 	                                0, 4);
+	MSBgm::startBGM(MSD_BGM_KUPPA);
 
 	mStateTimer = unk174;
 	mState      = STATE_UNKB;

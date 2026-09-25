@@ -526,7 +526,7 @@ static int MarioFootPosRCtrl(J3DNode* param_1, int param_2)
 	// volatile u32 padding[9];
 	if (param_2 == 0) {
 
-		BOOL check2;
+		BOOL check2 = FALSE;
 		bool check;
 
 		// Definitely some inline shenanigans
@@ -570,7 +570,7 @@ static int MarioFootDirRCtrl(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
 
-		BOOL check2;
+		BOOL check2 = FALSE;
 		bool check;
 
 		// Definitely some inline shenanigans
@@ -650,7 +650,7 @@ static int MarioFootPosLCtrl(J3DNode* param_1, int param_2)
 	// volatile u32 padding[9];
 	if (param_2 == 0) {
 
-		BOOL check2;
+		BOOL check2 = FALSE;
 		bool check;
 
 		// Definitely some inline shenanigans
@@ -694,7 +694,7 @@ static int MarioFootDirLCtrl(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
 
-		BOOL check2;
+		BOOL check2 = FALSE;
 		bool check;
 
 		// Definitely some inline shenanigans

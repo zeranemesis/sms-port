@@ -3,6 +3,8 @@
 
 #include <version.h>
 #include <Strategic/TakeActor.hpp>
+
+class TSpcInterp;
 #include <Strategic/LiveManager.hpp>
 #include <Strategic/Nerve.hpp>
 
@@ -173,7 +175,7 @@ public:
 	/* 0x84 */ const char* mAnmSoundPath;
 	/* 0x88 */ TBinder* mBinder;
 	/* 0x8C */ TSpineBase<TLiveActor>* mSpine;
-	/* 0x90 */ void* unk90;
+	/* 0x90 */ TSpcInterp* mInterp;
 	// TODO: Analyze mLinearVelocity vs mVelocity some more
 	// and decide on better names
 	/* 0x94 */ JGeometry::TVec3<f32> mLinearVelocity;

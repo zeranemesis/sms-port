@@ -466,8 +466,6 @@ void TMarDirector::currentStateFinalize(u8 next_state)
 
 		SMSGetApplication()->getFader()->startWipe(unkE4, 0.4f, 0.0f);
 		SMSRumbleMgr->reset();
-		if (SMSGetApplication()->mCurrArea.getStage() == 1)
-			THPPlayerPlay();
 		break;
 
 	case STATE_UNK1:
@@ -691,6 +689,8 @@ void TMarDirector::nextStateInitialize(u8 next_state)
 		}
 		if (mMap != 0xf)
 			getConsole()->unkC.off(CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW);
+		if (currSeq.getStage() == 1)
+			THPPlayerPlay();
 		break;
 
 	case STATE_UNK4:

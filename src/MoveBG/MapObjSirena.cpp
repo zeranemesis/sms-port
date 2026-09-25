@@ -579,6 +579,7 @@ int TItemSlotDrum::getForcastResult(int idx)
 {
 	f32 angle = unk13C[idx];
 	f32 speed = unk138[idx];
+	int attempts = 0;
 	for (;;) {
 		if (fabsf(speed) > unk160) {
 			angle += speed;
@@ -597,6 +598,8 @@ int TItemSlotDrum::getForcastResult(int idx)
 			if (angle <= 0.0f)
 				angle += 360.0f;
 			if ((int)fabsf(angle) % unk168 == 0)
+				break;
+			if (++attempts > 10000)
 				break;
 		}
 	}
