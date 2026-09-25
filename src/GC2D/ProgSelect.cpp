@@ -17,7 +17,8 @@ void TProgSelect::setLang(s32 lang)
 	    "/nintendo/progmessage_it.bmg",
 	};
 
-	unk130 = JKRFileLoader::getGlbResource(filename[lang]);
+	const char* fileName = filename[lang];
+	unk130 = JKRFileLoader::getGlbResource(fileName);
 	snprintf(unk1C, 0x100, SMSGetMessageData(unk130, 0));
 	snprintf(unk120[0]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 4));
 	snprintf(unk120[1]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 1));
