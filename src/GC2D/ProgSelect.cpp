@@ -34,9 +34,12 @@ TProgSelect::TProgSelect(u8 param_1, const char* name)
 	f32 sync     = SMSGetVSyncTimesPerSec();
 	unk128       = 0;
 	mRefreshRate = sync;
-	snprintf(unk1C, 0x100, "プログレッシブモードで\n表示しますか？");
-	unk120[0] = new J2DTextBox(gpSystemFont->getResFont(), "はい");
-	unk120[1] = new J2DTextBox(gpSystemFont->getResFont(), "いいえ");
+	unk130       = nullptr;
+	char* yesText = new char[0x20];
+	unk120[0] = new J2DTextBox(gpSystemFont->getResFont(), yesText);
+	char* noText = new char[0x20];
+	unk120[1] = new J2DTextBox(gpSystemFont->getResFont(), noText);
+	setLang(0);
 
 	unk120[0]->setFontSize(28, 28);
 	unk120[1]->setFontSize(28, 28);
