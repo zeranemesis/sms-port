@@ -58,6 +58,20 @@ u32 TCardLoad::cMessageID[] = {
 	0x0,        0x0,        0x0,        0x0,        0x0,
 };
 
+const char* TCardLoad::cToOptionFileName = "select_options.bti";
+const char* TCardLoad::cBMarkNewFileName = "select_new.bti";
+const char* TCardLoad::cWindowYesFileName = "select_yes.bti";
+const char* TCardLoad::cWindowNoFileName = "select_no.bti";
+const char* TCardLoad::cScoreTotalFileName = "select_total.bti";
+const char* TCardLoad::cBMarkMenuFileName[4] = {
+	"select_start.bti", "select_copy.bti", "select_erase.bti", "select_score.bti",
+};
+const char* TCardLoad::cScoreStageFileName[9] = {
+	"stage_bianco.bti", "stage_ricco.bti", "stage_mamma.bti",
+	"stage_pinna.bti",  "stage_sirena.bti", "stage_monte.bti",
+	"stage_mare.bti",   "stage_dolpicTown.bti", "stage_airport.bti",
+};
+
 TCardLoad::TCardLoad(const char* name)
     : JDrama::TViewObj(name)
     , unk10(5)
@@ -97,16 +111,34 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 
 	JKRArchive* optionVolume = (JKRArchive*)JKRFileLoader::getVolume("option");
 
-	unkA0 = JKRGetResource("/option/loadmessage.bmg");
+	static const char* messageFiles[5] = {
+		"/option/loadmessage_en.bmg", "/option/loadmessage_ge.bmg",
+		"/option/loadmessage_fr.bmg", "/option/loadmessage_sp.bmg",
+		"/option/loadmessage_it.bmg",
+	};
+	static const char* scoreFiles[5] = {
+		"load_score_en.blo", "load_score_ge.blo", "load_score_fr.blo",
+		"load_score_sp.blo", "load_score_it.blo",
+	};
+	for (int lang = 0; lang < 5; ++lang) {
+		unk7D8[lang] = JKRGetResource(messageFiles[lang]);
+		unk7EC[lang] = new J2DSetScreen(scoreFiles[lang], optionVolume);
+		unk7EC[lang]->setCullBack(GX_CULL_BACK);
+	}
+	unkA0 = unk7D8[0];
 
 	unk28 = new J2DSetScreen("load.blo", optionVolume);
 	unk28->setCullBack(GX_CULL_BACK);
-	unk2C = new J2DSetScreen("load_score.blo", optionVolume);
-	unk2C->setCullBack(GX_CULL_BACK);
+	unk2C = unk7EC[0];
 	unk754 = new TOptionControl;
 	unk754->load();
 
-	unk34 = new J2DSetScreen("title_1.blo", optionVolume);
+	static const char* titleFiles[5] = {
+		"title_1.blo", "title_1_ge.blo", "title_1_fr.blo", "title_1_sp.blo",
+		"title_1_it.blo",
+	};
+	unk34 = new J2DSetScreen(
+	    titleFiles[TFlagManager::getInstance()->getFlag(0xA0001)], optionVolume);
 	unk34->setCullBack(GX_CULL_BACK);
 
 	for (int i = 0; i < 10; ++i) {
@@ -115,24 +147,14 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		unkC8[i] = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
 	}
 
-	for (int i = 0; i < 11; ++i) {
-		unk20C[i] = 25 * i + 150;
-		if (i > 4)
-			unk20C[i] += 20;
-		unk222[i] = 4;
-	}
-
-	for (int i = 0; i < 13; ++i) {
-		unk22E[i] = 400 * i;
-		unk248[i] = 4;
-	}
+	setupTitleScreen();
 
 	unk208 = unk34->search('ROOT');
 
 	unkF0 = new TExPane(unk34, 'titl');
 	unkF4 = new TExPane(unk34, 'nint');
 
-	for (int i = 0; i < 11; ++i) {
+	for (int i = 0; i < unk7D4; ++i) {
 		int key;
 		if (i < 9)
 			key = 's_01' + i;
@@ -144,7 +166,7 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		unk124[i] = unkF8[i]->getPane()->getBounds();
 	}
 
-	for (int i = 0; i < 13; ++i) {
+	for (int i = 0; i < 18; ++i) {
 		int key;
 		if (i < 9)
 			key = 'p_01' + i;
@@ -327,9 +349,38 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk748 = (J2DPicture*)unk28->search('\0n_a');
 	unk74C = (J2DPicture*)unk28->search('\0n_b');
 	unk750 = (J2DPicture*)unk28->search('\0n_c');
+
+	loadLangTexture();
+	changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 }
 
-void TCardLoad::setupTitleScreen() { }
+void TCardLoad::setupTitleScreen()
+{
+	switch (TFlagManager::getInstance()->getFlag(0xA0001)) {
+	case 2:
+		unk7D4 = 15;
+		break;
+	case 3:
+		unk7D4 = 12;
+		break;
+	case 4:
+		unk7D4 = 10;
+		break;
+	default:
+		unk7D4 = 11;
+		break;
+	}
+
+	for (int i = 0; i < unk7D4; ++i) {
+		unk20C[i] = 25 * i + 150;
+		unk222[i] = 4;
+	}
+
+	for (int i = 0; i < 18; ++i) {
+		unk22E[i] = 400 * i;
+		unk248[i] = 4;
+	}
+}
 
 void TCardLoad::setupScoreScreen()
 {
@@ -468,6 +519,124 @@ void TCardLoad::setupScoreScreen()
 
 	unk744->setAlpha(0);
 	unk740->setAlpha(0);
+}
+
+static JUTTexture* loadLocalizedTexture(const char* directory,
+	                                    const char* fileName)
+{
+	char path[0x100];
+	snprintf(path, 0xFF, "/option/timg/%s%s", directory, fileName);
+	return new JUTTexture(
+	    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
+}
+
+void TCardLoad::loadLangTexture()
+{
+	static const char* directories[5] = { "", "ge/", "fr/", "sp/", "it/" };
+
+	for (int lang = 0; lang < 5; ++lang)
+		unk800[lang] = loadLocalizedTexture(directories[lang],
+		                                    cToOptionFileName);
+
+	for (int row = 0; row < 4; ++row)
+		for (int lang = 0; lang < 5; ++lang)
+			unk814[row][lang]
+			    = loadLocalizedTexture(directories[lang],
+			                           cBMarkMenuFileName[row]);
+
+	for (int lang = 0; lang < 5; ++lang) {
+		unk864[lang]
+		    = loadLocalizedTexture(directories[lang], cBMarkNewFileName);
+		unk878[lang]
+		    = loadLocalizedTexture(directories[lang], cWindowYesFileName);
+		unk88C[lang]
+		    = loadLocalizedTexture(directories[lang], cWindowNoFileName);
+	}
+
+	for (int row = 0; row < 9; ++row)
+		for (int lang = 0; lang < 5; ++lang)
+			unk8A0[row][lang]
+			    = loadLocalizedTexture(directories[lang],
+			                           cScoreStageFileName[row]);
+
+	for (int lang = 0; lang < 5; ++lang)
+		unk954[lang]
+		    = loadLocalizedTexture(directories[lang], cScoreTotalFileName);
+}
+
+void TCardLoad::changeLanguage(int lang)
+{
+	unkA0 = unk7D8[lang];
+	unk2C = unk7EC[lang];
+	resetScoreScreenObjects();
+
+	((J2DPicture*)unk28->search('s__1'))
+	    ->changeTexture(unk800[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_6a'))
+	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_7a'))
+	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_6b'))
+	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_7b'))
+	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 3; ++i)
+		((J2DPicture*)unk28->search('s_0a' + i))
+		    ->changeTexture(unk864[lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 3; ++i)
+		for (int row = 0; row < 4; ++row)
+			((J2DPicture*)unk28->search('s_2a' + row * 0x100 + i))
+			    ->changeTexture(unk814[row][lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 9; ++i)
+		((J2DPicture*)unk2C->search('st_0' + i))
+		    ->changeTexture(unk8A0[i][lang]->getTexInfo(), 0);
+
+	((J2DPicture*)unk2C->search('s_tl'))
+	    ->changeTexture(unk954[lang]->getTexInfo(), 0);
+}
+
+void TCardLoad::resetScoreScreenObjects()
+{
+	int shineAreas[] = { 2, 3, 4, 5, 6, 8, 7 };
+
+	for (int i = 0; i < 7; ++i) {
+		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
+
+		for (int j = 0; j < 3; ++j)
+			unk584[i].unk4[j]
+			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
+
+		for (int j = 0; j < 8; ++j) {
+			J2DPane* pane = unk2C->search('sh0a' + i * 0x100 + j);
+			unk584[i].unk10[j] = pane;
+
+			if (!SMS_isGetShine(shineAreas[i], j, false))
+				pane->hide();
+		}
+
+		for (int j = 0; j < 2; ++j) {
+			J2DPane* pane = unk2C->search('sh0i' + i * 0x100 + j);
+			unk584[i].unk30[j] = pane;
+			pane->hide();
+		}
+
+		unk584[i].unk38 = unk2C->search('sh0k' + i);
+		unk584[i].unk38->hide();
+	}
+
+	for (int i = 0; i < 3; ++i) {
+		unk728[i] = unk2C->search('\0t_1' + i);
+		unk728[i]->hide();
+	}
+
+	unk740 = unk2C->search('\0t_p');
+	unk744 = unk2C->search('s_tl');
+	unk748 = (J2DPicture*)unk2C->search('\0n_a');
+	unk74C = (J2DPicture*)unk2C->search('\0n_b');
+	unk750 = (J2DPicture*)unk2C->search('\0n_c');
 }
 
 void TCardLoad::loadAfter()
@@ -634,8 +803,10 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			break;
 
 		case 2:
-			if (unk754->movementOption())
+			if (unk754->movementOption()) {
+				changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 				unk14 = 7;
+			}
 			break;
 
 		case 7:
@@ -691,7 +862,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			           || unk38->getTrigger() & 0x1000) {
 				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
 				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->getPane()->setAlpha(0);
 				unk258 = 0;
 				if (unk18 < 4)
@@ -719,7 +890,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			    || unk38->getTrigger() & 0x1000) {
 				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
 				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->getPane()->setAlpha(0);
 				unk258 = 0;
 				unkBC  = 0;
@@ -794,7 +965,7 @@ bool TCardLoad::titleDraw()
 		break;
 
 	case 1:
-		for (int i = 0; i < 13; ++i) {
+		for (int i = 0; i < 18; ++i) {
 			switch (unk248[i]) {
 			case 4:
 				if (unk258 > unk22E[i]) {
@@ -813,9 +984,9 @@ bool TCardLoad::titleDraw()
 				break;
 
 			case 1:
-				if (i == 12) {
+				if (i == 17) {
 					unk258 = 0;
-					for (int j = 0; j < 13; ++j)
+					for (int j = 0; j < 18; ++j)
 						unk1D4[j]->setPaneAlpha(40, 255, 180);
 					unk18 = 3;
 				}
@@ -829,7 +1000,7 @@ bool TCardLoad::titleDraw()
 	case 3:
 		if (unk258 > 160) {
 			bool any = true;
-			for (int i = 0; i < 13; ++i) {
+			for (int i = 0; i < 18; ++i) {
 				any &= unk1D4[i]->update();
 				JUtility::TColor col
 				    = ((J2DPicture*)unk1D4[i]->getPane())->mBlack;
@@ -842,7 +1013,7 @@ bool TCardLoad::titleDraw()
 			}
 
 			if (any) {
-				for (int i = 0; i < 13; ++i)
+				for (int i = 0; i < 18; ++i)
 					unk1D4[i]->setPaneAlpha(140, 0, 255);
 				unk258 = 0;
 				unk18  = 2;
@@ -855,7 +1026,7 @@ bool TCardLoad::titleDraw()
 		u16 alpha = unkF0->getPane()->getAlpha() + 1;
 		if (alpha > 255) {
 			bool any = true;
-			for (int i = 0; i < 13; ++i)
+			for (int i = 0; i < 18; ++i)
 				any &= unk1D4[i]->update();
 			if (any) {
 				unkBC = 0;
@@ -867,7 +1038,7 @@ bool TCardLoad::titleDraw()
 	} break;
 
 	case 4: {
-		for (int i = 0; i < 13; ++i) {
+		for (int i = 0; i < unk7D4; ++i) {
 			switch (unk222[i]) {
 			case 0:
 				if (unkF8[i]->update()) {

@@ -251,8 +251,10 @@ BOOL TMario::warpIn()
 
 bool TMario::isUnUsualStageStart()
 {
-	// Missing stack space
-	// volatile u32 padding[14];
+	// Keep MWCC's frame at the 0x50 bytes used by the retail function. This is
+	// code-generation padding only; it has no gameplay role.
+	volatile u32 stackPadding[10];
+	(void)stackPadding;
 
 	// Pinna rollercoaster
 	if ((gpMarDirector->getCurrentMap() == 0x3A)

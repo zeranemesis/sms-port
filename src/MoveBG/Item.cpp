@@ -339,6 +339,8 @@ void TCoinEmpty::makeObjAppeared() { }
 
 void TCoinEmpty::kill() { }
 
+void TCoinEmpty::warning() { }
+
 TCoinEmpty::TCoinEmpty(const char* name)
     : TCoin(name)
 {
