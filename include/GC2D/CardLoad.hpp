@@ -31,6 +31,8 @@ public:
 	void setupTitleScreen();
 	void setupScoreScreen();
 	void resetScoreScreenObjects();
+	void loadLangTexture();
+	void changeLanguage(int);
 	void loadAfter();
 	bool titleDraw();
 	void makeBuffer(J2DTextBox*, int);
@@ -49,6 +51,13 @@ public:
 	void changeScene();
 
 	static u32 cMessageID[];
+	static const char* cToOptionFileName;
+	static const char* cBMarkNewFileName;
+	static const char* cWindowYesFileName;
+	static const char* cWindowNoFileName;
+	static const char* cScoreTotalFileName;
+	static const char* cBMarkMenuFileName[4];
+	static const char* cScoreStageFileName[9];
 
 public:
 	struct UnkCardLoadStruct {
@@ -172,6 +181,13 @@ public:
 	/* 0x7D4 */ s32 unk7D4;
 	/* 0x7D8 */ void* unk7D8[5];
 	/* 0x7EC */ J2DSetScreen* unk7EC[5];
+	/* 0x800 */ JUTTexture* unk800[5];
+	/* 0x814 */ JUTTexture* unk814[4][5];
+	/* 0x864 */ JUTTexture* unk864[5];
+	/* 0x878 */ JUTTexture* unk878[5];
+	/* 0x88C */ JUTTexture* unk88C[5];
+	/* 0x8A0 */ JUTTexture* unk8A0[9][5];
+	/* 0x954 */ JUTTexture* unk954[5];
 };
 
 #endif

@@ -58,6 +58,20 @@ u32 TCardLoad::cMessageID[] = {
 	0x0,        0x0,        0x0,        0x0,        0x0,
 };
 
+const char* TCardLoad::cToOptionFileName = "select_options.bti";
+const char* TCardLoad::cBMarkNewFileName = "select_new.bti";
+const char* TCardLoad::cWindowYesFileName = "select_yes.bti";
+const char* TCardLoad::cWindowNoFileName = "select_no.bti";
+const char* TCardLoad::cScoreTotalFileName = "select_total.bti";
+const char* TCardLoad::cBMarkMenuFileName[4] = {
+	"select_start.bti", "select_copy.bti", "select_erase.bti", "select_score.bti",
+};
+const char* TCardLoad::cScoreStageFileName[9] = {
+	"stage_bianco.bti", "stage_ricco.bti", "stage_mamma.bti",
+	"stage_pinna.bti",  "stage_sirena.bti", "stage_monte.bti",
+	"stage_mare.bti",   "stage_dolpicTown.bti", "stage_airport.bti",
+};
+
 TCardLoad::TCardLoad(const char* name)
     : JDrama::TViewObj(name)
     , unk10(5)
@@ -97,16 +111,34 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 
 	JKRArchive* optionVolume = (JKRArchive*)JKRFileLoader::getVolume("option");
 
-	unkA0 = JKRGetResource("/option/loadmessage.bmg");
+	static const char* messageFiles[5] = {
+		"/option/loadmessage_en.bmg", "/option/loadmessage_ge.bmg",
+		"/option/loadmessage_fr.bmg", "/option/loadmessage_sp.bmg",
+		"/option/loadmessage_it.bmg",
+	};
+	static const char* scoreFiles[5] = {
+		"load_score_en.blo", "load_score_ge.blo", "load_score_fr.blo",
+		"load_score_sp.blo", "load_score_it.blo",
+	};
+	for (int lang = 0; lang < 5; ++lang) {
+		unk7D8[lang] = JKRGetResource(messageFiles[lang]);
+		unk7EC[lang] = new J2DSetScreen(scoreFiles[lang], optionVolume);
+		unk7EC[lang]->setCullBack(GX_CULL_BACK);
+	}
+	unkA0 = unk7D8[0];
 
 	unk28 = new J2DSetScreen("load.blo", optionVolume);
 	unk28->setCullBack(GX_CULL_BACK);
-	unk2C = new J2DSetScreen("load_score.blo", optionVolume);
-	unk2C->setCullBack(GX_CULL_BACK);
+	unk2C = unk7EC[0];
 	unk754 = new TOptionControl;
 	unk754->load();
 
-	unk34 = new J2DSetScreen("title_1.blo", optionVolume);
+	static const char* titleFiles[5] = {
+		"title_1.blo", "title_1_ge.blo", "title_1_fr.blo", "title_1_sp.blo",
+		"title_1_it.blo",
+	};
+	unk34 = new J2DSetScreen(
+	    titleFiles[TFlagManager::getInstance()->getFlag(0xA0001)], optionVolume);
 	unk34->setCullBack(GX_CULL_BACK);
 
 	for (int i = 0; i < 10; ++i) {
@@ -317,6 +349,9 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk748 = (J2DPicture*)unk28->search('\0n_a');
 	unk74C = (J2DPicture*)unk28->search('\0n_b');
 	unk750 = (J2DPicture*)unk28->search('\0n_c');
+
+	loadLangTexture();
+	changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 }
 
 void TCardLoad::setupTitleScreen()
@@ -484,6 +519,83 @@ void TCardLoad::setupScoreScreen()
 
 	unk744->setAlpha(0);
 	unk740->setAlpha(0);
+}
+
+static JUTTexture* loadLocalizedTexture(const char* directory,
+	                                    const char* fileName)
+{
+	char path[0x100];
+	snprintf(path, 0xFF, "/option/timg/%s%s", directory, fileName);
+	return new JUTTexture(
+	    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
+}
+
+void TCardLoad::loadLangTexture()
+{
+	static const char* directories[5] = { "", "ge/", "fr/", "sp/", "it/" };
+
+	for (int lang = 0; lang < 5; ++lang)
+		unk800[lang] = loadLocalizedTexture(directories[lang],
+		                                    cToOptionFileName);
+
+	for (int row = 0; row < 4; ++row)
+		for (int lang = 0; lang < 5; ++lang)
+			unk814[row][lang]
+			    = loadLocalizedTexture(directories[lang],
+			                           cBMarkMenuFileName[row]);
+
+	for (int lang = 0; lang < 5; ++lang) {
+		unk864[lang]
+		    = loadLocalizedTexture(directories[lang], cBMarkNewFileName);
+		unk878[lang]
+		    = loadLocalizedTexture(directories[lang], cWindowYesFileName);
+		unk88C[lang]
+		    = loadLocalizedTexture(directories[lang], cWindowNoFileName);
+	}
+
+	for (int row = 0; row < 9; ++row)
+		for (int lang = 0; lang < 5; ++lang)
+			unk8A0[row][lang]
+			    = loadLocalizedTexture(directories[lang],
+			                           cScoreStageFileName[row]);
+
+	for (int lang = 0; lang < 5; ++lang)
+		unk954[lang]
+		    = loadLocalizedTexture(directories[lang], cScoreTotalFileName);
+}
+
+void TCardLoad::changeLanguage(int lang)
+{
+	unkA0 = unk7D8[lang];
+	unk2C = unk7EC[lang];
+	resetScoreScreenObjects();
+
+	((J2DPicture*)unk28->search('s__1'))
+	    ->changeTexture(unk800[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_6a'))
+	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_7a'))
+	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_6b'))
+	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
+	((J2DPicture*)unk28->search('s_7b'))
+	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 3; ++i)
+		((J2DPicture*)unk28->search('s_0a' + i))
+		    ->changeTexture(unk864[lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 3; ++i)
+		for (int row = 0; row < 4; ++row)
+			((J2DPicture*)unk28->search('s_2a' + row * 0x100 + i))
+			    ->changeTexture(unk814[row][lang]->getTexInfo(), 0);
+
+	for (int i = 0; i < 9; ++i)
+		((J2DPicture*)unk2C->search('st_0' + i))
+		    ->changeTexture(unk8A0[i][lang]->getTexInfo(), 0);
+
+	((J2DPicture*)unk2C->search('s_tl'))
+	    ->changeTexture(unk954[lang]->getTexInfo(), 0);
 }
 
 void TCardLoad::resetScoreScreenObjects()
@@ -691,8 +803,10 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			break;
 
 		case 2:
-			if (unk754->movementOption())
+			if (unk754->movementOption()) {
+				changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 				unk14 = 7;
+			}
 			break;
 
 		case 7:
