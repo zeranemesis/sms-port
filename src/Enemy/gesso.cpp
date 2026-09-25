@@ -793,6 +793,12 @@ void TGesso::turnOut()
 }
 
 // TODO: the size & logic matches but it won't inline =(
+// Kept `inline` on purpose: the ROM has no live call to this (the link map
+// lists checkDropInWater__6TGessoFv as UNUSED, i.e. it was emitted but fully
+// dead-stripped), so the call site was inlined. Defining it out of line to
+// measure it against the map's 0x144 size confirms the body is byte-for-byte
+// the right one -- but it turns the call site into a real `bl` and costs match
+// quality, so the inline form is the correct reconstruction.
 inline bool TGesso::checkDropInWater()
 {
 	// Don't skip your calculus class, kids.

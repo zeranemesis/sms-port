@@ -153,6 +153,27 @@ build/binutils/powerpc-eabi-objdump.exe -s -j .rodata build/GMSP01/obj/<unit>.o
 
 What is left after that is TU-specific: `MarNameRefGen_MapObj` still needs 24 more bytes (12 zero bytes then three `1.0f`) at `+0xE0`, which come from some static of the original file that has not been identified yet.
 
+## Measuring an UNUSED function against its map size
+
+`validate-symbol-order.py` reports UNUSED symbols as MISSING whenever the optimiser folded the body away, and it can only compare a size when the symbol is actually emitted.
+That combination makes it look like a failure when the reconstruction is in fact perfect.
+
+To check a candidate body, temporarily define the function **out of line** (drop the `inline` keyword) and read the compiled size:
+
+```
+ninja build/GMSP01/src/<path>.o
+build/binutils/powerpc-eabi-nm.exe -S build/GMSP01/src/<path>.o | grep <symbol>
+```
+
+Concretely: `TGesso::checkDropInWater` is listed as UNUSED at 0x144 bytes and is absent from our object.
+Defined out of line it compiles to exactly `00000144`, which proves the guessed body is byte-for-byte the original.
+
+**Then put the `inline` back.** The symbol being UNUSED means the original had no live call to it, so the call site was inlined; emitting a real `bl` there costs real match quality (this cost 0.01% of overall fuzzy match).
+Keep the measurement in a comment next to the function, and treat the validator's MISSING entry for that symbol as expected.
+
+Beware that this only works for a function defined in the `.cpp`.
+Moving an inline *header* function out of line changes every TU that includes it.
+
 ## MWCC 1.2.5 stack padding bugs
 
 Our version of MWCC has a bug where the backend allocates more stack than necessary.

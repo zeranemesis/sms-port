@@ -191,6 +191,10 @@ public:
 
 	void changeToothAlpha(u8);
 
+	// The link map lists updateTremble__13TBossEelToothFv as UNUSED at 0x4
+	// bytes, i.e. a single `blr`: the body was empty and always inlined away.
+	void updateTremble();
+
 public:
 	/* 0x068 */ TSharedParts* mSharedParts;
 	/* 0x06C */ TBossEel* mOwner;

@@ -796,6 +796,8 @@ TBossEelTooth::TBossEelTooth(u8 toothType, TBossEel* owner,
 
 void TBossEelTooth::changeToothAlpha(u8 alpha) { mColor.a = alpha; }
 
+void TBossEelTooth::updateTremble() { }
+
 BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 {
 	BOOL result = false;
