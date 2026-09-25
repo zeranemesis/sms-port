@@ -30,6 +30,7 @@ public:
 	void changePattern(J2DPicture*, s16, u32);
 	void setupTitleScreen();
 	void setupScoreScreen();
+	void resetScoreScreenObjects();
 	void loadAfter();
 	bool titleDraw();
 	void makeBuffer(J2DTextBox*, int);

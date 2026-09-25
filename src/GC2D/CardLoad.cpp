@@ -486,6 +486,47 @@ void TCardLoad::setupScoreScreen()
 	unk740->setAlpha(0);
 }
 
+void TCardLoad::resetScoreScreenObjects()
+{
+	int shineAreas[] = { 2, 3, 4, 5, 6, 8, 7 };
+
+	for (int i = 0; i < 7; ++i) {
+		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
+
+		for (int j = 0; j < 3; ++j)
+			unk584[i].unk4[j]
+			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
+
+		for (int j = 0; j < 8; ++j) {
+			J2DPane* pane = unk2C->search('sh0a' + i * 0x100 + j);
+			unk584[i].unk10[j] = pane;
+
+			if (!SMS_isGetShine(shineAreas[i], j, false))
+				pane->hide();
+		}
+
+		for (int j = 0; j < 2; ++j) {
+			J2DPane* pane = unk2C->search('sh0i' + i * 0x100 + j);
+			unk584[i].unk30[j] = pane;
+			pane->hide();
+		}
+
+		unk584[i].unk38 = unk2C->search('sh0k' + i);
+		unk584[i].unk38->hide();
+	}
+
+	for (int i = 0; i < 3; ++i) {
+		unk728[i] = unk2C->search('\0t_1' + i);
+		unk728[i]->hide();
+	}
+
+	unk740 = unk2C->search('\0t_p');
+	unk744 = unk2C->search('s_tl');
+	unk748 = (J2DPicture*)unk2C->search('\0n_a');
+	unk74C = (J2DPicture*)unk2C->search('\0n_b');
+	unk750 = (J2DPicture*)unk2C->search('\0n_c');
+}
+
 void TCardLoad::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
