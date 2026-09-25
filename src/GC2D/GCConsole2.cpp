@@ -2214,6 +2214,12 @@ void TGCConsole2::startDisappearTank()
 	unk274->setPanePosition(40, start, mid, end);
 	unk270->setPanePosition(40, start, mid, end);
 	unk26C->setPanePosition(40, start, mid, end);
+
+	if (gpMarioOriginal->mYoshi->mState != TYoshi::STATE_MOUNTED) {
+		unk324->hide();
+		for (int i = 0; i < 4; ++i)
+			unk314[i]->hide();
+	}
 }
 
 void TGCConsole2::startAppearCoin()
