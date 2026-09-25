@@ -53,8 +53,6 @@ MSRandVol::MSRandVol(u32 param)
 	mAmplitudes[3] = 1.0f;
 }
 
-u32 MSRandVol::getRandomVolume(u32 param_1, u32 param_2) { }
-
 f32 MSRandVol::getRandVol(u32 param_1)
 {
 	f32 d = JALCalc::getRandom(
