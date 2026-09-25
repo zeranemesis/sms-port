@@ -466,8 +466,6 @@ void TMarDirector::currentStateFinalize(u8 next_state)
 
 		SMSGetApplication()->getFader()->startWipe(unkE4, 0.4f, 0.0f);
 		SMSRumbleMgr->reset();
-		if (SMSGetApplication()->mCurrArea.getStage() == 1)
-			THPPlayerPlay();
 		break;
 
 	case STATE_UNK1:
