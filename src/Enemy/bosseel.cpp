@@ -1999,7 +1999,8 @@ static s32 hoseiDiveCameraCallback(u32 actorAddress, u32 state)
 void TBossEel::startMoguCamera()
 {
 	if (!mMoguCameraActive) {
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0015, true);
+		gpMarDirector->getConsole()->startAppearBalloon(
+		    VERSION_SELECT(GMSJ01(0xE0015), GMSP01(0x15)), true);
 		SMSGetMarDirector()->fireStartDemoCamera(
 		    "meoto_mogu_camera", &mPosition, -1, 0.0f, false,
 		    &hoseiDiveCameraCallback, reinterpret_cast<u32>(this), nullptr,
@@ -2017,7 +2018,8 @@ DEFINE_NERVE(TNerveBossEelWaitAppear, TLiveActor)
 		eel->setBckAnm(10);
 
 	if (spine->getTime() == 2500)
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0012, true);
+		gpMarDirector->getConsole()->startAppearBalloon(
+		    VERSION_SELECT(GMSJ01(0xE0012), GMSP01(0x12)), true);
 
 	JGeometry::TVec3<f32> marioPosition = *gpMarioPos;
 	marioPosition.y += 75.0f;
@@ -2145,7 +2147,8 @@ DEFINE_NERVE(TNerveBossEelAppear, TLiveActor)
 		eel->mBarrierCollision->onHitFlag(HIT_FLAG_NO_COLLISION);
 		if (eel->mCollisionEnabled) {
 			eel->mCollisionEnabled = false;
-			gpMarDirector->getConsole()->startAppearBalloon(0xE0013, true);
+			gpMarDirector->getConsole()->startAppearBalloon(
+			    VERSION_SELECT(GMSJ01(0xE0013), GMSP01(0x13)), true);
 		}
 		return true;
 	}
@@ -2305,7 +2308,8 @@ DEFINE_NERVE(TNerveBossEelDie, TLiveActor)
 	if (spine->getTime() == 0) {
 		SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_VOICE_LAST,
 		                                &eel->mPosition, 0, nullptr, 0, 4);
-		gpMarDirector->getConsole()->startAppearBalloon(0xE0014, true);
+		gpMarDirector->getConsole()->startAppearBalloon(
+		    VERSION_SELECT(GMSJ01(0xE0014), GMSP01(0x14)), true);
 		MSBgm::stopTrackBGMs(7, 10);
 		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK1E, 1.0f);
 		eel->setBckAnm(3);

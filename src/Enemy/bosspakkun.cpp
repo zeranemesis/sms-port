@@ -739,7 +739,7 @@ TBossPakkun::TBossPakkun(const char* name)
     , unk1B8(0)
     , unk1BC(0)
     , unk1C0(0)
-    , unk1C4(0)
+    , unk1C4(VERSION_SELECT(GMSJ01(0), GMSP01(1)))
     , unk1CC(0)
 {
 	offLiveFlag(LIVE_FLAG_UNK100);
@@ -862,7 +862,7 @@ void TBossPakkun::rumblePad(int type, const JGeometry::TVec3<f32>& position)
 	if (!SMS_IsMarioTouchGround4cm())
 		return;
 
-	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+	JGeometry::TVec3<f32> delta = *gpMarioPos;
 	delta -= position;
 	f32 distance = delta.length();
 	f32 power    = (3000.0f - distance) / 1000.0f;
@@ -893,7 +893,11 @@ void TBossPakkun::showMessage(u32 message)
 	if (message == 1)
 		mask = 0;
 	else
-		mask = 1u << message;
+#ifdef VERSION_GMSP01
+		mask = 1 << message;
+#else
+		mask = 1u << (message & 0x1f);
+#endif
 
 	if (!(unk1C0 & mask)) {
 		TGCConsole2* console = gpMarDirector->getConsole();
@@ -1466,7 +1470,7 @@ DEFINE_NERVE(TNerveBPWait, TLiveActor)
 DEFINE_NERVE(TNerveBPCannon, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 
 	if (spine->getTime() == 0)
 		boss->changeBck(21);
@@ -1487,7 +1491,7 @@ DEFINE_NERVE(TNerveBPCannon, TLiveActor)
 DEFINE_NERVE(TNerveBPVomit, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(21);
 
@@ -1518,8 +1522,8 @@ DEFINE_NERVE(TNerveBPVomit, TLiveActor)
 		} else {
 			if (!boss->is2ndFightNow()) {
 				if (!(boss->unk1C0 & 1))
-					gpMarDirector->getConsole()->startAppearBalloon(0xE0000,
-					                                                true);
+					gpMarDirector->getConsole()->startAppearBalloon(
+					    VERSION_SELECT(GMSJ01(0xE0000), GMSP01(0)), true);
 				boss->unk1C0 |= 1;
 			}
 			return true;
@@ -1537,7 +1541,7 @@ DEFINE_NERVE(TNerveBPVomit, TLiveActor)
 DEFINE_NERVE(TNerveBPTornado, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0) {
 		boss->changeBck(24);
 		gpMarioParticleManager->emitAndBindToSRTMtxPtr(
@@ -1607,7 +1611,7 @@ DEFINE_NERVE(TNerveBPSwallow, TLiveActor)
 DEFINE_NERVE(TNerveBPTumbleIn, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(3);
 
@@ -1654,7 +1658,7 @@ DEFINE_NERVE(TNerveBPTumble, TLiveActor)
 DEFINE_NERVE(TNerveBPTumbleOut, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0) {
 		boss->changeBck(14);
 		gpCameraShake->startShake(static_cast<EnumCamShakeMode>(0x10), 1.0f);
@@ -1665,12 +1669,20 @@ DEFINE_NERVE(TNerveBPTumbleOut, TLiveActor)
 		if (actor->checkCurBckFromIndex(14)) {
 			boss->changeBck(22);
 			if (!boss->is2ndFightNow()) {
+#ifdef VERSION_GMSP01
+				boss->unk1C4 -= 1;
+				if (boss->unk1C4 <= 0) {
+					gpMarDirector->getConsole()->startAppearBalloon(1, true);
+					boss->unk1C4 = 3;
+				}
+#else
 				boss->unk1C4 += 1;
 				if (boss->unk1C4 >= 3) {
 					gpMarDirector->getConsole()->startAppearBalloon(0xe0001,
 					                                                true);
 					boss->unk1C4 = 0;
 				}
+#endif
 			}
 		} else {
 			spine->pushAfterCurrent(&TNerveBPWait::theNerve());
@@ -1691,7 +1703,7 @@ DEFINE_NERVE(TNerveBPTumbleOut, TLiveActor)
 DEFINE_NERVE(TNerveBPGetUp, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0) {
 		boss->changeBck(14);
 		gpCameraShake->startShake(static_cast<EnumCamShakeMode>(0x10), 1.0f);
@@ -1709,7 +1721,7 @@ DEFINE_NERVE(TNerveBPGetUp, TLiveActor)
 DEFINE_NERVE(TNerveBPSwing, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(15);
 	if (spine->getTime() == 0) {
@@ -1725,7 +1737,7 @@ DEFINE_NERVE(TNerveBPSwing, TLiveActor)
 DEFINE_NERVE(TNerveBPStompReact, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 
 	if (spine->getTime() == 0) {
 		boss->changeBck(5);
@@ -1749,7 +1761,7 @@ DEFINE_NERVE(TNerveBPStompReact, TLiveActor)
 DEFINE_NERVE(TNerveBPJumpReact, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(17);
 	if (actor->curAnmEndsNext(0, nullptr))
@@ -1760,7 +1772,7 @@ DEFINE_NERVE(TNerveBPJumpReact, TLiveActor)
 DEFINE_NERVE(TNerveBPPreDie, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0) {
 		boss->changeBck(5);
 		boss->mHeadHit->onHitFlag(HIT_FLAG_NO_COLLISION);
@@ -1779,7 +1791,7 @@ DEFINE_NERVE(TNerveBPPreDie, TLiveActor)
 DEFINE_NERVE(TNerveBPDie, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 
 	if (spine->getTime() == 0) {
 		SMSGetMSound()->unk98->modBgm(0, 1);
@@ -1885,7 +1897,7 @@ DEFINE_NERVE(TNerveBPTouchDown, TLiveActor)
 DEFINE_NERVE(TNerveBPFlyCannon, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(12);
 	if (spine->getTime() == 168)
@@ -1898,6 +1910,7 @@ DEFINE_NERVE(TNerveBPFlyCannon, TLiveActor)
 DEFINE_NERVE(TNerveBPFlyPivot, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0)
 		boss->changeBck(11);
 	if (boss->turnToCurPathNode(
@@ -1942,7 +1955,7 @@ DEFINE_NERVE(TNerveBPHover, TLiveActor)
 DEFINE_NERVE(TNerveBPFall, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 	if (spine->getTime() == 0) {
 		boss->offLiveFlag(LIVE_FLAG_UNK10);
 		boss->onLiveFlag(LIVE_FLAG_AIRBORNE);
@@ -2002,7 +2015,8 @@ DEFINE_NERVE(TNerveBPBreakSleep, TLiveActor)
 		boss->changeBck(14);
 		MSBgm::stopTrackBGMs(7, 10);
 	}
-	if (boss->mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+	MActor* actor = boss->getMActor();
+	if (actor->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 		spine->pushAfterCurrent(&TNerveBPTakeOff::theNerve());
 		return true;
 	}
@@ -2012,23 +2026,14 @@ DEFINE_NERVE(TNerveBPBreakSleep, TLiveActor)
 DEFINE_NERVE(TNerveBPWaitL, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 
 	if (spine->getTime() == 0)
 		actor->setBck("bosspaku_wait");
 
 	if (spine->getTime()
 	    >= boss->getBossPakkunParams()->mSLWaitFrameStg0.get()) {
-		JGeometry::TVec3<f32>* marioPos = gpMarioPos;
-		if (boss->unk188 == nullptr) {
-			boss->unk188 = static_cast<TAreaCylinderManager*>(
-			    gpConductor->search("ゲロエリアマネージャー"));
-		}
-
-		BOOL marioInArea = boss->unk188 == nullptr
-		                       ? false
-		                       : boss->unk188->contain(*marioPos);
-		if (marioInArea) {
+		if (boss->inArea(*gpMarioPos)) {
 			if (!SMS_GetMarioGroundPlane()->isWaterSurface()) {
 				spine->pushAfterCurrent(&TNerveBPCannonL::theNerve());
 				return true;
@@ -2047,7 +2052,7 @@ DEFINE_NERVE(TNerveBPWaitL, TLiveActor)
 DEFINE_NERVE(TNerveBPCannonL, TLiveActor)
 {
 	TBossPakkun* boss = static_cast<TBossPakkun*>(spine->getBody());
-	MActor* actor     = boss->mMActor;
+	MActor* actor     = boss->getMActor();
 
 	if (spine->getTime() == 0)
 		actor->setBck("bosspaku_pollut_start");
