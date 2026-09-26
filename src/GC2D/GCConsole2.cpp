@@ -2111,18 +2111,8 @@ void TGCConsole2::endCameraDemo()
 
 	unk50 = 0;
 
-	if (!unk2F8->isInterpolatorAtZero() && !unk45
-	    && !TFlagManager::smInstance->getBool(0x30002)) {
-		unk45 = 1;
-		unk59 = 1;
-		unk7C = 0;
-		unk2F8->getPane()->show();
-		unk2F8->setPaneOffset(unk98, 0, 0, 0, 465 - unk2F8->mInitialBounds.y1);
-		unk26C->setPanePosition(50, JUTPoint(0, 100), JUTPoint(0, -30),
-		                        JUTPoint(0, -30));
-		unk274->getPane()->hide();
-		unk29C->getPane()->hide();
-	}
+	if (!unk2F8->isInterpolatorAtZero())
+		startAppearTank();
 
 	unk40 = 1;
 	unk41 = 0;
@@ -2157,7 +2147,6 @@ void TGCConsole2::startAppearTank()
 		return;
 	}
 
-	// TODO: needs register swapping
 	unk45 = 1;
 	unk59 = 1;
 	unk7C = 0;
@@ -2168,8 +2157,8 @@ void TGCConsole2::startAppearTank()
 	unk26C->setPanePosition(50, JUTPoint(0, 100), JUTPoint(0, -30),
 	                        JUTPoint(0, -30));
 
-	unk274->getPane()->show();
-	unk29C->getPane()->show();
+	unk274->getPane()->hide();
+	unk29C->getPane()->hide();
 }
 #pragma dont_inline off
 
