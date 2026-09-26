@@ -147,7 +147,7 @@ u32 TBiancoWatermill::touchWater(THitActor*) { return 0; }
 void TBiancoWatermill::control()
 {
 	mRotation.z -= unk138;
-	gpMSound->startSoundActorWithInfo(0x3043, &mPosition, nullptr,
+	SMSGetMSound()->startSoundActorWithInfo(0x3043, &mPosition, nullptr,
 	                                  fabsf(unk138), 0, 0, &unk13C, 0, 4);
 }
 
@@ -286,7 +286,7 @@ u32 TBiancoMiniWindmill::touchWater(THitActor* water)
 		unk154 = mRotSpeedMax;
 		JGeometry::TVec3<f32> point(
 		    mPosition.x, 550.0f + unk15C->mPosition.y, mPosition.z);
-		mAppearYSpeed = 0.0f;
+		mAppearSpeed = 0.0f;
 		appearObjFromPoint(point);
 	}
 	return 1;

@@ -224,10 +224,10 @@ void TMapObjGeneral::appearing()
 		mScaling.x += mNormalAppearingScaleUp;
 		mScaling.y += mNormalAppearingScaleUp;
 		mScaling.z += mNormalAppearingScaleUp;
-		if (mScaling.x < mInitialScaling.x)
+		if (mScaling.x < getInitialScaling().x)
 			return;
 
-		mScaling.set(mInitialScaling);
+		mScaling.set(getInitialScaling());
 	}
 
 uuuh:
