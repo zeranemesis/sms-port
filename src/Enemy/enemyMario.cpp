@@ -1533,19 +1533,15 @@ void TEnemyMario::checkReturn()
 
 	int nodeIndex
 	    = mEMario->getTracer()->getGraph()->findNearestNodeIndex(mPosition, -1);
-	BOOL searching = true;
-	while (searching) {
+	int nodeCount = mEMario->getTracer()->getGraph()->getNodeNum();
+	for (int i = 0; i < nodeCount; ++i) {
 		JGeometry::TVec3<f32> point;
-		mEMario->getTracer()->getGraph()->getGraphNode(nodeIndex).getPoint(
+		int currentNode = (nodeIndex + i) % nodeCount;
+		mEMario->getTracer()->getGraph()->getGraphNode(currentNode).getPoint(
 		    &point);
 
-		if (point.distance(SMS_GetMarioPos()) > 1000.0f) {
-			searching = false;
+		if (point.distance(SMS_GetMarioPos()) > 1000.0f)
 			mPosition = point;
-		}
-
-		nodeIndex
-		    = (nodeIndex + 1) % mEMario->getTracer()->getGraph()->getNodeNum();
 	}
 }
 

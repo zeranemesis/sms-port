@@ -223,9 +223,9 @@ BOOL TMario::sleeping()
 	if ((mInput & 0xa41f) || unk108->mAnalogR > 0.0f
 	    || unk108->mAnalogL > 0.0f) {
 		if (mStatusState == 0)
-			startSoundActor(MSD_SE_MV12_REACT_03);
+			startVoice(MSD_SE_MV12_REACT_03);
 		else
-			startSoundActor(MSD_SE_MV17_EXERT_REACT_02);
+			startVoice(MSD_SE_MV17_EXERT_REACT_02);
 		return changePlayerStatus(MARIO_STATUS_WAKEUP, mStatusState, false);
 	}
 

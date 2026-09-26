@@ -2190,7 +2190,7 @@ void TGCConsole2::startDisappearTank()
 	unk270->setPanePosition(40, start, mid, end);
 	unk26C->setPanePosition(40, start, mid, end);
 
-	if (gpMarioOriginal->mYoshi->mState == TYoshi::STATE_MOUNTED) {
+	if (gpMarioOriginal->mYoshi->mState != TYoshi::STATE_MOUNTED) {
 		unk324->hide();
 		for (int i = 0; i < 4; ++i)
 			unk314[i]->hide();
@@ -2827,7 +2827,7 @@ bool TGCConsole2::startAppearBalloon(u32 messageID, bool autoClose)
 	unk3F8 = autoClose;
 	unk3E4 = (s32)(strlen((const char*)messageText) * unk3EC + unk3E8);
 
-	if (unk3E0 == 0x000E002F)
+	if (unk3E0 == 0x2C)
 		unk3E4 = 0x96;
 
 	if (unk3E4 <= 0)

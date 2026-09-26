@@ -893,7 +893,7 @@ void TBossPakkun::showMessage(u32 message)
 	if (message == 1)
 		mask = 0;
 	else
-		mask = 1u << (message & 0x1f);
+		mask = 1u << message;
 
 	if (!(unk1C0 & mask)) {
 		TGCConsole2* console = gpMarDirector->getConsole();

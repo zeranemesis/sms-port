@@ -1866,6 +1866,7 @@ void TMario::checkPlayerAction(JDrama::TGraphics* graphics)
 void TMario::stateMachine()
 {
 	int result = 1;
+	int loopCount = 0;
 	while (result != 0) {
 		switch (mStatus & MARIO_STATUS_TYPE_MASK) {
 		case MARIO_STATUS_TYPE_WAITING:
@@ -1890,6 +1891,9 @@ void TMario::stateMachine()
 			result = actnMain();
 			break;
 		}
+
+		if (++loopCount > 10)
+			break;
 	}
 }
 

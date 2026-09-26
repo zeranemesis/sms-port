@@ -352,7 +352,7 @@ BOOL TMario::backJumping()
 
 BOOL TMario::landing()
 {
-	if (mVel.y < 0.0f) {
+	if (mVel.y < 0.0f && mStatusArg < 3) {
 		if (mStatusTimer++ > 240) {
 			mStatusTimer = 240;
 			startSoundActor(MSD_SE_MV10B_CRY_JUMP_01);
