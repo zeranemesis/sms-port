@@ -612,7 +612,7 @@ void TTamaNoko::setDeadAnm() { setBckAnm(3); }
 
 BOOL TTamaNoko::isReachedToGoal() const
 {
-	JGeometry::TVec3<f32> pos = unk104.getPoint();
+	JGeometry::TVec3<f32> pos = getUnk104().getPoint();
 	pos -= mPosition;
 	pos.y = 0.0f;
 	if (pos.x == 0.0f && pos.z == 0.0f)

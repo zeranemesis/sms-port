@@ -194,16 +194,15 @@ void THamuKuriManager::loadAfter()
 	}
 }
 
-static const char* anmlist[] = {
-	"hamukuri_walk",
-	"hamukuri_run",
-	// TODO: this shouldn't be here but rodata ordering looks like it should?!
-	// "default.bmd",
-	"hanekuri_wait",
-};
-
 void THamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3023 in the map is UNUSED and 3 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hamukuri_walk",
+		"hamukuri_run",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "default.bmd",
 		  J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
@@ -373,6 +372,12 @@ TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 
 void THaneHamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3101 in the map is UNUSED and 2 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hanekuri_wait",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "hanekuri.bmd", 0x10250000, 0 },
 		{ nullptr, 0, 0 },
@@ -1357,7 +1362,7 @@ void THaneHamuKuri::bind()
 
 BOOL THaneHamuKuri::isReachedToGoal() const
 {
-	JGeometry::TVec3<f32> local_c = unk104.getPoint();
+	JGeometry::TVec3<f32> local_c = getUnk104().getPoint();
 	local_c -= mPosition;
 	local_c.y = 0.0f;
 	if (MsVECMag2(&local_c) < 100.0f)
@@ -1477,7 +1482,7 @@ void TDoroHaneKuri::attackToMario()
 			mSpine->pushNerve(&TNerveDoroHaneRise::theNerve());
 			onHaveCap();
 			MtxPtr mtx = mMActor->getModel()->getAnmMtx(unk1AC);
-			unk200.set(mtx[3][0], mtx[3][1], mtx[3][2]);
+			unk200.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 			gpMarioParticleManager->emitAndBindToPosPtr(0xCD, &unk200, 0,
 			                                            nullptr);
 		}
@@ -1577,11 +1582,9 @@ void THaneHamuKuri2::walkBehavior(int param_1, f32 param_2)
 		unk234 -= 1.0f;
 
 	unk210      = MsSin(unk20C * 360.0f / flyBaseFrequency) * flyBaseAmplitude;
-	mPosition.y = unk210 + unk230 + unk234;
-	mTurnSpeed
-	    = ((THaneHamuKuriSaveLoadParams*)getSaveParam())->mSLTurnSpeedLow.get();
-	mMarchSpeed = ((THaneHamuKuriSaveLoadParams*)getSaveParam())
-	                  ->mSLMarchSpeedLow.get();
+	mPosition.y = unk210 + (unk230 + unk234);
+	mTurnSpeed  = getSaveParam2()->mSLTurnSpeedLow.get();
+	mMarchSpeed = getSaveParam2()->mSLMarchSpeedLow.get();
 
 	if (!isBckAnm(4))
 		TWalkerEnemy::walkBehavior(param_1, param_2);
@@ -1589,7 +1592,7 @@ void THaneHamuKuri2::walkBehavior(int param_1, f32 param_2)
 
 BOOL THaneHamuKuri2::isReachedToGoal() const
 {
-	JGeometry::TVec3<f32> local_c = unk104.getPoint();
+	JGeometry::TVec3<f32> local_c = getUnk104().getPoint();
 	local_c -= mPosition;
 	local_c.y = 0.0f;
 	if (MsVECMag2(&local_c) < 20.0f)
@@ -1787,8 +1790,8 @@ BOOL TDangoHamuKuri::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &mPosition, 0,
-		                             nullptr);
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
+		                             0, nullptr);
 		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0.0f,
 		                        0.0f, 0, 0, 4);
 		if (mSprayedByWaterCooldown == 0) {
