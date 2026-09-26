@@ -9,6 +9,12 @@
 #include <Strategic/ObjManager.hpp>
 #include <MSound/MSound.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP
 // and vtable data. Only trivial destructors are matched so far; the rest
 // are placeholder stubs. TBeeHive is inferred to extend TRealoid (like

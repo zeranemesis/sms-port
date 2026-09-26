@@ -11,6 +11,12 @@
 #include <MSound/MSoundSE.hpp>
 #include <System/MarDirector.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 TTalk2D2* gpTalk2D;
 void* TTalk2D2::cColorTable;
 

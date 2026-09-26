@@ -8,6 +8,12 @@
 #include <Strategic/ObjManager.hpp>
 #include <Strategic/Spine.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 static const char* amiNoko_bastable[] = {
 	0,
 	"/scene/amiNoko/bas/aminoko_flying1_start.bas",

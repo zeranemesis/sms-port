@@ -9,6 +9,12 @@
 #include <Strategic/ObjModel.hpp>
 #include <M3DUtil/MActor.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // TODO: this whole TU is a from-scratch scaffold (no header existed before).
 // Field offsets, base classes and most function bodies were reconstructed
 // from m2c drafts of build/GMSP01/asm/Enemy/Kukku.s and have not yet been

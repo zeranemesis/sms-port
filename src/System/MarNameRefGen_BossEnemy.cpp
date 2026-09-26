@@ -17,6 +17,12 @@
 // .rodata ahead of the real name table, which is what the original TU did
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 JDrama::TNameRef* TMarNameRefGen::getNameRef_BossEnemy(const char* name) const
 {
 	// Branch list and per-branch constructor arguments recovered from the

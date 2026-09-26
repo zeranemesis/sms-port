@@ -7,6 +7,12 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MSound/MSound.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // NOTE: this TU uses -inline deferred, so definitions are emitted in
 // reverse source order; keep them in reverse of marioEU.MAP address order
 // (TSandEgg < TLeanMirror < TSandBomb in the map).

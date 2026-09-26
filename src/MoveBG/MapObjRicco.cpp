@@ -18,6 +18,12 @@
 #include <Map/MapCollisionEntry.hpp>
 #include <PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/string.h>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // NOTE: this unit is reverse_fn_order (per tools/validate-symbol-order.py):
 // with -inline deferred, MWCC emits functions in the reverse of source
 // order, so definitions below are ordered backwards from the retail
