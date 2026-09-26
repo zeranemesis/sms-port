@@ -168,57 +168,43 @@ s16 matan(f32 param_1, f32 param_2)
 	return result;
 }
 
-static inline void MsGetRotFromZaxisY2(const JGeometry::TVec3<f32>& axis,
-                                       f32* out)
-{
-	if (axis.z == 0.0f) {
-		if (axis.x > 0.0f) {
-			*out = 90.0f;
-			return;
-		} else {
-			*out = -90.0f;
-			return;
-		}
-	}
-
-	if (axis.z > 0.0f) {
-		*out = (360.0f / 65536.0f) * matan(axis.z, axis.x);
-	} else {
-		f32 theta = matan(-axis.z, axis.x) * (360.0f / 65536.0f);
-		*out      = 180.0f - theta;
-	}
-}
-
-// TODO: very much fake
-static inline void MsGetRotFromZaxisX2(const JGeometry::TVec3<f32>& axis,
-                                       f32* out)
-{
-	if (axis.y == 1.0f) {
-		*out = 90.0f;
-		return;
-	} else if (axis.y == -1.0f) {
-		*out = -90.0f;
-		return;
-	}
-
-	f32 a = 1.0f - axis.y * axis.y;
-
-	// TODO: it smells to me like this entire function is not real but a result
-	// of MWCC optimizing out stuff for once
-
-	*out = -(matan(MsSqrtf(a), axis.y) * (360.0f / 65536.0f));
-}
-
 JGeometry::TVec3<f32> MsGetRotFromZaxis(const JGeometry::TVec3<f32>& param_1)
 {
 	JGeometry::TVec3<f32> result;
+	// TODO: temporary validation hack — frame is 8 bytes short without it
+	char trash[0x8];
 	result.zero();
 
 	JGeometry::TVec3<f32> axis = param_1;
 	axis.normalize();
 
-	MsGetRotFromZaxisX2(axis, &result.x);
-	MsGetRotFromZaxisY2(axis, &result.y);
+	if (axis.y == 1.0f) {
+		result.x = -90.0f;
+	} else if (axis.y == -1.0f) {
+		result.x = 90.0f;
+	} else {
+		// y must stay in a register across the volatile store inside MsSqrtf
+		// (target keeps it in f2 all the way to the matan call)
+		f32 y    = axis.y;
+		f32 tan  = matan(MsSqrtf(1.0f - y * y), y);
+		f32 phi  = tan * (360.0f / 65536.0f);
+
+		result.x = -phi;
+	}
+
+	if (axis.z == 0.0f) {
+		if (axis.x > 0.0f)
+			result.y = 90.0f;
+		else
+			result.y = -90.0f;
+	} else if (axis.z > 0.0f) {
+		f32 tan   = matan(axis.z, axis.x);
+		f32 theta = (360.0f / 65536.0f) * tan;
+		result.y  = theta;
+	} else {
+		f32 theta = matan(-axis.z, axis.x) * (360.0f / 65536.0f);
+		result.y  = 180.0f - theta;
+	}
 
 	return result;
 }

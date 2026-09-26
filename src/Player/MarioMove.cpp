@@ -2348,7 +2348,7 @@ void TMario::thinkDiving() { }
 
 void TMario::thinkTorocco()
 {
-	mToroccoAngle += unk108->mStickH * mDeParams.mRecoverTimer.get();
+	mToroccoAngle += unk108->mStickHS16 * mDeParams.mToroccoRotSp.get();
 }
 
 void TMario::thinkSound()

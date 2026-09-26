@@ -14,20 +14,20 @@ void TAreaCylinder::load(JSUMemoryInputStream& stream)
 	JDrama::TNameRef::load(stream);
 
 	JGeometry::TVec3<f32> v;
+	int count;
+	f32 tmp;
+	s32 rate;
 
-	stream >> mPos.x >> mPos.y >> mPos.z;
-	stream >> v.x >> v.y >> v.z;
-	stream >> mRadius >> mHeight;
-	stream >> v.z;
+	stream >> mPos.x >> mPos.y >> mPos.z >> v.x >> v.y >> v.z;
+	stream >> mRadius >> mHeight >> v.z;
 
 	mRadius *= 50.0f;
 	mHeight *= 50.0f;
 
 	stream.readString();
 
-	int count = stream.readS32();
+	count = stream.readS32();
 	for (int i = 0; i < count; ++i) {
-		f32 tmp;
 		stream >> tmp;
 		stream.readString();
 	}
@@ -41,7 +41,6 @@ void TAreaCylinder::load(JSUMemoryInputStream& stream)
 
 	mgr->registerCylinder(this);
 
-	s32 rate;
 	stream >> rate;
 	mProbability = (f32)rate / 100.0f;
 }

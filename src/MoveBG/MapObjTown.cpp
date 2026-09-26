@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <MoveBG/MapObjTown.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/Item.hpp>
@@ -23,10 +27,8 @@
 #include <PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/string.h>
 #include <stdio.h>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 TMapObjSwitch* gpMapObjSwitch;
 

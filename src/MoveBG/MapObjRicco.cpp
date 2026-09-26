@@ -1,4 +1,10 @@
 #include <MoveBG/MapObjRicco.hpp>
+
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <M3DUtil/MActorUtil.hpp>
@@ -11,6 +17,12 @@
 #include <Map/MapCollisionManager.hpp>
 #include <Map/MapCollisionEntry.hpp>
 #include <PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/string.h>
+
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
 
 // NOTE: this unit is reverse_fn_order (per tools/validate-symbol-order.py):
 // with -inline deferred, MWCC emits functions in the reverse of source

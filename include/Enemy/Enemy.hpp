@@ -84,7 +84,13 @@ public:
 	f32 getWallRadius() const { return mBodyScale * mWallRadius; }
 	f32 getBodyRadius() const { return mBodyScale * mBodyRadius; }
 	f32 getBodyScale() const { return mBodyScale; }
-	u32 getMaxHitPoints() const
+	// return type verified against the binary: marioEU.dol emits
+	// `clrlwi rD, rS, 24` whenever this value reaches an int-typed context
+	// (e.g. `clrlwi r0, r4, 24` in TFireWanwan::updateHitPoint's clamp,
+	// `clrlwi r3, r0, 24` before the `divw` in TEffectEnemy::perform), but
+	// nothing at all when it is assigned straight to mHitPoints (u8 = u8).
+	// Both are only true if the return type is u8.
+	u8 getMaxHitPoints() const
 	{
 		return getSaveParam() ? getSaveParam()->mSLHitPointMax.get() : 1;
 	}

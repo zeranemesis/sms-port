@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <Map/MapEventDolpic.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapModel.hpp>
@@ -19,10 +23,8 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <string.h>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 bool TDolpicEventBiancoGate::isFinishedAll() const
 {

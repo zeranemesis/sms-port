@@ -57,7 +57,10 @@ public:
 
 class THinokuri2Manager : public TEnemyManager {
 public:
-	THinokuri2Manager(const char* name = "ヒノクリ２マネージャ");
+	THinokuri2Manager(const char* name = "ヒノクリ２マネージャ")
+	    : TEnemyManager(name)
+	{
+	}
 
 	virtual void load(JSUMemoryInputStream&);
 	void createModelData();

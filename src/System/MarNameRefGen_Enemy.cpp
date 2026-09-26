@@ -1,5 +1,6 @@
 #include <System/MarNameRefGen.hpp>
 #include <Enemy/EffectObj.hpp>
+#include <Enemy/effectEnemy.hpp>
 #include <Enemy/ElecNokonoko.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/Gesso.hpp>
@@ -10,11 +11,13 @@
 #include <Enemy/NameKuri.hpp>
 #include <Enemy/Pakkun.hpp>
 #include <Enemy/PoiHana.hpp>
+#include <Enemy/popo.hpp>
 #include <Enemy/RiccoHook.hpp>
 #include <Enemy/Rocket.hpp>
 #include <Enemy/SmallEnemy.hpp>
 #include <Enemy/TamaNoko.hpp>
 #include <Enemy/Telesa.hpp>
+#include <Enemy/FruitsBoat.hpp>
 #include <Enemy/DebuTelesa.hpp>
 #include <Enemy/GateKeeper.hpp>
 #include <Enemy/TypicalEnemy.hpp>
@@ -23,12 +26,19 @@
 #include <Enemy/beam.hpp>
 #include <Enemy/Amenbo.hpp>
 #include <Enemy/Kumokun.hpp>
+#include <Enemy/Kukku.hpp>
 #include <Enemy/EggGen.hpp>
 #include <Enemy/Igaiga.hpp>
 #include <Animal/AnimalBase.hpp>
 #include <Animal/AnimalManager.hpp>
+#include <Animal/BeeHive.hpp>
+#include <Animal/Bird.hpp>
 #include <Animal/Butterfly.hpp>
 #include <Animal/fishoid.hpp>
+
+// rogue include: puts the dummy string pair and the MActor mtx-calc names in
+// .rodata ahead of the real name table, which is what the original TU did
+#include <M3DUtil/InfectiousStrings.hpp>
 
 JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 {
@@ -48,27 +58,31 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	if (strcmp(name, "EnemyManager") == 0)
 		return new TEnemyManager;
 
-	// TODO:
-	// if (strcmp(name, "FruitsBoat") == 0 || strcmp(name, "FruitsBoatG") == 0
-	// ||
-	//     strcmp(name, "FruitsBoatP") == 0 || strcmp(name, "FruitsBoatY") == 0)
-	//     return new TFruitsBoat("フルーツの船");
+	if (strcmp(name, "FruitsBoat") == 0)
+		return new TFruitsBoat("フルーツの船");
 
-	// TODO:
-	// if (strcmp(name, "FruitsBoatManager") == 0)
-	// 	return new TFruitsBoatManager(0, "フルーツの船マネージャー");
+	// PAL names the three colour variants B/C/D; the G/P/Y spelling seen in
+	// other dumps of this function does not exist in the PAL string pool.
+	if (strcmp(name, "FruitsBoatB") == 0)
+		return new TFruitsBoat("フルーツの船");
 
-	// TODO:
-	// if (strcmp(name, "FruitsBoatGManager") == 0)
-	// 	return new TFruitsBoatManager(1, "フルーツの船マネージャー");
+	if (strcmp(name, "FruitsBoatC") == 0)
+		return new TFruitsBoat("フルーツの船");
 
-	// TODO:
-	// if (strcmp(name, "FruitsBoatPManager") == 0)
-	// 	return new TFruitsBoatManager(2, "フルーツの船マネージャー");
+	if (strcmp(name, "FruitsBoatD") == 0)
+		return new TFruitsBoat("フルーツの船");
 
-	// TODO:
-	// if (strcmp(name, "FruitsBoatYManager") == 0)
-	//     return new TFruitsBoatManager(3, "フルーツの船マネージャー");
+	if (strcmp(name, "FruitsBoatManager") == 0)
+		return new TFruitsBoatManager(0, "フルーツの船マネージャー");
+
+	if (strcmp(name, "FruitsBoatManagerB") == 0)
+		return new TFruitsBoatManager(1, "フルーツの船マネージャー");
+
+	if (strcmp(name, "FruitsBoatManagerC") == 0)
+		return new TFruitsBoatManager(2, "フルーツの船マネージャー");
+
+	if (strcmp(name, "FruitsBoatManagerD") == 0)
+		return new TFruitsBoatManager(3, "フルーツの船マネージャー");
 
 	if (strcmp(name, "AnimalMew") == 0)
 		return new TAnimalBase(0x80001);
@@ -76,13 +90,11 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	if (strcmp(name, "MewManager") == 0)
 		return new TMewManager;
 
-	// TODO:
-	// if ( strcmp(name, "AnimalBird") == 0)
-	//     return new TAnimalBird;
+	if (strcmp(name, "AnimalBird") == 0)
+		return new TAnimalBird("(幸せの青い)鳥");
 
-	// TODO:
-	// if ( strcmp(name, "AnimalBirdManager") == 0)
-	//     return new TAnimalBirdManager;
+	if (strcmp(name, "AnimalBirdManager") == 0)
+		return new TAnimalBirdManager("(幸せの青い鳥マネージャー");
 
 	if (strcmp(name, "FishoidA") == 0)
 		return new TFishoid(0, "回遊魚Ａ");
@@ -99,13 +111,11 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	if (strcmp(name, "FishoidManager") == 0)
 		return new TFishoidManager;
 
-	// TODO:
-	// if ( strcmp( name, "BeeHive" ) == 0 )
-	//     return new TBeeHive;
+	if (strcmp(name, "BeeHive") == 0)
+		return new TBeeHive;
 
-	// TODO:
-	// if ( strcmp(name, "BeeHiveManager") == 0)
-	//     return new TBeeHiveManager;
+	if (strcmp(name, "BeeHiveManager") == 0)
+		return new TBeeHiveManager;
 
 	if (strcmp(name, "Butterfly") == 0)
 		return new TButterfloid(0, "蝶Ａ");
@@ -144,9 +154,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	// if (strcmp(name, "EffectEnemyManager") == 0)
 	// 	return new TEffectEnemyManager("エネミーマネージャー");
 
-	// TODO:
-	// if ( strcmp(name, "EffectEnemy") == 0)
-	//     return new TEffectEnemy("エフェクト敵");
+	if (strcmp(name, "EffectEnemy") == 0)
+		return new TEffectEnemy("エフェクト敵");
 
 	if (strcmp(name, "HauntLegManager") == 0)
 		return new THauntLegManager;
@@ -243,9 +252,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 	// if ( strcmp(name, "PopoManager") == 0)
 	//     return new TPopoManager;
 
-	// TODO:
-	// if ( strcmp( name, "Popo" ) == 0 )
-	//     return new TPopo;
+	if (strcmp(name, "Popo") == 0)
+		return new TPopo;
 
 	if (strcmp(name, "GorogoroManager") == 0)
 		return new TGorogoroManager;
@@ -465,9 +473,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Enemy(const char* name) const
 		return gpBeamManager;
 	}
 
-	// TODO:
-	// if ( strcmp( name, "KukkuManager" ) == 0 )
-	//     return new TKukkuManager;
+	if (strcmp(name, "KukkuManager") == 0)
+		return new TKukkuManager;
 
 	// TODO:
 	// if ( strcmp( name, "Kukku" ) == 0 )

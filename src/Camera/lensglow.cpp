@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <System/DummyStrings.hpp>
+
 #include <Camera/LensGlow.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
@@ -16,8 +20,6 @@
 #include <System/Resolution.hpp>
 #include <stdio.h>
 
-static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
-static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
 
 TLensGlow::TLensGlow(bool param_1, const char* name)
     : JDrama::TViewObj(name)

@@ -462,7 +462,7 @@ void TMario::setGamePad(TMarioGamePad* pad) { mGamePad = pad; }
 
 TMario::TDeParams::TDeParams()
     : TParams("/Mario/Mario.prm")
-    , PARAM_INIT(mHpMax, 8)
+    , mHpMax(this, 8, JDrama::TNameRef::calcKeyCode("mHPMax"), "mHPMax")
     , PARAM_INIT(mRunningMax, 45.0f)
     , PARAM_INIT(mDashMax, 60.0f)
     , PARAM_INIT(mDashAcc, 0.5f)

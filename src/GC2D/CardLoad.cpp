@@ -1332,14 +1332,16 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 			unk4CC[unkB0]->show();
 			TCardBookmarkInfo& info = unk40[unkB0];
 			if (info.unk0 == 1) {
-				strncpy(unk51C->getStringPtr(), "こわれています", 0x14);
-				strncpy(unk520->getStringPtr(), "こわれています", 0x14);
+				const char* message = SMSGetMessageData(unkA0, 0);
+				strncpy(unk51C->getStringPtr(), message, 0x14);
+				strncpy(unk520->getStringPtr(), message, 0x14);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else if (info.unk18 == 0) {
-				strncpy(unk51C->getStringPtr(), "NEW", 0x14);
-				strncpy(unk520->getStringPtr(), "NEW", 0x14);
+				const char* message = SMSGetMessageData(unkA0, 0x1B);
+				strncpy(unk51C->getStringPtr(), message, 0x14);
+				strncpy(unk520->getStringPtr(), message, 0x14);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
@@ -1914,13 +1916,17 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 			unk2A0->show();
 			for (int i = 0; i < 3; ++i) {
 				if (unk40[i].unk0 == 1) {
-					strncpy(unk2C0[i]->getStringPtr(), "こわれています", 20);
-					strncpy(unk2CC[i]->getStringPtr(), "こわれています", 20);
+					strncpy(unk2C0[i]->getStringPtr(),
+					        SMSGetMessageData(unkA0, 0), 20);
+					strncpy(unk2CC[i]->getStringPtr(),
+					        SMSGetMessageData(unkA0, 0), 20);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else if (unk40[i].unk18 == 0) {
-					strncpy(unk2C0[i]->getStringPtr(), "NEW", 20);
-					strncpy(unk2CC[i]->getStringPtr(), "NEW", 20);
+					strncpy(unk2C0[i]->getStringPtr(),
+					        SMSGetMessageData(unkA0, 0x1B), 20);
+					strncpy(unk2CC[i]->getStringPtr(),
+					        SMSGetMessageData(unkA0, 0x1B), 20);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else {
@@ -2066,7 +2072,7 @@ s8 TCardLoad::selectFunction()
 
 	case 1: {
 		bool done = true;
-		for (int i = 0; i < 4; ++i)
+		for (int i = 0; i < 3; ++i)
 			done &= unk2A4[i]->update();
 		done &= unk33C[unkB0]->update();
 		if (done) {
@@ -2228,7 +2234,7 @@ s8 TCardLoad::selectFunction()
 	case 4: {
 		bool done = true;
 		done &= unk33C[unkB0]->update();
-		for (int i = 0; i < 4; ++i)
+		for (int i = 0; i < 3; ++i)
 			done &= unk2A4[i]->update();
 		if (done) {
 			unk33C[unkB0]->getPane()->hide();
@@ -2448,7 +2454,7 @@ void TCardLoad::changeScene()
 	case PROGRESS_UNK11:
 	case PROGRESS_UNK12:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
-			gpCardManager->getBookmarkInfos(unk40);
+			unk1C = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNK13: {

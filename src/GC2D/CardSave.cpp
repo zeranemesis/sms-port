@@ -27,15 +27,16 @@
 extern JPAEmitterManager* gpEmitterManager4D2;
 
 u32 TCardSave::cMessageID[] = {
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xC,        0xF,        0x12,
-	0x4,        0x5,        0x6,        0x16,       0x1A,       0x14,
-	0xE,        0xD,        0x1,        0xA,        0x10,       0x19,
-	0x13,       0x18,       0x2,        0x8,        0x17,       0x1B,
-	0x15,       0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-	0x3,        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xE,        0x11,       0x14,
+	0x5,        0x6,        0x7,        0x18,       0x22,       0x16,
+	0x10,       0xF,        0x2,        0xB,        0x12,       0x21,
+	0x15,       0x1B,       0x3,        0x9,        0x1A,       0x23,
+	0x17,       0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0x4,        0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
 	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0x11,       0xB,        0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x9,        0x7,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x13,       0xD,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xA,        0x8,
+	0xC,
 };
 
 TEProgress TCardSave::changeMode(s32 param_1)
@@ -274,10 +275,33 @@ void TCardSave::initData(TMarioGamePad* param_1)
 	unk26C = unk254[0][0]->getBounds().x1;
 
 	unk14->search(0x6d61736b)->hide();
-	unk2E4 = JKRGetResource("/common/2d/savemessage.bmg");
+	unk2E4 = JKRGetResource("/cmn2d/savemessage.bmg");
 	if (!unk18)
 		unk2D8 = static_cast<TPauseMenu2*>(
 		    JDrama::TNameRefGen::search("ポーズメニュー"));
+
+#define INIT_SAVE_MESSAGE_PAIR(tagA, tagB, messageId)                       \
+	{                                                                      \
+		J2DTextBox* labelA = (J2DTextBox*)unk14->search(tagA);              \
+		J2DTextBox* labelB = (J2DTextBox*)unk14->search(tagB);              \
+		SMSMakeTextBuffer(labelA, 0x80);                                    \
+		labelA->setFont((JUTFont*)gpSystemFont);                             \
+		SMSMakeTextBuffer(labelB, 0x80);                                    \
+		labelB->setFont((JUTFont*)gpSystemFont);                             \
+		strncpy(labelA->getStringPtr(),                                     \
+		        SMSGetMessageData(unk2E4, messageId), 0x80);                 \
+		strncpy(labelB->getStringPtr(),                                     \
+		        SMSGetMessageData(unk2E4, messageId), 0x80);                 \
+	}
+	INIT_SAVE_MESSAGE_PAIR(0x736D3161, 0x736D3162, 0x1C);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3261, 0x736D3262, 0x1D);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3361, 0x736D3362, 0x1C);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3461, 0x736D3462, 0x1E);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3561, 0x736D3562, 0x1D);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3761, 0x736D3762, 0x1F);
+	INIT_SAVE_MESSAGE_PAIR(0x736D3861, 0x736D3862, 0x20);
+#undef INIT_SAVE_MESSAGE_PAIR
+
 	unk270 = param_1;
 }
 
@@ -652,14 +676,18 @@ s8 TCardSave::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 				}
 			} else {
 				if (getBookmarkInfo().unk0 == 1) {
-					strncpy(unk124->getStringPtr(), "こわれています", 0x14);
-					strncpy(unk128->getStringPtr(), "こわれています", 0x14);
+					const char* message = SMSGetMessageData(unk2E4, 0);
+					strncpy(unk124->getStringPtr(), message, 0x14);
+					message = SMSGetMessageData(unk2E4, 0);
+					strncpy(unk128->getStringPtr(), message, 0x14);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
 				} else if (getBookmarkInfo().unk18 == 0) {
-					strncpy(unk124->getStringPtr(), "NEW", 0x14);
-					strncpy(unk128->getStringPtr(), "NEW", 0x14);
+					const char* message = SMSGetMessageData(unk2E4, 0x19);
+					strncpy(unk124->getStringPtr(), message, 0x14);
+					message = SMSGetMessageData(unk2E4, 0x19);
+					strncpy(unk128->getStringPtr(), message, 0x14);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
@@ -912,14 +940,14 @@ s8 TCardSave::drawMessageBM(TEProgress param_1)
 
 			if (unk308 == 0 || unk308 == 6 || unk308 == 8) {
 				if (getBookmarkInfo().unk0 == 1) {
-					strncpy(unk124->getStringPtr(), "こわれています", 0x14);
-					strncpy(unk128->getStringPtr(), "こわれています", 0x14);
+					setMessage(unk124, 0x14, 0);
+					setMessage(unk128, 0x14, 0);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
 				} else if (getBookmarkInfo().unk18 == 0) {
-					strncpy(unk124->getStringPtr(), "NEW", 0x14);
-					strncpy(unk128->getStringPtr(), "NEW", 0x14);
+					setMessage(unk124, 0x14, 0x19);
+					setMessage(unk128, 0x14, 0x19);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
@@ -1581,6 +1609,7 @@ void TCardSave::execMovement_()
 	case PROGRESS_UNKC:
 	case PROGRESS_UNKD:
 	case PROGRESS_UNK2D:
+	case PROGRESS_UNK35:
 		if (gpCardManager->getLastStatus() != CARD_RESULT_NOCARD) {
 			waitForStop(PROGRESS_UNK1);
 			gpCardManager->probe();
@@ -1598,7 +1627,7 @@ void TCardSave::execMovement_()
 	case PROGRESS_UNK6:
 	case PROGRESS_UNK7:
 		if (gpCardManager->getLastStatus() != CARD_RESULT_NOCARD) {
-			waitForChoice(PROGRESS_UNK8, PROGRESS_UNK4, 1);
+			waitForChoice(PROGRESS_UNK8, PROGRESS_UNK35, 1);
 			gpCardManager->probe();
 		} else {
 			if (unkF8->isVisible())
@@ -1666,10 +1695,12 @@ void TCardSave::execMovement_()
 			if (r != -1)
 				gpCardManager->getBookmarkInfos(&unk278[0]);
 		} else {
-			if (unk178->isVisible()) {
-				unk160->setCenteredSize(20, 0, 0, unk164.getWidth(),
-				                        unk164.getHeight());
-				unk178->hide();
+			if (unk310 == PROGRESS_UNK2) {
+				if (unk178->isVisible()) {
+					unk160->setCenteredSize(20, 0, 0, unk164.getWidth(),
+					                        unk164.getHeight());
+					unk178->hide();
+				}
 			}
 			waitForAnyKey(PROGRESS_UNK3);
 		}
@@ -1732,7 +1763,7 @@ void TCardSave::execMovement_()
 
 	case PROGRESS_UNK12:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
-			gpCardManager->getBookmarkInfos(&unk278[0]);
+			unk310 = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNK10:

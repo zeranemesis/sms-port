@@ -5,6 +5,12 @@
 #include <Map/MapData.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // This unit is reverse_fn_order: with -inline deferred MWCC emits functions in
 // the reverse of their source order, so the source runs backwards relative to
 // the addresses in the map. Check with:

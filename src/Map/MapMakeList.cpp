@@ -178,11 +178,11 @@ bool TMapCollisionData::getGridArea(const TBGCheckData* param_1, int param_2,
 	if (*param_5 >= unk8)
 		*param_5 = unk8 - 1;
 
-	*param_4 = (minZ + mGridExtentX) * 0.0009765625f;
+	*param_4 = (minZ + mGridExtentY) * 0.0009765625f;
 	if (*param_4 < 0)
 		*param_4 = 0;
 
-	*param_6 = (maxZ + mGridExtentX) * 0.0009765625f;
+	*param_6 = (maxZ + mGridExtentY) * 0.0009765625f;
 	if (*param_6 >= unkC)
 		*param_6 = unkC - 1;
 

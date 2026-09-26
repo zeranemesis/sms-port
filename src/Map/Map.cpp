@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <Map/Map.hpp>
 #include <Map/MapCollisionData.hpp>
 #include <Map/MapModel.hpp>
@@ -23,10 +27,8 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JDrama/JDRViewObjPtrList.hpp>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 TMap* gpMap;
 
@@ -293,7 +295,7 @@ const TBGCheckData* TMap::intersectLine(const JGeometry::TVec3<f32>& param_1,
                                         bool param_3,
                                         JGeometry::TVec3<f32>* param_4) const
 {
-	mCollisionData->intersectLine(param_1, param_2, param_3, param_4);
+	return mCollisionData->intersectLine(param_1, param_2, param_3, param_4);
 }
 
 bool TMap::isTouchedOneWall(f32 x, f32 y, f32 z, f32 radius) const

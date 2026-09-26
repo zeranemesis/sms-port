@@ -1,5 +1,14 @@
 #include <Enemy/popo.hpp>
 
+// rogue include: dummy string pair, needed to match the .rodata prologue
+#include <System/DummyStrings.hpp>
+
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // TODO: this entire translation unit is freshly scaffolded from mario.MAP and
 // m2c drafts. Only trivial functions have been matched so far; most bodies
 // below are placeholders and are known non-matching.

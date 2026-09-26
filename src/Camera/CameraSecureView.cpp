@@ -28,7 +28,9 @@ void CPolarSubCamera::calcSecureViewTarget_(s16 angle, f32* outX, f32* outZ)
 		                                 mCurrentTarget.unk28);
 	}
 
-	f32 mag = -ABS(first * JMASSin(diff) + second * cos_d);
+	f32 mag = -(first * JMASSin(diff) + second * cos_d >= 0.0f
+                ? first * JMASSin(diff) + second * cos_d
+                : -(first * JMASSin(diff) + second * cos_d));
 
 	*outX = mag * JMASSin(base);
 	*outZ = mag * JMASCos(base);

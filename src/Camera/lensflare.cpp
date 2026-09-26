@@ -1,4 +1,10 @@
 #include <Camera/LensFlare.hpp>
+
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
@@ -84,10 +90,11 @@ void TLensFlare::perform(u32 cue, JDrama::TGraphics*)
 	if (cue & CUE_CALC_ANIM) {
 		JGeometry::TVec3<f32> sunWorldPos = gpSunModel->unk198;
 
-		// TODO: a mystery is happening here with the args, but it's definitely
-		// this inline (maybe one more inlining layer?)
+		// CLBCalcNearNinePos always writes the Euler-angle output, even though
+		// the lens flare only consumes the resulting grid.
 		JGeometry::TVec3<f32> near9grid[9];
-		CLBCalcNearNinePos(near9grid, nullptr, gpCamera->unk124,
+		S16Vec near9Euler;
+		CLBCalcNearNinePos(near9grid, &near9Euler, gpCamera->unk124,
 		                   gpCamera->mTarget, gpCamera->getFinalAngleZ(),
 		                   gpCamera->getNear(), gpCamera->getFovy(),
 		                   gpCamera->getAspect());

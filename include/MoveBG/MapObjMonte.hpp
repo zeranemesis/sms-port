@@ -9,14 +9,20 @@
 class TMapObjMonteRoot : public TMapObjBase {
 public:
 	void initMapObj();
-	TMapObjMonteRoot(const char* name = "根っこ");
+	TMapObjMonteRoot(const char* name = "根っこ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TJumpMushroom : public TMapObjBase {
 public:
 	BOOL receiveMessage(THitActor*, unsigned long);
 	void load(JSUMemoryInputStream&);
-	TJumpMushroom(const char* name = "ジャンプきのこ");
+	TJumpMushroom(const char* name = "ジャンプきのこ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class THangingBridgeBoard : public TLeanBlock {
@@ -30,6 +36,14 @@ public:
 	void setGroundCollision();
 	void initMapObj();
 	THangingBridgeBoard(const char*);
+
+public:
+	/* 0x194 */ u32 unk194;
+	/* 0x198 */ u32 unk198;
+	/* 0x19C */ u32 unk19C;
+	/* 0x1A0 */ u32 unk1A0;
+	/* 0x1A4 */ JGeometry::TVec3<f32> unk1A4[2];
+	/* 0x1BC */ TMapObjBase* unk1BC;
 };
 
 class THangingBridge : public JDrama::TViewObj {
@@ -68,7 +82,10 @@ public:
 	f32 getRadiusAtY(f32) const;
 	void touchActor(THitActor*);
 	void initMapObj();
-	TGoalFlag(const char* name = "ゴールフラグ");
+	TGoalFlag(const char* name = "ゴールフラグ")
+	    : TMapObjBase(name)
+	{
+	}
 };
 
 class TFluff : public TMapObjBase {

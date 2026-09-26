@@ -282,9 +282,39 @@ void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 			unk1C[unk18]->unk4->viewCalc();
 
 		if (cue & CUE_ENTRY) {
-			unk1C[unk18]->setPlane();
+			TMirrorModel* model = unk1C[unk18];
+			model->setPlane();
 
-			// TODO: awful vector math, one of unused functions inlined
+			TMirrorCamera* mirrorCamera = model->unk8;
+			const JGeometry::TVec3<f32>& normal = mirrorCamera->unk84;
+			f32 planeD                       = mirrorCamera->unk90;
+
+			JGeometry::TVec3<f32> reflectedUp;
+			JGeometry::TVec3<f32> reflectedTarget;
+			f32 offset = -2.0f * (normal.dot(gpCamera->unk124) + planeD);
+			mirrorCamera->unk98.scaleAdd(offset, gpCamera->unk124, normal);
+
+			offset = -2.0f * (normal.dot(gpCamera->mTarget) + planeD);
+			reflectedTarget.scaleAdd(offset, gpCamera->mTarget, normal);
+
+			offset = -2.0f * (normal.dot(gpCamera->mUp) + planeD);
+			reflectedUp.scaleAdd(offset, gpCamera->mUp, normal);
+
+			C_MTXLookAt(mirrorCamera->unk30, &mirrorCamera->unk98,
+			            &reflectedUp, &reflectedTarget);
+
+			Mtx lightProjection;
+			Mtx effectMtx;
+			C_MTXLightPerspective(lightProjection,
+			                      mirrorCamera->unk80 * gpCamera->mFovy,
+			                      gpCamera->mAspect, 1.0f, -1.0f, 1.0f, 1.0f);
+			PSMTXConcat(lightProjection, mirrorCamera->unk30, effectMtx);
+
+			J3DMaterial* material
+			    = model->unk4->getModel()->getModelData()->getMaterialNodePointer(0);
+			material->change();
+			material->getTexGenBlock()->getTexMtx(0)->setEffectMtx(effectMtx);
+			model->unk4->entry();
 		}
 	}
 }

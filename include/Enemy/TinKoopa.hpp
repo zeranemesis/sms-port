@@ -186,7 +186,10 @@ public:
 	/* 0x178 */ int mKillerTimer;
 	/* 0x17C */ int mFlameTimer;
 	/* 0x180 */ int mDefeatTimer;
-	/* 0x184 */ char unk184[0x1B4 - 0x184];
+	/* 0x184 */ JGeometry::TVec3<f32> mEffectJoint0Pos;
+	/* 0x190 */ JGeometry::TVec3<f32> mEffectJoint1Pos;
+	/* 0x19C */ JGeometry::TVec3<f32> mEffectJoint3Pos;
+	/* 0x1A8 */ JGeometry::TVec3<f32> mEffectJoint4Pos;
 	/* 0x1B4 */ f32 unk1B4;
 	/* 0x1B8 */ f32 unk1B8;
 	/* 0x1BC */ f32 unk1BC;

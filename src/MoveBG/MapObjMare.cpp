@@ -1,9 +1,32 @@
 #include <MoveBG/MapObjMare.hpp>
 
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 
-TCogwheelScale::TCogwheelScale(const char* name) : TMapObjBase(name) { }
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
+// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
+// (see the same block in src/Enemy/effectObj.cpp).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+TCogwheelScale::TCogwheelScale(const char* name)
+	: TMapObjBase(name)
+	, unk138(0.0f)
+	, unk13C(0.0f)
+	, unk140(0.0f)
+	, unk144(0.0f)
+	, unk148(0.0f)
+	, unk14C(0.01f)
+	, unk150(5.0f)
+	, unk154(0)
+	, unk158(nullptr)
+{
+}
 
 u32 TCogwheelScale::touchWater(THitActor* param_1)
 {
@@ -61,10 +84,6 @@ void TCogwheel::initDraw() const
 void TCogwheel::rebound()
 {
 	// TODO: unconfirmed
-}
-
-TMapObjElasticCode::TMapObjElasticCode(const char* name) : TMapObjBase(name)
-{
 }
 
 void TMapObjElasticCode::initMapObj()
@@ -144,8 +163,6 @@ void TWireBell::initDraw() const
 	// TODO: unconfirmed
 }
 
-TMapObjPuncher::TMapObjPuncher(const char* name) : TMapObjBase(name) { }
-
 void TMapObjPuncher::load(JSUMemoryInputStream& stream)
 {
 	// TODO: unconfirmed
@@ -219,8 +236,6 @@ void TMuddyBoat::bindToWall(const JGeometry::TVec3<float>& param_1,
 	// TODO: unconfirmed
 }
 
-TMareFall::TMareFall(const char* name) : TMapObjBase(name) { }
-
 void TMareFall::calc()
 {
 	// TODO: unconfirmed
@@ -232,8 +247,6 @@ void TMareFall::load(JSUMemoryInputStream& stream)
 	// TODO: unconfirmed
 	TMapObjBase::load(stream);
 }
-
-TMareCork::TMareCork(const char* name) : TMapObjBase(name) { }
 
 void TMareCork::loadAfter()
 {
@@ -261,8 +274,6 @@ void TMareCork::drawObject(JDrama::TGraphics* param_1)
 {
 	// TODO: unconfirmed
 }
-
-TMareEventPoint::TMareEventPoint(const char* name) : THitActor(name) { }
 
 BOOL TMareEventPoint::receiveMessage(THitActor* sender, u32 message)
 {

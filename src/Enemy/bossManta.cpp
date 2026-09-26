@@ -735,7 +735,7 @@ void TBossManta::updateAttractor()
 		JGeometry::TVec3<f32> otherFacing = other->unk170;
 		otherFacing *= getSaveParams()->mSLPusherPower.get();
 
-		JGeometry::TVec3<f32> otherPos = mPosition;
+		JGeometry::TVec3<f32> otherPos = other->mPosition;
 		otherPos += otherFacing;
 
 		JGeometry::TVec3<f32> delta;

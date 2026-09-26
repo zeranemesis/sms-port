@@ -17,7 +17,13 @@ class TDemoBossHanachanSaveParams;
 
 class TDemoBossHanachan : public TSpineEnemy {
 public:
-	TDemoBossHanachan(); // TODO: constructor not in mario.MAP for this TU
+	// The ROM inlines this constructor at the name-factory call site: it calls
+	// TSpineEnemy("?") and then stores the TDemoBossHanachan vtable, so the
+	// original took the name and forwarded it to the base.
+	TDemoBossHanachan(const char* name = "?")
+	    : TSpineEnemy(name)
+	{
+	}
 	virtual BOOL receiveMessage(THitActor*, u32);
 
 	void initBase(TLiveManager*, u32);

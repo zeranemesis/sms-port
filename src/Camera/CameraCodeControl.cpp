@@ -22,6 +22,9 @@ bool CPolarSubCamera::controlByCameraCode_(int* param_1)
 
 		JGeometry::TVec3<f32> local_24 = SMS_GetMarioPos();
 		local_24.y += 75.0f;
+		// TODO: the ROM's frame here is 0x28 bytes larger than ours; the extra
+		// space comes from temporaries of an inline chain we have not
+		// identified yet. Do not paper over it with a stack padding array.
 		for (int i = 0; i < count; ++i) {
 			if (gpCubeCamera->isInCube(local_24, i)) {
 				TCubeCameraInfo* info

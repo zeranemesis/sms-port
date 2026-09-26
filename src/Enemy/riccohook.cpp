@@ -6,6 +6,13 @@
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
 
+// rogue include: pulls in JALList.hpp's JSUList<T>::smList template statics,
+// which is what marioEU.dol registers from __sinit_riccohook_cpp (764 bytes,
+// the same 15 registrations as every other TU) and lays out in .bss after this
+// object's own statics (target .bss 0xC0 = 0xC + 15 * 0xC).
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 // @non-matching -- the issue seems to stem from the JDrama TNameRefGen
 // search/push_back calls.
 THookTake::THookTake(TRiccoHook* owner, const char* name)

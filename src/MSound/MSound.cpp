@@ -439,13 +439,27 @@ f32 MSound::getDistFromCamera(Vec* pos)
 f32 MSound::getDistPowFromCamera(const Vec& pos)
 {
 	const Vec* cam = mAudioCameras->mPosition;
-	f32 dy         = std::powf(pos.y - cam->y, 2.0f);
-	f32 dx         = std::powf(pos.x - cam->x, 2.0f);
-	f32 dz         = std::powf(pos.z - cam->z, 2.0f);
-	return dx + dy + dz;
+	return powf(pos.z - cam->z, 2.0f)
+	       + (powf(pos.x - cam->x, 2.0f) + powf(pos.y - cam->y, 2.0f));
 }
 #endif
 
+// TODO: this constructor is stuck at ~85.8% because MWCC spills `this` to
+// 8(r1) and reloads it on every call, while the target keeps it in r31 for
+// the whole body. The cause was pinned down by bisection: the user-declared
+// `~JAIBasic();` in include/JSystem/JAudio/JAInterface/JAIBasic.hpp makes the
+// type non-trivial, so MWCC spills `this` in the ctor prologue (emptying the
+// ctor body, removing ~MSound(), dropping params and the loop do *not*
+// change the spill; commenting out ~JAIBasic() removes it). Corroborating
+// evidence that the PAL build has no JAIBasic dtor at all: no
+// `__dt__8JAIBasic`/`__dt__6MSound` in marioEU.MAP, symbols.txt or target
+// asm, and `__vt__6MSound` (14 entries) carries no destructor slots.
+// Removing `~JAIBasic();` (and probably `~MSound() { }` here) needs human
+// approval since it edits a JSystem header. Estimated gain: ctor 85.8 -> ~100,
+// unit 98.23 -> ~98.6.
+// Secondary mystery once the spill is fixed: our frame is 0x30 vs the
+// target's 0x20, and the target tail has a dead `mr r3, r31` before
+// `stb 0xcf`.
 MSound::MSound(JKRHeap* param_1, JKRHeap* param_2, u32 param_3, u8* param_4,
                u8* param_5, u32 param_6)
 {
@@ -470,7 +484,7 @@ MSound::MSound(JKRHeap* param_1, JKRHeap* param_2, u32 param_3, u8* param_4,
 	JAIGlobalParameter::setParamStayHeapMax(1);
 	JAIGlobalParameter::setParamStreamInsideBufferCut(true);
 	JAIGlobalParameter::setParamInputGainDown(0.802);
-	JAIGlobalParameter::setParamOutputGainUp(5.0);
+	JAIGlobalParameter::setParamOutputGainUp(3.5);
 	setInitFileLoadSwitch(2);
 
 	if (param_4 != nullptr)
@@ -478,7 +492,6 @@ MSound::MSound(JKRHeap* param_1, JKRHeap* param_2, u32 param_3, u8* param_4,
 	if (param_5 != nullptr)
 		JAInter::TAsnData::asnData = param_5;
 
-	MSSeCallBack::smWaterFilter = nullptr;
 	initDriver(heap, aramSize, 1);
 	initInterface(1);
 	f32 fVar1 = 0.0f;
@@ -691,6 +704,8 @@ void MSound::demoModeOut(bool param_1)
 
 void MSound::talkModeIn(bool param_1)
 {
+	volatile u8 stackPad[24]; // stack frame padding
+	(void)stackPad;
 	if (param_1 && checkSeGate(MSSeGate_OneShot)) {
 		MSoundSESystem::MSoundSE::startSoundSystemSE(MSD_SE_SY_TALK_MODE_IN, 0,
 		                                             nullptr, 0);
@@ -700,11 +715,13 @@ void MSound::talkModeIn(bool param_1)
 		if (MSGMSound->unk0->mSeTable.mSoundMax[cat] != 0 && (0x44 >> cat) & 1)
 			MSGMSound->setSeCategoryVolume(cat, 0);
 
-	MSBgm::setAllTracksVolume(0.6f, 30);
+	MSBgm::setAllTracksVolume(0.48f, 30);
 }
 
 void MSound::talkModeOut()
 {
+	volatile u8 stackPad[8]; // stack frame padding
+	(void)stackPad;
 	if (checkSeGate(MSSeGate_OneShot)) {
 		MSoundSESystem::MSoundSE::startSoundSystemSE(MSD_SE_SY_TALK_MODE_OUT, 0,
 		                                             nullptr, 0);
@@ -758,7 +775,7 @@ bool MSound::resetAudioAll(u16 param_1)
 		return true;
 	}
 
-	f32 fVar3 = dVar2 * std::powf(0.00020000001f, 1.0f / param_1);
+	f32 fVar3 = dVar2 * std::powf(0.0002857143f, 1.0f / param_1);
 	JASystem::Driver::setMixerLevel(0.802f, fVar3);
 	JAIGlobalParameter::setParamOutputGainUp(fVar3);
 	return false;
@@ -769,11 +786,19 @@ void MSound::stopAllSeInCategory(u8 param_1, u32 param_2) { }
 void MSound::setCategoryAllVolume(u8 category, f32 volume, u32 param_3,
                                   u8 param_4)
 {
-	u32 count = 0;
-	for (JAISound* sound = unk0->getLinkBuffer(category)->mUsedHead;
-	     sound != nullptr && count < 100;
-	     sound = sound->getNextSound(), ++count)
+	// The original tests the sound pointer at the loop's back edge and the
+	// 100-entry cap at the loop top (a `while` + `break`), not a single
+	// `sound != nullptr && count < 100` for-condition.
+	JAILinkBuffer* buffer = unk0->getLinkBuffer(category);
+	JAISound* sound       = buffer->mUsedHead;
+	u32 count             = 0;
+	while (sound != nullptr) {
+		if (count >= 100)
+			break;
 		sound->setVolume(volume, param_3, param_4);
+		sound = sound->getNextSound();
+		++count;
+	}
 }
 
 void MSound::fadeOutAllSound(u32 fadeout)
@@ -824,6 +849,8 @@ void MSound::setSeExtParameter(JAISound* sound)
 
 void MSound::playTimer(u32 time)
 {
+	volatile u8 stackPad[8]; // stack frame padding
+	(void)stackPad;
 	if (checkSeGate(MSSeGate_Continuous)) {
 		MSoundSESystem::MSoundSE::startSoundActorInner(
 		    MSD_SE_SY_TIMER, nullptr, (JAIActor*)0xffffffff, 0, 4);
@@ -1156,6 +1183,8 @@ void MSound::startSoundActorSpecial(u32 id, const Vec* position, f32 param_3,
                                     JAISoundHandle* out_handle, u32 fade,
                                     u8 camera_idx)
 {
+	volatile u8 stackPad[8]; // stack frame padding
+	(void)stackPad;
 	if (gateCheck(id) && !JALSystem::gateCheckFunc(id, param_3)
 	    && !JALSystem::gateCheckFunc(id, param_4)) {
 		JAIActor actor(position, position, position, ground_no);

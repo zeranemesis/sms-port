@@ -2,6 +2,13 @@
 #include <Map/MapWire.hpp>
 #include <Map/MapWireManager.hpp>
 
+// TODO: all instructions match but our frame is 0x68 vs the target's 0x50 —
+// 24 bytes of dead stack slots below local24. Tried: direct body in init
+// (inlines dot/scale, 49.5%), wire declared/assigned separately (neutral),
+// declaration reordering (neutral), double inline getWire (87.2%).
+// Structure (init delegating to reset, inlined) is confirmed correct by the
+// out-of-line bl dot / bl scale calls, which only occur when the body arrives
+// via inlining (MWCC does not recursively inline into already-inlined code).
 bool TWireBinder::init(const JGeometry::TVec3<f32>& param_1)
 {
 	return reset(param_1);
@@ -52,6 +59,9 @@ JGeometry::TVec3<f32>
 TWireBinder::getDirAtPos(const JGeometry::TVec3<f32>& param_1,
                          f32 param_2) const
 {
+	JGeometry::TVec3<f32> vec1;
+	JGeometry::TVec3<f32> vec2;
+
 	f32 posInWire = getRangePos(param_1);
 
 	f32 fVar1;
@@ -66,10 +76,8 @@ TWireBinder::getDirAtPos(const JGeometry::TVec3<f32>& param_1,
 		fVar2 = posInWire + 0.01f * param_2;
 	}
 
-	JGeometry::TVec3<f32> vec1;
-	JGeometry::TVec3<f32> vec2;
 	getPoint(&vec1, fVar1);
-	getPoint(&vec2, fVar2);
+	gpMapWireManager->getWire(mWireNumber)->getPointPosOnWire(fVar2, &vec2);
 
 	vec2 -= vec1;
 
@@ -107,7 +115,8 @@ bool TWireBinder::isEndWire(const JGeometry::TVec3<f32>& param_1,
 {
 	f32 posInWire = getRangePos(param_1);
 	f32 targetPos = 0.0f < param_2 ? 1.0f : 0.0f;
+	f32 diff      = posInWire - targetPos;
 
-	return fabsf(posInWire - targetPos) < 0.015f;
+	return fabsf(diff) < 0.015f;
 }
 

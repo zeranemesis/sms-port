@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <System/DummyStrings.hpp>
+
 #include <Camera/SunMgr.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <System/PositionHolder.hpp>
@@ -12,8 +16,6 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
-static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
 
 const char* cSunWarpPointName = "太陽ワープポイント";
 

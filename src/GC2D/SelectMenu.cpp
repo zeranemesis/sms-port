@@ -1,5 +1,11 @@
 
 #include <dolphin/gx.h>
+
+
+// rogue include: the original TU opens .rodata with the dummy string
+// pair from System/DummyStrings.hpp; without it every string offset in
+// this object is shifted.
+#include <System/DummyStrings.hpp>
 #include <dolphin/gx/GXGeometry.h>
 #include <dolphin/gx/GXLighting.h>
 #include <dolphin/gx/GXTev.h>
@@ -429,7 +435,7 @@ void TSelectMenu::initData(u8 stage, JKRArchive* pArch,
 		    = new TBoundPane(mMenuScreen, tags[mStage] * 0x100 + 'b');
 		mStageBannerShadow->getPane()->show();
 
-		mScenarioBmg = JKRGetResource("/common/2d/scenarioname.bmg");
+		mScenarioBmg = JKRGetResource("/cmn2d/scenarioname.bmg");
 
 		strncpy(mStageName->getStringPtr(),
 		        SMSGetMessageData(mScenarioBmg, tags[mStage] & 0xFFFF), 0x11);
@@ -563,7 +569,7 @@ void TSelectMenu::initData(u8 stage, JKRArchive* pArch,
 		mScenarioShadow1->remove(1);
 
 		char buf[254];
-		snprintf(buf, sizeof(buf), "/common/2d/scenarioname.bmg");
+		snprintf(buf, sizeof(buf), "/cmn2d/scenarioname.bmg");
 		mScenarioBmg2 = JKRGetResource(buf);
 
 		mScenarioText1->setFont((JUTFont*)gpSystemFont);
@@ -831,7 +837,7 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID));
+					    mScenarioBmg2, SMS_getNormalStage(shineID2));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
 					mShineMarks[mSelectedShine]->mWhite = mSelectedMarkCol;
@@ -906,7 +912,7 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID));
+					    mScenarioBmg2, SMS_getNormalStage(shineID2));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
 					mSelectShineMgr->mRumbleOption[mSelectedShine]

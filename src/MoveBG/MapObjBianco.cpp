@@ -1,3 +1,7 @@
+// rogue include: the original TU opens .rodata with this dummy string
+// pair, ahead of every other string constant in the object.
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include <MoveBG/MapObjBianco.hpp>
 #include <Camera/CubeManagerBase.hpp>
 #include <Camera/CubeMapTool.hpp>
@@ -28,10 +32,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 // NOTE: this unit is -inline deferred, so functions below are defined in the
 // reverse of their retail address order.

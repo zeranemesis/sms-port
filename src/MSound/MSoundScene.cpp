@@ -7,6 +7,12 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
+// TODO: never referenced by any code; the original emits it as the first object
+// of this TU's .bss, and __sinit_MSoundScene_cpp addresses the compiler-generated
+// global-destructor regmem blocks relative to it (r31 + 0xC00 etc).
+// Element type unknown; 0xC00 bytes total (see marioEU.MAP / symbols.txt).
+u8 _posByCamera[0xC00];
+
 MSSceneSE::MSSceneSE(u32 param_1)
 {
 	for (int i = 0; i < ARRAY_COUNT(mTrans); ++i)
