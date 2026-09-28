@@ -218,6 +218,9 @@ void TMapObjTreeScale::startScaleUp()
 
 u32 TMapObjTreeScale::touchWater(THitActor* water)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_touchWater[8];
+	(void)framePad_8_touchWater;
 	if (mScaling.x == 1.0f)
 		return TMapObjGeneral::touchWater(water);
 
@@ -229,6 +232,9 @@ u32 TMapObjTreeScale::touchWater(THitActor* water)
 
 void TMapObjTreeScale::control()
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_control[32];
+	(void)framePad_32_control;
 	switch (mState) {
 	case STATE_SMALL:
 		if (SMSGetMarDirector()->getCurrentMap() != 4
@@ -320,6 +326,9 @@ void TMapObjTreeScale::beSmall()
 
 void TMapObjTreeScale::loadAfter()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_loadAfter[16];
+	(void)framePad_16_loadAfter;
 	TMapObjGeneral::loadAfter();
 
 	if (SMSGetMarDirector()->getCurrentMap() == 4

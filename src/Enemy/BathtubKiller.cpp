@@ -205,6 +205,9 @@ void TBathtubKiller::reset()
 
 void TBathtubKiller::resetBathtubKiller()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_resetBathtubKiller[24];
+	(void)framePad_24_resetBathtubKiller;
 	mSpine->initWith(&TNerveBathtubKillerWander::theNerve());
 	onLiveFlag(LIVE_FLAG_AIRBORNE);
 	unk208 = 0;

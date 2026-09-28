@@ -249,6 +249,9 @@ void JAIGlobalParameter::setParamSeDistancepitchMax(f32 value)
 
 void JAIGlobalParameter::setParamSoundOutputMode(u32 value)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_setParamSoundOutputMode[8];
+	(void)framePad_8_setParamSoundOutputMode;
 	int r31 = 1;
 	int r30 = 0;
 	switch (value) {

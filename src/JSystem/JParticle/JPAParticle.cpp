@@ -143,6 +143,9 @@ f32 JPABaseParticle::getCurrentPositionZ()
 
 bool JPAParticle::checkCreateChildParticle()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_checkCreateChildParticle[16];
+	(void)framePad_16_checkCreateChildParticle;
 	bool result          = false;
 	JPAEmitterInfo* info = JPAGetEmitterInfoPtr();
 

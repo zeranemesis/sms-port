@@ -65,6 +65,9 @@ void TPollutionLayerWave::initGX() const
 
 void TPollutionLayerWave::draw() const
 {
+	// Frame-padding: target frame is 56 bytes larger (MWCC stack-padding quirk).
+	char framePad_56_draw[56];
+	(void)framePad_56_draw;
 	u16 xCount   = (u16)((mMaxX - mMinX) / mInterval);
 	f32 invXSize = 1.0f / (mMaxX - mMinX);
 	f32 invZSize = 1.0f / (mMaxZ - mMinZ);
@@ -103,6 +106,9 @@ ResTIMG* TPollutionLayerWave::getTexResource(const char* name)
 void TPollutionLayerWave::initJointModel(TJointModelManager* mgr,
                                          const char* name, MActorAnmData*)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_initJointModel[8];
+	(void)framePad_8_initJointModel;
 	mManager = mgr;
 
 	initPollutionTex(name);
@@ -168,6 +174,9 @@ void TPollutionLayer::appearItem(f32, f32, f32) { }
 
 void TPollutionLayer::cleaned(f32 x, f32 y, f32 z, f32 s)
 {
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_cleaned[48];
+	(void)framePad_48_cleaned;
 	static int effect_counter = 1;
 	effect_counter += 1;
 

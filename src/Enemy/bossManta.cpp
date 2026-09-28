@@ -272,6 +272,9 @@ DEFINE_NERVE(TNerveMantaSpawn, TLiveActor)
 
 DEFINE_NERVE(TNerveMantaDeath, TLiveActor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
 	TBossManta* self = (TBossManta*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -487,7 +490,7 @@ void TBossManta::moveObject()
 
 	for (int i = 0; i < mColCount; ++i)
 		if (mCollisions[i]->isActorType(0x80000001))
-			AttackMario(mCollisions[i]);
+			AttackMario(this);
 }
 
 BOOL TBossManta::isSpawnState()
@@ -692,7 +695,7 @@ bool TBossManta::isDamageable()
 
 bool TBossManta::isPolluting()
 {
-	const u8 pollute[6] = { 1, 1, 1, 1, 1, 1 };
+	const bool pollute[6] = { true, true, true, true, true, true };
 	return pollute[mGeneration];
 }
 
@@ -847,7 +850,8 @@ void TBossMantaManager::TMantaMessageState::update()
 	switch (unk4) {
 	case 0:
 		if (((TBossManta*)unk0->getObj(0))->isSpawnState()) {
-			gpMarDirector->getConsole()->startAppearBalloon(0xE000C, true);
+			gpMarDirector->getConsole()->startAppearBalloon(
+			    VERSION_SELECT(GMSJ01(0xE000C), GMSP01(0x0C)), true);
 			unk4++;
 		}
 		break;
@@ -859,14 +863,16 @@ void TBossMantaManager::TMantaMessageState::update()
 				aliveCount++;
 		}
 		if (aliveCount > 50) {
-			gpMarDirector->getConsole()->startAppearBalloon(0xE000D, true);
+			gpMarDirector->getConsole()->startAppearBalloon(
+			    VERSION_SELECT(GMSJ01(0xE000D), GMSP01(0x0D)), true);
 			unk4++;
 		}
 		break;
 	}
 	case 2:
 		if (unk0->unk88.mState == 2) {
-			gpMarDirector->getConsole()->startAppearBalloon(0xE000E, true);
+			gpMarDirector->getConsole()->startAppearBalloon(
+			    VERSION_SELECT(GMSJ01(0xE000E), GMSP01(0x0E)), true);
 			unk4++;
 		}
 		break;
@@ -986,7 +992,7 @@ void TBossMantaAdditionalCollision::perform(u32 cue,
 	if (cue & CUE_MOVE) {
 		for (int i = 0; i < mColCount; ++i)
 			if (mCollisions[i]->isActorType(0x80000001))
-				AttackMario(mCollisions[i]);
+				AttackMario(this);
 	}
 }
 

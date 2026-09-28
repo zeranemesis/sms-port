@@ -41,6 +41,9 @@ public:
 
 void SDLModelData::entrySameMat(J3DMaterial* material, SDLDrawBufToken* token)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_entrySameMat[8];
+	(void)framePad_8_entrySameMat;
 	SDLModel* head = token->mHead;
 	while (head != nullptr) {
 		if (head->mSdlFlags & SDLModel::FLAG_UNK1)
@@ -327,6 +330,9 @@ void SDLModel::entry()
 
 void SDLModel::viewCalcSimple()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_viewCalcSimple[8];
+	(void)framePad_8_viewCalcSimple;
 	swapDrawMtx();
 	MtxPtr mA = gpCamera->getUnk1EC();
 	for (int i = 0; i < mModelData->getDrawMtxNum(); ++i)

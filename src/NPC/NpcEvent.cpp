@@ -350,6 +350,9 @@ void TNpcEvent::initDownSunflowerNum()
 
 static s32 ReviveSunflowerCallBack(u32 param_1, u32 param_2)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_ReviveSunflowerCallBack[16];
+	(void)framePad_16_ReviveSunflowerCallBack;
 	if (param_2 == 0) {
 		TBaseNPC* sunflower = (TBaseNPC*)param_1;
 		sunflower->sunflowerReviveIn();

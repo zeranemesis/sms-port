@@ -139,6 +139,9 @@ void TMarDirector::setup2()
 
 TMarDirector::~TMarDirector()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_TMarDirector[24];
+	(void)framePad_24_TMarDirector;
 	gpMSound->exitStage();
 	if (SMSGetApplication()->mCurrArea.getStage() == 15) {
 		if (JKRMemArchive* arch

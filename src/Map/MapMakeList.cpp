@@ -278,6 +278,9 @@ void TMapCollisionData::removeCheckListNode(s32, s32) { }
 void TMapCollisionData::updateCheckListNode(s32 param_1, s32 param_2,
                                             s32 param_3)
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_updateCheckListNode[24];
+	(void)framePad_24_updateCheckListNode;
 	TBGCheckListWarp* l   = &unk30[param_3];
 	TBGCheckListWarp* r   = &unk30[param_1];
 	TBGCheckListWarp* end = &unk30[param_3 + param_2];

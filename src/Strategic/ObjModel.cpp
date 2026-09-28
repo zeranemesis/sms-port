@@ -79,6 +79,9 @@ int TModelDataKeeper::getIndex(const char* name) const
 
 SDLModelData* TModelDataKeeper::getDataByName(const char* name) const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_getDataByName[8];
+	(void)framePad_8_getDataByName;
 	int idx = getIndex(name);
 	if (idx < 0)
 		return nullptr;
@@ -116,6 +119,9 @@ MActor* TMActorKeeper::createAndRegister(SDLModelData* model_data,
 
 MActor* TMActorKeeper::getMActor(const char* name) const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_getMActor[8];
+	(void)framePad_8_getMActor;
 	if (!getModelDataKeeper())
 		return mActors[0];
 
@@ -162,10 +168,8 @@ MActor* TMActorKeeper::createMActor(const char* model_data_name, u32 flags)
 MActor* TMActorKeeper::createMActorFromAllBmd(u32 flags)
 {
 	int num = mModelDataKeeper->getModelDataNum();
-	MActor* actor = nullptr;
 	for (int i = 0; i < num; ++i)
-		actor = createMActorFromNthData(i, flags);
-	return actor;
+		createMActorFromNthData(i, flags);
 }
 
 TMActorKeeper::TMActorKeeper(TLiveManager* param_1, u16 param_2)
@@ -188,6 +192,9 @@ TMActorKeeper::TMActorKeeper(TLiveManager* param_1, u16 param_2)
 
 TMActorKeeper::TMActorKeeper(TLiveManager* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_TMActorKeeper[8];
+	(void)framePad_8_TMActorKeeper;
 	if (param_1) {
 		mModelDataKeeper = param_1->getModelDataKeeper();
 		mActorAnmData    = param_1->getMActorAnmData();

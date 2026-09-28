@@ -110,6 +110,9 @@ BOOL TMario::barWait()
 
 BOOL TMario::barClimb()
 {
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_barClimb[48];
+	(void)framePad_48_barClimb;
 	if (mHolder == nullptr)
 		return changePlayerStatus(MARIO_STATUS_LAND_SAFE_DOWN, 0, false);
 
@@ -278,6 +281,9 @@ void TMario::doRoofWaitingProcess()
 
 BOOL TMario::roofCommonEvents()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_roofCommonEvents[8];
+	(void)framePad_8_roofCommonEvents;
 	if (mInput & 0x8000) {
 		mInput &= ~0x8000;
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);

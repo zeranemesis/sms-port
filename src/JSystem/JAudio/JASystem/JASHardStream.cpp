@@ -69,6 +69,9 @@ namespace HardStream {
 
 	void main()
 	{
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_main[16];
+	(void)framePad_16_main;
 		static DVDFileInfo finfo[3];
 		static u32 cur_finfo   = 0;
 		static u8 cur_addr_cmd = 0;
@@ -475,6 +478,9 @@ namespace HardStream {
 
 	u8 TControl::volFloatToU8(f32 param_1)
 	{
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_volFloatToU8[8];
+	(void)framePad_8_volFloatToU8;
 		if (param_1 > 1.0f)
 			param_1 = 1.0f;
 

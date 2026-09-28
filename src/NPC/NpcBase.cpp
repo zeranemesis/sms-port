@@ -129,6 +129,9 @@ void TBaseNPC::load(JSUMemoryInputStream& stream)
 
 void TBaseNPC::loadAfter()
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_loadAfter[32];
+	(void)framePad_32_loadAfter;
 	TSpineEnemy::loadAfter();
 	if (mActorType == 0x4000018 && gpMarDirector->getCurrentMap() == 1
 	    && gpMarDirector->getCurrentStage() == 1) {
@@ -399,6 +402,9 @@ bool TBaseNPC::isPartsAnmNpc() const
 
 bool TBaseNPC::isNeedNeckStraight() const
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_isNeedNeckStraight[16];
+	(void)framePad_16_isNeedNeckStraight;
 	bool result = false;
 	int anmKind = unkD0->getCurrentAnmKind();
 	if ((mHolder != nullptr && mHolder == gpMarioAddress) || !isClean()
@@ -606,6 +612,9 @@ void TBaseNPC::moveObject()
 
 void TBaseNPC::execMotionBlend_()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_execMotionBlend_[24];
+	(void)framePad_24_execMotionBlend_;
 	if (!mInbetweenCtrl->isMotionBlending())
 		setKeepAnm_();
 
@@ -617,6 +626,9 @@ void TBaseNPC::execMotionBlend_()
 
 void TBaseNPC::calcRootMatrix()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_calcRootMatrix[24];
+	(void)framePad_24_calcRootMatrix;
 	if (mActorType == 0x400001D) {
 		TLiveActor::calcRootMatrix();
 		return;
@@ -833,6 +845,9 @@ void TBaseNPC::setBalloonMessage(u32 param_1, s32 param_2)
 
 const GXColor* TBaseNPC::getPtrInitPollutionColor() const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_getPtrInitPollutionColor[8];
+	(void)framePad_8_getPtrInitPollutionColor;
 	const GXColor* result = nullptr;
 
 	if (isPollutionNpc()) {

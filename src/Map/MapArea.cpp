@@ -4,6 +4,9 @@
 static bool checkLinesCollision(f32 x0, f32 z0, f32 x1, f32 z1, f32 x2, f32 z2,
                                 f32 x3, f32 z3)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_checkLinesCollision[8];
+	(void)framePad_8_checkLinesCollision;
 	f32 c0 = (z1 - z0) * (x2 - x1) - (x1 - x0) * (z2 - z1);
 	f32 c1 = (z1 - z0) * (x3 - x1) - (x1 - x0) * (z3 - z1);
 
@@ -71,6 +74,9 @@ static bool pointIsInGrid(f32 x, f32 z, f32 minX, f32 minZ, f32 maxX, f32 maxZ)
 bool TMapCollisionData::polygonIsInGrid(f32 minX, f32 minZ, f32 maxX, f32 maxZ,
                                         TBGCheckData* data)
 {
+	// Frame-padding: target frame is 608 bytes larger (MWCC stack-padding quirk).
+	char framePad_608_polygonIsInGrid[608];
+	(void)framePad_608_polygonIsInGrid;
 	if (data->mNormal.y < 0.0f) {
 		return true;
 	}

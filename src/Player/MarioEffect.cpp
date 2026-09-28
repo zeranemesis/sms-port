@@ -167,6 +167,9 @@ void TMarioEffect::endDashEffect()
 
 void TMarioEffect::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_perform[48];
+	(void)framePad_48_perform;
 	if (cue & CUE_MOVE) {
 		switch (unk7C) {
 		case 0:

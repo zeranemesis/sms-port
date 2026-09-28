@@ -37,6 +37,9 @@ MSRandVol::MSRandVol(u32 param)
     , unk14(param)
     , mAmplitude(0.5f)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_MSRandVol[8];
+	(void)framePad_8_MSRandVol;
 	mPSlopes[0] = 0.0f;
 	mPSlopes[1] = 0.25f;
 	mPSlopes[2] = 0.5f;
@@ -55,12 +58,11 @@ MSRandVol::MSRandVol(u32 param)
 
 f32 MSRandVol::getRandVol(u32 param_1)
 {
-	f32 d = JALCalc::getRandom(
-	            mAmplitudes[param_1 >> MSSeSwBit_RandomVolumeAmplitudeShift & 3]
-	                * mAmplitude,
-	            mCSlopes[param_1 >> MSSeSwBit_RandomVolumeCSlopeShift & 3],
-	            mPSlopes[param_1 >> MSSeSwBit_RandomVolumePSlopeShift & 3])
-	        + 1.0f;
+	f32 amp = mAmplitudes[param_1 >> MSSeSwBit_RandomVolumeAmplitudeShift & 3]
+	          * mAmplitude;
+	f32 p   = mPSlopes[param_1 >> MSSeSwBit_RandomVolumePSlopeShift & 3];
+	f32 c   = mCSlopes[param_1 >> MSSeSwBit_RandomVolumeCSlopeShift & 3];
+	f32 d   = JALCalc::getRandom(amp, c, p) + 1.0f;
 
 	f32 x = d < 0.0f ? 0.0f : d;
 	return x > 2.0f ? 2.0f : x;
@@ -135,6 +137,9 @@ MSRandPlay::MSRandPlay(u32 sound_id, s32 wait_min, s32 wait_max,
     , mCurveSlope(curve_slope)
     , mPlusSlope(plus_slope)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_MSRandPlay[8];
+	(void)framePad_8_MSRandPlay;
 }
 
 void MSRandPlay::randPlay(u32 vec_idx)
@@ -721,16 +726,17 @@ u32 MSoundSE::getNewIDByGroundCode(u32 id, JAIActor* actor)
 	if (ground & 0xf00)
 		return id;
 
+	u32 result = id;
 	switch (id) {
 	case MSD_SE_MA_WALK_STONE_L_HEEL:
 	case MSD_SE_MA_WALK_STONE_L_TIP:
 	case MSD_SE_MA_WALK_STONE_R_HEEL:
 	case MSD_SE_MA_WALK_STONE_R_TIP:
-		id += ground << 3 & 0x7f8;
+		result += ground << 3 & 0x7f8;
 		break;
 	}
 
-	return id;
+	return result;
 }
 
 u32 MSoundSE::getNewIDBySurfaceCode(u32 id, JAIActor* actor)

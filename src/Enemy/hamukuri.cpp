@@ -194,16 +194,15 @@ void THamuKuriManager::loadAfter()
 	}
 }
 
-static const char* anmlist[] = {
-	"hamukuri_walk",
-	"hamukuri_run",
-	// TODO: this shouldn't be here but rodata ordering looks like it should?!
-	// "default.bmd",
-	"hanekuri_wait",
-};
-
 void THamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3023 in the map is UNUSED and 3 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hamukuri_walk",
+		"hamukuri_run",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "default.bmd",
 		  J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
@@ -288,6 +287,9 @@ void THamuKuriManager::setSearchHamuKuri()
 
 void THamuKuriManager::requestSerialKill(THamuKuri* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_requestSerialKill[8];
+	(void)framePad_8_requestSerialKill;
 	int trampled = 1;
 
 	THamuKuriSaveLoadParams* params = (THamuKuriSaveLoadParams*)unk38;
@@ -373,6 +375,12 @@ TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 
 void THaneHamuKuriManager::createModelData()
 {
+	// Unused leftover; anmlist$3101 in the map is UNUSED and 2 entries long.
+	// TODO: the nullptr terminator is a guess based on the size.
+	static const char* anmlist[] = {
+		"hanekuri_wait",
+		nullptr,
+	};
 	static TModelDataLoadEntry entry[] = {
 		{ "hanekuri.bmd", 0x10250000, 0 },
 		{ nullptr, 0, 0 },
@@ -434,6 +442,9 @@ TSpineEnemy* TDangoHamuKuriManager::createEnemyInstance()
 void TDangoHamuKuriManager::createModelDataArray(
     const TModelDataLoadEntry* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_createModelDataArray[8];
+	(void)framePad_8_createModelDataArray;
 	THamuKuriManager* manager
 	    = (THamuKuriManager*)gpConductor->getManagerByName(
 	        "ハムクリマネージャー");
@@ -835,6 +846,9 @@ void THamuKuri::canGoForSearchActor() { }
 
 void THamuKuri::behaveToFindMario()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_behaveToFindMario[8];
+	(void)framePad_8_behaveToFindMario;
 	TWalkerEnemy::behaveToFindMario();
 	SMSGetMSound()->startSoundActor(MSD_SE_EN_HMKRI_VO_ATTACK, &mPosition, 0,
 	                                nullptr, 0, 4);
@@ -854,6 +868,9 @@ void THamuKuri::attackToMario()
 
 void THamuKuri::moveObject()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_moveObject[8];
+	(void)framePad_8_moveObject;
 	if (unk198) {
 		offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 		if (!isAirborne()) {
@@ -900,6 +917,9 @@ void THamuKuri::moveObject()
 
 void THamuKuri::setBehavior()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_setBehavior[8];
+	(void)framePad_8_setBehavior;
 	if (isAirborne() && mPosition.y > mGroundHeight + 250.0f
 	    && mSpine->getCurrentNerve() != &TNerveWalkerGenerate::theNerve()) {
 		unk1F0 = 1;
@@ -917,6 +937,9 @@ void THamuKuri::changeCapHolder() { }
 #pragma dont_inline on
 void THamuKuri::selectCapHolder()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_selectCapHolder[8];
+	(void)framePad_8_selectCapHolder;
 	if (!gpMarioOriginal->isWearingCap()) {
 		sendAttackMsgToMario();
 	} else {
@@ -1058,6 +1081,9 @@ void THamuKuri::setWalkAnm() { setBckAnm(4); }
 
 void THamuKuri::setDeadAnm()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_setDeadAnm[24];
+	(void)framePad_24_setDeadAnm;
 	if (unk198 && mHeldObject != nullptr
 	    && mHeldObject->receiveMessage(this, HIT_MESSAGE_PUT)) {
 		TMapObjBase* heldObj = (TMapObjBase*)mHeldObject;
@@ -1092,6 +1118,9 @@ void THamuKuri::setRollAnm() { setBckAnm(7); }
 
 void THamuKuri::setCrashAnm()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_setCrashAnm[8];
+	(void)framePad_8_setCrashAnm;
 	if (unk198 && mHeldObject != nullptr
 	    && mHeldObject->receiveMessage(this, HIT_MESSAGE_PUT)) {
 		TMapObjBase* heldObj = (TMapObjBase*)mHeldObject;
@@ -1357,7 +1386,7 @@ void THaneHamuKuri::bind()
 
 BOOL THaneHamuKuri::isReachedToGoal() const
 {
-	JGeometry::TVec3<f32> local_c = unk104.getPoint();
+	JGeometry::TVec3<f32> local_c = getUnk104().getPoint();
 	local_c -= mPosition;
 	local_c.y = 0.0f;
 	if (MsVECMag2(&local_c) < 100.0f)
@@ -1368,6 +1397,9 @@ BOOL THaneHamuKuri::isReachedToGoal() const
 
 void THaneHamuKuri::attackToMario()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_attackToMario[8];
+	(void)framePad_8_attackToMario;
 	SMSGetMSound()->startSoundActor(MSD_SE_EN_HANEKURI_ATTACK, &mPosition, 0,
 	                                nullptr, 0, 4);
 	sendAttackMsgToMario();
@@ -1440,6 +1472,9 @@ TDoroHaneKuri::TDoroHaneKuri(const char* name)
 
 void TDoroHaneKuri::init(TLiveManager* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_init[8];
+	(void)framePad_8_init;
 	THaneHamuKuri::init(param_1);
 
 	mSpine->initWith(&TNerveWalkerGraphWander::theNerve());
@@ -1477,7 +1512,7 @@ void TDoroHaneKuri::attackToMario()
 			mSpine->pushNerve(&TNerveDoroHaneRise::theNerve());
 			onHaveCap();
 			MtxPtr mtx = mMActor->getModel()->getAnmMtx(unk1AC);
-			unk200.set(mtx[3][0], mtx[3][1], mtx[3][2]);
+			unk200.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 			gpMarioParticleManager->emitAndBindToPosPtr(0xCD, &unk200, 0,
 			                                            nullptr);
 		}
@@ -1499,6 +1534,9 @@ void TDoroHaneKuri::behaveToWater(THitActor*)
 
 void TDoroHaneKuri::setBehavior()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_setBehavior[24];
+	(void)framePad_24_setBehavior;
 	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve()
 	    && mHeldObject && mHeldObject->receiveMessage(this, HIT_MESSAGE_PUT)) {
 		TMapObjBase* held = (TMapObjBase*)mHeldObject;
@@ -1514,6 +1552,9 @@ void TDoroHaneKuri::setBehavior()
 
 bool TDoroHaneKuri::isCollidMove(THitActor* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_isCollidMove[8];
+	(void)framePad_8_isCollidMove;
 	if ((param_1->getActorType() & 0xffff0000) == 0x40000000) {
 		TMapObjBase* mapObj = (TMapObjBase*)param_1;
 		if (mapObj->isHideObj(mapObj))
@@ -1577,11 +1618,9 @@ void THaneHamuKuri2::walkBehavior(int param_1, f32 param_2)
 		unk234 -= 1.0f;
 
 	unk210      = MsSin(unk20C * 360.0f / flyBaseFrequency) * flyBaseAmplitude;
-	mPosition.y = unk210 + unk230 + unk234;
-	mTurnSpeed
-	    = ((THaneHamuKuriSaveLoadParams*)getSaveParam())->mSLTurnSpeedLow.get();
-	mMarchSpeed = ((THaneHamuKuriSaveLoadParams*)getSaveParam())
-	                  ->mSLMarchSpeedLow.get();
+	mPosition.y = unk210 + (unk230 + unk234);
+	mTurnSpeed  = getSaveParam2()->mSLTurnSpeedLow.get();
+	mMarchSpeed = getSaveParam2()->mSLMarchSpeedLow.get();
 
 	if (!isBckAnm(4))
 		TWalkerEnemy::walkBehavior(param_1, param_2);
@@ -1589,7 +1628,7 @@ void THaneHamuKuri2::walkBehavior(int param_1, f32 param_2)
 
 BOOL THaneHamuKuri2::isReachedToGoal() const
 {
-	JGeometry::TVec3<f32> local_c = unk104.getPoint();
+	JGeometry::TVec3<f32> local_c = getUnk104().getPoint();
 	local_c -= mPosition;
 	local_c.y = 0.0f;
 	if (MsVECMag2(&local_c) < 20.0f)
@@ -1787,8 +1826,8 @@ BOOL TDangoHamuKuri::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &mPosition, 0,
-		                             nullptr);
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
+		                             0, nullptr);
 		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0.0f,
 		                        0.0f, 0, 0, 4);
 		if (mSprayedByWaterCooldown == 0) {
@@ -2072,6 +2111,9 @@ void TFireHamuKuri::behaveToWater(THitActor* param_1)
 
 void TFireHamuKuri::reset()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_reset[8];
+	(void)framePad_8_reset;
 	THamuKuri::reset();
 	mHitPoints = getSaveParam() ? getSaveParam()->mSLHitPointMax.get() : 1;
 	unk150 &= ~0x2;
@@ -2099,6 +2141,9 @@ void TFireHamuKuri::moveObject()
 
 void TFireHamuKuri::calcRootMatrix()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_calcRootMatrix[16];
+	(void)framePad_16_calcRootMatrix;
 	TSpineEnemy::calcRootMatrix();
 	if (unk210 && !checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
 		if (JPABaseEmitter* emitter
@@ -2211,6 +2256,9 @@ void TFireHamuKuri::sendAttackMsgToMario()
 #pragma dont_inline on
 void TFireHamuKuri::changeTevColor()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_changeTevColor[8];
+	(void)framePad_8_changeTevColor;
 	if (recoverFire()) {
 		unk21C.r = (mFireHamNoseColorDiff.r * unk218) / 30
 		           + mFireHamNoseColorStart.r;
@@ -2273,6 +2321,9 @@ void TDoroHamuKuri::attackToMario()
 
 void TDoroHamuKuri::setBehavior()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_setBehavior[16];
+	(void)framePad_16_setBehavior;
 	TDoroHamuKuriManager* man = (TDoroHamuKuriManager*)getManager();
 	if (!unk198 && man->unk70) {
 		if (mSpine->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()
@@ -2655,6 +2706,9 @@ DEFINE_NERVE(TNerveFireHamuKuriRecover, TLiveActor)
 
 DEFINE_NERVE(TNerveDoroHaneRise, TLiveActor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
 	TDoroHaneKuri* self = (TDoroHaneKuri*)spine->getBody();
 
 	if (self->mPosition.y < self->mGroundHeight + 800.0f)

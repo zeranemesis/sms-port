@@ -49,17 +49,7 @@ static BOOL TobiPukuRollCallback(J3DNode* param_1, BOOL param_2)
 	if (param_2 == 0) {
 		TTobiPuku* puku = gpCurTobiPuku;
 		if (puku != nullptr) {
-			bool roll;
-			if (puku->mSpine->getCurrentNerve()
-			        == &TNerveTobiPukuLand::theNerve()
-			    || puku->mSpine->getCurrentNerve()
-			           == &TNerveTobiPukuPrepareFly::theNerve()
-			    || puku->mSpine->getCurrentNerve()
-			           == &TNerveTobiPukuReturnLaunch::theNerve())
-				roll = true;
-			else
-				roll = false;
-			if (!roll)
+			if (!puku->isRoll())
 				return true;
 			MtxPtr mA = gpCurTobiPuku->getMActor()->getModel()->getAnmMtx(
 			    ((J3DJoint*)param_1)->getJntNo());
@@ -324,7 +314,22 @@ void TTobiPuku::hitWall()
 	}
 }
 
-void TTobiPuku::bound() { }
+void TTobiPuku::bound()
+{
+	unk1AE = 1;
+	if (unk198 < unk19C->mSLBoundNum.get()) {
+		unk198++;
+		f32 boundVal                   = unk19C->mSLBoundVal.get();
+		JGeometry::TVec3<f32> velocity = unk1D0;
+		velocity.x *= boundVal;
+		velocity.z *= boundVal;
+		velocity.y = TTobiPuku::mBoundVelocityY * boundVal
+		             * (unk1B0 - mGroundHeight) / 30.0f;
+		unk1D0    = velocity;
+		mVelocity = velocity;
+		onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
+}
 
 void TTobiPuku::calcRootMatrix()
 {
@@ -412,9 +417,28 @@ void TTobiPuku::setJumpStartAnm()
 		setBckAnm(7);
 }
 
-bool TTobiPuku::canBound() { return false; }
+bool TTobiPuku::canBound()
+{
+	// TODO: size matches the map, but in TNerveTobiPukuLand the target
+	// stores unk1AE before testing the value, we test first.
+	bool result;
+	if (unk198 < unk19C->mSLBoundNum.get())
+		result = true;
+	else
+		result = false;
+	unk1AE = result;
+	return result;
+}
 
-bool TTobiPuku::isRoll() { return false; }
+bool TTobiPuku::isRoll()
+{
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuLand::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTobiPukuPrepareFly::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveTobiPukuReturnLaunch::theNerve())
+		return true;
+	else
+		return false;
+}
 
 void TTobiPuku::behaveToWater(THitActor* param_1)
 {
@@ -989,14 +1013,9 @@ DEFINE_NERVE(TNerveTobiPukuLand, TLiveActor)
 				self->unk1E8 = (180.0f - self->mRotation.x)
 				               / fabsf(600.0f / self->unk1E4);
 			}
-			return false;
 		} else {
 			if (TTobiPuku::mBoundSw) {
-				if (self->unk198 < self->unk19C->mSLBoundNum.get())
-					self->unk1AE = 1;
-				else
-					self->unk1AE = 0;
-				if (self->unk1AE) {
+				if (self->canBound()) {
 					spine->pushAfterCurrent(&TNerveTobiPukuBound::theNerve());
 					return true;
 				}
@@ -1008,12 +1027,9 @@ DEFINE_NERVE(TNerveTobiPukuLand, TLiveActor)
 		}
 	} else if (self->isFallEndLandBck()) {
 		if (spine->getTime() == 1) {
-			f32 dx            = self->mPosition.x - self->unk1B8[0].x;
-			f32 dy            = self->mPosition.y - self->unk1B8[0].y;
-			f32 dz            = self->mPosition.z - self->unk1B8[0].z;
-			self->unk1B8[1].x = dx;
-			self->unk1B8[1].y = dy;
-			self->unk1B8[1].z = dz;
+			self->unk1B8[1].set(self->mPosition.x - self->unk1B8[0].x,
+			                    self->mPosition.y - self->unk1B8[0].y,
+			                    self->mPosition.z - self->unk1B8[0].z);
 		}
 
 		if (spine->getTime() < 20) {
@@ -1066,6 +1082,10 @@ DEFINE_NERVE(TNerveTobiPukuLand, TLiveActor)
 DEFINE_NERVE(TNerveTobiPukuBound, TLiveActor)
 {
 	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	// TODO: this block is almost certainly an inlined TTobiPuku::bound()
+	// (same code, and bound() compiles to exactly the 0xC8 bytes of the map),
+	// but calling bound() here puts the frame 12 bytes further off than
+	// spelling it out, so the call is not used yet.
 	if (spine->getTime() == 0) {
 		self->unk1AE = 1;
 		if (self->unk198 < self->unk19C->mSLBoundNum.get()) {

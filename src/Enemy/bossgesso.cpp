@@ -40,10 +40,6 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-// Force emission of weak inline functions that appear in the original binary
-static MActorAnmData* (TMActorKeeper::*force_emit_getMActorAnmData)() const = &TMActorKeeper::getMActorAnmData;
-static JGeometry::TVec3<f32>& (*force_emit_SMS_GetMarioPos)() = &SMS_GetMarioPos;
-
 const char* bgeso_bastable[] = {
 	nullptr,
 	"/scene/bgeso/bas/bgeso_cannon.bas",
@@ -652,7 +648,7 @@ void TBossGesso::rumblePad(int param_1, const JGeometry::TVec3<f32>& param_2)
 	if (!SMS_IsMarioTouchGround4cm())
 		return;
 
-	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+	JGeometry::TVec3<f32> delta = *gpMarioPos;
 	delta -= param_2;
 	f32 fVar2 = delta.length();
 	f32 fVar1 = (3000.0f - fVar2) / 1000.0f;
@@ -1107,7 +1103,7 @@ void TBossGesso::doAttackShoot()
 	}
 
 	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)) {
-		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+		JGeometry::TVec3<f32> delta = *gpMarioPos;
 		delta -= mPosition;
 
 		f32 singleAttackLen = getSaveParam()->mSLSingleAttackLen.get();
@@ -1225,6 +1221,9 @@ void TBossGesso::moveObject()
 
 void TBossGesso::reset()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_reset[8];
+	(void)framePad_8_reset;
 	for (int i = 0; i < TENTACLE_NUM; ++i) {
 		mTentacles[i]->resetAllNodes(mPosition);
 		mTentacles[i]->getFirstNode()->onUnk24();
@@ -1443,7 +1442,8 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 
 			if (!((left == 4 || left == 6 || left == 3)
 			      && (right == 4 || right == 6 || right == 3))) {
-				gpMarDirector->mConsole->startAppearBalloon(0xE0003, true);
+				gpMarDirector->mConsole->startAppearBalloon(
+				    VERSION_SELECT(GMSJ01(0xE0003), GMSP01(0x03)), true);
 			}
 		}
 	}
@@ -1526,7 +1526,7 @@ DEFINE_NERVE(TNerveBGWait, TLiveActor)
 		self->getMActor()->resetDL();
 	}
 
-	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+	JGeometry::TVec3<f32> delta = *gpMarioPos;
 	delta -= self->mPosition;
 	f32 len   = delta.length();
 	f32 fVar2 = len > 800.0f ? 1.0f : 3000.0f / len;
@@ -1732,7 +1732,7 @@ DEFINE_NERVE(TNerveBGTug, TLiveActor)
 	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(4), 0, nullptr);
 
 	if (self->mBeak->mHolder != nullptr) {
-		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+		JGeometry::TVec3<f32> delta = *gpMarioPos;
 		delta -= self->mPosition;
 		f32 lim = self->getSaveParam()->mSLBeakLengthDamage.get();
 

@@ -24,6 +24,9 @@ void TMario::rumbleStart(int channelDataIdx, int repeatCount)
 
 void TMario::incHP(int hp)
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_incHP[32];
+	(void)framePad_32_incHP;
 	// volatile u32 padding[10];
 	if (isUnderWater() || checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		mAir += hp;
@@ -46,6 +49,9 @@ void TMario::incHP(int hp)
 
 void TMario::decHP(int hp)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_decHP[8];
+	(void)framePad_8_decHP;
 	// volatile u32 padding[2];
 	if (isUnderWater() || checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		mAir -= hp;
@@ -191,6 +197,9 @@ void TMario::resetNozzle() { }
 
 void TMario::normalizeNozzle()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_normalizeNozzle[8];
+	(void)framePad_8_normalizeNozzle;
 	// volatile u32 padding[2];
 	if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
 		mWaterGun->changeNozzle(TWaterGun::Spray, true);
@@ -201,6 +210,9 @@ void TMario::normalizeNozzle()
 
 void TMario::loserExec()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_loserExec[8];
+	(void)framePad_8_loserExec;
 	// volatile u32 padding[2];
 	if (mStatus != MARIO_STATUS_SWIM_DOWN && mStatus != MARIO_STATUS_ELEC_DOWN
 	    && mStatus != MARIO_STATUS_SWIM_P_DOWN
@@ -405,6 +417,9 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 
 void TMario::considerTake()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_considerTake[24];
+	(void)framePad_24_considerTake;
 	// volatile u32 missingStack[6];
 	bool check = false;
 

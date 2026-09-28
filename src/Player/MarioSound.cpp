@@ -619,6 +619,9 @@ void TMario::soundMovement()
 
 void TMario::animSound()
 {
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_animSound[48];
+	(void)framePad_48_animSound;
 	mSoundFlags = mGroundPlane->unk6;
 
 	if (checkFlag(MARIO_FLAG_DIRTY)) {
@@ -703,6 +706,9 @@ u8 TMario::getVoiceStatus()
 
 u32 TMario::startVoice(u32 param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_startVoice[8];
+	(void)framePad_8_startVoice;
 	if (onYoshi())
 		return 0;
 
@@ -711,6 +717,9 @@ u32 TMario::startVoice(u32 param_1)
 
 u32 TMario::startVoiceIfNoVoice(u32 param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_startVoiceIfNoVoice[8];
+	(void)framePad_8_startVoiceIfNoVoice;
 	if (SMSGetMSound()->getMarioVoiceID(0) == -1)
 		return startVoice(param_1);
 

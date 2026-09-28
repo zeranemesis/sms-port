@@ -9,6 +9,9 @@
 
 void TTalkCursor::loadAfter()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_loadAfter[8];
+	(void)framePad_8_loadAfter;
 	MActorAnmData* anmData = new MActorAnmData;
 	anmData->init("/common/cursor_b", nullptr);
 	unk10 = new MActor(anmData);

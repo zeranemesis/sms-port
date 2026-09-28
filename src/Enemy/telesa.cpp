@@ -109,6 +109,9 @@ TSmallEnemy* TTelesaManager::createEnemyInstance() { return new TTelesa; }
 
 void TTelesaManager::createEnemies(int param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_createEnemies[8];
+	(void)framePad_8_createEnemies;
 	TEnemyManager::createEnemies(param_1);
 	int bodyMatIdx = getObj(0)
 	                     ->getMActor()
@@ -144,6 +147,9 @@ void TTelesaManager::createModelData()
 
 void TTelesaManager::telesaForceKill()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_telesaForceKill[16];
+	(void)framePad_16_telesaForceKill;
 	bool anyKilled = false;
 	for (int i = 0; i < mObjNum; ++i) {
 		TTelesa* telesa = (TTelesa*)unk18[i];
@@ -349,6 +355,9 @@ void TTelesa::setBehavior()
 
 void TTelesa::attackToMario()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_attackToMario[8];
+	(void)framePad_8_attackToMario;
 	if (checkLiveFlag(LIVE_FLAG_HIDDEN)
 	    || !(mPosition.y + mAttackHeight - 50.0f < SMS_GetMarioPos().y)) {
 		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
@@ -533,6 +542,9 @@ BOOL TTelesa::isReachedToGoal() const
 
 bool TTelesa::changeByJuice()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_changeByJuice[8];
+	(void)framePad_8_changeByJuice;
 	if (checkUnk150(0x40)) {
 
 		if (mJuiceBlock != nullptr)
@@ -578,6 +590,9 @@ void TTelesa::scalingChangeActor()
 
 void TTelesa::changeOut()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_changeOut[8];
+	(void)framePad_8_changeOut;
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 	SMSGetMSound()->startSoundActor(MSD_SE_EN_TELSA_RECOVER, &mPosition, 0,
 	                                nullptr, 0, 4);
@@ -705,6 +720,9 @@ void TTelesa::initAttacker(THitActor* param_1)
 
 void TTelesa::initItemAttacker(THitActor* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_initItemAttacker[8];
+	(void)framePad_8_initItemAttacker;
 	reset();
 	offLiveFlag(LIVE_FLAG_HIDDEN);
 	unk1B8 = 1;
@@ -883,6 +901,9 @@ TSeeTelesa::TSeeTelesa(const char* name)
 
 void TSeeTelesa::load(JSUMemoryInputStream& stream)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_load[8];
+	(void)framePad_8_load;
 	TTelesa::load(stream);
 	setTypeCanSee();
 }
@@ -942,6 +963,9 @@ TMarioModokiTelesa::TMarioModokiTelesa(const char* name)
 
 void TMarioModokiTelesa::load(JSUMemoryInputStream& stream)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_load[16];
+	(void)framePad_16_load;
 	TSmallEnemy::load(stream);
 
 	stream >> mImitationIndex;
@@ -1099,6 +1123,9 @@ DEFINE_NERVE(TNerveTelesaImitate, TLiveActor)
 
 DEFINE_NERVE(TNerveTelesaDie, TLiveActor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
 	TTelesa* self = (TTelesa*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -1236,6 +1263,9 @@ void TKageMarioModoki::load(JSUMemoryInputStream& stream)
 
 void TKageMarioModoki::init(TLiveManager* manager)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_init[8];
+	(void)framePad_8_init;
 	TWalkerEnemy::init(manager);
 	mSpine->initWith(&TNerveKageMarioModokiWait::theNerve());
 	mMActor->resetDL();

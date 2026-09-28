@@ -157,6 +157,9 @@ void MActor::setModel(J3DModel* param_1, u32 param_2)
 
 bool MActor::isCurAnmAlreadyEnd(int type)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_isCurAnmAlreadyEnd[8];
+	(void)framePad_8_isCurAnmAlreadyEnd;
 	bool result = true;
 
 	J3DFrameCtrl* ctrl = getFrameCtrl(type);
@@ -304,6 +307,9 @@ void MActor::updateOutSubBck()
 
 void MActor::calcAnm()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_calcAnm[24];
+	(void)framePad_24_calcAnm;
 	frameUpdate();
 
 	updateIn();
@@ -370,6 +376,9 @@ void MActor::update() { }
 
 void MActor::entry()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_entry[8];
+	(void)framePad_8_entry;
 	if (!unk39)
 		return;
 
@@ -412,6 +421,9 @@ void MActor::matAnmFrameUpdate()
 
 void MActor::perform(u32 cue, JDrama::TGraphics*)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_perform[16];
+	(void)framePad_16_perform;
 	if (cue & CUE_CALC_ANIM)
 		calcAnm();
 
@@ -649,6 +661,9 @@ void MActor::entryOut()
 
 void MActor::updateMatAnm()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_updateMatAnm[8];
+	(void)framePad_8_updateMatAnm;
 	j3dSys.setTexture(mModel->getModelData()->getTexture());
 	for (u16 i = 0; i < mMaterialNum; ++i)
 		if (unk30[i] != 0x32 || unk2C[i] != 0x32)

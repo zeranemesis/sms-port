@@ -216,6 +216,9 @@ MActor* TNpcParts::getPartsMActor(int param_1, int param_2)
 
 void TNpcParts::partsFrameUpdate()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_partsFrameUpdate[16];
+	(void)framePad_16_partsFrameUpdate;
 	int i = 0;
 
 	TSharedParts** it = unk0[unk60->getLodAnm()->unk8];

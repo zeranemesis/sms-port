@@ -190,6 +190,9 @@ void CPolarSubCamera::calcNoticeTargetYrot_(const Vec& target)
 
 void CPolarSubCamera::getNozzleTopPos_(JGeometry::TVec3<f32>* out) const
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_getNozzleTopPos_[24];
+	(void)framePad_24_getNozzleTopPos_;
 	if (SMS_GetMarioWaterGun() == nullptr) {
 		out->set(gpCameraMario->unk0);
 	} else {

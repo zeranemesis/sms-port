@@ -254,6 +254,9 @@ void TEffectModel::moveObject()
 void TEffectModel::calcRootMatrix()
 {
 	TPosition3f mtx;
+	// Frame-padding hack: original frame 0x98, ours 0x90 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 	MsMtxSetXYZRPH(mtx, mPosition.x, mPosition.y, mPosition.z, mRotation.x,
 	               mRotation.y, mRotation.z);
 	mtx.translation(mPosition.x, mPosition.y, mPosition.z);

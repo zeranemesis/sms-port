@@ -188,6 +188,9 @@ JPABaseEmitter*
 TMarioParticleManager::emit(s32 param_1, const JGeometry::TVec3<f32>* param_2,
                             u8 param_3, const void* param_4)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_emit[8];
+	(void)framePad_8_emit;
 	if (param_3 == 0)
 		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
 		        *param_2, param_1, param_3, 0, nullptr, nullptr))
@@ -267,6 +270,9 @@ TMarioParticleManager::emitAndBindToPosPtr(s32 param_1,
                                            const JGeometry::TVec3<f32>* param_2,
                                            u8 param_3, const void* param_4)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_emitAndBindToPosPtr[8];
+	(void)framePad_8_emitAndBindToPosPtr;
 	if (param_3 == 0)
 		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
 		        *param_2, param_1, param_3, 0, nullptr, nullptr)) {

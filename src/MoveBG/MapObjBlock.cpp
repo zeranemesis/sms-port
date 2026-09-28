@@ -200,6 +200,9 @@ u32 TIceBlock::getSDLModelFlag() const { return 0; }
 
 u32 TIceBlock::touchWater(THitActor* param_1)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_touchWater[16];
+	(void)framePad_16_touchWater;
 	const JGeometry::TVec3<f32>& speed = getWaterSpeed(param_1);
 
 	int id = getWaterID(param_1);
@@ -227,6 +230,9 @@ u32 TIceBlock::touchWater(THitActor* param_1)
 
 void TIceBlock::control()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_control[16];
+	(void)framePad_16_control;
 	JPABaseEmitter* emitter
 	    = gpMarioParticleManager->emit(MAPOBJ_ICEBLOCKA, &mPosition, 1, this);
 	if (emitter != nullptr) {
@@ -283,6 +289,9 @@ void TIceBlock::initMapObj()
 
 void TBrickBlock::kill()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_kill[8];
+	(void)framePad_8_kill;
 	makeObjDead();
 	emitAndScale(0x60, 0, &mPosition);
 	emitAndScale(0x61, 0, &mPosition);
@@ -383,6 +392,9 @@ void TTelesaBlock::setGroundCollision()
 
 BOOL TSuperHipDropBlock::receiveMessage(THitActor* sender, u32 message)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	if (message == HIT_MESSAGE_SUPER_HIP_DROP) {
 		kill();
 		if (mMonteBlockBroken)

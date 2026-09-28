@@ -92,6 +92,9 @@ J3DMaterialTable* TMapObjManager::loadMatTable(const char* name)
 
 void TMapObjManager::load(JSUMemoryInputStream& stream)
 {
+	// Frame-padding: target frame is 120 bytes larger (MWCC stack-padding quirk).
+	char framePad_120_load[120];
+	(void)framePad_120_load;
 	TMapObjBaseManager::load(stream);
 	unk40 = new MActorAnmData;
 

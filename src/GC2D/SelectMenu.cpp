@@ -837,7 +837,7 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID2));
+					    mScenarioBmg2, SMS_getNormalStage(shineID));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
 					mShineMarks[mSelectedShine]->mWhite = mSelectedMarkCol;
@@ -912,7 +912,7 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID2));
+					    mScenarioBmg2, SMS_getNormalStage(shineID));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
 					mSelectShineMgr->mRumbleOption[mSelectedShine]

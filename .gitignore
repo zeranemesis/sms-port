@@ -43,3 +43,12 @@ compile_commands.json
 !/CMakeLists.txt
 *.exe
 tools/mwcc_compiler
+
+# Local scratch scripts, dumps and logs at the repository root
+/scratch_*
+/*.s
+/*.log
+/*.json
+/*.ps1
+/*.py
+!/configure.py

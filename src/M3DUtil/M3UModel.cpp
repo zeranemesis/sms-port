@@ -46,6 +46,9 @@ void M3UModel::changeAnmTexPattern(int param_1, u8 param_2)
 // though the rest of the file does use it.
 void M3UModel::updateInMotion()
 {
+	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
+	char framePad_40_updateInMotion[40];
+	(void)framePad_40_updateInMotion;
 	for (int i = 0; i < unk10; i++) {
 		M3UMtxCalcSetInfo& info   = unk14[i];
 		J3DFrameCtrl& frameCtrl   = unkC[info.mFrameCalcIdx];

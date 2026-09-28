@@ -502,6 +502,9 @@ void dirTypeEmtrDir(JPABaseParticle*, JPABaseEmitter* emitter,
 void dirTypePrevPtcl(JPABaseParticle* particle, JPABaseEmitter* emitter,
                      JGeometry::TVec3<f32>& result)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_dirTypePrevPtcl[16];
+	(void)framePad_16_dirTypePrevPtcl;
 	JGeometry::TVec3<f32> pos;
 	particle->getGlobalPosition(pos);
 	JSULink<JPABaseParticle>* prev = particle->getLinkBufferPtr()->getPrev();
@@ -1520,6 +1523,9 @@ void JPADrawCalcScaleY::calc(const JPADrawContext* dc,
 void JPADrawCalcScaleXBySpeed::calc(const JPADrawContext* dc,
                                     JPABaseParticle* particle)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_calc[8];
+	(void)framePad_8_calc;
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
 	JGeometry::TVec3<f32> vel;
