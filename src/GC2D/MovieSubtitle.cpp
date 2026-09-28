@@ -6,10 +6,13 @@
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <System/THPRender.hpp>
 #include <System/Application.hpp>
+#include <version.h>
+
 #ifdef VERSION_GMSP01
-#include <System/FlagManager.hpp>
 #include <JSystem/JSupport/JSUMemoryInputStream.hpp>
 #include <JSystem/JSupport/JSUMemoryOutputStream.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
+#include <System/FlagManager.hpp>
 #endif
 
 // TODO: removeme
@@ -51,7 +54,7 @@ void TMovieSubTitle::setupResource(const char* param_1, JKRArchive* param_2)
 	unk18 = (J2DTextBox*)unk14->search('me_a');
 	unk1C = (J2DTextBox*)unk14->search('me_b');
 
-	char buffer[0x400];
+	char buffer[VERSION_SELECT(GMSJ01(256), GMSP01(1024))];
 
 	// inline?
 	memset(buffer, ' ', ARRAY_COUNT(buffer));
@@ -118,83 +121,90 @@ void TMovieSubTitle::hide()
 
 const TMessageLoader::EntryInfo* TMovieSubTitle::getCurEntry() const
 {
+#ifdef VERSION_GMSP01
+	if (unk20->getMessageNum() <= unk24
+	    || !TFlagManager::getInstance()->getFlag(0x90001))
+		return nullptr;
+#else
 	if (unk20->getMessageNum() <= unk24)
 		return nullptr;
+#endif
 
 	return unk20->getMessageEntry(unk24);
 }
 
 void TMovieSubTitle::setCurMessage()
 {
+	const char* msg
+	    = (const char*)(unk20->getMessageData() + getCurEntry()->unk0);
+
 #ifdef VERSION_GMSP01
-	const TMessageLoader::EntryInfo* entry = nullptr;
-	if (unk20->getMessageNum() > unk24
-	    && TFlagManager::getInstance()->getFlag(0x90001))
-		entry = unk20->getMessageEntry(unk24);
+	JSUMemoryInputStream in(msg, 0x400);
+	JSUMemoryOutputStream out(unk18->getStringPtr(), 0x400);
 
-	const u8* message = unk20->getMessageData() + entry->unk0;
-	u8 code;
-	u8 length;
-	u8 color[4];
-	bool hasColor;
-	JSUMemoryInputStream input(message, 0x400);
-	JSUMemoryOutputStream output(unk18->getStringPtr(), 0x400);
-	char markup[0x100];
+	while (in.getAvailable() && out.getAvailable()) {
+		u8 c = in.read8b();
 
-	while (input.getPosition() != input.getLength()) {
-		input.read(&code, 1);
-
-		if (code == '\n') {
-			output.write(&code, 1);
+		char buffer[256];
+		JUtility::TColor color;
+		switch (c) {
+		case 0x1A:
+			in.skip(in.read8b() - 2);
 			continue;
-		}
-		if (code == '\0') {
-			output.write(&code, 1);
+		case '\0':
+			out << c;
 			return;
-		}
-		if (code == 0x1A) {
-			input.read(&length, 1);
-			input.skip(length - 2);
+		case '\n':
+			out << c;
 			continue;
 		}
 
-		hasColor = true;
-		switch (code) {
-		case '@': color[0] = 100; color[1] = 255; color[2] = 100; break;
-		case '#': color[0] = 255; color[1] = 160; color[2] = 100; break;
-		case '%': color[0] = 255; color[1] = 255; color[2] = 0; break;
-		case '*':
-		case '+':
+		bool colored = true;
+		switch (c) {
+		case '@':
+			color.set(100, 255, 100, 255);
+			break;
+		case '#':
+			color.set(255, 160, 100, 255);
+			break;
+		case '%':
+			color.set(255, 255, 0, 255);
+			break;
 		case '<':
+		case '+':
 		case '>':
 		case 0xA5:
-			color[0] = 220;
-			color[1] = 220;
-			color[2] = 220;
+			color.set(220, 220, 220, 255);
 			break;
-		case 'n': color[0] = 110; color[1] = 230; color[2] = 255; break;
-		default: hasColor = false; break;
+		case '$':
+			color.set(110, 230, 255, 255);
+			break;
+		case '*':
+			color.set(220, 220, 220, 255);
+			break;
+		default:
+			colored = false;
+			break;
 		}
 
-		if (hasColor) {
-			color[3] = 255;
-			snprintf(markup, 0xFF,
-			         "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]",
-			         color[0], color[1], color[2]);
-			output.write(markup, 0x1D);
+		if (colored) {
+			snprintf(buffer, 255,
+			         "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]", color.r,
+			         color.g, color.b);
+			out.write(buffer, 29);
 		}
-		output.write(&code, 1);
-		if (hasColor) {
-			snprintf(markup, 0xFF,
+
+		out << c;
+
+		if (colored) {
+			snprintf(buffer, 255,
 			         "\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]\033GM[1]");
-			output.write(markup, 0x1E);
+			out.write(buffer, 30);
 		}
 	}
 
 	snprintf(unk1C->getStringPtr(), 0x400, "%s", unk18->getStringPtr());
 #else
-	const char* msg
-	    = (const char*)(unk20->getMessageData() + getCurEntry()->unk0);
 	snprintf(unk18->getStringPtr(), 256, "%s", msg);
 	snprintf(unk1C->getStringPtr(), 256, "%s", msg);
 #endif

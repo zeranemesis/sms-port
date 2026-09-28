@@ -8,6 +8,7 @@
 class TSplinePath {
 public:
 	TSplinePath(int);
+	~TSplinePath();
 	void makeTable(f32*, f32*, f32*);
 	void calcTable();
 	f32 calcSpline(f32, f32*, f32*, f32*);

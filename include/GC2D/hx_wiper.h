@@ -7,18 +7,16 @@
 extern "C" {
 #endif
 
-// NOTE: only the global (non-static) functions of hx_wiper.c are declared
-// here, everything else is local to the translation unit.
-
-int Hx_MovieStartSyncEx(void);
-void Hx_MovieStartSync(void);
-u32 Hx_UpdateWipe(f32 delta);
-int Hx_GetWipeType(int type);
-void Hx_StartWipe(int type, int param);
-void Hx_RemoveResource(void);
-void Hx_ProvideResourceEx(void* resource);
-void Hx_ProvideResource(void* resource, u32 size);
-void Hx_ResetWipe(u32 width, u32 height);
+int Hx_MovieStartSyncEx();
+void Hx_MovieStartSync();
+u32 Hx_UpdateWipe(f32);
+int Hx_GetWipeType(int);
+void Hx_StartWipe(int, int);
+void Hx_RemoveResource();
+void Hx_ProvideResourceEx(void*);
+void Hx_ProvideResource(void*, int);
+void Hx_ResetWipe(u32, u32);
+void Hx_SetVFilterFade();
 
 #if __cplusplus
 }

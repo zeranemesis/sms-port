@@ -621,12 +621,13 @@ void TGuide::mmarkPattern(TExPane* pane, s16 period, u32 frame)
 // TODO: body is unknown
 void TGuide::searchNearPoint(s16*, s16*, s16, s16) { }
 
-int TGuide::checkPoint(int x, int y)
+int TGuide::checkPoint(int param_1, int param_2)
 {
 	int result = -1;
 	for (int i = 0; i < 14; ++i) {
-		JUTRect rect(unk168[i]->getBounds());
-		if (x > rect.x1 && x < rect.x2 && y > rect.y1 && y < rect.y2) {
+		JUTRect rect = unk168[i]->getBounds();
+		if (param_1 > rect.x1 && param_1 < rect.x2 && param_2 > rect.y1
+		    && param_2 < rect.y2) {
 			result = i;
 			break;
 		}
@@ -634,15 +635,16 @@ int TGuide::checkPoint(int x, int y)
 
 	if (result == -1) {
 		for (int i = 0; i < 10; ++i) {
-			JUTRect rect(unk44C[i]->getBounds());
-			if (x > rect.x1 && x < rect.x2 && y > rect.y1 && y < rect.y2) {
+			JUTRect rect = unk44C[i]->getBounds();
+			if (param_1 > rect.x1 && param_1 < rect.x2 && param_2 > rect.y1
+			    && param_2 < rect.y2) {
 				result = i;
 				break;
 			}
 		}
 	}
 
-	if (result >= 0 && result < 10 && !unk44C[result]->mVisible)
+	if (result >= 0 && result < 10 && !unk44C[result]->isVisible())
 		result = -1;
 
 	return result;
