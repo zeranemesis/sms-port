@@ -31,6 +31,9 @@ void TEggGenerator::init(TLiveManager* manager)
 
 void TEggGenerator::control()
 {
+	// Frame-padding hack: original frame 0x30, ours 0x18 (MWCC stack-padding bug).
+	char pad[24];
+	(void)pad;
 	if (VECSquareDistance(&mPosition, &gpMarioOriginal->mPosition)
 	    < 250000.0f) {
 		if (!gpMarioOriginal->mYoshi->isHatched())

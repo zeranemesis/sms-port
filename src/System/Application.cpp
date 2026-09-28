@@ -209,6 +209,9 @@ void SMSLoadArchiveARAM(TARAMBlock* out_block, const char* path)
 
 void SMSMountAramArchive(JKRMemArchive* archive, TARAMBlock& block)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_SMSMountAramArchive[16];
+	(void)framePad_16_SMSMountAramArchive;
 	if (block.mIsCompressed) {
 		JKRAram::aramToMainRam(
 		    block.mBlock, (u8*)SMSGetMarDirector()->getUnkD4(), 0, 0,

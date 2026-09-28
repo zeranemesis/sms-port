@@ -2111,8 +2111,18 @@ void TGCConsole2::endCameraDemo()
 
 	unk50 = 0;
 
-	if (!unk2F8->isInterpolatorAtZero())
-		startAppearTank();
+	if (!unk2F8->isInterpolatorAtZero() && !unk45
+	    && !TFlagManager::smInstance->getBool(0x30002)) {
+		unk45 = 1;
+		unk59 = 1;
+		unk7C = 0;
+		unk2F8->getPane()->show();
+		unk2F8->setPaneOffset(unk98, 0, 0, 0, 465 - unk2F8->mInitialBounds.y1);
+		unk26C->setPanePosition(50, JUTPoint(0, 100), JUTPoint(0, -30),
+		                        JUTPoint(0, -30));
+		unk274->getPane()->hide();
+		unk29C->getPane()->hide();
+	}
 
 	unk40 = 1;
 	unk41 = 0;
@@ -3227,10 +3237,7 @@ bool TGCConsole2::processAppearStar(int param_1)
 	for (int i = 0; i < 3; ++i) {
 		if (param_1 == i * 6 + 28) {
 			if (i == 2) {
-				bool showHundreds = shines >= 100;
-				if (unk50 && !(gpMarDirector->mDemoFlags & 0x10))
-					showHundreds = shines > 100;
-				if (showHundreds)
+				if ((!unk50 && shines >= 100) || (unk50 && shines > 100))
 					unk134[i]->getPane()->show();
 			} else {
 				unk134[i]->getPane()->show();
@@ -3906,17 +3913,17 @@ bool TGCConsole2::processAppearBalloon()
 bool TGCConsole2::processDisappearBalloon()
 {
 	bool isFinished = false;
-	int height;
-	int nextHeight;
 
 	JUTRect bounds = unk3B0->getBounds();
-	height = bounds.getHeight();
+	int height     = bounds.getHeight();
 
-	JUTRect contents = unk3B0->getContentsBounds();
-	if (contents.getHeight() > 0) {
-		nextHeight = height - unk3CC;
-		if (contents.getHeight() - unk3CC < 0)
-			nextHeight += unk3CC - contents.getHeight();
+	JUTRect contents  = unk3B0->getContentsBounds();
+	int contentHeight = contents.getHeight();
+
+	if (contentHeight > 0) {
+		int nextHeight = height - unk3CC;
+		if (contentHeight - unk3CC < 0)
+			nextHeight += unk3CC - contentHeight;
 
 		unk3B0->resize(unk3BC.getWidth(), nextHeight);
 

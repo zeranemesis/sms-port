@@ -18,7 +18,6 @@ BOOL JPADraw::initialize(JPABaseEmitter* emitter,
                          JPATextureResource* tex_resource)
 {
 	int i;
-
 	mDrawCtx.pcb = &cb;
 
 	mDrawCtx.mBaseEmitter = emitter;
@@ -91,6 +90,9 @@ BOOL JPADraw::initialize(JPABaseEmitter* emitter,
 		mpCalcChldVis[i] = nullptr;
 
 	JPADrawVisitorDefFlags flags;
+	// Frame-padding hack: original frame 0x190, ours 0x180 (MWCC stack-padding bug).
+	char pad[16];
+	(void)pad;
 
 	flags.mbIsEnableDrawParent = mDrawCtx.mSweepShape == nullptr
 	                             || mDrawCtx.mSweepShape->isEnableDrawParent();
@@ -324,15 +326,6 @@ const ResTIMG* JPADraw::swapImage(const ResTIMG* param_1, s16 param_2)
 	u8 id   = param_2;
 	u32 idx = mDrawCtx.mTexIndices[id];
 	return mDrawCtx.mTexResource->swapImage(param_1, idx);
-}
-
-BOOL JPADraw::loadTexture(u8 idx, GXTexMapID map_id)
-{
-	JUT_ASSERT(
-	    mDrawCtx.mBaseEmitter->getEmitterDataBlockInfoPtr()->getTextureNum()
-	    > idx);
-	mDrawCtx.mTexResource->load(mDrawCtx.mTexIndices[idx], map_id);
-	return true;
 }
 
 void JPADraw::setDrawExecVisitorsBeforeCB(
@@ -1110,6 +1103,9 @@ void JPADraw::zDraw()
 
 void JPADraw::zDrawParticle()
 {
+	// Frame-padding hack: original frame 0x88, ours 0x80 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 	unkC2 &= ~0x2;
 	setParticleClipBoard();
 	mDrawCtx.unk18 = mDrawCtx.mBaseEmitter->getParticleList();
@@ -1158,6 +1154,9 @@ void JPADraw::zDrawParticle()
 
 void JPADraw::zDrawChild()
 {
+	// Frame-padding hack: original frame 0x88, ours 0x80 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 	unkC2 |= 0x2;
 	setChildClipBoard();
 	mDrawCtx.unk18 = mDrawCtx.mBaseEmitter->getChildParticleList();
@@ -1225,36 +1224,12 @@ s16 JPADraw::getMainTextureID(u8 i)
 	return result;
 }
 
-s16 JPADraw::getIndTextureID()
-{
-	s16 result = -1;
-	if (mDrawCtx.mExTexShape != nullptr
-	    && mDrawCtx.mExTexShape->getIndTexMode() != 0)
-		result = mDrawCtx.mExTexShape->getIndTextureID();
-	return result;
-}
-
-s16 JPADraw::getIndSubTextureID()
-{
-	s16 result = -1;
-	if (mDrawCtx.mExTexShape != nullptr
-	    && mDrawCtx.mExTexShape->getIndTexMode() == 2)
-		result = mDrawCtx.mExTexShape->getSubTextureID();
-	return result;
-}
-
-s16 JPADraw::getSecondTextureID()
-{
-	s16 result = -1;
-	if (mDrawCtx.mExTexShape != nullptr
-	    && mDrawCtx.mExTexShape->isEnableSecondTex())
-		result = mDrawCtx.mExTexShape->getSecondTexIndex();
-	return result;
-}
-
 void JPADraw::loadYBBMtx(MtxPtr mtx)
 {
 	JGeometry::TVec3<f32> v(0.0f, mtx[1][1], mtx[2][1]);
+	// Frame-padding hack: original frame 0x48, ours 0x40 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 	JUT_ASSERT(!v.isZero());
 	v.normalize();
 

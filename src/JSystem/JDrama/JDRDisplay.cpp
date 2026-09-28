@@ -26,6 +26,9 @@ TDisplay::TDisplay(u16 param_1, void* param_2, void* param_3,
 
 void TDisplay::startRendering()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_startRendering[8];
+	(void)framePad_8_startRendering;
 	unk60->setNextRenderMode(unk10);
 	unk60->setNextXFB(unk4[unkC]);
 	GXSetDispCopyGamma(unk50);

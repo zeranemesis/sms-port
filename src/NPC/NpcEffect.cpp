@@ -210,6 +210,9 @@ inline void TBaseNPC::emitWashEffect_()
 
 inline bool TBaseNPC::isPolWaitCEffectEmitTime_() const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_isPolWaitCEffectEmitTime_[8];
+	(void)framePad_8_isPolWaitCEffectEmitTime_;
 	bool result = false;
 
 	const f32* checkFrames = nullptr;

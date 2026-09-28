@@ -623,6 +623,9 @@ BOOL TSpineEnemy::checkCurAnmEnd(int type) const
 
 void TSpineEnemy::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_perform[8];
+	(void)framePad_8_perform;
 	TEnemyManager* mgr = (TEnemyManager*)getManager();
 
 	if (mgr != nullptr) {

@@ -159,6 +159,9 @@ void JAIBasic::checkRequestStream()
 
 void JAIBasic::checkPlayingStream()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_checkPlayingStream[8];
+	(void)framePad_8_checkPlayingStream;
 	JAIStreamUpdateParameter* sud = unk0->mStreamUpdate;
 	JAISound* sound               = sud->mSound;
 
@@ -696,6 +699,9 @@ namespace StreamLib {
 
 	s32 callBack(void* param)
 	{
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_callBack[32];
+	(void)framePad_32_callBack;
 		bool decoded = false;
 
 		if (startInitFlag != 0) {

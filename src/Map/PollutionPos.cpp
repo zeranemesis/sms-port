@@ -33,6 +33,9 @@ f32 TPollutionPos::getDepthWorld(int x, int y) const
 
 bool TPollutionPos::isSame(int x, int z, f32 y) const
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_isSame[32];
+	(void)framePad_32_isSame;
 	if (!isInArea(x, z))
 		return false;
 

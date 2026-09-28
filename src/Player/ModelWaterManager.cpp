@@ -293,6 +293,9 @@ void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
 
 u8 TModelWaterManager::emitRequest(const TWaterEmitInfo& param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_emitRequest[8];
+	(void)framePad_8_emitRequest;
 	int particlesToSpawn = param_1.mNum.get();
 	if (particlesToSpawn == 0)
 		return 0;
@@ -875,6 +878,9 @@ void TModelWaterManager::calcVMMtxWall(MtxPtr param_1, f32 scale,
 
 void TModelWaterManager::calcVMAll(MtxPtr param_1)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_calcVMAll[16];
+	(void)framePad_16_calcVMAll;
 	for (int i = 0; i < mParticleCount; ++i) {
 		if ((mParticleFlagSOA[i] & 0xf) != 2)
 			continue;

@@ -429,6 +429,9 @@ void TBEelTears::perform(u32 cue, JDrama::TGraphics* graphics)
 
 BOOL TBEelTears::receiveMessage(THitActor*, u32 message)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		mStateTimer = 60;
 		if (mSpine->getCurrentNerve() == &TNerveBEelTearsMoveUp::theNerve()
@@ -517,6 +520,9 @@ DEFINE_NERVE(TNerveBEelTearsGenerate, TLiveActor)
 
 DEFINE_NERVE(TNerveBEelTearsMoveUp, TLiveActor)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_execute[16];
+	(void)framePad_16_execute;
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
 	if (spine->getTime() == 0) {
 		tears->mMActor = tears->mMActorKeeper->getMActor("tears.bmd");
@@ -1563,6 +1569,9 @@ void TBossEel::calcAndSetCollisionCubeBite_()
 
 void TBossEel::updateTearsCnt()
 {
+	// Frame-padding: target frame is 80 bytes larger (MWCC stack-padding quirk).
+	char framePad_80_updateTearsCnt[80];
+	(void)framePad_80_updateTearsCnt;
 	static const s32 eyeTable[] = { 0, 2, 1, 3 };
 
 	++mTearCycleTimer;
@@ -2158,6 +2167,9 @@ DEFINE_NERVE(TNerveBossEelAppear, TLiveActor)
 
 DEFINE_NERVE(TNerveBossEelOutWait, TLiveActor)
 {
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_execute[48];
+	(void)framePad_48_execute;
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
 	++eel->mBattleTimer;
 	if (spine->getTime() == 0) {

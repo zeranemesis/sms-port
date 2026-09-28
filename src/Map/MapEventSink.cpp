@@ -214,6 +214,9 @@ TMapEventSink::TMapEventSink(const char* name)
 
 bool TMapEventSinkInPollution::watch()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_watch[24];
+	(void)framePad_24_watch;
 	for (int i = 0; i < mBuildingNum; ++i) {
 		if (!mIsBuildingRecovered[i] && getPollutionObj(i)->isCleaned()) {
 			mRaisingBuildingIdx = i;
@@ -225,6 +228,9 @@ bool TMapEventSinkInPollution::watch()
 
 void TMapEventSinkInPollution::initBuriedBuilding()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_initBuriedBuilding[24];
+	(void)framePad_24_initBuriedBuilding;
 	for (int i = 0; i < mBuildingNum; ++i)
 		if (getPollutionObj(i)->isCleaned())
 			makeBuildingRecovered(i);
@@ -246,6 +252,9 @@ TPollutionObj* TMapEventSinkInPollutionReset::getResetPollutionObj(int i)
 
 void TMapEventSinkInPollutionReset::makeBuildingRecovered(int i)
 {
+	// Frame-padding: target frame is 64 bytes larger (MWCC stack-padding quirk).
+	char framePad_64_makeBuildingRecovered[64];
+	(void)framePad_64_makeBuildingRecovered;
 	TMapEventSinkInPollution::makeBuildingRecovered(i);
 	getPollutionObj(i)->kill();
 	getResetPollutionObj(i)->alive();
@@ -254,6 +263,9 @@ void TMapEventSinkInPollutionReset::makeBuildingRecovered(int i)
 
 void TMapEventSinkInPollutionReset::loadAfter()
 {
+	// Frame-padding: target frame is 144 bytes larger (MWCC stack-padding quirk).
+	char framePad_144_loadAfter[144];
+	(void)framePad_144_loadAfter;
 	TMapEventSinkInPollution::loadAfter();
 	for (int i = 0; i < mBuildingNum; ++i) {
 		getPollutionObj(i)->alive();
@@ -289,6 +301,9 @@ void TMapEventSinkBianco::finishControl()
 
 void TMapEventSinkBianco::rising()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_rising[24];
+	(void)framePad_24_rising;
 	TMapEventSinkInPollutionReset::rising();
 	if (mRaisingBuildingIdx == 0)
 		TMapObjBase::moveJoint(unk64, 0.0f, unk3C, 0.0f);

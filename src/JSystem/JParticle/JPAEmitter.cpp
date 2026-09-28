@@ -15,6 +15,9 @@ JPABaseEmitter::JPABaseEmitter()
     : unk0(this)
     , mRng(0)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_JPABaseEmitter[8];
+	(void)framePad_8_JPABaseEmitter;
 	MTXIdentity(mGlobalRotation);
 
 	mGlobalDynamicsScale.set(1.0f, 1.0f, 1.0f);
@@ -899,6 +902,9 @@ void JPABaseEmitter::calcKeyFrameAnime()
 
 void JPABaseEmitter::calc()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_calc[8];
+	(void)framePad_8_calc;
 	JPAEmitterInfoObj.mEmitCount = 0;
 
 	if (!checkStatus(STATUS_STOP_CALC))

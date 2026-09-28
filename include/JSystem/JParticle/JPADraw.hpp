@@ -159,7 +159,6 @@ public:
 	void initParticle(JPABaseParticle*);
 	void initChild(JPABaseParticle*, JPABaseParticle*);
 	const ResTIMG* swapImage(const ResTIMG*, s16);
-	BOOL loadTexture(u8, GXTexMapID);
 	void setDrawExecVisitorsBeforeCB(const JPADraw::JPADrawVisitorDefFlags&);
 	void setDrawExecVisitorsAfterCB(const JPADraw::JPADrawVisitorDefFlags&);
 	void setDrawCalcVisitors(const JPADraw::JPADrawVisitorDefFlags&);
@@ -171,9 +170,6 @@ public:
 	void zDrawParticle();
 	void zDrawChild();
 	s16 getMainTextureID(u8);
-	s16 getIndTextureID();
-	s16 getIndSubTextureID();
-	s16 getSecondTextureID();
 	void loadYBBMtx(MtxPtr);
 };
 

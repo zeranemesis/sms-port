@@ -66,6 +66,9 @@ void SMSSetupGCLogoRenderMode(GXRenderModeObj* rmo)
 
 void SMSSetupGCLogoRenderingInfo(JDrama::TDisplay* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_SMSSetupGCLogoRenderingInfo[8];
+	(void)framePad_8_SMSSetupGCLogoRenderingInfo;
 	SMSSetupGCLogoRenderMode(&param_1->getRenderMode());
 	param_1->offFlag(0x8);
 }

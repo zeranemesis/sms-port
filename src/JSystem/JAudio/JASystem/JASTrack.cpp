@@ -1405,6 +1405,9 @@ u16 TTrack::readRegDirect(u8 reg)
 
 void TTrack::writeRegDirect(u8 reg, u16 value)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_writeRegDirect[8];
+	(void)framePad_8_writeRegDirect;
 	u16 top;
 	u16 uVar1;
 	u8 r30 = reg;

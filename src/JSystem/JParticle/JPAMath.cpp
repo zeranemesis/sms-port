@@ -172,6 +172,9 @@ s16 JPAConvertFloatToFix(f32) { }
 void JPAConvertFixVecToFloatVec(JGeometry::TVec3<f32>& param_1,
                                 const JGeometry::TVec3<s16>& param_2)
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_JPAConvertFixVecToFloatVec[16];
+	(void)framePad_16_JPAConvertFixVecToFloatVec;
 	param_1.x = JPAConvertFixToFloat(param_2.x);
 	param_1.y = JPAConvertFixToFloat(param_2.y);
 	param_1.z = JPAConvertFixToFloat(param_2.z);

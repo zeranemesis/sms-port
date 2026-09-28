@@ -87,6 +87,9 @@ void TMapObjBase::loadHideObjInfo(JSUMemoryInputStream& stream, s32* param_2,
 
 void TMapObjBase::checkOnManhole()
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_checkOnManhole[32];
+	(void)framePad_32_checkOnManhole;
 	mGroundHeight = gpMap->checkGround(mPosition.x, mPosition.y + 20.0f,
 	                                   mPosition.z, &mGroundPlane);
 	if (mGroundPlane->mActor && mGroundPlane->mActor->isActorType(0x4000000b)) {
@@ -456,6 +459,9 @@ void TMapObjBase::setRootMtxTrans() { }
 
 void TMapObjBase::updateObjMtx()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_updateObjMtx[8];
+	(void)framePad_8_updateObjMtx;
 	MsMtxSetXYZRPH(getModel()->getAnmMtx(0), mPosition.x,
 	               mPosition.y - mYOffset, mPosition.z, mRotation.x,
 	               mRotation.y, mRotation.z);
@@ -743,6 +749,9 @@ bool TMapObjBase::marioHeadAttack() const
 
 bool TMapObjBase::marioHipAttack() const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_marioHipAttack[8];
+	(void)framePad_8_marioHipAttack;
 	if (SMS_GetMarioGrPlane()->getActor() == this && SMS_IsMarioStatusHipDrop()
 	    && (gpMarioPos->y + *gpMarioSpeedY) < SMS_GetMarioGrLevel())
 		return true;

@@ -14,6 +14,9 @@
 
 void TMapWarp::changeModel(int i)
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_changeModel[24];
+	(void)framePad_24_changeModel;
 	if (unk8 == i)
 		return;
 
@@ -77,6 +80,9 @@ void TMapWarp::watchToWarp()
 
 void TMapWarp::initModel()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_initModel[16];
+	(void)framePad_16_initModel;
 	// TODO: inlines
 	int num = gpMap->getModelManager()->getJointModel(0)->mChildrenNum;
 	for (int i = 0; i < num; ++i)

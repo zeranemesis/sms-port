@@ -377,6 +377,9 @@ u8 J3DMaterialFactory_v21::newDither(int idx) const
 J3DNBTScale J3DMaterialFactory_v21::newNBTScale(int idx) const
 {
 	J3DNBTScale defaultNbtScale;
+	// Frame-padding hack: original frame 0x38, ours 0x30 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 
 	J3DMaterialInitData_v21* initData = &mpMaterialInitData[mpMaterialID[idx]];
 

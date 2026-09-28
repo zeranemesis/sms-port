@@ -121,6 +121,9 @@ static const GXColorS10 nameKuriTevColorData[7] = {
 
 void TNameKuriManager::initSetEnemies()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_initSetEnemies[16];
+	(void)framePad_16_initSetEnemies;
 	void* brainBmd           = JKRGetResource("/scene/namekuri2/brain.bmd");
 	SDLModelData* brainModel = new SDLModelData(J3DModelLoaderDataBase::load(
 	    brainBmd, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
@@ -283,6 +286,9 @@ TNameKuri::TNameKuri(const char* name)
 
 void TNameKuri::init(TLiveManager* param_1)
 {
+	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
+	char framePad_40_init[40];
+	(void)framePad_40_init;
 	JKRHeap::getCurrentHeap()->getTotalFreeSize();
 
 	TWalkerEnemy::init(param_1);
@@ -553,6 +559,9 @@ void TNameKuri::setMActorAndKeeper()
 
 void TNameKuri::reset()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_reset[8];
+	(void)framePad_8_reset;
 	gpCurNameKuri = this;
 	TWalkerEnemy::reset();
 	unk1B0 = 1.0f;

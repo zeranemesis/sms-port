@@ -357,6 +357,9 @@ void TTamaNoko::behaveToRelease()
 
 BOOL TTamaNoko::receiveMessage(THitActor* sender, u32 message)
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_receiveMessage[32];
+	(void)framePad_32_receiveMessage;
 	if (message == HIT_MESSAGE_TRAMPLE || message == HIT_MESSAGE_HIP_DROP) {
 		if (isHitValid(message)) {
 			unk184 = 0;
@@ -583,6 +586,9 @@ void TTamaNoko::forceSleep()
 
 void TTamaNoko::setAfterDeadEffect()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_setAfterDeadEffect[8];
+	(void)framePad_8_setAfterDeadEffect;
 	TSmallEnemy::setAfterDeadEffect();
 	unk19C->unk34 = 1;
 	unk19C->setBckAnm(0);
@@ -597,6 +603,9 @@ const char** TTamaNoko::getBasNameTable() const { return tamaNoko_bastable; }
 
 f32 TTamaNoko::getGravityY() const
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_getGravityY[8];
+	(void)framePad_8_getGravityY;
 	if (mSpine->getCurrentNerve() == &TNerveTamaNokoAttack::theNerve())
 		return unk198->mSLAttackGravityY.get();
 
@@ -905,6 +914,9 @@ DEFINE_NERVE(TNerveTamaNokoSink, TLiveActor)
 // NOTE: lil shaking when mario sprays water on a sleeping tamanoko
 DEFINE_NERVE(TNerveTamaNokoHitWater, TLiveActor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
 	TTamaNoko* self = (TTamaNoko*)spine->getBody();
 
 	if (spine->getTime() < 2) {

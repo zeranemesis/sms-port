@@ -41,6 +41,9 @@ TMenuDirector::TMenuDirector()
 
 TMenuDirector::~TMenuDirector()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_TMenuDirector[8];
+	(void)framePad_8_TMenuDirector;
 	unk2C->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 	JKRMemArchive* arc = (JKRMemArchive*)JKRFileLoader::getVolume("title");
 	if (arc)

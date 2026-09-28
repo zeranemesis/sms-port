@@ -10974,6 +10974,9 @@ void TMapObjBase::initMapCollisionData()
 
 void TMapObjBase::initObjCollisionData()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_initObjCollisionData[16];
+	(void)framePad_16_initObjCollisionData;
 	if (getMapObjData()->mHit != nullptr) {
 		initHitActor(getMapObjData()->unk4, getHitObjNumMax(),
 		             getMapObjData()->mHit->unk4, 0.0f, 0.0f, 0.0f, 0.0f);

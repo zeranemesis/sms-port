@@ -153,23 +153,6 @@ void JAIBasic::setRegisterTrackCallback()
 	JASystem::TrackMgr::registerTrackCallback(&JAIBasic::setParameterSeqSync);
 }
 
-void JAIBasic::initAudioThread(JKRSolidHeap* heap, u32 aram_heap_size,
-                               u8 param2)
-{
-	JKRSolidHeap* rootHeap = heap;
-	s32 uVar1              = 1;
-	if (param2 & 1)
-		uVar1 |= 2;
-
-	JASystem::AudioThread::setPriority(
-	    JAIGlobalParameter::audioSystemThreadPriority,
-	    JAIGlobalParameter::audioDvdThreadPriority);
-	JASystem::AudioThread::start(rootHeap, aram_heap_size, uVar1);
-	JASystem::TrackMgr::init(JAIGlobalParameter::systemTrackMax,
-	                         JAIGlobalParameter::systemRootTrackMax);
-	JASystem::TrackMgr::reset();
-}
-
 void JAIBasic::bootDSP() { }
 
 void JAIBasic::initReadFile()
@@ -612,7 +595,22 @@ void JAIBasic::initNullData()
 
 void JAIBasic::initDriver(JKRSolidHeap* heap, u32 aram_heap_size, u8 param_3)
 {
-	initAudioThread(heap, aram_heap_size, param_3);
+	// Frame-padding hack: original frame is 0x30, ours is 0x28 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
+	s32 uVar1        = 1;
+	JKRSolidHeap* pHeap = heap;
+	u32 pAram         = aram_heap_size;
+	if (param_3 & 1)
+		uVar1 |= 2;
+
+	JASystem::AudioThread::setPriority(
+	    JAIGlobalParameter::audioSystemThreadPriority,
+	    JAIGlobalParameter::audioDvdThreadPriority);
+	JASystem::AudioThread::start(pHeap, pAram, uVar1);
+	JASystem::TrackMgr::init(JAIGlobalParameter::systemTrackMax,
+	                         JAIGlobalParameter::systemRootTrackMax);
+	JASystem::TrackMgr::reset();
 }
 
 void JAIBasic::initInterface(u8 param)

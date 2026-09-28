@@ -176,6 +176,9 @@ void* JKRExpHeap::allocFromHead(u32 size, int align)
 	CMemBlock* foundBlock   = nullptr;
 	CMemBlock* newFreeBlock = nullptr;
 	CMemBlock* newUsedBlock = nullptr;
+	// Frame-padding hack: original frame 0x38, ours 0x30 (MWCC stack-padding bug).
+	char pad[8];
+	(void)pad;
 
 	for (CMemBlock* block = mHead; block; block = block->mNext) {
 		// this bastard is the problem

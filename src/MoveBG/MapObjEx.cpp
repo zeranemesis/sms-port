@@ -23,6 +23,9 @@ f32 TMapObjNail::mDownHeight = 50.0f;
 
 BOOL TMapObjNail::receiveMessage(THitActor* sender, u32 message)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	if (message == HIT_MESSAGE_HIP_DROP && !isStateTimerEngaged()
 	    && unk150 < 3) {
 		mPosition.y -= mDownHeight;
@@ -55,6 +58,9 @@ TMapObjNail::TMapObjNail(const char* name)
 
 void TJointCoin::control()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_control[8];
+	(void)framePad_8_control;
 	unk138->frameUpdate();
 	unk138->calc();
 	MtxPtr mtx = unk138->getModel()->getAnmMtx(0);

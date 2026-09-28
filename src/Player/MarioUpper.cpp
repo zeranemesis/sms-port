@@ -42,6 +42,9 @@ void TMario::checkPumping()
 
 BOOL TMario::checkPumpEnable()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_checkPumpEnable[24];
+	(void)framePad_24_checkPumpEnable;
 	if ((mWaterGun != nullptr) && checkFlag(MARIO_FLAG_HAS_FLUDD)
 	    && gMarioAnimeData[mAnimationId].isPumpOK() && !onYoshi()
 	    && (!isSinking()

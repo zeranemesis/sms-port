@@ -82,7 +82,6 @@ public:
 	void initSeqsLoadArea();
 	void startSeSequence();
 	void setCameraInfo(VecPtr pos, VecPtr dir, MtxPtr mtx, u32 param);
-	void initAudioThread(JKRSolidHeap* heap, u32 param1, u8 param2);
 	void bootDSP();
 	void readInitSoundData();
 	void loadFirstStayWave();

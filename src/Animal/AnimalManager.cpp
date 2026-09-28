@@ -55,6 +55,9 @@ void TMewManager::load(JSUMemoryInputStream& stream)
 
 void TMewManager::loadAfter()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_loadAfter[16];
+	(void)framePad_16_loadAfter;
 	TAnimalManagerBase::loadAfter();
 	MSoundSESystem::MSRandPlay::createRandPlayVec(MSD_SE_OBJ_KAMOME_SOLO,
 	                                              mObjNum);

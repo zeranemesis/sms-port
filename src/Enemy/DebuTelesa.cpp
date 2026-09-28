@@ -58,6 +58,9 @@ void TDebuTelesa::kill() { TSmallEnemy::kill(); }
 
 BOOL TDebuTelesa::receiveMessage(THitActor* sender, u32 message)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	switch (message) {
 	case HIT_MESSAGE_TRAMPLE:
 	case HIT_MESSAGE_HIP_DROP:

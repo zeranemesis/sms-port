@@ -442,6 +442,9 @@ void SMS_AddDamageFogEffect(J3DModelData* param_1,
 
 void SMS_ResetDamageFogEffect(J3DModelData* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_SMS_ResetDamageFogEffect[8];
+	(void)framePad_8_SMS_ResetDamageFogEffect;
 	for (u16 i = 0; i < param_1->getMaterialNum(); i++) {
 		J3DFog* fog
 		    = param_1->getMaterialNodePointer(i)->getPEBlock()->getFog();
@@ -785,6 +788,9 @@ void SMS_DrawHorzCircle(const JGeometry::TVec3<f32>&, f32, int, const GXColor&)
 
 void SMS_CalcMatAnmAndMakeDL(J3DModel* param_1, u16 param_2)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_SMS_CalcMatAnmAndMakeDL[8];
+	(void)framePad_8_SMS_CalcMatAnmAndMakeDL;
 	J3DMaterial* mat = param_1->getModelData()->getMaterialNodePointer(param_2);
 
 	param_1->getModelData()

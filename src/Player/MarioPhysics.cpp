@@ -461,6 +461,9 @@ BOOL TMario::isFallCancel()
 
 void TMario::fallProcess()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_fallProcess[16];
+	(void)framePad_16_fallProcess;
 	if (mStatus == MARIO_STATUS_DIVE) {
 		mVel.y -= mDivingParams.mGravity.get();
 		if (mVel.y < -75.0f)

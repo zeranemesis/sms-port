@@ -664,6 +664,9 @@ void JAIBasic::checkReadSeq()
 
 void JAIBasic::checkSeqWave()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_checkSeqWave[8];
+	(void)framePad_8_checkSeqWave;
 	for (int i = 0; i < JAIGlobalParameter::seqPlayTrackMax; ++i) {
 		JAISeqUpdateData* sud = &unk0->mSeqTrackInfo[i];
 		JAISoundHandle& sound = sud->mSound;

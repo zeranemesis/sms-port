@@ -1,0 +1,74 @@
+[
+ [
+  "marioEU/Enemy/namekuri",
+  "execute__19TNerveNKFollowMarioCFP24TSpineBase<10TLiveActor>",
+  16,
+  "TNerveNKFollowMario::execute(TSpineBase<TLiveActor>*) const"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASChannel",
+  "__UpdateJcToDSP__Q28JASystem6DriverFPQ28JASystem8TChannel",
+  16,
+  "JASystem::Driver::__UpdateJcToDSP(JASystem::TChannel*)"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASChannel",
+  "__UpdateJcToDSPInit__Q28JASystem6DriverFPQ28JASystem8TChannel",
+  16,
+  "JASystem::Driver::__UpdateJcToDSPInit(JASystem::TChannel*)"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASChannel",
+  "updatecallDSPChannel__Q28JASystem6DriverFPQ28JASystem11TDSPChannelUl",
+  24,
+  "JASystem::Driver::updatecallDSPChannel(JASystem::TDSPChannel*, unsigned long)"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASHardStream",
+  "main__Q28JASystem10HardStreamFv",
+  16,
+  "JASystem::HardStream::main()"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASHardStream",
+  "volFloatToU8__Q38JASystem10HardStream8TControlFf",
+  8,
+  "JASystem::HardStream::TControl::volFloatToU8(float)"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASDSPChannel",
+  "updateAll__Q28JASystem11TDSPChannelFv",
+  24,
+  "JASystem::TDSPChannel::updateAll()"
+ ],
+ [
+  "marioEU/MSound/MSoundSE",
+  "__ct__Q214MSoundSESystem9MSRandVolFUl",
+  8,
+  "MSoundSESystem::MSRandVol::MSRandVol(unsigned long)"
+ ],
+ [
+  "marioEU/MSound/MSoundSE",
+  "__ct__Q214MSoundSESystem10MSRandPlayFUlllff",
+  8,
+  "MSoundSESystem::MSRandPlay::MSRandPlay(unsigned long, long, long, float, float)"
+ ],
+ [
+  "marioEU/JSystem/JDrama/JDRDisplay",
+  "startRendering__Q26JDrama8TDisplayFv",
+  8,
+  "JDrama::TDisplay::startRendering()"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JAInterface/JAIGFrameStream",
+  "callBack__Q27JAInter9StreamLibFPv",
+  32,
+  "JAInter::StreamLib::callBack(void*)"
+ ],
+ [
+  "marioEU/JSystem/JAudio/JASystem/JASTrack",
+  "writeRegDirect__Q28JASystem6TTrackFUcUs",
+  8,
+  "JASystem::TTrack::writeRegDirect(unsigned char, unsigned short)"
+ ]
+]

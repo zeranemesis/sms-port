@@ -425,6 +425,9 @@ void CPolarSubCamera::changeCamModeSpecifyFrame_(int mode, int tween_frames)
 void CPolarSubCamera::changeCamModeSpecifyCamMapTool_(
     const TCameraMapTool* tool)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_changeCamModeSpecifyCamMapTool_[8];
+	(void)framePad_8_changeCamModeSpecifyCamMapTool_;
 	int newMode = tool->getCameraMode();
 	if (mMode != newMode || unk70 != tool) {
 		unk74 = unk70;

@@ -80,6 +80,9 @@ TGKHitObj::TGKHitObj(TGateKeeperBase* owner, int joint_idx, const char* name)
 
 BOOL TGKHitObj::receiveMessage(THitActor* sender, u32 message)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	if (sender->getActorType() == 0x1000001
 	    && message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		if (mVulnerable)
@@ -598,6 +601,9 @@ const char** TBiancoGateKeeper::getBasNameTable() const
 
 void TBiancoGateKeeper::emitParticles()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_emitParticles[16];
+	(void)framePad_16_emitParticles;
 	const TNerveBase<TLiveActor>* sleep = &TNerveBGKSleep::theNerve();
 	if (mSpine->getLatestNerve() != sleep) {
 		const TNerveBase<TLiveActor>* goro = &TNerveBGKLaunchGoro::theNerve();
@@ -629,6 +635,9 @@ void TBiancoGateKeeper::emitParticles()
 
 void TBiancoGateKeeper::controlCollision()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	char framePad_24_controlCollision[24];
+	(void)framePad_24_controlCollision;
 	if (mMActor->checkCurBckFromIndex(0xB)
 	    || mMActor->checkCurBckFromIndex(7)) {
 		mHead->mVulnerable = TRUE;
@@ -826,6 +835,9 @@ DEFINE_NERVE(TNerveBGKAppear, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKWait, TLiveActor)
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_execute[32];
+	(void)framePad_32_execute;
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
 	MActor* actor           = self->getMActor();
 
@@ -898,6 +910,9 @@ DEFINE_NERVE(TNerveBGKWait, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKWait2, TLiveActor)
 {
+	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
+	char framePad_40_execute[40];
+	(void)framePad_40_execute;
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
 	MActor* actor           = self->getMActor();
 
@@ -966,6 +981,9 @@ DEFINE_NERVE(TNerveBGKSleepDamage, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKAwakeDamage, TLiveActor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
 
 	if (spine->getTime() == 0)

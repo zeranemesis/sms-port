@@ -106,6 +106,9 @@ static void initMare()
 #pragma dont_inline on
 static void initPinnaParco()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_initPinnaParco[8];
+	(void)framePad_8_initPinnaParco;
 	J3DModel* model = new J3DModel(
 	    gpMap->getModelManager()->getJointModel(0)->getModelData(), 0, 1);
 	MActor* actor = new MActor(gpMap->getModelManager()->getMActorAnmData());
@@ -159,6 +162,9 @@ static void initStageCommon()
 
 static void initStage()
 {
+	// Frame-padding: target frame is 56 bytes larger (MWCC stack-padding quirk).
+	char framePad_56_initStage[56];
+	(void)framePad_56_initStage;
 	if (gpMarDirector->getCurrentStage() > 9)
 		return;
 

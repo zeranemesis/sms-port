@@ -433,6 +433,9 @@ void TGesso::attackToMario()
 
 void TGesso::setBehavior()
 {
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_setBehavior[16];
+	(void)framePad_16_setBehavior;
 	if (mAttackCooldown > 0)
 		mAttackCooldown += 1;
 
@@ -713,6 +716,9 @@ void TGesso::behaveToFindMario()
 
 void TGesso::rollCheck()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_rollCheck[8];
+	(void)framePad_8_rollCheck;
 	if (mAttackCooldown != 0)
 		return;
 
@@ -961,6 +967,9 @@ void TGessoPolluteObj::set()
 
 void TGessoPolluteObj::calcRootMatrix()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_calcRootMatrix[8];
+	(void)framePad_8_calcRootMatrix;
 	TEnemyAttachment::calcRootMatrix();
 	if (unk168 != 0)
 		return;

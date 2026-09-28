@@ -129,6 +129,9 @@ TMapCollisionStatic::TMapCollisionStatic()
 
 void TMapCollisionMove::move()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_move[8];
+	(void)framePad_8_move;
 	if (checkFlag(FLAG_NEEDS_SETUP))
 		return;
 
@@ -164,6 +167,9 @@ void TMapCollisionMove::moveTrans(const JGeometry::TVec3<f32>& param_1)
 void TMapCollisionMove::init(u32 param_1, u16 bg_type, s16 data,
                              const TLiveActor* actor)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_init[8];
+	(void)framePad_8_init;
 	mKind         = 1;
 	mCheckDataNum = param_1;
 	mCheckDatas   = gpMapCollisionData->allocCheckData(getUnkC());
