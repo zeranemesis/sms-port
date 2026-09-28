@@ -101,7 +101,7 @@ void TBaseNPC::setVariableDamageRadius_()
 	if (isBeTrampledNpc() && !SMS_IsMarioTouchGround4cm()
 	    && SMS_GetMarioPos().y > mPosition.y) {
 		JGeometry::TVec3<f32> diff;
-		diff.sub(mPosition, SMS_GetMarioPos());
+		diff.sub(SMS_GetMarioPos(), mPosition);
 		diff.y = 0.0f;
 		if (diff.squared() < CLBSquared(fVar6 * 3.0f))
 			fVar6 = mIndividualParams->mSLDamageRadiusSmall.get();

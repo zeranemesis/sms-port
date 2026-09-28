@@ -412,8 +412,6 @@ void TBaseNPC::npcFallIn()
 
 bool TBaseNPC::npcRecoverFromSinking()
 {
-	bool result = false;
-
 	if (!checkLiveFlag(LIVE_FLAG_UNK8000000)) {
 		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(32.0f)) {
 			onLiveFlag(LIVE_FLAG_UNK8000000);
@@ -431,6 +429,7 @@ bool TBaseNPC::npcRecoverFromSinking()
 		}
 	}
 
+	bool result = false;
 	if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
 		result = true;
 		offLiveFlag(LIVE_FLAG_AIRBORNE);

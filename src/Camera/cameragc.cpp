@@ -123,7 +123,7 @@ void CPolarSubCamera::startJetCoasterCam1()
 	unk2B0->setFrame(gpMarDirector->mMoveTickCount * 0.5f);
 }
 
-static s32 JetCoasterDemoCallBack(u32 param_1, u32 param_2)
+static s32 JetCoasterDemoCallBack(uintptr_t param_1, u32 param_2)
 {
 	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
 	char framePad_16_JetCoasterDemoCallBack[16];
@@ -262,9 +262,10 @@ void CPolarSubCamera::loadAfter()
 	fabricatedInline2();
 
 	if ((unk64 & CAMERA_FLAG_JET_COASTER_SCENE) && gpMarDirector->unk7D == 1) {
-		gpMarDirector->fireStartDemoCamera(
-		    cJetCoasterDemoBckName, nullptr, -1, 0.0f, true,
-		    &JetCoasterDemoCallBack, (u32)this, nullptr, JDrama::TFlagT<u16>());
+		gpMarDirector->fireStartDemoCamera(cJetCoasterDemoBckName, nullptr, -1,
+		                                   0.0f, true, &JetCoasterDemoCallBack,
+		                                   (uintptr_t)this, nullptr,
+		                                   JDrama::TFlagT<u16>());
 	} else {
 		if (!JKRGetResource(cStartCamBckFileName))
 			calcInHouseNo_(true);

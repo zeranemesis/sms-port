@@ -371,7 +371,7 @@ int TMovieDirector::direct()
 		if (!OSIsThreadTerminated(&gSetupThread))
 			return 0;
 
-		u32 errc;
+		void* errc;
 		OSJoinThread(&gSetupThread, &errc);
 		if (errc)
 			return 5;
@@ -412,22 +412,22 @@ int TMovieDirector::direct()
 
 	if (unk1C == STATE_SAVE_TO_TITLE || unk1C == STATE_SAVE_AND_CONTINUE) {
 		JDrama::TGraphics graphics;
-		graphics.unk2 = 1;
+		graphics.unk0 = 1;
 		unk10->testPerform(CUE_MOVE, &graphics);
 #ifdef VERSION_GMSP01
 		if (VIGetTvFormat() != VI_PAL) {
-			graphics.unk2 = 0;
+			graphics.unk0 = 0;
 			unk10->testPerform(CUE_MOVE, &graphics);
-			graphics.unk2 = 0;
+			graphics.unk0 = 0;
 			unk10->testPerform(CUE_MOVE, &graphics);
 		}
 #else
-		graphics.unk2 = 0;
+		graphics.unk0 = 0;
 		unk10->testPerform(CUE_MOVE, &graphics);
-		graphics.unk2 = 0;
+		graphics.unk0 = 0;
 		unk10->testPerform(CUE_MOVE, &graphics);
 #endif
-		graphics.unk2 = 0;
+		graphics.unk0 = 0;
 		unk10->testPerform(CUE_MOVE | CUE_CALC_ANIM, &graphics);
 		unk14->testPerform(CUE_DRAW, &graphics);
 	} else {
@@ -523,8 +523,7 @@ int TMovieDirector::direct()
 			THPPlayerStop();
 			unk28->unkC.on(CUE_DRAW | CUE_MOVE);
 			unk2C->unkC.on(CUE_DRAW | CUE_MOVE);
-			SMSGetApplication()->getFader()->startWipe(
-			    VERSION_SELECT(GMSJ01(15), GMSP01(14)), 0.3f, 0.0f);
+			SMSGetApplication()->getFader()->startWipe(14, 0.3f, 0.0f);
 			SMSGetApplication()->getFader()->setColor(
 			    JUtility::TColor(0, 0, 0, 255));
 			unk24->init(SMSGetApplication()->getMovie() == 17 ? 8 : 0);
@@ -550,8 +549,7 @@ int TMovieDirector::direct()
 			}
 
 			if (SMSGetApplication()->getMovie() == 9) {
-				MSound* sound = gpMSound;
-				sound->fadeOutAllSound(SMSGetVSyncTimesPerSec());
+				SMSGetMSound()->fadeOutAllSound(SMSGetVSyncTimesPerSec());
 			}
 			THPPlayerSetVolume(0, 1000);
 			break;

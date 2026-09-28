@@ -150,6 +150,16 @@ config.objdiff_tag = "v3.8.1"
 config.sjiswrap_tag = "v1.2.2"
 config.wibo_tag = "1.1.0"
 
+middleware_libs = [
+    "dolphin",
+    "JSystem",
+    "THPPlayer",
+    "PowerPC_EABI_Support",
+    "TRK_MINNOW_DOLPHIN",
+    "OdemuExi2",
+]
+msl_include = "libs/PowerPC_EABI_Support/include/PowerPC_EABI_Support/Msl"
+
 # Project
 config.config_path = Path("config") / config.version / "config.yml"
 config.check_sha_path = Path("config") / config.version / "build.sha1"
@@ -157,8 +167,9 @@ config.asflags = [
     "-mgekko",
     "--strip-local-absolute",
     "-I include",
-    "-I include/PowerPC_EABI_Support/Msl/MSL_C/MSL_Common",
-    "-I include/PowerPC_EABI_Support/Msl/MSL_C++/MSL_Common",
+    *[f"-I libs/{lib}/include" for lib in middleware_libs],
+    f"-I {msl_include}/MSL_C/MSL_Common",
+    f"-I {msl_include}/MSL_C++/MSL_Common",
     f"-I build/{config.version}/include",
     f"--defsym BUILD_VERSION={version_num}",
 ]
@@ -196,10 +207,12 @@ cflags_base_base = [
     "-multibyte",  # For Wii compilers, replace with `-enc SJIS`
     "-cwd source",
     "-i include",
-    "-i include/PowerPC_EABI_Support/Msl/MSL_C/MSL_Common",
-    "-i include/PowerPC_EABI_Support/Msl/MSL_C++/MSL_Common",
+    *[f"-i libs/{lib}/include" for lib in middleware_libs],
+    f"-i {msl_include}/MSL_C/MSL_Common",
+    f"-i {msl_include}/MSL_C++/MSL_Common",
     f"-i build/{config.version}/include",
     f"-DBUILD_VERSION={version_num}",
+    "-Dnullptr=0",
     f"-DVERSION_{config.version}",
 ]
 
@@ -588,7 +601,7 @@ config.libs = [
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/ansi_files.c"),
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/abort_exit.c"),
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/errno.c"),
-            Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common_Embedded/ansi_fp.c"),
+            Object(NonMatching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common_Embedded/ansi_fp.c"),
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common_Embedded/uart_console_io.c"),
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/buffer_io.c"),
             Object(Matching, "PowerPC_EABI_Support/Msl/MSL_C/PPC_EABI/critical_regions.ppc_eabi.c"),
@@ -940,7 +953,7 @@ config.libs = [
             PCHObject(NonMatching, "Player/Yoshi.cpp"),
             PCHObject(NonMatching, "Player/MarioEffect.cpp"),
             Object(NonMatching, "Player/MarioSwim.cpp"),
-            Object(Matching, "Player/MarioAccess.cpp"),
+            Object(NonMatching, "Player/MarioAccess.cpp"),
             PCHObject(NonMatching, "Player/MarioInit.cpp"),
             PCHObject(NonMatching, "Player/ModelWaterManager.cpp"),
             PCHObject(Matching, "Player/MarioPositionObj.cpp"),
@@ -1084,7 +1097,7 @@ config.libs = [
             PCHObject(NonMatching, "Map/Sky.cpp"),
             PCHObject(NonMatching, "Map/MapEventSirena.cpp"),
             PCHObject(NonMatching, "Map/PollutionLayer.cpp"),
-            PCHObject(Matching, "Map/PollutionEvent.cpp"),
+            PCHObject(NonMatching, "Map/PollutionEvent.cpp"),
             Object(NonMatching, "Map/MapCollisionPlane.cpp"),
             PCHObject(Matching, "Map/MarineSnow.cpp"),
             Object(Matching, "Map/MapData.cpp"),
@@ -1111,7 +1124,7 @@ config.libs = [
             PCHObject(NonMatching, "GC2D/PauseMenu2.cpp"),
             Object(NonMatching, "GC2D/MessageLoader.cpp"),
             PCHObject(Matching, "GC2D/HelpActor.cpp"),
-            Object(MatchingFor("GMSJ01", "GMSP01"), "GC2D/MessageUtil.cpp"),
+            Object(MatchingFor("GMSJ01"), "GC2D/MessageUtil.cpp"),
             PCHObject(NonMatching, "GC2D/CardSave.cpp"),
             PCHObject(NonMatching, "GC2D/CardLoad.cpp"),
             PCHObject(NonMatching, "GC2D/ConsoleStr.cpp"),
@@ -1123,11 +1136,7 @@ config.libs = [
             PCHObject(NonMatching, "GC2D/SunGlass.cpp"),
             PCHObject(Matching, "GC2D/ShineFader.cpp"),
             PCHObject(NonMatching, "GC2D/ProgSelect.cpp"),
-            # NOTE: nothing in hx_wiper.c is ever inlined, not even empty
-            # static functions, so auto-inlining must have been off for it.
-            # It is also compiled as C++: the map lists the C++-mangled local
-            # statics of the MSL sqrtf/sqrt inlines (sqrtf__Ff, sqrt__Ff).
-            Object(NonMatching, "GC2D/hx_wiper.c", cflags=["-lang=c++", *cflags_game_base, "-opt all,nostrength", "-inline noauto,deferred"]),
+            Object(NonMatching, "GC2D/hx_wiper.c", cflags=[*cflags_game, "-inline noauto"]),
             PCHObject(NonMatching, "GC2D/MovieSubtitle.cpp"),
             PCHObject(NonMatching, "GC2D/Option.cpp"),
             PCHObject(NonMatching, "GC2D/MovieRumble.cpp"),
@@ -1205,7 +1214,7 @@ config.libs = [
             PCHObject(NonMatching, "Enemy/hauntLeg.cpp"),
             PCHObject(NonMatching, "Enemy/areacylinder.cpp"),
             PCHObject(NonMatching, "Enemy/wireTrap.cpp"),
-            PCHObject(Matching, "Enemy/BossHanachanSound.cpp"),
+            PCHObject(NonMatching, "Enemy/BossHanachanSound.cpp"),
             PCHObject(NonMatching, "Enemy/rocket.cpp"),
             PCHObject(NonMatching, "Enemy/Kazekun.cpp"),
             PCHObject(NonMatching, "Enemy/bossManta.cpp"),
@@ -1237,7 +1246,7 @@ config.libs = [
             Object(NonMatching, "Camera/CameraCodeControl.cpp"),
             PCHObject(NonMatching, "Camera/cameragc.cpp"),
             PCHObject(Matching, "Camera/CameraHeightPan.cpp"),
-            Object(Matching, "Camera/CameraInbetween.cpp"),
+            Object(NonMatching, "Camera/CameraInbetween.cpp"),
             Object(Matching, "Camera/CameraKindParam.cpp"),
             Object(NonMatching, "Camera/cameralib.cpp"),
             Object(Matching, "Camera/CameraMarioData.cpp"),
@@ -1282,6 +1291,13 @@ config.libs = [
         ],
     },
 ]
+
+for lib in config.libs:
+    for obj in lib["objects"]:
+        top, _, rest = obj.name.partition("/")
+        if top in middleware_libs:
+            obj.options["src_dir"] = f"libs/{top}/src"
+            obj.options["source"] = rest
 
 # Optional extra categories for progress tracking
 # Adjust as desired for your project
