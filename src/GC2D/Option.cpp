@@ -1229,7 +1229,8 @@ bool TOptionControl::movementOption2Card()
 		mScreen->search('oya1')->hide();
 		mScreen->search('oya2')->hide();
 
-		if (mInitialRumbleValue == mRumbleOption->getValue())
+		TOptionRumbleUnit* rumbleOption = mRumbleOption;
+		if (mInitialRumbleValue == rumbleOption->getValue())
 			fake(mSoundOption);
 
 		return true;
