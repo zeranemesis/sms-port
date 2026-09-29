@@ -1,6 +1,4 @@
-#define JGEOMETRY_TVEC3_ADD_OUT_OF_LINE
 #include <GC2D/SelectShine2.hpp>
-#undef JGEOMETRY_TVEC3_ADD_OUT_OF_LINE
 
 
 // rogue include: the original TU opens .rodata with the dummy string
