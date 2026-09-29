@@ -582,10 +582,8 @@ DEFINE_NERVE(TNerveMameGessoThrown, TLiveActor)
 
 DEFINE_NERVE(TNerveMameGessoObject, TLiveActor)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
 	TMameGesso* self = (TMameGesso*)spine->getBody();
+	JGeometry::TVec3<f32> position;
 
 	if (SMS_IsMarioStatusTypeSwimming()) {
 		self->offHitFlag(HIT_FLAG_NO_COLLISION);
