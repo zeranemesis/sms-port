@@ -2,8 +2,10 @@
 #include <macros.h>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/J2D/J2DScreen.hpp>
+#include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/J2D/J2DTextBox.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/JAudio/JAInterface/JAIGlobalParameter.hpp>
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
@@ -13,8 +15,11 @@
 #include <MarioUtil/RumbleMgr.hpp>
 #include <MSound/MSound.hpp>
 #include <GC2D/ExPane.hpp>
+#include <GC2D/MessageUtil.hpp>
 #include <Camera/CameraOption.hpp>
 #include <Player/MarioAccess.hpp>
+#include <stdio.h>
+#include <string.h>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -65,6 +70,51 @@ const TPatternAnmControl::TAnmChunk cSurRBSpeakerAnm[] = {
 	{ 'sp2g', 0.3f }, { 'sp2h', 0.3f },
 };
 
+const char* const cOptionLanguageDirectories[] = { "", "ge/", "fr/", "sp/",
+	                                              "it/" };
+const char* const cOptionMessageMarkerA =
+	"\033" "GM[0]\033CC[64ff64]\033FX[26]\033FY[26]\033SH[3]\033CD[4]@"
+	"\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]";
+const char* const cOptionMessageMarkerB =
+	"\033" "GM[0]\033CC[dcdcdc]\033FX[26]\033FY[26]\033SH[3]\033CD[4]*"
+	"\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]";
+const char* const cRumbleModeTextures[] = { "select_on.bti", "select_off.bti" };
+const char* const cSoundModeTextures[] = { "select_stereo.bti", "select_mono.bti",
+	                                      "select_surround.bti" };
+const char* const cSubtitleTextures[] = { "select_on.bti", "select_off.bti" };
+const u32 cSubtitleToggleItems[] = { 'sel6', 'sel5' };
+const u32 cLanguageToggleItems[] = { 'lan0', 'lan1', 'lan2', 'lan3', 'lan4' };
+
+int replaceOptionPictureTexture(J2DScreen* screen, u32 tag, JUTTexture* texture)
+{
+	J2DPicture* picture = (J2DPicture*)screen->search(tag);
+	int halfWidth = (texture->getWidth() - picture->getWidth()) / 2;
+	picture->changeTexture(texture->getTexInfo(), 0);
+	JUTRect bounds = picture->getBounds();
+	bounds.reform(-halfWidth, 0, halfWidth, 0);
+	picture->setBounds(bounds);
+	return picture->getWidth();
+}
+
+inline void resizeOptionBubble(TPaneScalingControl* bubble, int contentWidth)
+{
+	J2DPane* pane = bubble->mPane;
+	int width = contentWidth + 0x1E;
+	int halfWidth = (pane->getWidth() - width) / 2;
+	const_cast<JUTRect&>(pane->getBounds()).reform(-halfWidth, 0, halfWidth, 0);
+	JUTRect bounds = pane->getBounds();
+	int baseWidth = bounds.getWidth();
+	int baseHeight = bounds.getHeight();
+	f32 progress = bubble->mFrameCtrl.getFrame() / bubble->mFrameCtrl.getEnd();
+	f32 scale = bubble->mAmplitude * MsSin(RAD_TO_DEG(progress * (2.0f * M_PI)));
+	int widthDelta = scale * baseWidth;
+	int heightDelta = scale * baseHeight;
+	bounds.move(bounds.x1 - widthDelta / 2, bounds.y1 - heightDelta / 2);
+	bounds.resize(widthDelta + baseWidth, heightDelta + baseHeight);
+	pane->setBounds(bounds);
+	bubble->mFrameCtrl.update();
+}
+
 const TPatternAnmControl::TAnmChunk cSteMonteAnm[] = {
 	{ 'fa_4', 0.3f }, { 'fa_5', 0.3f }, { 'fa_4', 0.3f }, { 'fa_5', 0.3f },
 	{ 'fa_2', 0.3f }, { 'fa_3', 0.3f }, { 'fa_2', 0.3f }, { 'fa_3', 0.3f },
@@ -102,6 +152,90 @@ const u32 cSoundToggleItems[] = {
 };
 
 } // namespace
+
+#pragma dont_inline on
+void TArrowControl::loadLanguageTextures()
+{
+	char path[0xFF];
+	for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+	     ++language) {
+		snprintf(path, sizeof(path), "/option/timg/%s%s",
+		         cOptionLanguageDirectories[language], "select_quit.bti");
+		JUTTexture* texture = new JUTTexture();
+		if (texture)
+			texture->storeTIMG((const ResTIMG*)JKRFileLoader::getGlbResource(path));
+		mLanguageTextures[language] = texture;
+	}
+}
+
+int TArrowControl::replaceTexture(u32 tag, JUTTexture* texture)
+{
+	J2DPicture* picture = (J2DPicture*)mPane->search(tag);
+	int widthDelta = texture->getWidth() - picture->getWidth();
+	picture->changeTexture(texture->getTexInfo(), 0);
+	JUTRect bounds = picture->getBounds();
+	bounds.reform(0, 0, widthDelta, 0);
+	picture->setBounds(bounds);
+	return picture->getWidth();
+}
+
+void TOptionRumbleUnit::changeTexture(int language)
+{
+	int maxWidth = replaceOptionPictureTexture(mScreen, 'm_1',
+	                                           mLanguageTextures[language]);
+	for (int state = 0; state < ARRAY_COUNT(mStateTextures); ++state) {
+		int width = replaceOptionPictureTexture(
+		    mScreen, 'sel0' + state, mStateTextures[state][language]);
+		if (width > maxWidth)
+			maxWidth = width;
+	}
+	resizeOptionBubble(mSelectionBubble, maxWidth);
+}
+
+void TOptionSoundUnit::changeTexture(int language)
+{
+	int maxWidth = replaceOptionPictureTexture(mScreen, 'm_2',
+	                                           mLanguageTextures[language]);
+	for (int mode = 0; mode < ARRAY_COUNT(mModeTextures); ++mode) {
+		int width = replaceOptionPictureTexture(
+		    mScreen, 'sel2' + mode, mModeTextures[mode][language]);
+		if (width > maxWidth)
+			maxWidth = width;
+	}
+	resizeOptionBubble(mSelectionBubble, maxWidth);
+}
+
+void TOptionSubtitleUnit::changeTexture(int language)
+{
+	int maxWidth = replaceOptionPictureTexture(mScreen, 'm_3',
+	                                           mLanguageTextures[language]);
+	for (int state = 0; state < ARRAY_COUNT(mStateTextures); ++state) {
+		int width = replaceOptionPictureTexture(
+		    mScreen, 'sel5' + state, mStateTextures[state][language]);
+		if (width > maxWidth)
+			maxWidth = width;
+	}
+	resizeOptionBubble(mSelectionBubble, maxWidth);
+}
+
+void TOptionLanguageUnit::changeTexture(int language)
+{
+	int maxWidth = replaceOptionPictureTexture(mScreen, 'm_4',
+	                                           mLanguageTextures[language]);
+	for (int i = 0; i < mSelectionText->mItems.size(); ++i) {
+		J2DPane* pane = mScreen->search('lan0' + i);
+		int width = pane->getWidth();
+		if (width > maxWidth)
+			maxWidth = width;
+	}
+	resizeOptionBubble(mSelectionBubble, maxWidth);
+}
+
+int TOptionLanguageUnit::replaceTexture(u32 tag, JUTTexture* texture)
+{
+	return replaceOptionPictureTexture(mScreen, tag, texture);
+}
+#pragma dont_inline off
 
 const TOptionSoundUnit::FabricatedSoundSettings
     TOptionSoundUnit::cSoundSettings[]
@@ -149,44 +283,6 @@ int TArrowControl::calcMoveX(int phase) const
 	f32 fVar2 = 1.0f - fVar1;
 	return fVar1 * 8.0f * fVar1 + fVar2 * -8.0f * fVar2 + fVar1 * fVar2;
 }
-
-TBalloonControl::TBalloonControl(int size)
-    : unk4(size)
-    , unk8(0)
-{
-	unk0 = new UnknownBalloonControlStruct[size];
-}
-
-void TBalloonControl::add(TExPane* pane)
-{
-	if (unk4 > unk8) {
-		unk0[unk8].unk0 = pane;
-		unk0[unk8].unk4 = pane->getPane()->getAlpha();
-		++unk8;
-	}
-}
-
-void TBalloonControl::setupAnm()
-{
-	mFrameCtrl.init((unk8 + 1) * 120.0f);
-	mFrameCtrl.setAttribute(J3DFrameCtrl::ATTR_LOOP);
-	unk20 = 0;
-	for (int i = 0; i < unk8; ++i)
-		unk0[i].unk0->getPane()->setAlpha(0);
-	mFrameCtrl.setRate(1.0f);
-}
-
-void TBalloonControl::startAnm() { mFrameCtrl.setRate(1.0f); }
-
-void TBalloonControl::stopAnm()
-{
-	mFrameCtrl.setRate(0.0f);
-	mFrameCtrl.reset();
-	for (int i = 0; i < unk8; ++i)
-		unk0[i].unk0->getPane()->setAlpha(0);
-}
-
-void TBalloonControl::update() { }
 
 TPaneScalingControl::TPaneScalingControl(J2DPane* pane)
     : mPane(pane)
@@ -329,12 +425,6 @@ TOptionRumbleUnit::TOptionRumbleUnit(J2DScreen* screen)
 	mParentPane   = new TExPane(mScreen, 'oya1');
 	mInitialAlpha = mParentPane->getPane()->getAlpha();
 
-	unkC = new TBalloonControl(3);
-	unkC->add(new TExPane(mScreen, 'bub0'));
-	unkC->add(new TExPane(mScreen, 'bub1'));
-	unkC->add(new TExPane(mScreen, 'bub2'));
-	unkC->setupAnm();
-
 	// The speech bubble around the on/off text that pulsates
 	// when this setting is selected.
 	mSelectionBubble = new TPaneScalingControl(mScreen->search('me_0'));
@@ -357,6 +447,30 @@ TOptionRumbleUnit::TOptionRumbleUnit(J2DScreen* screen)
 	mSelectionText = new TToggleControl(mScreen);
 	mSelectionText->setupToggle(cRumbleToggleItems,
 	                            ARRAY_COUNT(cRumbleToggleItems));
+
+	char path[0xFF];
+	for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+	     ++language) {
+		snprintf(path, sizeof(path), "/option/timg/%s%s",
+		         cOptionLanguageDirectories[language], "select_rumble.bti");
+		JUTTexture* texture = new JUTTexture();
+		if (texture)
+			texture->storeTIMG((const ResTIMG*)JKRFileLoader::getGlbResource(path));
+		mLanguageTextures[language] = texture;
+	}
+	for (int state = 0; state < ARRAY_COUNT(cRumbleModeTextures); ++state) {
+		for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+		     ++language) {
+			snprintf(path, sizeof(path), "/option/timg/%s%s",
+			         cOptionLanguageDirectories[language],
+			         cRumbleModeTextures[state]);
+			JUTTexture* texture = new JUTTexture();
+			if (texture)
+				texture->storeTIMG(
+				    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
+			mStateTextures[state][language] = texture;
+		}
+	}
 
 	setState(STATE_INACTIVE);
 }
@@ -472,14 +586,12 @@ void TOptionRumbleUnit::setState(TOptionRumbleUnit::State state)
 		mParentPane->getPane()->setAlpha(150);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
 		mSelectionBubble->stopAnm();
-		unkC->stopAnm();
 		mShouldRumble = false;
 		break;
 
 	case STATE_DEACTIVATING:
 		mParentPane->setPaneAlpha(30, 150, mInitialAlpha);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
-		unkC->stopAnm();
 		mShouldRumble = false;
 		break;
 
@@ -487,8 +599,6 @@ void TOptionRumbleUnit::setState(TOptionRumbleUnit::State state)
 		mParentPane->getPane()->setAlpha(mInitialAlpha);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), false);
 		mSelectionBubble->startAnm();
-		unkC->setupAnm();
-		unkC->startAnm();
 		adjustView();
 		break;
 	}
@@ -509,11 +619,6 @@ TOptionSoundUnit::TOptionSoundUnit(J2DScreen* screen)
 	mParentPane   = new TExPane(mScreen, 'oya2');
 	mInitialAlpha = mParentPane->getPane()->getAlpha();
 
-	unkC = new TBalloonControl(2);
-	unkC->add(new TExPane(mScreen, 'bub3'));
-	unkC->add(new TExPane(mScreen, 'bub4'));
-	unkC->setupAnm();
-
 	// The speech bubble around the mono/stereo/surround text that pulsates
 	// when this setting is selected.
 	mSelectionBubble = new TPaneScalingControl(mScreen->search('me_1'));
@@ -533,8 +638,179 @@ TOptionSoundUnit::TOptionSoundUnit(J2DScreen* screen)
 	mMusicFrameCtrl.setAttribute(J3DFrameCtrl::ATTR_LOOP);
 	mMusicFrameCtrl.setRate(1.0f);
 	mMusic = nullptr;
+	char path[0xFF];
+	for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+	     ++language) {
+		snprintf(path, sizeof(path), "/option/timg/%s%s",
+		         cOptionLanguageDirectories[language], "select_sound.bti");
+		JUTTexture* texture = new JUTTexture();
+		if (texture)
+			texture->storeTIMG((const ResTIMG*)JKRFileLoader::getGlbResource(path));
+		mLanguageTextures[language] = texture;
+	}
+	for (int mode = 0; mode < ARRAY_COUNT(cSoundModeTextures); ++mode) {
+		for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+		     ++language) {
+			snprintf(path, sizeof(path), "/option/timg/%s%s",
+			         cOptionLanguageDirectories[language],
+			         cSoundModeTextures[mode]);
+			JUTTexture* texture = new JUTTexture();
+			if (texture)
+				texture->storeTIMG(
+				    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
+			mModeTextures[mode][language] = texture;
+		}
+	}
 	setState(STATE_INACTIVE);
 	adjustView();
+}
+
+TOptionSubtitleUnit::TOptionSubtitleUnit(J2DScreen* screen)
+    : mScreen(screen)
+{
+	mParentPane   = new TExPane(mScreen, 'txp2');
+	mInitialAlpha = mParentPane->getPane()->getAlpha();
+	mSelectionBubble = new TPaneScalingControl(mScreen->search('me_2'));
+	mSelectionBubble->setupAnm(0.05f, 1.0f);
+	mSelectionBubble->stopAnm();
+	mSelectionText = new TToggleControl(mScreen);
+	mSelectionText->setupToggle(cSubtitleToggleItems,
+	                            ARRAY_COUNT(cSubtitleToggleItems));
+
+	char path[0xFF];
+	for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+	     ++language) {
+		snprintf(path, sizeof(path), "/option/timg/%s%s",
+		         cOptionLanguageDirectories[language], "select_subtitles.bti");
+		JUTTexture* texture = new JUTTexture();
+		if (texture)
+			texture->storeTIMG((const ResTIMG*)JKRFileLoader::getGlbResource(path));
+		mLanguageTextures[language] = texture;
+	}
+	for (int state = 0; state < ARRAY_COUNT(cSubtitleTextures); ++state) {
+		for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+		     ++language) {
+			snprintf(path, sizeof(path), "/option/timg/%s%s",
+			         cOptionLanguageDirectories[language], cSubtitleTextures[state]);
+			JUTTexture* texture = new JUTTexture();
+			if (texture)
+				texture->storeTIMG(
+				    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
+			mStateTextures[state][language] = texture;
+		}
+	}
+	setState(STATE_INACTIVE);
+}
+
+TOptionLanguageUnit::TOptionLanguageUnit(J2DScreen* screen)
+    : mScreen(screen)
+{
+	mParentPane   = new TExPane(mScreen, 'txp3');
+	mInitialAlpha = mParentPane->getPane()->getAlpha();
+	mSelectionBubble = new TPaneScalingControl(mScreen->search('me_3'));
+	mSelectionBubble->setupAnm(0.05f, 1.0f);
+	mSelectionBubble->stopAnm();
+	mSelectionText = new TToggleControl(mScreen);
+	mSelectionText->setupToggle(cLanguageToggleItems,
+	                            ARRAY_COUNT(cLanguageToggleItems));
+
+	char path[0xFF];
+	for (int language = 0; language < ARRAY_COUNT(cOptionLanguageDirectories);
+	     ++language) {
+		snprintf(path, sizeof(path), "/option/timg/%s%s",
+		         cOptionLanguageDirectories[language], "select_language.bti");
+		JUTTexture* texture = new JUTTexture();
+		if (texture)
+			texture->storeTIMG((const ResTIMG*)JKRFileLoader::getGlbResource(path));
+		mLanguageTextures[language] = texture;
+	}
+	setState(STATE_INACTIVE);
+}
+
+void TOptionSubtitleUnit::setInfluencedAlphaRecursive(J2DPane* pane, bool flag)
+{
+	for (JSUTreeIterator<J2DPane> it = pane->getPaneTree()->getFirstChild();
+	     it != pane->getPaneTree()->getEndChild(); ++it) {
+		it->setInfluenceAlpha(flag);
+		setInfluencedAlphaRecursive(it.getObject(), flag);
+	}
+}
+
+void TOptionLanguageUnit::setInfluencedAlphaRecursive(J2DPane* pane, bool flag)
+{
+	for (JSUTreeIterator<J2DPane> it = pane->getPaneTree()->getFirstChild();
+	     it != pane->getPaneTree()->getEndChild(); ++it) {
+		it->setInfluenceAlpha(flag);
+		setInfluencedAlphaRecursive(it.getObject(), flag);
+	}
+}
+
+#pragma dont_inline on
+void TOptionSubtitleUnit::setState(State state)
+{
+	mState = state;
+	switch (state) {
+	case STATE_INACTIVE:
+		mParentPane->getPane()->setAlpha(150);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
+		mSelectionBubble->stopAnm();
+		break;
+	case STATE_DEACTIVATING:
+		mParentPane->setPaneAlpha(30, 150, mInitialAlpha);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
+		break;
+	case STATE_ACTIVE:
+		mParentPane->getPane()->setAlpha(mInitialAlpha);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), false);
+		mSelectionBubble->startAnm();
+		break;
+	}
+}
+
+void TOptionLanguageUnit::setState(State state)
+{
+	mState = state;
+	switch (state) {
+	case STATE_INACTIVE:
+		mParentPane->getPane()->setAlpha(150);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
+		mSelectionBubble->stopAnm();
+		break;
+	case STATE_DEACTIVATING:
+		mParentPane->setPaneAlpha(30, 150, mInitialAlpha);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
+		break;
+	case STATE_ACTIVE:
+		mParentPane->getPane()->setAlpha(mInitialAlpha);
+		setInfluencedAlphaRecursive(mParentPane->getPane(), false);
+		mSelectionBubble->startAnm();
+		break;
+	}
+}
+#pragma dont_inline off
+
+void TOptionSubtitleUnit::update()
+{
+	if (mState == STATE_DEACTIVATING) {
+		mParentPane->update();
+		if (mParentPane->getPane()->getAlpha() == 150)
+			setState(STATE_INACTIVE);
+	} else if (mState == STATE_ACTIVE) {
+		mParentPane->update();
+		mSelectionBubble->update();
+	}
+}
+
+void TOptionLanguageUnit::update()
+{
+	if (mState == STATE_DEACTIVATING) {
+		mParentPane->update();
+		if (mParentPane->getPane()->getAlpha() == 150)
+			setState(STATE_INACTIVE);
+	} else if (mState == STATE_ACTIVE) {
+		mParentPane->update();
+		mSelectionBubble->update();
+	}
 }
 
 void TOptionSoundUnit::initMonoAnm()
@@ -717,22 +993,18 @@ void TOptionSoundUnit::setState(TOptionSoundUnit::State state)
 		mParentPane->getPane()->setAlpha(150);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
 		mSelectionBubble->stopAnm();
-		unkC->stopAnm();
 		stopSound();
 		break;
 
 	case STATE_DEACTIVATING:
 		mParentPane->setPaneAlpha(30, 150, mInitialAlpha);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), true);
-		unkC->stopAnm();
 		break;
 
 	case STATE_ACTIVE:
 		mParentPane->getPane()->setAlpha(mInitialAlpha);
 		setInfluencedAlphaRecursive(mParentPane->getPane(), false);
 		mSelectionBubble->startAnm();
-		unkC->setupAnm();
-		unkC->startAnm();
 		adjustView();
 		adjustSound();
 		break;
@@ -789,16 +1061,30 @@ void TOptionControl::load()
 
 	mScreen = new J2DSetScreen("option.blo", optionArch);
 	mScreen->setCullBack(GX_CULL_BACK);
-	J2DTextBox* textBoxA = (J2DTextBox*)mScreen->search('m_0a');
-	J2DTextBox* textBoxB = (J2DTextBox*)mScreen->search('m_0b');
-	textBoxA->setFont((JUTFont*)gpSystemFont);
-	textBoxB->setFont((JUTFont*)gpSystemFont);
+	mOptionTextA = (J2DTextBox*)mScreen->search('m_0a');
+	mOptionTextB = (J2DTextBox*)mScreen->search('m_0b');
+	mOptionTextA->setFont((JUTFont*)gpSystemFont);
+	mOptionTextB->setFont((JUTFont*)gpSystemFont);
+	SMSMakeTextBuffer(mOptionTextA, 0x200);
+	SMSMakeTextBuffer(mOptionTextB, 0x200);
+	static const char* const messagePaths[] = {
+	    "/option/loadmessage_en.bmg", "/option/loadmessage_ge.bmg",
+	    "/option/loadmessage_fr.bmg", "/option/loadmessage_sp.bmg",
+	    "/option/loadmessage_it.bmg",
+	};
+	for (int i = 0; i < ARRAY_COUNT(messagePaths); ++i)
+		mLocalizedMessageResources[i] =
+		    JKRFileLoader::getGlbResource(messagePaths[i]);
 	mBackArrow    = new TArrowControl(mScreen->search('yaji'));
+	mBackArrow->loadLanguageTextures();
 	mRumbleOption = new TOptionRumbleUnit(mScreen);
 	mSoundOption  = new TOptionSoundUnit(mScreen);
+	mSubtitleOption = new TOptionSubtitleUnit(mScreen);
+	mLanguageOption = new TOptionLanguageUnit(mScreen);
 	setType(SELECT_TYPE_RUMBLE_OPTION, true);
 	loadSetting();
 	mWasJumping = false;
+	unk41       = true;
 }
 
 #pragma dont_inline on
@@ -825,6 +1111,25 @@ void TOptionControl::loadSetting()
 		break;
 	}
 
+	int subtitle = TFlagManager::getInstance()->getFlag(0x90001);
+	switch (subtitle) {
+	case 0:
+	case 1:
+		mSubtitleOption->setValue(subtitle);
+		break;
+	}
+
+	int language = TFlagManager::getInstance()->getFlag(0xA0001);
+	switch (language) {
+	case 0:
+	case 1:
+	case 2:
+	case 3:
+	case 4:
+		mLanguageOption->setValue(language);
+		break;
+	}
+
 	resetChangedSetting();
 }
 #pragma dont_inline off
@@ -838,22 +1143,70 @@ bool TOptionControl::movementCard2Option()
 {
 	if (gpCameraOption->unk12 == 0) {
 		mRumbleOption->mShouldRumble = false;
+		mScreen->search('txp2')->show();
+		mScreen->search('txp3')->show();
 		mScreen->search('oya0')->show();
 		mScreen->search('oya1')->show();
 		mScreen->search('oya2')->show();
 		mWasJumping = false;
 		setType(mSelectedOption, true);
+		int language = mLanguageOption->getValue();
+		mBackArrow->replaceTexture('s_1', mBackArrow->mLanguageTextures[language]);
+		mRumbleOption->changeTexture(language);
+		mSoundOption->changeTexture(language);
+		mSubtitleOption->changeTexture(language);
+		int width = mLanguageOption->replaceTexture(
+		    'm_4', mLanguageOption->mLanguageTextures[language]);
+		ArrayWrapper<const u32>& items = mLanguageOption->mSelectionText->mItems;
+		int count = items.size();
+		int maxWidth = width;
+		for (int i = 0; i < count; ++i) {
+			J2DPane* pane = mLanguageOption->mScreen->search('lan0' + i);
+			int itemWidth = pane->getWidth();
+			if (itemWidth > maxWidth)
+				maxWidth = itemWidth;
+		}
+		resizeOptionBubble(mLanguageOption->mSelectionBubble, maxWidth);
+		changeTopMessage(language);
 		return true;
 	}
 
 	return false;
 }
 
+#pragma dont_inline on
+void TOptionControl::changeTopMessage(int language)
+{
+	if (language < 0 || language >= ARRAY_COUNT(mLocalizedMessageResources))
+		language = 0;
+	const char* message = (const char*)SMSGetMessageData(mLocalizedMessageResources[language], 0x1C);
+	char buffer[0x200];
+	char* out = buffer;
+	while (*message) {
+		if (*message == '@') {
+			strncpy(out, cOptionMessageMarkerA, 0x44);
+			out += 0x44;
+		} else if (*message == '*') {
+			strncpy(out, cOptionMessageMarkerB, 0x44);
+			out += 0x44;
+		} else {
+			*out++ = *message;
+		}
+		++message;
+	}
+	*out = '\0';
+	strncpy(mOptionTextA->getStringPtr(), buffer, 0x200);
+	strncpy(mOptionTextB->getStringPtr(), buffer, 0x200);
+}
+#pragma dont_inline off
+
 bool TOptionControl::movementOption()
 {
 	mBackArrow->update();
 	mRumbleOption->update();
 	mSoundOption->update();
+	mSubtitleOption->update();
+	mLanguageOption->update();
 
 	checkInput();
 	writeValue();
@@ -894,10 +1247,38 @@ void TOptionControl::setType(TOptionControl::SelectType type,
 		case SELECT_TYPE_RUMBLE_OPTION:
 			mRumbleOption->activate();
 			mSoundOption->deactivate(initial_options_entry);
+			mSubtitleOption->setState(initial_options_entry
+			                              ? TOptionSubtitleUnit::STATE_INACTIVE
+			                              : TOptionSubtitleUnit::STATE_DEACTIVATING);
+			mLanguageOption->setState(initial_options_entry
+			                              ? TOptionLanguageUnit::STATE_INACTIVE
+			                              : TOptionLanguageUnit::STATE_DEACTIVATING);
 			break;
 		case SELECT_TYPE_SOUND_OPTION:
 			mRumbleOption->deactivate(initial_options_entry);
 			mSoundOption->activate();
+			mSubtitleOption->setState(initial_options_entry
+			                              ? TOptionSubtitleUnit::STATE_INACTIVE
+			                              : TOptionSubtitleUnit::STATE_DEACTIVATING);
+			mLanguageOption->setState(initial_options_entry
+			                              ? TOptionLanguageUnit::STATE_INACTIVE
+			                              : TOptionLanguageUnit::STATE_DEACTIVATING);
+			break;
+		case SELECT_TYPE_SUBTITLE_OPTION:
+			mSubtitleOption->setState(TOptionSubtitleUnit::STATE_ACTIVE);
+			mRumbleOption->deactivate(initial_options_entry);
+			mSoundOption->deactivate(initial_options_entry);
+			mLanguageOption->setState(initial_options_entry
+			                              ? TOptionLanguageUnit::STATE_INACTIVE
+			                              : TOptionLanguageUnit::STATE_DEACTIVATING);
+			break;
+		case SELECT_TYPE_LANGUAGE_OPTION:
+			mLanguageOption->setState(TOptionLanguageUnit::STATE_ACTIVE);
+			mSubtitleOption->setState(initial_options_entry
+			                               ? TOptionSubtitleUnit::STATE_INACTIVE
+			                               : TOptionSubtitleUnit::STATE_DEACTIVATING);
+			mRumbleOption->deactivate(initial_options_entry);
+			mSoundOption->deactivate(initial_options_entry);
 			break;
 		}
 
@@ -916,16 +1297,53 @@ void TOptionControl::toggleCurType()
 	case SELECT_TYPE_SOUND_OPTION:
 		mSoundOption->toggle();
 		break;
+	case SELECT_TYPE_SUBTITLE_OPTION:
+		mSubtitleOption->toggle();
+		break;
+	case SELECT_TYPE_LANGUAGE_OPTION:
+		mLanguageOption->toggle();
+		break;
 	}
 }
 
 void TOptionControl::checkInput()
 {
 	f32 fVar1 = gpMarDirector->unk18[0]->getMainStickInDir(0.0f, 1.0f);
-	if (fVar1 >= 0.75f)
-		setType(SELECT_TYPE_RUMBLE_OPTION, false);
-	else if (fVar1 <= -0.75f)
-		setType(SELECT_TYPE_SOUND_OPTION, false);
+	if (fVar1 >= 0.75f) {
+		if (unk41) {
+			unk41 = false;
+		switch (mSelectedOption) {
+		case SELECT_TYPE_RUMBLE_OPTION:
+		case SELECT_TYPE_SOUND_OPTION:
+			setType(SELECT_TYPE_RUMBLE_OPTION, false);
+			break;
+		case SELECT_TYPE_SUBTITLE_OPTION:
+			setType(SELECT_TYPE_SOUND_OPTION, false);
+			break;
+		case SELECT_TYPE_LANGUAGE_OPTION:
+			setType(SELECT_TYPE_SUBTITLE_OPTION, false);
+			break;
+		}
+		}
+	} else if (fVar1 <= -0.75f) {
+		if (unk41) {
+			unk41 = false;
+			switch (mSelectedOption) {
+		case SELECT_TYPE_RUMBLE_OPTION:
+			setType(SELECT_TYPE_SOUND_OPTION, false);
+			break;
+		case SELECT_TYPE_SOUND_OPTION:
+			setType(SELECT_TYPE_SUBTITLE_OPTION, false);
+			break;
+		case SELECT_TYPE_SUBTITLE_OPTION:
+		case SELECT_TYPE_LANGUAGE_OPTION:
+			setType(SELECT_TYPE_LANGUAGE_OPTION, false);
+			break;
+		}
+		}
+	} else {
+		unk41 = true;
+	}
 
 	bool jumping = SMS_IsMarioStatusTypeJumping();
 	if (!mWasJumping && jumping)
@@ -937,6 +1355,8 @@ void TOptionControl::writeValue()
 {
 	TFlagManager::getInstance()->setFlag(0x90000, mRumbleOption->getValue());
 	TFlagManager::getInstance()->setFlag(0xA0000, mSoundOption->getValue());
+	TFlagManager::getInstance()->setFlag(0x90001, mSubtitleOption->getValue());
+	TFlagManager::getInstance()->setFlag(0xA0001, mLanguageOption->getValue());
 }
 
 bool TOptionControl::isChangedSetting() const
@@ -944,7 +1364,9 @@ bool TOptionControl::isChangedSetting() const
 	bool result = true;
 
 	if (mInitialRumbleValue == mRumbleOption->getValue()
-	    && mInitialSoundValue == mSoundOption->getValue())
+	    && mInitialSoundValue == mSoundOption->getValue()
+	    && mInitialSubtitleValue == mSubtitleOption->getValue()
+	    && mInitialLanguageValue == mLanguageOption->getValue())
 		result = false;
 
 	return result;
@@ -954,4 +1376,6 @@ void TOptionControl::resetChangedSetting()
 {
 	mInitialRumbleValue = mRumbleOption->getValue();
 	mInitialSoundValue  = mSoundOption->getValue();
+	mInitialSubtitleValue = mSubtitleOption->getValue();
+	mInitialLanguageValue = mLanguageOption->getValue();
 }

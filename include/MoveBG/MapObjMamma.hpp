@@ -87,6 +87,10 @@ public:
 
 class TSandCastle : public TSandBombBase {
 public:
+	enum {
+		STATE_SHRINKING = 2,
+	};
+
 	bool withering();
 	void expanded();
 	void explode();
@@ -168,6 +172,10 @@ public:
 
 class TGoalWatermelon : public TMapObjBase {
 public:
+	enum {
+		STATE_HIDDEN = 1,
+	};
+
 	~TGoalWatermelon();
 	void touchActor(THitActor*);
 	void control();
@@ -181,6 +189,18 @@ public:
 	/* 0x140 */ f32 unk140;
 	/* 0x144 */ f32 unk144;
 	/* 0x148 */ f32 unk148;
+};
+
+class TWatermelonStatic : public TGoalWatermelon {
+public:
+	~TWatermelonStatic();
+	u32 touchWater(THitActor*);
+	void control();
+
+	TWatermelonStatic()
+	    : TGoalWatermelon("お化けスイカ")
+	{
+	}
 };
 
 class TMammaMirrorMapOperator : public JDrama::TViewObj {

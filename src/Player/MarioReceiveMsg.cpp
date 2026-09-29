@@ -195,8 +195,14 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 		case 0x20000006:
 		case 0x20000007: // collectible fruit
 			if (message == HIT_MESSAGE_ATTACK) {
+				bool invalid;
 				if (*(s8*)((u8*)sender + 0x13A) == 0
-				    && !(*(s32*)((u8*)sender + 0x13C) < 120 ? true : false)) {
+				    && *(s32*)((u8*)sender + 0x13C) < 120) {
+					invalid = true;
+				} else {
+					invalid = false;
+				}
+				if (invalid == false) {
 					mHealth = mDeParams.mHpMax.get();
 					if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
 						mWaterGun->addWater(mWaterGun->getMaxWater());
@@ -507,19 +513,6 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 			keepDistance(sender->mPosition, sender->getDamageRadius() + 30.0f,
 			             0.0f);
 			return TRUE;
-		case 0x40000053: // boss-graffito-tongue / sea attacker
-			if (checkFlag(MARIO_FLAG_IN_ANY_WATER)
-			    && message == HIT_MESSAGE_ATTACK && !isInvincible()) {
-				damageExec(sender, mDmgParamsEnemyCommon.mDamage.get(),
-				           mDmgParamsEnemyCommon.mDownType.get(),
-				           mDmgParamsEnemyCommon.mWaterEmit.get(),
-				           mDmgParamsEnemyCommon.mMinSpeed.get(),
-				           mDmgParamsEnemyCommon.mMotor.get(),
-				           mDmgParamsEnemyCommon.mDirty.get(),
-				           mDmgParamsEnemyCommon.mInvincibleTime.get());
-				return TRUE;
-			}
-			break;
 		case 0x1000002B:
 		case 0x1000000D: // glistening enemy
 			if (message == HIT_MESSAGE_UNK5) {
@@ -809,6 +802,20 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 		}
 		break;
 	}
+
+	case 0x40000053: // boss-graffito-tongue / sea attacker
+		if (checkFlag(MARIO_FLAG_IN_ANY_WATER)
+		    && message == HIT_MESSAGE_ATTACK && !isInvincible()) {
+			damageExec(sender, mDmgParamsEnemyCommon.mDamage.get(),
+			           mDmgParamsEnemyCommon.mDownType.get(),
+			           mDmgParamsEnemyCommon.mWaterEmit.get(),
+			           mDmgParamsEnemyCommon.mMinSpeed.get(),
+			           mDmgParamsEnemyCommon.mMotor.get(),
+			           mDmgParamsEnemyCommon.mDirty.get(),
+			           mDmgParamsEnemyCommon.mInvincibleTime.get());
+			return TRUE;
+		}
+		break;
 
 	case 0x80000001:
 	case 0x80000002:

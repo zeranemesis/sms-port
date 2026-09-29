@@ -9,6 +9,7 @@
 #include <MarioUtil/RumbleMgr.hpp>
 #include <MarioUtil/ShadowUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/LightUtil.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <System/EmitterViewObj.hpp>
@@ -637,25 +638,10 @@ void TYoshi::thinkUpper()
 
 	J3DJoint* joint
 	    = mActor->getModel()->getModelData()->getJointNodePointer(18);
-	const TWaterGun* waterGun = mMario->mWaterGun;
+	TWaterGun* waterGun = mMario->mWaterGun;
 
-	bool shouldUseEatMtx = false;
-
-	if (mTongue->mState != TYoshiTongue::STATE_IDLE
-	    && waterGun->mCurrentWater != 0) {
-		if (waterGun->getCurrentNozzle()->getNozzleKind() == 1) {
-			if (((TNozzleTrigger*)waterGun->getCurrentNozzle())->unk385
-			    == TNozzleTrigger::ACTIVE)
-				shouldUseEatMtx = true;
-			else
-				shouldUseEatMtx = false;
-		} else {
-			if (waterGun->getCurrentNozzle()->unk378 > 0.0f)
-				shouldUseEatMtx = true;
-			else
-				shouldUseEatMtx = false;
-		}
-	}
+	bool shouldUseEatMtx = mTongue->mState != TYoshiTongue::STATE_IDLE
+	                        || waterGun->isEmitting();
 
 	if (shouldUseEatMtx) {
 		if (joint->getMtxCalc() != unk54) {
@@ -669,14 +655,14 @@ void TYoshi::thinkUpper()
 
 		unk4C->setFrame(unk5C.getFrame());
 	} else {
-		if (joint->getMtxCalc() == unk58) {
+		if (joint->getMtxCalc() == unk54) {
 			unk5C.setFrame(unk5C.getStart());
 			unk5C.setRate(1.0f);
 			unk5C.setEnd(unk50->getFrameMax());
 			unk5C.setFrame(0.0f);
 			joint->setMtxCalc(unk58);
 			mBodyAnmSound->initAnmSound(mBodyAnmSoundTable[4], 1, 0.0f);
-		} else if (joint->getMtxCalc() != unk58) {
+		} else if (joint->getMtxCalc() == unk58) {
 			if (unk5C.checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE
 			                     | J3DFrameCtrl::STATE_LOOPED_ONCE))
 				joint->setMtxCalc(nullptr);
@@ -1105,6 +1091,9 @@ void TYoshi::entry()
 	if (!isHatched())
 		return;
 
+	if (gpMarDirector->isTalkOrDemoModeNow())
+		bVar1 = true;
+
 	if (bVar1 != true)
 		return;
 
@@ -1147,9 +1136,12 @@ void TYoshi::entry()
 	}
 
 	mActor->entry();
+	gpLightManager->getLightSet(LIGHT_TYPE_OBJECT)
+	    ->changeLightDrawBuffer(mActor->mLightId);
 	mMirrorModels[0]->entry();
 	mMirrorModels[1]->entry();
 	mTongue->entry();
+	gpLightManager->getLightSet(LIGHT_TYPE_OBJECT)->resetLightDrawBuffer();
 
 	TCircleShadowRequest shadowRequest;
 	shadowRequest.mPosition = mTranslation;

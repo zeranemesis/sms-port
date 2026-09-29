@@ -352,7 +352,7 @@ void TPauseMenu2::perform(u32 cue, JDrama::TGraphics* graphics)
 							gpMSound->pauseOff(0);
 							gpMarDirector->getConsole()->pauseOut();
 							mFadeAnim = 0.0f;
-							mState    = MENU_APPEARING;
+							mState    = MENU_DISAPPEARING;
 							break;
 						case 2:
 							mSelectionConfirmed = true;
@@ -566,6 +566,9 @@ void TPauseMenu2::setDrawStart()
 	mPauseLetters[4]->mRotation = u16(mOrigLetterAngles[4] + 180.0f);
 
 	mMenuPane->setAlpha(255);
+#ifdef VERSION_GMSP01
+	unk20->setAlpha(255);
+#endif
 	mMenuPane->mRotation = 0.0f;
 	gpMarDirector->getConsole()->pauseIn();
 	SMSRumbleMgr->startPause();
@@ -588,9 +591,11 @@ void TPauseMenu2::drawAppearPane(J2DPicture* picture, f32 anim, JUTRect& rect,
 		if (picture->isVisible()) {
 			picture->hide();
 		}
-	} else if (!(anim >= 20.0f) && !picture->isVisible()) {
-		picture->show();
-		picture->setAlpha(0);
+	} else if (!(anim >= 20.0f)) {
+		if (!picture->isVisible()) {
+			picture->show();
+			picture->setAlpha(0);
+		}
 
 		if (anim == 2.0f) {
 			JUTRect rect = picture->getGlobalBounds();

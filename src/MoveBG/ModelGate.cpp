@@ -235,9 +235,9 @@ BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if (sender->getActorType() == 0x1000001) {
-		Mtx localMtx;
 		JGeometry::TVec3<f32> localPos;
-		PSMTXMultVec(unk7C, (Vec*)&sender->getPosition(), (Vec*)&localPos);
+		Mtx localMtx;
+		PSMTXMultVec(unk7C, (Vec*)&sender->mPosition, (Vec*)&localPos);
 		PSMTXCopy(unk78->getModel()->getAnmMtx(unk72), localMtx);
 
 		if (localPos.x * localPos.x + localPos.y * localPos.y < 40000.0f) {
@@ -252,13 +252,13 @@ BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
 						}
 					}
 
-					if (0.000030517578f * (f32)rand() < unkF8) {
-						const JGeometry::TVec3<f32>* position = &sender->getPosition();
+					f32 rnd = 0.000030517578f * (f32)rand();
+					if (rnd < unkF8) {
 						gpMarioParticleManager->emitWithRotate(
-						    0x1DD, position, 0, unk74, 0, 2,
+						    0x1DD, &sender->mPosition, 0, unk74, 0, 2,
 						    nullptr);
 						gpMarioParticleManager->emitWithRotate(
-						    0x1DE, position, 0, unk74, 0, 2,
+						    0x1DE, &sender->mPosition, 0, unk74, 0, 2,
 						    nullptr);
 					}
 
@@ -266,8 +266,6 @@ BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
 				}
 			}
 		}
-
-		return FALSE;
 	}
 
 	return FALSE;

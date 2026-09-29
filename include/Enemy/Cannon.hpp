@@ -49,15 +49,16 @@ public:
 
 	void setBckAnm(int);
 	void checkHit();
-	void isUpEnd();
-	void isDownEnd();
+	bool isUpEnd();
+	bool isDownEnd();
+	MActor* getMActor() const { return mParts->getMActor(); }
 
 public:
 	/* 0x68 */ TCannon* mCannon;
 	/* 0x6C */ TSharedParts* mParts;
 	/* 0x70 */ f32 unk70;
 	/* 0x74 */ MAnmSound* mAnmSound;
-	/* 0x78 */ u32 unk78;
+	/* 0x78 */ const char* unk78;
 	/* 0x7C */ f32 unk7C;
 };
 
@@ -72,7 +73,7 @@ public:
 
 public:
 	/* 0x1C */ MAnmSound* mAnmSound;
-	/* 0x20 */ u32 unk20;
+	/* 0x20 */ const char* unk20;
 	/* 0x24 */ u8 unk24;
 	/* 0x28 */ f32 unk28;
 	/* 0x2C */ f32 unk2C;
@@ -117,6 +118,11 @@ public:
 	void gateOpen();
 	void startChorobeiShout();
 
+	TChorobei* getChorobei() const { return unk1A8; }
+	u8 getShootKind() const { return unk290; }
+	TSpineEnemy* getMareGate() const { return unk254; }
+	TCannonSaveLoadParams* getSLParams() const { return unk28C; }
+
 	// fabricated
 	TCannonSaveLoadParams* getParams() const
 	{
@@ -131,16 +137,16 @@ public:
 public:
 	// TODO: most fields are only known by offset (ctor/load/reset stores)
 	/* 0x194 */ JGeometry::TVec3<f32> unk194;
-	/* 0x1A0 */ TLiveActor* unk1A0; // bomb held by the Chorobei
-	/* 0x1A4 */ u32 unk1A4;
+	/* 0x1A0 */ TSmallEnemy* unk1A0; // bomb held by the Chorobei
+	/* 0x1A4 */ TLiveActor* unk1A4;
 	/* 0x1A8 */ TChorobei* unk1A8;
 	/* 0x1AC */ TCannonDom* unk1AC[3];
 	/* 0x1B8 */ TCannonDom* unk1B8;
 	/* 0x1BC */ TSharedParts* unk1BC;
 	/* 0x1C0 */ TMapCollisionMove* unk1C0[3];
 	/* 0x1CC */ u8 unk1CC[0x1E0 - 0x1CC];
-	/* 0x1E0 */ void* unk1E0;
-	/* 0x1E4 */ u8 unk1E4[0x214 - 0x1E4];
+	/* 0x1E0 */ MtxPtr unk1E0;
+	/* 0x1E4 */ TPosition3f unk1E4;
 	/* 0x214 */ s32 unk214;
 	/* 0x218 */ s32 unk218;
 	/* 0x21C */ u8 unk21C;
@@ -151,13 +157,14 @@ public:
 	/* 0x238 */ u8 unk238;
 	/* 0x239 */ u8 unk239;
 	/* 0x23C */ JGeometry::TVec3<f32> unk23C; // position at load
-	/* 0x248 */ u8 unk248[0x254 - 0x248];
-	/* 0x254 */ TLiveActor* unk254; // mare gate effect
-	/* 0x258 */ TMapCollisionBase* unk258;
+	/* 0x248 */ JGeometry::TVec3<f32> unk248;
+	/* 0x254 */ TSpineEnemy* unk254; // mare gate effect
+	/* 0x258 */ TMapCollisionMove* unk258;
 	/* 0x25C */ JGeometry::TVec3<f32> unk25C[4];
 	/* 0x28C */ TCannonSaveLoadParams* unk28C;
 	/* 0x290 */ u8 unk290;
-	/* 0x294 */ u8 unk294[0x2AC - 0x294];
+	/* 0x294 */ JGeometry::TVec3<f32> unk294;
+	/* 0x2A0 */ JGeometry::TVec3<f32> unk2A0;
 	/* 0x2AC */ f32 unk2AC;
 	/* 0x2B0 */ TMapCollisionMove* unk2B0;
 };

@@ -562,6 +562,7 @@ void TNameKuri::reset()
 	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
 	char framePad_8_reset[8];
 	(void)framePad_8_reset;
+
 	gpCurNameKuri = this;
 	TWalkerEnemy::reset();
 	unk1B0 = 1.0f;

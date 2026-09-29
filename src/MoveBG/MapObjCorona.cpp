@@ -1,10 +1,10 @@
 #include "MoveBG/MapObjCorona.hpp"
 
 
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
+// rogue include: the original TU opens .rodata with the dummy string pair from
+// System/DummyStrings.hpp plus the four MtxCalcType names; without them every
+// string offset in this object is shifted.
+#include <M3DUtil/InfectiousStrings.hpp>
 #include "MoveBG/MapObjBase.hpp"
 #include <math.h>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -15,6 +15,12 @@
 #include <MarioUtil/MathUtil.hpp>
 #include <Player/MarioAccess.hpp>
 #include <System/Particles.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
+#include <JSystem/JGeometry/JGMatrix33.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <stdio.h>
 
 // rogue include: pulls in JALList.hpp's JSUList<T>::smList template
 // statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
@@ -27,11 +33,281 @@ extern "C" void getDown__6TKoopaFv(void*);
 extern "C" void stagger__6TKoopaFb(void*, bool);
 extern "C" void* __ct__14TBathtubParamsFv(void*);
 
+// ---------------------------------------------------------------------------
+// The whole file below is in the REVERSE of the address order the linker map
+// records for MoveBG.a/MapObjCorona.cpp, because this TU is built with
+// -inline deferred. tools/validate-symbol-order.py is the authority.
+// ---------------------------------------------------------------------------
 
+// Not in the map: the TU-local helper both getNumKiller{Burstable,Launchable}
+// use to ask the resident Koopa whether he may be launched. Dead in the target
+// build, so it is dead-stripped and has no entry there either.
 static bool bathtubKoopaAllowsLaunch()
 {
 	return allowsLaunch__6TKoopaCFv(JDrama::TNameRefGen::search("クッパ")) != 0;
 }
+
+// ---------------------------------------------------------------------------
+// TBathtubParams (map position 67)
+// ---------------------------------------------------------------------------
+
+TBathtubParams::TBathtubParams()
+    : TParams("/MapObj/bathtub.prm")
+    , PARAM_INIT(resetGrip, 0)
+    , PARAM_INIT(trampleRelease, 10)
+    , PARAM_INIT(trampleRecover, 10)
+    , PARAM_INIT(quakeRelease, 500)
+    , PARAM_INIT(quakeRecover, 500)
+    , PARAM_INIT(hipdropRelease, 35)
+    , PARAM_INIT(hipdropRecover, 35)
+    , PARAM_INIT(breakCount0, 750)
+    , PARAM_INIT(breakCount1, 710)
+    , PARAM_INIT(breakCount2, 685)
+    , PARAM_INIT(breakCount3, 655)
+    , PARAM_INIT(launchStopCount, 1000)
+    , PARAM_INIT(animSpeed0, 0.15f)
+    , PARAM_INIT(animSpeed1, 0.15f)
+    , PARAM_INIT(animSpeed2, 0.15f)
+    , PARAM_INIT(animSpeed3, 0.15f)
+    , PARAM_INIT(animSpeed4, 0.22f)
+    , PARAM_INIT(shake, 0.0f)
+    , PARAM_INIT(watermark, 0.3f)
+    , PARAM_INIT(maxAngle, 35.0f)
+    , PARAM_INIT(angleVelDamp, 0.93f)
+    , PARAM_INIT(rebound, 0.0005f)
+    , PARAM_INIT(shakeDamp, 0.93f)
+    , PARAM_INIT(marioWeight, 0.01f)
+    , PARAM_INIT(marioDropWeight, 5.0f)
+    , PARAM_INIT(outerHeight, 20.0f)
+{
+	TParams::load(mPrmPath);
+}
+
+// ---------------------------------------------------------------------------
+// TBathtubGripParts (map positions 63-66)
+// ---------------------------------------------------------------------------
+
+// Unused
+TBathtubGripParts::TBathtubGripParts(const char* name, int index,
+                                     TBathtubGrip* grip)
+    : TLiveActor(name)
+    , mGrip(grip)
+    , unkF8(index)
+{
+}
+
+// Unused
+TBathtubGripPartsFragile::TBathtubGripPartsFragile(int index,
+                                                   TBathtubGrip* grip)
+    : TBathtubGripParts("バスタブの足場の一部（弱点）", index, grip)
+{
+}
+
+// Unused
+TBathtubGripPartsHard::TBathtubGripPartsHard(int index, TBathtubGrip* grip)
+    : TBathtubGripParts("バスタブの足場の一部（壊れない）", index, grip)
+{
+}
+
+Mtx* TBathtubGripParts::getRootJointMtx() const
+{
+	s32 index = mGrip->unk200[unkF8];
+	// getAnmMtx() is `mNodeMatrices[idx]`, i.e. the same address the target
+	// computes; only the return type differs (Mtx* vs MtxPtr).
+	return reinterpret_cast<Mtx*>(getModel()->getAnmMtx(index));
+}
+
+BOOL TBathtubGripPartsFragile::receiveMessage(THitActor*, u32 message)
+{
+	return mGrip->receiveMessage(nullptr, message);
+}
+
+BOOL TBathtubGripPartsHard::receiveMessage(THitActor*, u32 message)
+{
+	if (message == 3)
+		message = 1;
+	return mGrip->receiveMessage(nullptr, message);
+}
+
+// ---------------------------------------------------------------------------
+// TBathtubGrip (map positions 46-60)
+// ---------------------------------------------------------------------------
+
+void TBathtubGrip::kill()
+{
+	unk24A = 1;
+	makeObjDead();
+
+	for (s32 i = 0; i < 17; i++)
+		unk164[i]->remove();
+	for (s32 i = 0; i < 5; i++)
+		unk150[i]->remove();
+}
+
+// Unused
+void TBathtubGrip::reset() { }
+
+// Between reset() and the ctor in source order: the object (which is the
+// reverse of this file) needs it at map position 58, i.e. after the
+// TBathtubGrip ctor and before reset().
+TBathtubGripParts::~TBathtubGripParts() { }
+
+TBathtubGrip::TBathtubGrip(TBathtub* bathtub, f32 angle,
+                           MActorAnmData* anmData, const char* name)
+    : TMapObjBase(name)
+{
+	mStandMActor = new MActor(anmData);
+	mStandMActor->setModel(
+	    new J3DModel(J3DModelLoaderDataBase::load(
+	                     JKRFileLoader::getGlbResource(
+	                         "/scene/map/map/stand_effect/stand_effect.bmd"),
+	                     0x5005),
+	                 0, 1),
+	    0x5005);
+
+	unk254  = 0;
+	mBathtub = bathtub;
+	unk24C  = angle;
+
+	initAndRegister("stand_break");
+	calcRootMatrix();
+	getModel()->calc();
+
+	JUTNameTab* nameTab = getModel()->getModelData()->getJointName();
+
+	char partName[0x48];
+	char colName[0x100];
+
+	for (s32 i = 0; i < 17; i++) {
+		sprintf(partName, "c%d", i + 1);
+		sprintf(colName, "/scene/mapObj/stand_break_%s.col", partName);
+
+		unk200[i] = nameTab->getIndex(partName);
+		unk164[i] = new TMapCollisionMove();
+		unk1BC[i] = new TBathtubGripPartsHard(i, this);
+		unk164[i]->init(colName, 0, unk1BC[i]);
+
+		if (i < 5) {
+			sprintf(partName, "b%d", i + 1);
+			sprintf(colName, "/scene/mapObj/stand_break_%s.col", partName);
+
+			unk150[i] = new TMapCollisionMove();
+			unk1A8[i] = new TBathtubGripPartsFragile(i, this);
+			unk150[i]->init(colName, 0, unk1A8[i]);
+		}
+	}
+
+	offLiveFlag(LIVE_FLAG_DEAD);
+	unk248 = 0;
+	unk24A = 0;
+	unk249 = 1;
+	unk24B = 0;
+
+	startAnim(0);
+
+	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(0);
+	if (ctrl != nullptr) {
+		ctrl->setFrame(0.0f);
+		ctrl->setRate(0.0f);
+	}
+
+	unk250 = 1.0f;
+	unk258 = 100;
+	unk260 = 0;
+}
+
+void TBathtubGrip::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TMapObjBase::perform(cue, graphics);
+
+	if (unk260 != 0)
+		return;
+
+	if (cue & 1) {
+		PSMTXCopy((MtxPtr)getRootJointMtx(),
+		          mStandMActor->getModel()->getBaseTRMtx());
+		if (unk254 > 0 || unk248 != 0) {
+			if (mStandMActor->curAnmEndsNext(0, nullptr))
+				unk260 = 1;
+		}
+	}
+
+	mStandMActor->perform(cue, graphics);
+}
+
+// Unused
+bool TBathtubGrip::isCracking() const
+{
+	return false;
+}
+
+// Unused
+void TBathtubGrip::startCrack() { }
+
+// Unused
+void TBathtubGrip::startBreak(f32, int, f32) { }
+
+// TODO: not reconstructed yet (0x324 in the map).
+BOOL TBathtubGrip::receiveMessage(THitActor*, u32)
+{
+	return false;
+}
+
+Mtx* TBathtubGrip::getRootJointMtx() const
+{
+	return reinterpret_cast<Mtx*>(getModel()->getBaseTRMtx());
+}
+
+// The grip's own model matrix is rebuilt by baking the grip's stored angle
+// (unk24C) into a rotation matrix and then multiplying the bathtub's root
+// joint matrix by it.
+void TBathtubGrip::calcRootMatrix()
+{
+	// The destination matrix is fetched before anything else: the target
+	// keeps model+0x20 in r31 across the whole body.
+	MtxPtr model = getModel()->getBaseTRMtx();
+
+	Mtx mtx;
+	MsMtxSetRotRPH(mtx, 0.0f, unk24C, 0.0f);
+	mtx[0][3] = 0.0f;
+	mtx[1][3] = 0.0f;
+	mtx[2][3] = 0.0f;
+
+	MtxPtr bathp = reinterpret_cast<MtxPtr>(mBathtub->getRootJointMtx());
+
+	reinterpret_cast<JGeometry::SMatrix34C<f32>*>(model)->set(
+	    // clang-format off
+	    bathp[0][0] * mtx[0][0] + bathp[0][1] * mtx[1][0] + bathp[0][2] * mtx[2][0],
+	    bathp[0][0] * mtx[0][1] + bathp[0][1] * mtx[1][1] + bathp[0][2] * mtx[2][1],
+	    bathp[0][0] * mtx[0][2] + bathp[0][1] * mtx[1][2] + bathp[0][2] * mtx[2][2],
+	    bathp[0][0] * mtx[0][3] + bathp[0][1] * mtx[1][3] + bathp[0][2] * mtx[2][3] + bathp[0][3],
+	    bathp[1][0] * mtx[0][0] + bathp[1][1] * mtx[1][0] + bathp[1][2] * mtx[2][0],
+	    bathp[1][0] * mtx[0][1] + bathp[1][1] * mtx[1][1] + bathp[1][2] * mtx[2][1],
+	    bathp[1][0] * mtx[0][2] + bathp[1][1] * mtx[1][2] + bathp[1][2] * mtx[2][2],
+	    bathp[1][0] * mtx[0][3] + bathp[1][1] * mtx[1][3] + bathp[1][2] * mtx[2][3] + bathp[1][3],
+	    bathp[2][0] * mtx[0][0] + bathp[2][1] * mtx[1][0] + bathp[2][2] * mtx[2][0],
+	    bathp[2][0] * mtx[0][1] + bathp[2][1] * mtx[1][1] + bathp[2][2] * mtx[2][1],
+	    bathp[2][0] * mtx[0][2] + bathp[2][1] * mtx[1][2] + bathp[2][2] * mtx[2][2],
+	    bathp[2][0] * mtx[0][3] + bathp[2][1] * mtx[1][3] + bathp[2][2] * mtx[2][3] + bathp[2][3]
+	    // clang-format on
+	);
+}
+
+// Unused
+bool TBathtubGrip::marioIsOn() const
+{
+	return false;
+}
+
+// Unused
+void TBathtubGrip::setupCollisions_() { }
+
+// TODO: not reconstructed yet (0x394 in the map).
+void TBathtubGrip::control() { }
+
+// ---------------------------------------------------------------------------
+// TBathtub (map positions 1-45)
+// ---------------------------------------------------------------------------
 
 void TBathtub::loadAfter()
 {
@@ -65,7 +341,7 @@ void TBathtub::hipdrop(const JGeometry::TVec3<f32>& position)
 
 void TBathtub::quake(const JGeometry::TVec3<f32>& position)
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0)
+	if (unk29A != 0)
 		return;
 
 	f32 dx = position.x - *reinterpret_cast<f32*>(reinterpret_cast<u8*>(this) + 0x10C);
@@ -94,18 +370,24 @@ void TBathtub::quake(const JGeometry::TVec3<f32>& position)
 int TBathtub::getNumGripsDead() const
 {
 	int count = 0;
-	if (reinterpret_cast<const u8*>(unk168[0])[0x249] == 0)
+	if (unk168[0]->unk249 == 0)
 		count = 1;
-	if (reinterpret_cast<const u8*>(unk168[1])[0x249] == 0)
+	if (unk168[1]->unk249 == 0)
 		count += 1;
-	if (reinterpret_cast<const u8*>(unk168[2])[0x249] == 0)
+	if (unk168[2]->unk249 == 0)
 		count += 1;
-	if (reinterpret_cast<const u8*>(unk168[3])[0x249] == 0)
+	if (unk168[3]->unk249 == 0)
 		count += 1;
-	if (reinterpret_cast<const u8*>(unk168[4])[0x249] == 0)
+	if (unk168[4]->unk249 == 0)
 		count += 1;
 	return count;
 }
+
+// Unused
+void TBathtub::trample(const JGeometry::TVec3<f32>&) { }
+
+// Unused
+void TBathtub::liftMario(const JGeometry::TVec3<f32>&) { }
 
 void TBathtub::tumble(f32 angle, f32 force)
 {
@@ -123,6 +405,15 @@ MtxPtr TBathtub::getTakingMtx()
 	return mMActor->getModel()->getAnmMtx(mMarioJntIdx);
 }
 
+// Unused
+MtxPtr TBathtub::getShineMtx() { return nullptr; }
+
+// Unused
+MtxPtr TBathtub::getShineEffectMtx() { return nullptr; }
+
+// Unused
+MtxPtr TBathtub::getWaterMtx(int) { return nullptr; }
+
 MtxPtr TBathtub::getSubmarineMtxInDemo()
 {
 	return mMActor->getModel()->getAnmMtx(mSubmarineJntIdx);
@@ -132,6 +423,9 @@ MtxPtr TBathtub::getPeachMtxInDemo()
 {
 	return mMActor->getModel()->getAnmMtx(mDuckJntIdx);
 }
+
+// Unused
+MtxPtr TBathtub::getKoopaMtxInDemo() { return nullptr; }
 
 MtxPtr TBathtub::getKoopaJrMtxInDemo()
 {
@@ -181,6 +475,15 @@ void TBathtub::calcBathtubData() { }
 
 void TBathtub::setupCollisions_() { }
 
+// The demo-camera shake callback the map records at 8 bytes, i.e. a bare
+// "return 0".
+namespace {
+s32 CameraDemoCallBack(u32, u32)
+{
+	return 0;
+}
+} // namespace
+
 void TBathtub::startDemo() { }
 
 bool TBathtub::allowsTumble() const
@@ -210,8 +513,10 @@ bool TBathtub::allowsTumble() const
 
 void TBathtub::calcRootMatrix()
 {
-	MtxPtr matrix = getModel()->getBaseTRMtx();
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0) {
+	// getModel() is re-fetched in both branches: the target does not hoist it
+	// out of the unk29A test.
+	if (unk29A != 0) {
+		MtxPtr matrix = getModel()->getBaseTRMtx();
 		MsMtxSetRotRPH(matrix, 0.0f, mRotation.y, 0.0f);
 		matrix[0][3] = mPosition.x;
 		matrix[1][3] = mPosition.y;
@@ -219,46 +524,64 @@ void TBathtub::calcRootMatrix()
 		return;
 	}
 
+	MtxPtr matrix = getModel()->getBaseTRMtx();
+
+	// The target builds the rotation with an explicit 2.0f factor on every
+	// quaternion component (fmuls against a 2.0f constant, not `x + x`), and
+	// stores the last row back-to-front.
 	const f32 x = unk1D8;
 	const f32 y = unk1DC;
 	const f32 z = unk1E0;
 	const f32 w = unk1E4;
-	const f32 xx = x + x;
-	const f32 yy = y + y;
-	const f32 zz = z + z;
-	const f32 wx = w * xx;
-	const f32 wy = w * yy;
-	const f32 wz = w * zz;
-	const f32 xx2 = x * xx;
-	const f32 xy = x * yy;
-	const f32 xz = x * zz;
-	const f32 yy2 = y * yy;
-	const f32 yz = y * zz;
-	const f32 zz2 = z * zz;
-	matrix[0][0] = 1.0f - (yy2 + zz2);
-	matrix[0][1] = xy - wz;
-	matrix[0][2] = xz + wy;
-	matrix[1][0] = xy + wz;
-	matrix[1][1] = 1.0f - (xx2 + zz2);
-	matrix[1][2] = yz - wx;
-	matrix[2][0] = xz - wy;
-	matrix[2][1] = yz + wx;
-	matrix[2][2] = 1.0f - (xx2 + yy2);
+	const f32 twoY = 2.0f * y;
+	const f32 twoZ = 2.0f * z;
+	const f32 twoX = 2.0f * x;
+	const f32 twoW = 2.0f * w;
+	matrix[0][0] = 1.0f - twoY * y - twoZ * z;
+	matrix[0][1] = twoX * y - twoW * z;
+	matrix[0][2] = twoX * z + twoW * y;
+	matrix[1][0] = twoX * y + twoW * z;
+	matrix[1][1] = 1.0f - twoX * x - twoZ * z;
+	matrix[1][2] = twoY * z - twoW * x;
+	matrix[2][2] = twoX * z - twoW * y;
+	matrix[2][1] = twoY * z + twoW * x;
+	matrix[2][0] = 1.0f - twoX * x - twoY * y;
 	matrix[0][3] = mPosition.x;
 	matrix[1][3] = mPosition.y;
 	matrix[2][3] = mPosition.z;
 }
 
+// Unused
+u8 TBathtub::getNearJuncture(const JGeometry::TVec3<f32>&) const { return 0; }
+
 #pragma dont_inline on
 bool TBathtub::getNearGrip(const JGeometry::TVec3<f32>& position, f32 radius,
                            f32* gripAngle) const
 {
-	Mtx* matrix = getRootJointMtx();
-	f32 dx = position.x - (*matrix)[0][3];
-	f32 dy = position.y - (*matrix)[1][3];
-	f32 dz = position.z - (*matrix)[2][3];
-	f32 localX = (*matrix)[0][0] * dx + (*matrix)[1][0] * dy + (*matrix)[2][0] * dz;
-	f32 localZ = (*matrix)[0][2] * dx + (*matrix)[1][2] * dy + (*matrix)[2][2] * dz;
+	MtxPtr matrix = reinterpret_cast<MtxPtr>(getRootJointMtx());
+	// The target copies the 3x3 block into a stack-local SMatrix33R (whose
+	// at() is transposed) and keeps it there across the setLength() call,
+	// rather than reading through the model pointer each time.
+	JGeometry::SMatrix33R<f32> rot;
+	rot.ref(0, 0) = matrix[0][0];
+	rot.ref(0, 1) = matrix[1][0];
+	rot.ref(0, 2) = matrix[2][0];
+	rot.ref(1, 0) = matrix[0][1];
+	rot.ref(1, 1) = matrix[1][1];
+	rot.ref(1, 2) = matrix[2][1];
+	rot.ref(2, 0) = matrix[0][2];
+	rot.ref(2, 1) = matrix[1][2];
+	rot.ref(2, 2) = matrix[2][2];
+
+	JGeometry::TVec3<f32> delta;
+	delta.set(position.x - rot.at(0, 2),
+	          position.y - rot.at(1, 2),
+	          position.z - rot.at(2, 2));
+
+	f32 localZ = rot.at(0, 1) * delta.x + rot.at(1, 1) * delta.y
+	           + rot.at(2, 1) * delta.z;
+	f32 localX = rot.at(0, 0) * delta.x + rot.at(1, 0) * delta.y
+	           + rot.at(2, 0) * delta.z;
 	f32 angle = 0.005493164f * static_cast<f32>(matan(localZ, localX));
 	f32 nearest = 180.0f;
 	int nearestIndex = 0;
@@ -357,7 +680,12 @@ u8 TBathtub::getNextGrip(const JGeometry::TVec3<f32>& position,
 	return 1;
 }
 
+// Unused
+void TBathtub::showMessage(u32) { }
+
 void TBathtub::updatePosture_() { }
+
+void TBathtub::load(JSUMemoryInputStream&) { }
 
 TBathtub::TBathtub(const char* name)
     : TMapObjBase(name)
@@ -391,12 +719,18 @@ TBathtub::TBathtub(const char* name)
 	unk294 = 0;
 }
 
-void TBathtub::load(JSUMemoryInputStream&) { }
+// Unused
+bool TBathtub::isKillerLaunchable() const { return false; }
 
 u8 TBathtub::getNumKillerLaunchable() const
 {
-	if (reinterpret_cast<const u8*>(this)[0x299] != 0
-	    || !bathtubKoopaAllowsLaunch() || unk248 > 0)
+	if (unk29A != 0)
+		return 0;
+
+	if (!bathtubKoopaAllowsLaunch())
+		return 0;
+
+	if (unk248 == 0)
 		return 0;
 
 	int count = getNumGripsDead() + 1;
@@ -409,21 +743,29 @@ u8 TBathtub::getNumKillerLaunchable() const
 
 bool TBathtub::isKillerAttackable() const { return unk248 <= 0; }
 
+// Unused
+bool TBathtub::isBreaking() const { return false; }
+
 u8 TBathtub::getNumKillerBurstable() const
 {
-    if (reinterpret_cast<const u8*>(this)[0x299] != 0
-        || !bathtubKoopaAllowsLaunch() || unk248 > 0)
-        return 0;
+	if (unk29A != 0)
+		return 0;
+
+	if (!bathtubKoopaAllowsLaunch())
+		return 0;
+
+	if (unk248 == 0)
+		return 0;
 
 	int count = getNumGripsDead();
 	if (count >= 4)
 		return 8;
 	if (!allowsTumble() && unk250 == 0 && unk258 == 0) {
-        switch (count) {
-        case 1:
-            return 4;
-        case 2:
-            return 6;
+		switch (count) {
+		case 1:
+			return 4;
+		case 2:
+			return 6;
 		case 3:
 		case 4:
 			return 8;
@@ -434,32 +776,6 @@ u8 TBathtub::getNumKillerBurstable() const
 	return 0;
 }
 
-// Unused
-bool TBathtub::isBreaking() const { return false; }
-
-// Unused
-bool TBathtub::isKillerLaunchable() const { return false; }
-
-// Unused
-void TBathtub::showMessage(u32) { }
-
-// Unused
-u8 TBathtub::getNearJuncture(const JGeometry::TVec3<f32>&) const { return 0; }
-
-// Unused
-MtxPtr TBathtub::getKoopaMtxInDemo() { return nullptr; }
-
-// Unused
-MtxPtr TBathtub::getWaterMtx(s32) { return nullptr; }
-
-// Unused
-MtxPtr TBathtub::getShineEffectMtx() { return nullptr; }
-
-// Unused
-MtxPtr TBathtub::getShineMtx() { return nullptr; }
-
-// Unused
-void TBathtub::liftMario(const JGeometry::TVec3<f32>&) { }
-
-// Unused
-void TBathtub::trample(const JGeometry::TVec3<f32>&) { }
+// Map position 0 -- with -inline deferred the first symbol of the object is
+// the last definition in the file.
+TBathtub::~TBathtub() { }

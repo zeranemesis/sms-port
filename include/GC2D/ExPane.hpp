@@ -67,7 +67,11 @@ public:
 	/// still unknown.
 	void setPaneAlpha(s32 time, s16 target_alpha, s16 initial_alpha)
 	{
-		s16 a = initial_alpha < 0 ? s16(0) : initial_alpha;
+		s16 a;
+		if (initial_alpha < 0)
+			a = 0;
+		else
+			a = initial_alpha;
 		if (a > 255)
 			a = 255;
 		mPane->setAlpha(a);

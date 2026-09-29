@@ -35,8 +35,8 @@ public:
 	/* 0x28 */ f32 unk28;
 	/* 0x2C */ f32 unk2c;
 	/* 0x30 */ f32 unk30;
-	/* 0x34 */ u32 unk34;
-	/* 0x38 */ u8 unk38;
+	/* 0x34 */ s32 unk34;
+	/* 0x38 */ s8 unk38;
 	/* 0x39 */ u8 unk39;
 	/* 0x3A */ s16 unk3a;
 	/* 0x3C */ s16 unk3c;
@@ -56,6 +56,8 @@ public:
 
 class TSelectShineManager : public JDrama::TViewObj {
 public:
+	static JGeometry::TVec3<f32> cCenter;
+
 	TSelectShineManager(const char*);
 	virtual ~TSelectShineManager();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -66,7 +68,7 @@ public:
 	void startDecrease(int);
 
 public:
-	/* 0x10 */ TOptionRumbleUnit* mRumbleOption[8];
+	/* 0x10 */ TSelectShine* mSelectShines[8];
 	/* 0x30 */ u8 unk30[0x20];
 	/* 0x50 */ J3DDrawBuffer* mDrawBuffer0;
 	/* 0x54 */ J3DDrawBuffer* mDrawBuffer1;

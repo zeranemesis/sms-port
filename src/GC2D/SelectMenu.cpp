@@ -168,15 +168,12 @@ void TSelectGrad::perform(u32 flags, JDrama::TGraphics* gfx)
 		}
 
 		if (nextCycle) {
-			// TODO: This doesn't fully match.
-			mRgbAnimCycle[0]++;
-			mRgbAnimCycle[0] = (mRgbAnimCycle[0] >= 6) ? 0 : mRgbAnimCycle[0];
-
-			mRgbAnimCycle[1]++;
-			mRgbAnimCycle[1] = (mRgbAnimCycle[1] >= 6) ? 0 : mRgbAnimCycle[1];
-
-			mRgbAnimCycle[2]++;
-			mRgbAnimCycle[2] = (mRgbAnimCycle[2] >= 6) ? 0 : mRgbAnimCycle[2];
+			for (s32 i = 0; i < 3; i++) {
+				mRgbAnimCycle[i]++;
+				if (mRgbAnimCycle[i] >= 6) {
+					mRgbAnimCycle[i] = 0;
+				}
+			}
 		}
 	}
 
@@ -563,10 +560,10 @@ void TSelectMenu::initData(u8 stage, JKRArchive* pArch,
 		mShineMarks[mSelectedShine]->setWhite(mSelectedMarkCol);
 		mShineMarks[mSelectedShine]->setAlpha(mSelectedMarkAlpha);
 
-		mScenarioImg1->insert(mScenarioTex[mSelectedShine], 0, 1.0f);
-		mScenarioImg1->remove(1);
-		mScenarioShadow1->insert(mScenarioTex[mSelectedShine], 0, 1.0f);
-		mScenarioShadow1->remove(1);
+		mScenarioImg1->changeTexture(
+		    mScenarioTex[mSelectedShine]->getTexInfo(), 0);
+		mScenarioShadow1->changeTexture(
+		    mScenarioTex[mSelectedShine]->getTexInfo(), 0);
 
 		char buf[254];
 		snprintf(buf, sizeof(buf), "/cmn2d/scenarioname.bmg");
@@ -590,7 +587,7 @@ void TSelectMenu::startMove()
 	JPAEmitterManager* emitter = mSelectDir->unk30;
 	mSelectShineMgr->initData(mShineUnlockStates, mNumUnlockedShines,
 	                          mSelectedShine, emitter);
-	mSelectShineMgr->mRumbleOption[mSelectedShine]->mShouldRumble = true;
+	mSelectShineMgr->mSelectShines[mSelectedShine]->unk24 = true;
 }
 
 void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
@@ -828,8 +825,8 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					mShineMarks[mSelectedShine]->mWhite = mMarkCol;
 					mShineMarks[mSelectedShine]->setAlpha(mMarkAlpha);
 
-					mSelectShineMgr->mRumbleOption[mSelectedShine]
-					    ->mShouldRumble
+					mSelectShineMgr->mSelectShines[mSelectedShine]
+					    ->unk24
 					    = false;
 
 					mSelectedShine = prevIndex;
@@ -837,14 +834,14 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID));
+					    mScenarioBmg2, SMS_getNormalStage(shineID2));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
 					mShineMarks[mSelectedShine]->mWhite = mSelectedMarkCol;
 					mShineMarks[mSelectedShine]->setAlpha(mSelectedMarkAlpha);
 
-					mSelectShineMgr->mRumbleOption[mSelectedShine]
-					    ->mShouldRumble
+					mSelectShineMgr->mSelectShines[mSelectedShine]
+					    ->unk24
 					    = true;
 
 					if (mNumUnlockedShines > 1) {
@@ -901,8 +898,8 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 
 					strncpy(mScenarioText1->getStringPtr(), scenarioName, 127);
 
-					mSelectShineMgr->mRumbleOption[mSelectedShine]
-					    ->mShouldRumble
+					mSelectShineMgr->mSelectShines[mSelectedShine]
+					    ->unk24
 					    = false;
 					mShineMarks[mSelectedShine]->mWhite = mMarkCol;
 					mShineMarks[mSelectedShine]->setAlpha(mMarkAlpha);
@@ -912,11 +909,11 @@ void TSelectMenu::perform(u32 flags, JDrama::TGraphics* gfx)
 					s16 shineID2 = SMS_getShineID(SMS_getShineStage(mStage),
 					                              mSelectedShine, false);
 					const char* scenarioName2 = SMSGetMessageData(
-					    mScenarioBmg2, SMS_getNormalStage(shineID));
+					    mScenarioBmg2, SMS_getNormalStage(shineID2));
 					strncpy(mScenarioText2->getStringPtr(), scenarioName2, 127);
 
-					mSelectShineMgr->mRumbleOption[mSelectedShine]
-					    ->mShouldRumble
+					mSelectShineMgr->mSelectShines[mSelectedShine]
+					    ->unk24
 					    = true;
 
 					mShineMarks[mSelectedShine]->mWhite = mSelectedMarkCol;
