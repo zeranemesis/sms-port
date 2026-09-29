@@ -26,7 +26,7 @@ TMario* gpMarioOriginal;
 
 BOOL TMario::isMario() { return gpMarioOriginal == this ? TRUE : FALSE; }
 
-void TMario::thinkFreeze()
+inline void TMario::thinkFreeze()
 {
 	if (mFreezeTimer > 0) {
 		mFreezeTimer -= 1;
@@ -38,7 +38,7 @@ void TMario::thinkFreeze()
 		mFreezeImmunityTimer -= 1;
 }
 
-void TMario::thinkCube()
+inline void TMario::thinkCube()
 {
 	if (!isMario())
 		return;
@@ -55,7 +55,7 @@ void TMario::thinkCube()
 	mgrC->unk1C               = mgrC->getInCubeNo(pos);
 }
 
-void TMario::thinkAloha()
+inline void TMario::thinkAloha()
 {
 	if (checkFlag(MARIO_FLAG_HAS_SHIRT)) {
 		mModel->getModel()->getModelData()->getShapeNodePointer(10)->offFlag(

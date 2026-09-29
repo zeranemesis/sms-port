@@ -5,10 +5,12 @@
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Strategic/HitActor.hpp>
+#include <M3DUtil/MActor.hpp>
 
 class TBathtub;
 class TBathtubBinder;
 class TBathtubKiller;
+class TKoopa;
 class TKoopaJr;
 
 // A small helper for angles in radians, used by TKoopaJrSubmarine to steer.
@@ -127,11 +129,19 @@ public:
 	void moveSwing();
 	void getSwingAngle();
 	void getWaveAngle();
-	void damageKoopaJrSubmarine();
-	void setAnimationIndex(int);
+	// defined here: the original inlines this at every call site, so it never
+	// appears as a symbol
+	void damageKoopaJrSubmarine() { unk18C = 1; }
+	// defined here: the original inlines this at every call site, so it never
+	// appears as a symbol
+	void setAnimationIndex(int index)
+	{
+		mMActor->setBckFromIndex(index);
+		setAnmSound(getBas(index));
+	}
 	void prepareKillerLaunch(int);
 	void prepareKillerLaunchFast(int);
-	bool appearShineKiller(int);
+	int appearShineKiller(int);
 	void checkKillerLaunch();
 	void launchKiller();
 	void makeKillerVelocity(TBathtubKiller*, JGeometry::TVec3<f32>);
@@ -156,10 +166,10 @@ public:
 	/* 0x158 */ f32 unk158;
 	/* 0x15C */ f32 unk15C;
 	/* 0x160 */ f32 unk160;
-	/* 0x164 */ f32 unk164;
-	/* 0x168 */ u32 unk168;
-	/* 0x16C */ TDirectionCalc unk16C;
-	/* 0x170 */ s32 unk170;
+	/* 0x164 */ TDirectionCalc unk164;
+	/* 0x168 */ f32 unk168;
+	/* 0x16C */ f32 unk16C;
+	/* 0x170 */ u8 unk170;
 	/* 0x174 */ TBathtubBinder* unk174;
 	/* 0x178 */ u8 unk178[8]; // per-killer shine flags
 	/* 0x180 */ s32 unk180;   // killers launched so far
@@ -189,7 +199,13 @@ public:
 	void resetKoopaJr();
 	void startKoopaJrMessage(u32);
 	void emitKoopaJrEffects();
-	void setAnimationIndex(int);
+	// defined here: the original inlines this at every call site, so it never
+	// appears as a symbol
+	void setAnimationIndex(int index)
+	{
+		mMActor->setBckFromIndex(index);
+		setAnmSound(getBas(index));
+	}
 	void updateTimers();
 	void damageKoopaJr();
 	void checkSubmarineSwing();
@@ -211,7 +227,7 @@ public:
 	/* 0x154 */ s32 unk154; // killer launch timer
 	/* 0x158 */ s32 unk158; // fast killer launch timer
 	/* 0x15C */ TBathtub* unk15C;
-	/* 0x160 */ THitActor* unk160; // Bowser
+	/* 0x160 */ TKoopa* unk160; // Bowser
 	/* 0x164 */ TKoopaJrSubmarine* unk164;
 	/* 0x168 */ TKoopaJrSubmarineManager* unk168;
 	/* 0x16C */ TEnemyManager* unk16C; // bathtub killer manager

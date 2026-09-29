@@ -3,6 +3,8 @@
 
 #include <MoveBG/MapObjGeneral.hpp>
 
+class TWaterEmitInfo;
+
 class TMapObjBall : public TMapObjGeneral {
 public:
 	TMapObjBall(const char* name = "ボール");
@@ -133,7 +135,7 @@ public:
 
 	void startEvent();
 
-	/* 0x198 */ u32 unk198;
+	/* 0x198 */ TWaterEmitInfo* mWaterEmitInfo;
 	/* 0x19C */ u32 unk19C;
 	/* 0x1A0 */ f32 unk1A0;
 };

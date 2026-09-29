@@ -8,11 +8,15 @@
 #include <System/ArrayWrapper.hpp>
 
 class J2DPane;
+class J2DTextBox;
 class J2DScreen;
 class J2DOrthoGraph;
 class J2DSetScreen;
 class TExPane;
 class JAISound;
+class JUTTexture;
+class TOptionSubtitleUnit;
+class TOptionLanguageUnit;
 
 /**
  * @brief A control that makes a pane's left side
@@ -28,6 +32,8 @@ public:
 		mBounds = mPane->getBounds();
 	}
 
+	void loadLanguageTextures();
+	int replaceTexture(u32 tag, JUTTexture* texture);
 	void update();
 	void updateAlpha();
 	void updateScale();
@@ -38,29 +44,8 @@ public:
 	/* 0x4 */ JUTRect mBounds;
 	/* 0x14 */ bool unk14;
 	/* 0x18 */ int mPhase;
-};
-
-class TBalloonControl {
-public:
-	TBalloonControl(int size);
-
-	void add(TExPane* pane);
-	void setupAnm();
-	void startAnm();
-	void stopAnm();
-	void update();
-
-public:
-	struct UnknownBalloonControlStruct {
-		/* 0x0 */ TExPane* unk0;
-		/* 0x4 */ u8 unk4;
-	};
-
-	/* 0x0 */ UnknownBalloonControlStruct* unk0;
-	/* 0x4 */ int unk4;
-	/* 0x8 */ int unk8;
-	/* 0xC */ J3DFrameCtrl mFrameCtrl;
-	/* 0x20 */ u32 unk20;
+	/* 0x1C */ u32 unk1C;
+	/* 0x20 */ JUTTexture* mLanguageTextures[5];
 };
 
 /**
@@ -164,6 +149,7 @@ public:
 	void deactivate(bool force);
 	void activate();
 	void setValue(RumbleType value);
+	void changeTexture(int language);
 	RumbleType getValue() const
 	{
 		return (RumbleType)mSelectionText->getNumber();
@@ -180,12 +166,13 @@ public:
 	/* 0x0 */ J2DScreen* mScreen;
 	/* 0x4 */ TExPane* mParentPane;
 	/* 0x8 */ u8 mInitialAlpha;
-	/* 0xC */ TBalloonControl* unkC;
-	/* 0x10 */ TPaneScalingControl* mSelectionBubble;
-	/* 0x14 */ TPatternAnmControl* mGamepadIcon[2];
-	/* 0x1C */ TToggleControl* mSelectionText;
-	/* 0x20 */ State mState;
-	/* 0x24 */ bool mShouldRumble;
+	/* 0xC */ TPaneScalingControl* mSelectionBubble;
+	/* 0x10 */ TPatternAnmControl* mGamepadIcon[2];
+	/* 0x18 */ TToggleControl* mSelectionText;
+	/* 0x1C */ State mState;
+	/* 0x20 */ bool mShouldRumble;
+	/* 0x24 */ JUTTexture* mLanguageTextures[5];
+	/* 0x38 */ JUTTexture* mStateTextures[2][5];
 };
 
 class TOptionSoundUnit {
@@ -218,6 +205,7 @@ public:
 	void activate();
 	void setValue(int value);
 	int getValue() const;
+	void changeTexture(int language);
 	void stopSound();
 	static SoundType flagToType(int flag);
 	static int typeToFlag(SoundType type);
@@ -242,23 +230,83 @@ public:
 	/* 0x0 */ J2DScreen* mScreen;
 	/* 0x4 */ TExPane* mParentPane;
 	/* 0x8 */ u8 mInitialAlpha;
-	/* 0xC */ TBalloonControl* unkC;
-	/* 0x10 */ TPaneScalingControl* mSelectionBubble;
-	/* 0x14 */ TToggleControl* mSelectionText;
-	/* 0x18 */ State mState;
-	/* 0x1C */ J3DFrameCtrl mMusicFrameCtrl;
-	/* 0x30 */ JAISound* mMusic;
-	/* 0x34 */ TPatternAnmControl* mMonoAnimations[2];
-	/* 0x3C */ TPatternAnmControl* mStereoAnimations[3];
-	/* 0x48 */ TPatternAnmControl* mSurroundAnimations[5];
-	/* 0x5C */ ArrayWrapper<TPatternAnmControl*> mMonteIcons[3];
+	/* 0xC */ TPaneScalingControl* mSelectionBubble;
+	/* 0x10 */ TToggleControl* mSelectionText;
+	/* 0x14 */ State mState;
+	/* 0x18 */ J3DFrameCtrl mMusicFrameCtrl;
+	/* 0x2C */ JAISound* mMusic;
+	/* 0x30 */ TPatternAnmControl* mMonoAnimations[2];
+	/* 0x38 */ TPatternAnmControl* mStereoAnimations[3];
+	/* 0x44 */ TPatternAnmControl* mSurroundAnimations[5];
+	/* 0x58 */ ArrayWrapper<TPatternAnmControl*> mMonteIcons[3];
+	/* 0x70 */ JUTTexture* mLanguageTextures[5];
+	/* 0x84 */ JUTTexture* mModeTextures[3][5];
+};
+
+class TOptionSubtitleUnit {
+public:
+	enum State {
+		STATE_ACTIVE = 0,
+		STATE_DEACTIVATING = 1,
+		STATE_INACTIVE = 2,
+	};
+
+	TOptionSubtitleUnit(J2DScreen* screen);
+	void update();
+	void setState(State state);
+	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
+	void changeTexture(int language);
+	int getValue() const { return mSelectionText->getNumber(); }
+	void setValue(int value) { mSelectionText->setNumber(value); }
+	void toggle() { mSelectionText->toggle(); }
+
+public:
+	/* 0x00 */ J2DScreen* mScreen;
+	/* 0x04 */ TExPane* mParentPane;
+	/* 0x08 */ u8 mInitialAlpha;
+	/* 0x0C */ TPaneScalingControl* mSelectionBubble;
+	/* 0x10 */ TToggleControl* mSelectionText;
+	/* 0x14 */ State mState;
+	/* 0x18 */ JUTTexture* mLanguageTextures[5];
+	/* 0x2C */ JUTTexture* mStateTextures[2][5];
+};
+
+class TOptionLanguageUnit {
+public:
+	enum State {
+		STATE_ACTIVE = 0,
+		STATE_DEACTIVATING = 1,
+		STATE_INACTIVE = 2,
+	};
+
+	TOptionLanguageUnit(J2DScreen* screen);
+	void update();
+	void setState(State state);
+	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
+	void changeTexture(int language);
+	int replaceTexture(u32 tag, JUTTexture* texture);
+	int getValue() const { return mSelectionText->getNumber(); }
+	void setValue(int value) { mSelectionText->setNumber(value); }
+	void toggle() { mSelectionText->toggle(); }
+
+public:
+	/* 0x00 */ J2DScreen* mScreen;
+	/* 0x04 */ TExPane* mParentPane;
+	/* 0x08 */ u8 mInitialAlpha;
+	/* 0x0C */ TPaneScalingControl* mSelectionBubble;
+	/* 0x10 */ TToggleControl* mSelectionText;
+	/* 0x14 */ State mState;
+	/* 0x18 */ JUTTexture* mLanguageTextures[5];
+	/* 0x2C */ u8 mUnknownTail[0x64];
 };
 
 class TOptionControl {
 public:
 	enum SelectType {
-		SELECT_TYPE_RUMBLE_OPTION = 0,
-		SELECT_TYPE_SOUND_OPTION  = 1,
+		SELECT_TYPE_RUMBLE_OPTION   = 0,
+		SELECT_TYPE_SOUND_OPTION    = 1,
+		SELECT_TYPE_SUBTITLE_OPTION = 2,
+		SELECT_TYPE_LANGUAGE_OPTION = 3,
 	};
 
 	void load();
@@ -271,6 +319,7 @@ public:
 	void setType(TOptionControl::SelectType type, bool initial_options_entry);
 	void toggleCurType();
 	void checkInput();
+	void changeTopMessage(int language);
 	void writeValue();
 	bool isChangedSetting() const;
 	void resetChangedSetting();
@@ -280,10 +329,18 @@ public:
 	/* 0x4 */ TArrowControl* mBackArrow;
 	/* 0x8 */ TOptionRumbleUnit* mRumbleOption;
 	/* 0xC */ TOptionSoundUnit* mSoundOption;
-	/* 0x10 */ SelectType mSelectedOption;
-	/* 0x14 */ bool mWasJumping;
-	/* 0x18 */ int mInitialRumbleValue;
-	/* 0x1C */ int mInitialSoundValue;
+	/* 0x10 */ TOptionSubtitleUnit* mSubtitleOption;
+	/* 0x14 */ int mInitialSubtitleValue;
+	/* 0x18 */ TOptionLanguageUnit* mLanguageOption;
+	/* 0x1C */ int mInitialLanguageValue;
+	/* 0x20 */ J2DTextBox* mOptionTextA;
+	/* 0x24 */ J2DTextBox* mOptionTextB;
+	/* 0x28 */ void* mLocalizedMessageResources[5];
+	/* 0x3C */ SelectType mSelectedOption;
+	/* 0x40 */ bool mWasJumping;
+	/* 0x41 */ bool unk41;
+	/* 0x44 */ int mInitialRumbleValue;
+	/* 0x48 */ int mInitialSoundValue;
 };
 
 #endif

@@ -53,7 +53,7 @@ void TMario::hitNormal(THitActor* actor)
 }
 
 // TODO: wrong size! maybe we return the receiveMessage result?
-void TMario::hitHipDrop(THitActor* actor)
+inline void TMario::hitHipDrop(THitActor* actor)
 {
 	if (mStatus == MARIO_STATUS_HIP_DROP
 	    && (mStatusState == 2 || mStatusState == 3)
@@ -62,14 +62,14 @@ void TMario::hitHipDrop(THitActor* actor)
 	}
 }
 
-void TMario::hitPushup(THitActor* actor)
+inline void TMario::hitPushup(THitActor* actor)
 {
 	if (checkStatusType(MARIO_STATUS_FLAG_JUMPING) && mVel.y > 0.0f)
 		actor->receiveMessage(this, HIT_MESSAGE_PUSH_UP);
 	hitNormal(actor);
 }
 
-void TMario::hitMario(THitActor* actor)
+inline void TMario::hitMario(THitActor* actor)
 {
 	if (mHeldObject != actor && mHolder != actor)
 		keepDistance(*actor, 0.0f);
@@ -77,7 +77,7 @@ void TMario::hitMario(THitActor* actor)
 	hitNormal(actor);
 }
 
-void TMario::hitNpc(THitActor* actor)
+inline void TMario::hitNpc(THitActor* actor)
 {
 	if (!checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)
 	    && !checkStatusType(MARIO_FLAG_HELMET)
@@ -95,7 +95,7 @@ void TMario::hitNpc(THitActor* actor)
 		wantToTakeActor(actor);
 }
 
-void TMario::wantToTakeActor(THitActor* actor)
+inline void TMario::wantToTakeActor(THitActor* actor)
 {
 	if (canTake(actor)) {
 		unk384 = actor;
@@ -103,13 +103,13 @@ void TMario::wantToTakeActor(THitActor* actor)
 	}
 }
 
-void TMario::hitWantToTake(THitActor* actor)
+inline void TMario::hitWantToTake(THitActor* actor)
 {
 	keepDistance(*actor, 0.0f);
 	wantToTakeActor(actor);
 }
 
-void TMario::hitBarrel(THitActor* actor)
+inline void TMario::hitBarrel(THitActor* actor)
 {
 	hitWantToTake(actor);
 	if (checkStatusType(MARIO_STATUS_FLAG_JUMPING) && mVel.y < 0.0f
@@ -125,14 +125,14 @@ void TMario::hitBarrel(THitActor* actor)
 	}
 }
 
-void TMario::hitJumpBase(THitActor* actor)
+inline void TMario::hitJumpBase(THitActor* actor)
 {
 	keepDistance(*actor, 0.0f);
 	if ((s8)((TJumpBase*)actor)->unk138 == 0)
 		wantToTakeActor(actor);
 }
 
-void TMario::hitBrakable(THitActor* actor)
+inline void TMario::hitBrakable(THitActor* actor)
 {
 	if (checkStatusType(MARIO_STATUS_FLAG_JUMPING) && mVel.y < 0.0f
 	    && actor->mPosition.y < mPosition.y
@@ -208,7 +208,7 @@ void TMario::hangPole(THitActor* actor)
 	}
 }
 
-void TMario::hitPickUpEnemy(THitActor* actor)
+inline void TMario::hitPickUpEnemy(THitActor* actor)
 {
 	if (((TSmallEnemy*)actor)->unk164 != 0
 	    && !checkStatusType(MARIO_STATUS_FLAG_JUMPING)) {
@@ -221,7 +221,7 @@ void TMario::hitPickUpEnemy(THitActor* actor)
 }
 
 // As in we pull but don't "keep" the object, cuz it's a tentacle/tail?
-void TMario::hitNoKeepPull(THitActor* actor)
+inline void TMario::hitNoKeepPull(THitActor* actor)
 {
 	if (mStatus != MARIO_STATUS_PULLING && mStatus != MARIO_STATUS_PULL_JUMP
 	    && canTake(actor) && actor->receiveMessage(this, HIT_MESSAGE_TAKE)) {

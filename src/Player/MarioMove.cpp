@@ -370,7 +370,7 @@ f32 TMario::getSlideStopCatch()
 
 void TMario::isSlipLimit() { }
 
-BOOL TMario::isJumpMiss()
+inline BOOL TMario::isJumpMiss()
 {
 	if (isForceSlip())
 		return mSlipParamsAll.mMissJump.get();
@@ -678,7 +678,7 @@ u32 TMario::setStatusToJumping(u32 status, u32 arg)
 	return nextStatus;
 }
 
-u32 TMario::setStatusToRunning(u32 status, u32)
+inline u32 TMario::setStatusToRunning(u32 status, u32)
 {
 	f32 mag = mIntendedMag <= 8.0f ? 8.0f : mIntendedMag;
 
@@ -1279,8 +1279,8 @@ void TMario::checkSink()
 }
 
 // TODO: fake!! use a real inline!
-static void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
-                                 u32 param_4)
+static inline void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
+                                        u32 param_4)
 {
 	SMSGetMSound()->startForceJumpSound(param_1, param_2, param_3, param_4);
 }
@@ -2000,7 +2000,7 @@ void TMario::thinkSituation()
 			mYoshi->kill();
 		changePlayerStatus(MARIO_STATUS_FALL_DEAD, 0, true);
 		if (mAnimationId != ANIM_THROWN)
-			startSoundActor(MSD_SE_MV10B_CRY_JUMP_01);
+			startVoice(MSD_SE_MV10B_CRY_JUMP_01);
 		gpCamera->unk64 |= CPolarSubCamera::CAMERA_FLAG_HELL_DEAD_DEMO;
 		gpMarDirector->onDemoFlag(TMarDirector::DEMO_FLAG_HELL_DEAD);
 		return;
@@ -2313,7 +2313,7 @@ void TMario::getOffYoshi(bool fly)
 	mWaterGun->resetWaterToFull();
 }
 
-void TMario::checkYoshiGetOff()
+inline void TMario::checkYoshiGetOff()
 {
 	if (onYoshi() && mGamePad->checkFrameMeaning(TMarioGamePad::MEANING_X))
 		getOffYoshi(false);
@@ -2355,14 +2355,14 @@ void TMario::thinkYoshiHeadCollision()
 	}
 }
 
-void TMario::thinkDiving() { }
+inline void TMario::thinkDiving() { }
 
-void TMario::thinkTorocco()
+inline void TMario::thinkTorocco()
 {
 	mToroccoAngle += unk108->mStickHS16 * mDeParams.mToroccoRotSp.get();
 }
 
-void TMario::thinkSound()
+inline void TMario::thinkSound()
 {
 	if (mStatus != MARIO_STATUS_THROWN_DOWN && mSound != nullptr)
 		mSound->stop(1);
@@ -2431,7 +2431,7 @@ void TMario::gunExec()
 			mWaterGun->emit();
 			mWaterGun->resetWaterToFull();
 		}
-	} else if (unk390 == 0) {
+	} else if (mUpperState == UPPER_STATE_PUMPING) {
 		mWaterGun->emit();
 	}
 

@@ -695,21 +695,17 @@ static int MarioFootPosLCtrl(J3DNode* param_1, int param_2)
 static int MarioFootDirLCtrl(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
-
 		BOOL check2;
-		bool check;
-
-		// Definitely some inline shenanigans
-		// And this is wrong
 		if ((gpMarioForCallBack->mStatus & MARIO_STATUS_TYPE_MASK)
 		        == MARIO_STATUS_TYPE_WAITING
 		    && gpMarioForCallBack->mStatus != MARIO_STATUS_BRAKE_END
 		    && gpMarioForCallBack->onYoshi() == 0) {
-
-			check2 = !(gpMarioForCallBack->mStatus != MARIO_STATUS_SLEEPY
-			           && gpMarioForCallBack->mStatus != MARIO_STATUS_SLEEP)
-			             ? TRUE
-			             : FALSE;
+			check2 = TRUE;
+			if (gpMarioForCallBack->mStatus != MARIO_STATUS_SLEEPY
+			    && gpMarioForCallBack->mStatus != MARIO_STATUS_SLEEP)
+				check2 = FALSE;
+		} else {
+			check2 = FALSE;
 		}
 
 		if (check2) {
@@ -893,14 +889,14 @@ BOOL TMario::isAnimeLoopOrStop()
 }
 
 // Fabricated - Probably somewhere else
-void flagOnAllShapes(J3DModelData* modelData, u32 flag)
+static inline void flagOnAllShapes(J3DModelData* modelData, u32 flag)
 {
 	for (u16 i = 0; i < modelData->getShapeNum(); ++i)
 		modelData->getShapeNodePointer(i)->onFlag(flag);
 }
 
 // Fabricated - Probably somewhere else
-void flagOffAllShapes(J3DModelData* modelData, u32 flag)
+static inline void flagOffAllShapes(J3DModelData* modelData, u32 flag)
 {
 	for (u16 i = 0; i < modelData->getShapeNum(); ++i) {
 		modelData->getShapeNodePointer(i)->offFlag(flag);
@@ -1019,7 +1015,7 @@ f32 TMario::setAnimation(int anm_id, f32 rate)
 		}
 
 		bool check = false;
-		if (checkFlag(MARIO_FLAG_HAS_FLUDD) && mWaterGun->canSpray()) {
+		if (checkFlag(MARIO_FLAG_HAS_FLUDD) && mWaterGun->isEmitting()) {
 			check = true;
 		}
 
@@ -1107,7 +1103,7 @@ void TMario::loadBas(void** param_1, const char* param_2)
 	}
 }
 
-void TMario::loadAnm(J3DAnmTransform** param_1, const char* param_2)
+inline void TMario::loadAnm(J3DAnmTransform** param_1, const char* param_2)
 {
 	void* data = JKRFileLoader::getGlbResource(param_2);
 	if (data != nullptr) {
@@ -1138,8 +1134,8 @@ void TMario::initModel()
 	    JKRFileLoader::getGlbResource("/mario/bmd/ma_mdl1.bmd"),
 	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
 	mJointIdCenter   = mBodyModelData->getJointName()->getIndex("center");
-	mJointIdChnChest = mBodyModelData->getJointName()->getIndex("chn_chest");
-	mJointIdChest    = mBodyModelData->getJointName()->getIndex("jnt_chest");
+	mJointIdChest    = mBodyModelData->getJointName()->getIndex("chn_chest");
+	mJointIdChnChest = mBodyModelData->getJointName()->getIndex("jnt_chest");
 	mJointIdArmR1    = mBodyModelData->getJointName()->getIndex("jnt_arm_R1");
 	mJointIdArmL1    = mBodyModelData->getJointName()->getIndex("jnt_arm_L1");
 	mJointIdHandR    = mBodyModelData->getJointName()->getIndex("jnt_hand_R");
@@ -1175,29 +1171,30 @@ void TMario::initModel()
 	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
 
 	// possible inlines around setting ResTIMG through J3DTexture?
-	mHandModels[0][0]->getModelData()->getTexture()->setResTIMG(
-	    0, *mBodyModelData->getTexture()->getResTIMG(0));
-	DCFlushRange(mHandModels[0][0]->getModelData()->getTexture()->getResTIMG(0),
-	             0x20);
+	ResTIMG* bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	J3DModelData* handModelData = mHandModels[0][0]->getModelData();
+	J3DTexture* handTexture = handModelData->getTexture();
+	handTexture->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handModelData->getTexture()->getResTIMG(0), 0x20);
 
-	mHandModels[0][1]->getModelData()->getTexture()->setResTIMG(
-	    0, *mBodyModelData->getTexture()->getResTIMG(0));
-	DCFlushRange(mHandModels[0][1]->getModelData()->getTexture()->getResTIMG(0),
-	             0x20);
+	handModelData = mHandModels[0][1]->getModelData();
+	handTexture   = handModelData->getTexture();
+	handTexture->setResTIMG(0, *mBodyModelData->getTexture()->getResTIMG(0));
+	DCFlushRange(handModelData->getTexture()->getResTIMG(0), 0x20);
 
-	mHandModels[1][0]->getModelData()->getTexture()->setResTIMG(
-	    0, *mBodyModelData->getTexture()->getResTIMG(0));
-	DCFlushRange(mHandModels[1][0]->getModelData()->getTexture()->getResTIMG(0),
-	             0x20);
-	mHandModels[1][1]->getModelData()->getTexture()->setResTIMG(
-	    0, *mBodyModelData->getTexture()->getResTIMG(0));
-	DCFlushRange(mHandModels[1][1]->getModelData()->getTexture()->getResTIMG(0),
-	             0x20);
+	handModelData = mHandModels[1][0]->getModelData();
+	handTexture   = handModelData->getTexture();
+	handTexture->setResTIMG(0, *mBodyModelData->getTexture()->getResTIMG(0));
+	DCFlushRange(handModelData->getTexture()->getResTIMG(0), 0x20);
+	handModelData = mHandModels[1][1]->getModelData();
+	handTexture   = handModelData->getTexture();
+	handTexture->setResTIMG(0, *mBodyModelData->getTexture()->getResTIMG(0));
+	DCFlushRange(handModelData->getTexture()->getResTIMG(0), 0x20);
 
-	mRHand4ndModel->getModelData()->getTexture()->setResTIMG(
-	    0, *mBodyModelData->getTexture()->getResTIMG(0));
-	DCFlushRange(mRHand4ndModel->getModelData()->getTexture()->getResTIMG(0),
-	             0x20);
+	handModelData = mRHand4ndModel->getModelData();
+	handTexture   = handModelData->getTexture();
+	handTexture->setResTIMG(0, *mBodyModelData->getTexture()->getResTIMG(0));
+	DCFlushRange(handModelData->getTexture()->getResTIMG(0), 0x20);
 
 	mBodyModelData->getShapeNodePointer(4)->onFlag(J3DShpFlag_Visible);
 
@@ -1233,9 +1230,11 @@ void TMario::initModel()
 		u16 matCount   = anmTexPattern[i]->getUpdateMaterialNum();
 		anmTexNoAnm[i] = new J3DTexNoAnm[matCount];
 
-		for (int j = 0; j < matCount; ++j) {
-			anmTexNoAnm[i][j].setAnmIndex(j);
-			anmTexNoAnm[i][j].setAnmTexPattern(anmTexPattern[i]);
+		u32 byteOffset = 0;
+		for (u16 j = 0; j < matCount; ++j, byteOffset += sizeof(J3DTexNoAnm)) {
+			J3DTexNoAnm* texAnm = (J3DTexNoAnm*)((u8*)anmTexNoAnm[i] + byteOffset);
+			texAnm->setAnmIndex(j);
+			texAnm->setAnmTexPattern(anmTexPattern[i]);
 		}
 	}
 
@@ -1295,7 +1294,7 @@ void TMario::initModel()
 	transformInfo.mScale.y     = 1.0f;
 	transformInfo.mScale.z     = 1.0f;
 	transformInfo.mRotation.x  = mFaceAngle.x;
-	transformInfo.mRotation.y  = mFaceAngle.y;
+	transformInfo.mRotation.y  = mModelFaceAngle;
 	transformInfo.mRotation.z  = mFaceAngle.z;
 	transformInfo.mTranslate.x = mPosition.x;
 	transformInfo.mTranslate.y = mPosition.y;
@@ -1387,8 +1386,8 @@ void TMario::initModel()
 				MTXIdentity(koopaMtx);
 				mKoopaRail->getModel()->setBaseTRMtx(koopaMtx);
 				mKoopaRail->calcAnm();
-				mKoopaRail->getModel()->setBaseTRMtx(
-				    mTorocco->getModel()->getAnmMtx(0));
+				mTorocco->getModel()->setBaseTRMtx(
+				    mKoopaRail->getModel()->getAnmMtx(0));
 			}
 			onFlag(MARIO_FLAG_HAS_FLUDD);
 			mTorocco->calcAnm();

@@ -139,7 +139,7 @@ public:
 	/* 0x120 */ MAnmSound* mTongueAnmSound;
 };
 
-// TODO: dumb hack, but why is it not getting inlined in the original?!
+// Keep this out of callers whose original code makes a direct call.
 inline BOOL TYoshi::onYoshi()
 {
 	(void)0;

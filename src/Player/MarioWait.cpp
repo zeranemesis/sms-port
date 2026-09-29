@@ -94,7 +94,7 @@ BOOL TMario::waitingCommonEvents()
 	if (mInput & 0x1) {
 		s16 diff      = mIntendedYaw - mFaceAngle.y;
 		s16 rotSp     = mDeParams.mWaitingRotSp.get();
-		s16 converged = IConverge(diff, 0, rotSp, rotSp);
+		int converged = IConverge(diff, 0, rotSp, rotSp);
 		mFaceAngle.y  = mIntendedYaw - converged;
 		if (mIntendedMag > mControllerParams.mStartToWalkLevel.get()) {
 			emitSmoke(mFaceAngle.y);
@@ -102,7 +102,7 @@ BOOL TMario::waitingCommonEvents()
 		}
 	}
 
-	if (checkFlag(MARIO_FLAG_IS_PERFORMING))
+	if (checkFlag(MARIO_FLAG_FLUDD_EMITTING))
 		return changePlayerStatus(MARIO_STATUS_RUN, 0, false);
 
 	if (canSquat()) {
@@ -110,7 +110,7 @@ BOOL TMario::waitingCommonEvents()
 		return changePlayerStatus(MARIO_STATUS_SQUAT, 0, false);
 	}
 
-	if (mInput & 0x10000)
+	if (mInput & 0x8000)
 		return changePlayerStatus(MARIO_STATUS_TAKE_POSE, 0, false);
 
 	if (rocketCheck()) {
@@ -261,7 +261,7 @@ BOOL TMario::sleeping()
 	return 0;
 }
 
-BOOL TMario::wakeup()
+inline BOOL TMario::wakeup()
 {
 	if (mInput & 0x4) {
 		sleepingEffectKill();
@@ -386,7 +386,7 @@ BOOL TMario::squating()
 	return 0;
 }
 
-BOOL TMario::squatStart() { return 0; }
+inline BOOL TMario::squatStart() { return 0; }
 
 BOOL TMario::squatStandup()
 {
@@ -411,7 +411,7 @@ BOOL TMario::squatStandup()
 	return 0;
 }
 
-BOOL TMario::pullEnd()
+inline BOOL TMario::pullEnd()
 {
 	if (mInput & 0x4)
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
@@ -450,7 +450,7 @@ BOOL TMario::jumpEndEvents(u32 param_1)
 	return 0;
 }
 
-BOOL TMario::jumpEnd()
+inline BOOL TMario::jumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -459,7 +459,7 @@ BOOL TMario::jumpEnd()
 	return 0;
 }
 
-BOOL TMario::secJumpEnd()
+inline BOOL TMario::secJumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -468,7 +468,7 @@ BOOL TMario::secJumpEnd()
 	return 0;
 }
 
-BOOL TMario::landEnd()
+inline BOOL TMario::landEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -477,7 +477,7 @@ BOOL TMario::landEnd()
 	return 0;
 }
 
-BOOL TMario::ultraJumpEnd()
+inline BOOL TMario::ultraJumpEnd()
 {
 	if (jumpEndEvents(MARIO_STATUS_JUMP))
 		return 1;
@@ -486,7 +486,7 @@ BOOL TMario::ultraJumpEnd()
 	return 0;
 }
 
-BOOL TMario::uTurnJumpEnd()
+inline BOOL TMario::uTurnJumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -498,14 +498,14 @@ BOOL TMario::uTurnJumpEnd()
 	return 0;
 }
 
-BOOL TMario::jumpThrowEnd()
+inline BOOL TMario::jumpThrowEnd()
 {
 	checkThrowObject();
 	jumpEndCommon(ANIM_THROW, MARIO_STATUS_WAIT);
 	return 0;
 }
 
-BOOL TMario::fireJumpEnd()
+inline BOOL TMario::fireJumpEnd()
 {
 	mInput &= ~0x2010;
 	if (jumpEndEvents(0))
@@ -515,7 +515,7 @@ BOOL TMario::fireJumpEnd()
 	return 0;
 }
 
-BOOL TMario::broadJumpEnd()
+inline BOOL TMario::broadJumpEnd()
 {
 	mInput &= ~0x2000;
 	if (jumpEndEvents(MARIO_STATUS_JUMP)) {
@@ -529,7 +529,7 @@ BOOL TMario::broadJumpEnd()
 	return 0;
 }
 
-BOOL TMario::hipAttackEnd()
+inline BOOL TMario::hipAttackEnd()
 {
 	mStatusState = 1;
 	if (mInput & 0x4) {
@@ -542,7 +542,7 @@ BOOL TMario::hipAttackEnd()
 	return 0;
 }
 
-BOOL TMario::brakeEnd()
+inline BOOL TMario::brakeEnd()
 {
 	if ((mInput & 0x10) == 0 && (mInput & 0xF))
 		return checkAllMotions();
@@ -551,7 +551,7 @@ BOOL TMario::brakeEnd()
 	return 0;
 }
 
-BOOL TMario::slipEnd()
+inline BOOL TMario::slipEnd()
 {
 	if (mInput & 0xF)
 		return checkAllMotions();

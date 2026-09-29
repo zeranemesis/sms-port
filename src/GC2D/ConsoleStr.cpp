@@ -17,6 +17,7 @@
 #include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
 #include <JSystem/JParticle/JPAEmitterManager.hpp>
 #include <JSystem/JUtility/JUTResFont.hpp>
 #include <dolphin/gx/GXCull.h>
@@ -398,12 +399,10 @@ bool TConsoleStr::processReady(int param_1)
 	for (int i = 0; i < 5; ++i) {
 		if (param_1 == i * 10) {
 			JUTRect local_d8 = unk27C[i]->getPane()->getBounds();
-			unk27C[i]->setPaneSize(
+			unk27C[i]->setCenteredSize(
 			    0x1E, local_d8.getWidth(), local_d8.getHeight(),
 			    local_d8.getWidth() + 80, local_d8.getHeight() + 80);
-			// TODO: wrong args
-			unk27C[i]->setPaneOffset(0x1E, 0, 0, 0, 0);
-		} else if (param_1 >= i * 10 + 30) {
+		} else if (param_1 < i * 10 + 30) {
 			unk27C[i]->update();
 			u16 alpha = unk27C[i]->getPane()->getAlpha();
 			alpha += 9;
@@ -414,11 +413,9 @@ bool TConsoleStr::processReady(int param_1)
 			if (param_1 == i * 10 + 130) {
 				JUTRect local_e8 = unk27C[i]->getPane()->getBounds();
 
-				unk27C[i]->setPaneSize(
+				unk27C[i]->setCenteredSize(
 				    0x1E, local_e8.getWidth() - 20, local_e8.getHeight() - 20,
 				    local_e8.getWidth(), local_e8.getHeight());
-				// TODO: wrong args
-				unk27C[i]->setPaneOffset(0x1E, 0, 0, 0, 0);
 			} else if (param_1 < i * 10 + 160) {
 				unk27C[i]->update();
 				s16 alpha = unk27C[i]->getPane()->getAlpha();
@@ -439,40 +436,128 @@ extern JPAEmitterManager* gpEmitterManager4D2;
 
 bool TConsoleStr::processGo(float param_1)
 {
-	if (param_1 >= 90.0f) {
-		if (param_1 >= 95.0f) {
-			if (param_1 == 95.0f) {
-				unk28[0]->setPanePosition(0x50, JUTPoint(0, 0),
-				                          JUTPoint(170, 180),
-				                          JUTPoint(340, 360));
-				unk28[1]->setPanePosition(0x50, JUTPoint(0, 0),
-				                          JUTPoint(170, 180),
-				                          JUTPoint(340, 360));
-				unk28[2]->setPanePosition(0x50, JUTPoint(0, 0),
-				                          JUTPoint(170, 180),
-				                          JUTPoint(340, 360));
-				for (int i = 0; i < 3; ++i) {
-					for (int j = 0; j < 16; ++j) {
-						// TODO: all wrong
-						// JUTRect local_88 = unk28[i]->unk24;
-					}
+	bool result = false;
 
-					JGeometry::TVec3<f32> local_a4;
-					gpEmitterManager4D2->createEmitter(local_a4, 0x1FD, nullptr,
-					                                   nullptr);
-					unk2A0[i]->mVisible = gpEmitterManager4D2->unkC8[0][0];
-				}
-			} else if (param_1 >= 175.0f) {
-				if (param_1 == 175.0f) {
-					for (int i = 0; i < 3; ++i) {
-						//
-					}
-				} else {
-					// TODO:
+	if (param_1 < 90.0f) {
+		for (s32 i = 0; i < mGoPaneCount; ++i) {
+			if (param_1 == i * 5) {
+				unk28[i]->setPanePosition(
+				    0x28, JUTPoint(0, 60), JUTPoint(0, -40),
+				    JUTPoint(0, -40));
+				unk28[i]->getPane()->show();
+			}
+		}
+
+		for (s32 i = 0; i < mGoPaneCount; ++i) {
+			JUTRect bounds = unk28[i]->getPane()->getBounds();
+			(void)bounds;
+
+			if (unk28[i]->update()) {
+				bool atOrigin = false;
+				if (unk28[i]->unk14.x1 == 0 && unk28[i]->unk14.y1 == 0)
+					atOrigin = true;
+
+				if (!atOrigin) {
+					JUTPoint startPosition(0, 0);
+					JUTPoint middlePosition(0, -40);
+					JUTPoint endPosition(0, -40);
+					unk28[i]->setPanePosition(0x1E, startPosition,
+					                         middlePosition, endPosition);
 				}
 			}
 		}
 	}
+
+	if (param_1 >= 90.0f) {
+		if (param_1 >= 95.0f) {
+			if (param_1 == 95.0f) {
+				for (int i = 0; i < mGoPaneCount; ++i) {
+					if (i % 3 == 0) {
+						unk28[i]->setPanePosition(
+						    0x50, JUTPoint(0, 0), JUTPoint(-170, -180),
+						    JUTPoint(-340, -360));
+					} else if (i % 3 == 1) {
+						unk28[i]->setPanePosition(
+						    0x50, JUTPoint(0, 0), JUTPoint(0, -220),
+						    JUTPoint(0, -440));
+					} else {
+						unk28[i]->setPanePosition(
+						    0x50, JUTPoint(0, 0), JUTPoint(160, -180),
+						    JUTPoint(320, -360));
+					}
+				}
+
+				for (int i = 0; i < mGoPaneCount; ++i) {
+					JUTRect globalBounds = unk28[i]->getPane()->getGlobalBounds();
+					for (int j = 0; j < 16; ++j) {
+						unk34[i * 22 + j].set(globalBounds.x1, globalBounds.y1);
+					}
+
+					JUTRect emitterBounds = unk28[i]->getPane()->getBounds();
+					JGeometry::TVec3<f32> emitterPosition(
+					    emitterBounds.x1 + emitterBounds.getWidth() * 0.5f,
+					    emitterBounds.y1 + emitterBounds.getHeight() * 0.5f, 0.0f);
+					gpEmitterManager4D2->createEmitter(emitterPosition, 0x1FD, nullptr,
+					                                   nullptr);
+					unk2AC[i] = gpEmitterManager4D2->unkC8[0][0];
+				}
+			} else if (param_1 < 175.0f) {
+				for (s32 i = 0; i < mGoPaneCount; ++i) {
+					J2DPane* pane = unk28[i]->getPane();
+					s32 alpha = pane->getAlpha() - 4;
+					if (alpha < 0)
+						alpha = 0;
+
+					JUTRect globalBounds = pane->getGlobalBounds();
+					pane->setAlpha(alpha);
+					pane->resize(globalBounds.getWidth() + 2,
+					             globalBounds.getHeight() + 2);
+
+					if (unk2AC[i]) {
+						JUTRect emitterBounds = pane->getBounds();
+						JGeometry::TVec3<f32> emitterPosition(
+						    emitterBounds.x1 + emitterBounds.getWidth() * 0.5f,
+						    emitterBounds.y1 + emitterBounds.getHeight() * 0.5f,
+						    0.0f);
+						((JPABaseEmitter*)unk2AC[i])->setGlobalTranslation(
+						    emitterPosition);
+					}
+
+					if (unk28[i]->update() && unk2AC[i]) {
+						((JPABaseEmitter*)unk2AC[i])->setStatus(1);
+						unk2AC[i] = nullptr;
+					}
+
+					if ((s32)param_1 % 2 == 0) {
+						for (int j = 15; j > 10; --j)
+							unk34[i * 22 + j] = unk34[i * 22 + j - 1];
+						unk34[i * 22].set(globalBounds.x1, globalBounds.y1);
+					}
+				}
+			} else if (param_1 >= 175.0f) {
+				if (param_1 == 175.0f) {
+					for (s32 i = 0; i < mGoPaneCount; ++i) {
+						JUTRect bounds = unk28[i]->getPane()->getBounds();
+						unk28[i]->getPane()->resize(bounds.getWidth() - 0x50,
+						                            bounds.getHeight() - 0x50);
+					}
+				} else {
+					for (s32 i = 0; i < mGoPaneCount; ++i) {
+						J2DPane* pane = unk28[i]->getPane();
+						pane->hide();
+
+						if (unk2AC[i]) {
+							((JPABaseEmitter*)unk2AC[i])->setStatus(1);
+							unk2AC[i] = nullptr;
+						}
+					}
+					result = true;
+				}
+			}
+		}
+	}
+
+	return result;
 }
 
 bool TConsoleStr::processShineGet(int param_1)
@@ -645,13 +730,14 @@ void TConsoleStr::startCloseWipe(bool param_1)
 		JUTRect local_74 = unk290[0]->getPane()->getBounds();
 		unk290[0]->setPaneSize(0x2D, local_74.getWidth(), 0,
 		                       local_74.getHeight(), 0);
-		unk290[0]->setPaneAlpha(30, 100, 255);
+		unk290[0]->setPaneAlpha(0x2D, 0xFF, 0);
 
 		unk290[1]->setPaneOffset(0x2D, 0, 224 - local_74.y1, 0,
 		                         465 - unk290[1]->getInitialBounds().y1);
 		unk290[1]->setPaneSize(0x2D, local_74.getWidth(), 0,
 		                       local_74.getHeight(), 0);
-		unk290[1]->setPaneAlpha(30, 100, 255);
+		unk290[1]->setPaneAlpha(0x2D, 0xFF,
+		                        unk290[1]->getPane()->getAlpha());
 
 		unk2BC = 8;
 		unk2B8 = 4;
@@ -661,13 +747,15 @@ void TConsoleStr::startCloseWipe(bool param_1)
 		JUTRect local_88 = unk290[0]->getPane()->getBounds();
 		unk290[0]->setPaneSize(0x2D, local_88.getWidth(), 0,
 		                       local_88.getWidth(), local_88.getHeight());
-		unk290[0]->setPaneAlpha(30, 100, 255);
+		unk290[0]->setPaneAlpha(0x2D, 0xFF,
+		                        unk290[0]->getPane()->getAlpha());
 
 		unk290[1]->setPaneOffset(0x2D, 0, 224 - local_88.y1, 0,
 		                         465 - unk290[1]->getInitialBounds().y1);
 		unk290[1]->setPaneSize(0x2D, local_88.getWidth(), 0,
 		                       local_88.getHeight(), 0);
-		unk290[1]->setPaneAlpha(30, 100, 255);
+		unk290[1]->setPaneAlpha(0x2D, 0xFF,
+		                        unk290[1]->getPane()->getAlpha());
 	} else {
 		unk2A8 = 1;
 	}

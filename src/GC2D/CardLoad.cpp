@@ -5,6 +5,8 @@
 #include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/J2D/J2DTextBox.hpp>
+#include <JSystem/J2D/J2DWindow.hpp>
+#include <JSystem/J2D/J2DPrint.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/JParticle/JPAEmitterManager.hpp>
@@ -111,34 +113,45 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 
 	JKRArchive* optionVolume = (JKRArchive*)JKRFileLoader::getVolume("option");
 
-	static const char* messageFiles[5] = {
-		"/option/loadmessage_en.bmg", "/option/loadmessage_ge.bmg",
-		"/option/loadmessage_fr.bmg", "/option/loadmessage_sp.bmg",
-		"/option/loadmessage_it.bmg",
-	};
-	static const char* scoreFiles[5] = {
-		"load_score_en.blo", "load_score_ge.blo", "load_score_fr.blo",
-		"load_score_sp.blo", "load_score_it.blo",
-	};
-	for (int lang = 0; lang < 5; ++lang) {
-		unk7D8[lang] = JKRGetResource(messageFiles[lang]);
-		unk7EC[lang] = new J2DSetScreen(scoreFiles[lang], optionVolume);
-		unk7EC[lang]->setCullBack(GX_CULL_BACK);
-	}
-	unkA0 = unk7D8[0];
+	unk7D8[0] = JKRGetResource("/option/loadmessage_en.bmg");
+	unk7D8[1] = JKRGetResource("/option/loadmessage_ge.bmg");
+	unk7D8[2] = JKRGetResource("/option/loadmessage_fr.bmg");
+	unk7D8[3] = JKRGetResource("/option/loadmessage_sp.bmg");
+	unk7D8[4] = JKRGetResource("/option/loadmessage_it.bmg");
 
 	unk28 = new J2DSetScreen("load.blo", optionVolume);
 	unk28->setCullBack(GX_CULL_BACK);
+	unk7EC[0] = new J2DSetScreen("load_score_en.blo", optionVolume);
+	unk7EC[1] = new J2DSetScreen("load_score_ge.blo", optionVolume);
+	unk7EC[2] = new J2DSetScreen("load_score_fr.blo", optionVolume);
+	unk7EC[3] = new J2DSetScreen("load_score_sp.blo", optionVolume);
+	unk7EC[4] = new J2DSetScreen("load_score_it.blo", optionVolume);
 	unk2C = unk7EC[0];
+	unk2C->setCullBack(GX_CULL_BACK);
 	unk754 = new TOptionControl;
 	unk754->load();
 
-	static const char* titleFiles[5] = {
-		"title_1.blo", "title_1_ge.blo", "title_1_fr.blo", "title_1_sp.blo",
-		"title_1_it.blo",
-	};
-	unk34 = new J2DSetScreen(
-	    titleFiles[TFlagManager::getInstance()->getFlag(0xA0001)], optionVolume);
+	int language = TFlagManager::getInstance()->getFlag(0xA0001);
+	const char* titleFile;
+	switch (language) {
+	case 0:
+	default:
+		titleFile = "title_1.blo";
+		break;
+	case 1:
+		titleFile = "title_1_ge.blo";
+		break;
+	case 2:
+		titleFile = "title_1_fr.blo";
+		break;
+	case 3:
+		titleFile = "title_1_sp.blo";
+		break;
+	case 4:
+		titleFile = "title_1_it.blo";
+		break;
+	}
+	unk34 = new J2DSetScreen(titleFile, optionVolume);
 	unk34->setCullBack(GX_CULL_BACK);
 
 	for (int i = 0; i < 10; ++i) {
@@ -148,6 +161,19 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	}
 
 	setupTitleScreen();
+	const char* directories[5] = {
+		"/option/timg/", "/option/timg/ge/", "/option/timg/fr/",
+		"/option/timg/sp/", "/option/timg/it/",
+	};
+	const char* directory = directories[language];
+	for (int i = 0; i < unk7D4; ++i) {
+		char buffer[0xFF];
+		snprintf(buffer, 0xFF, "%stitle_start_%02d.bti", directory, i + 1);
+		JUTTexture* texture = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
+		J2DPicture* picture = (J2DPicture*)unk34->search(
+		    's_00' + (i + 1) % 10 + (((i + 1) / 10) << 8));
+		picture->changeTexture(texture->getTexInfo(), 0);
+	}
 
 	unk208 = unk34->search('ROOT');
 
@@ -159,7 +185,7 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		if (i < 9)
 			key = 's_01' + i;
 		else
-			key = 's_00' + ((i + 1) / 10) * 0x100 + (i + 1) % 10;
+			key = ((i + 1) / 10) * 0x100 + 's_00' + (i + 1) % 10;
 
 		unkF8[i] = new TExPane(unk34, key);
 		unkF8[i]->getPane()->setAlpha(0);
@@ -171,11 +197,11 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		if (i < 9)
 			key = 'p_01' + i;
 		else
-			key = 'p_00' + ((i + 1) / 10) * 0x100 + (i + 1) % 10;
+			key = ((i + 1) / 10) * 0x100 + 'p_00' + (i + 1) % 10;
 
 		unk1D4[i] = new TExPane(unk34, key);
 
-		((J2DPicture*)unk1D4[i]->getPane())->mBlack = 0x01006667;
+		((J2DPicture*)unk1D4[i]->getPane())->mBlack = 0x00FFFF00;
 
 		unk1D4[i]->setPaneAlpha(20, 0xff, 0);
 	}
@@ -191,10 +217,10 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk28C = unk288->getPane()->getBounds();
 
 	unk29C = (J2DTextBox*)unk28->search('m_0a');
-	makeBuffer(unk29C, 0x80);
+	makeBuffer(unk29C, 0x100);
 
 	unk2A0 = (J2DTextBox*)unk28->search('m_0b');
-	makeBuffer(unk2A0, 0x80);
+	makeBuffer(unk2A0, 0x100);
 
 	JUTTexture* pJVar5 = new JUTTexture(
 	    (const ResTIMG*)JKRGetResource("/option/timg/load_sun_1.bti"));
@@ -264,10 +290,13 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	for (int i = 0; i < 2; ++i) {
 		unk4D8[i] = new TExPane(unk28, 's_6b' + i * 0x100);
 		unk4E0[i] = unk4D8[i]->getPane()->getBounds();
+		unk4D8[i]->getPane()->hide();
 	}
 
 	unk500 = unk28->search('f_sh');
 	unk510 = unk28->search('f_si');
+	unk500->hide();
+	unk510->hide();
 
 	for (int i = 0; i < 3; ++i)
 		unk504[i] = (J2DPicture*)unk28->search('n_3a' + i);
@@ -313,47 +342,17 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk580 = (J2DTextBox*)unk28->search('m_6b');
 	makeBuffer(unk580, 0x400);
 
-	int local_90[] = { 2, 3, 4, 5, 6, 8, 7 };
-
-	for (int i = 0; i < 7; ++i) {
-		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
-		for (int j = 0; j < 3; ++j)
-			unk584[i].unk4[j]
-			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
-
-		int tmp = local_90[i];
-
-		for (int j = 0; j < 8; ++j) {
-			unk584[i].unk10[j] = unk2C->search('sh0a' + i * 0x100 + j);
-
-			if (!SMS_isGetShine(tmp, j, false))
-				unk584[i].unk10[j]->hide();
-		}
-
-		for (int j = 0; j < 2; ++j) {
-			unk584[i].unk30[j] = unk2C->search('sh0i' + i * 0x100 + j);
-			unk584[i].unk30[j]->hide();
-		}
-
-		unk584[i].unk38 = unk2C->search('sh0k' + i * 0x100);
-		unk584[i].unk38->hide();
-	}
-
-	for (int i = 0; i < 3; ++i) {
-		unk728[i] = unk2C->search('\0t_1' + i);
-		unk728[i]->hide();
-	}
-
-	unk740 = unk2C->search('\0t_p');
-	unk744 = unk2C->search('s_tl');
-	unk748 = (J2DPicture*)unk2C->search('\0n_a');
-	unk74C = (J2DPicture*)unk2C->search('\0n_b');
-	unk750 = (J2DPicture*)unk2C->search('\0n_c');
+	loadLangTexture();
+	changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 }
 
 void TCardLoad::setupTitleScreen()
 {
 	switch (TFlagManager::getInstance()->getFlag(0xA0001)) {
+	case 0:
+	case 1:
+		unk7D4 = 11;
+		break;
 	case 2:
 		unk7D4 = 15;
 		break;
@@ -635,6 +634,31 @@ void TCardLoad::resetScoreScreenObjects()
 	unk74C = (J2DPicture*)unk2C->search('\0n_b');
 	unk750 = (J2DPicture*)unk2C->search('\0n_c');
 }
+
+#pragma dont_inline on
+void TCardLoad::resizeBox(J2DWindow* window, J2DTextBox* text,
+                          J2DTextBox* shadow)
+{
+	const char* textString = text->getStringPtr();
+	JUTRect originalBounds = window->mBounds;
+	J2DPrint printer((JUTFont*)gpSystemFont, 0);
+	J2DPrint::TSize textSize;
+	printer.getSize(textSize, textString);
+
+	JUTRect contentsBounds = JUTRect(window->getContentsBounds());
+	const s32 frameWidth = originalBounds.getWidth() - contentsBounds.getWidth();
+	const s32 frameHeight = originalBounds.getHeight() - contentsBounds.getHeight();
+	window->resize(textSize.unk0 + frameWidth + 10.0f,
+	               textSize.unk4 + frameHeight + 10.0f);
+
+	JUTRect resizedBounds = window->getBounds();
+	const s32 moveX = (originalBounds.x2 - resizedBounds.x2) / 2;
+	const s32 moveY = (originalBounds.y2 - resizedBounds.y2) / 2;
+	text->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
+	shadow->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
+	window->add(moveX, moveY);
+}
+#pragma dont_inline off
 
 void TCardLoad::loadAfter()
 {
@@ -1476,6 +1500,7 @@ s8 TCardLoad::waitForAnyKey(TEProgress progress)
 	case 0: {
 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
+		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
 
 		unk580->hide();
 		unk568->getPane()->show();
@@ -1560,14 +1585,22 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 				unkB0 = unkB1;
 			TCardBookmarkInfo& info = unk40[unkB0];
 			if (info.unk0 == 1) {
-				strncpy(unk51C->getStringPtr(), "こわれています", 0x14);
-				strncpy(unk520->getStringPtr(), "こわれています", 0x14);
+			J2DTextBox* text = unk51C;
+			const char* message = SMSGetMessageData(unkA0, 0);
+			strncpy(text->getStringPtr(), message, 0x14);
+			text    = unk520;
+			message = SMSGetMessageData(unkA0, 0);
+			strncpy(text->getStringPtr(), message, 0x14);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else if (info.unk18 == 0) {
-				strncpy(unk51C->getStringPtr(), "NEW", 0x14);
-				strncpy(unk520->getStringPtr(), "NEW", 0x14);
+			J2DTextBox* text = unk51C;
+			const char* message = SMSGetMessageData(unkA0, 0x1B);
+			strncpy(text->getStringPtr(), message, 0x14);
+			text    = unk520;
+			message = SMSGetMessageData(unkA0, 0x1B);
+			strncpy(text->getStringPtr(), message, 0x14);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
@@ -1650,8 +1683,9 @@ s8 TCardLoad::waitForStart(TEProgress param_1)
 	case 0:
 		setMessage(unk538, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk53C, 0x400, (u16)cMessageID[unk1C]);
-		setMessage(unk560, 0x400, 12);
-		setMessage(unk564, 0x400, 12);
+		setMessage(unk560, 0x400, 13);
+		setMessage(unk564, 0x400, 13);
+		resizeBox((J2DWindow*)unk524->getPane(), unk53C, unk538);
 
 		unk524->getPane()->show();
 		unk524->setCenteredSize(20, unk528.getWidth(), unk528.getHeight(), 0,
@@ -1723,6 +1757,7 @@ s8 TCardLoad::drawMessage(TEProgress param_1)
 	case 0:
 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
+		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
 
 		unk568->getPane()->show();
 		unk580->hide();
@@ -1795,13 +1830,21 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 			unk4CC[unkB0]->show();
 			TCardBookmarkInfo* bm = &unk40[unkB0];
 			if (bm->unk0 == 1) {
-				strncpy(unk51C->getStringPtr(), "こわれています", 20);
-				strncpy(unk520->getStringPtr(), "こわれています", 20);
+			J2DTextBox* text = unk51C;
+			const char* message = SMSGetMessageData(unkA0, 0);
+			strncpy(text->getStringPtr(), message, 20);
+			text    = unk520;
+			message = SMSGetMessageData(unkA0, 0);
+			strncpy(text->getStringPtr(), message, 20);
 				unk520->show();
 				unk500->hide();
 			} else if (bm->unk18 == 0) {
-				strncpy(unk51C->getStringPtr(), "NEW", 20);
-				strncpy(unk520->getStringPtr(), "NEW", 20);
+			J2DTextBox* text = unk51C;
+			const char* message = SMSGetMessageData(unkA0, 0x1B);
+			strncpy(text->getStringPtr(), message, 20);
+			text    = unk520;
+			message = SMSGetMessageData(unkA0, 0x1B);
+			strncpy(text->getStringPtr(), message, 20);
 				unk520->show();
 				unk500->hide();
 			} else {
@@ -1881,11 +1924,11 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 		                        0);
 		if (unk1C == PROGRESS_UNK1C) {
 			unk278[unkB1]->makeBlockRock();
-			setMessage(unk29C, 30, 0x1B);
-			setMessage(unk2A0, 30, 0x1B);
+			setMessage(unk29C, 0xFF, 0x1F);
+			setMessage(unk2A0, 0xFF, 0x1F);
 		} else {
-			setMessage(unk29C, 30, 0x1A);
-			setMessage(unk2A0, 30, 0x1A);
+			setMessage(unk29C, 0xFF, 0x1E);
+			setMessage(unk2A0, 0xFF, 0x1E);
 		}
 
 		for (int i = 0; i < 3; ++i) {
@@ -2094,13 +2137,21 @@ s8 TCardLoad::selectFunction()
 			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->mWhite = 0x00FF00FF;
 			for (int i = 0; i < 3; ++i) {
 				if (unk40[i].unk0 == 1) {
-					strncpy(unk2C0[i]->getStringPtr(), "こわれています", 20);
-					strncpy(unk2CC[i]->getStringPtr(), "こわれています", 20);
+				J2DTextBox* text = unk2C0[i];
+				const char* message = SMSGetMessageData(unkA0, 0);
+				strncpy(text->getStringPtr(), message, 20);
+				text    = unk2CC[i];
+				message = SMSGetMessageData(unkA0, 0);
+				strncpy(text->getStringPtr(), message, 20);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else if (unk40[i].unk18 == 0) {
-					strncpy(unk2C0[i]->getStringPtr(), "NEW", 20);
-					strncpy(unk2CC[i]->getStringPtr(), "NEW", 20);
+				J2DTextBox* text = unk2C0[i];
+				const char* message = SMSGetMessageData(unkA0, 0x1B);
+				strncpy(text->getStringPtr(), message, 20);
+				text    = unk2CC[i];
+				message = SMSGetMessageData(unkA0, 0x1B);
+				strncpy(text->getStringPtr(), message, 20);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else {

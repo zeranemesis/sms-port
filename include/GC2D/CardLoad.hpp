@@ -7,6 +7,7 @@
 
 class J2DPane;
 class J2DPicture;
+class J2DWindow;
 class J2DTextBox;
 class J2DSetScreen;
 class JPABaseEmitter;
@@ -31,6 +32,7 @@ public:
 	void setupTitleScreen();
 	void setupScoreScreen();
 	void resetScoreScreenObjects();
+	void resizeBox(J2DWindow*, J2DTextBox*, J2DTextBox*);
 	void loadLangTexture();
 	void changeLanguage(int);
 	void loadAfter();

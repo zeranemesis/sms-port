@@ -54,7 +54,7 @@ TMenuPlane::TMenuPlane(const TMarioGamePad* param_1, J2DPane* param_2,
 	}
 
 	unk30 = new J2DTextBox*[unk28];
-	for (u32 i = 0; i < unk28; ++i)
+	for (int i = 0; i < unk28; ++i)
 		unk30[i] = local_420[i];
 }
 

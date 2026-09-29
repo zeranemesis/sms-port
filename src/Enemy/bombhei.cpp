@@ -71,9 +71,10 @@ DEFINE_NERVE(TNerveBombHeiGenerate, TLiveActor)
 
 const char** TBombHei::getBasNameTable() const { return bombhei_bastable; }
 
-void TBombHei::isDamageToCannon()
+bool TBombHei::isDamageToCannon()
 {
 	// TODO: not yet decompiled
+	return false;
 }
 
 void TBombHei::forceKill()

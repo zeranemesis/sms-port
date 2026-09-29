@@ -21,7 +21,7 @@ void TMario::barJumpSetting() { }
 BOOL TMario::barWait()
 {
 	if (mHolder == nullptr)
-		return changePlayerStatus(MARIO_STATUS_WALL_JUMP, 0, false);
+		return changePlayerStatus(MARIO_STATUS_LAND_SAFE_DOWN, 0, false);
 
 	if (mInput & 0x2) {
 		mPosition.x -= 200.0f * JMASSin(mFaceAngle.y);
@@ -679,6 +679,7 @@ void TMario::getOnWirePosAngle(JGeometry::TVec3<f32>* outPos, s16* outAngle)
 	*outAngle = matan(dirCopy.z, dirCopy.x);
 }
 
+#pragma dont_inline on
 BOOL TMario::wireMove(f32 param_1)
 {
 	JGeometry::TVec3<f32> start = mWireStartPos;
@@ -700,6 +701,7 @@ BOOL TMario::wireMove(f32 param_1)
 		mWirePosRatio += delta;
 	return clean;
 }
+#pragma dont_inline off
 
 BOOL TMario::wireWait()
 {
@@ -733,7 +735,7 @@ BOOL TMario::wireWait()
 		}
 	}
 
-	if (mInput & 0x10000) {
+	if (mInput & 0x8000) {
 		mWireBounceVel = 5.0f;
 		return changePlayerStatus(MARIO_STATUS_WIRE_WAIT_TO_HANG, 0, false);
 	}
@@ -785,14 +787,14 @@ BOOL TMario::wireSWait()
 			mHolder  = nullptr;
 			BOOL ret = changePlayerStatus(MARIO_STATUS_WIRE_JUMP, 0, false);
 			setPlayerVelocity(0.0f);
-			if (mWireBounceVelPrev < 0.0f)
-				mVel.y -= 5.0f * mWireBounceVelPrev;
+			if (mWireBounceVel < 0.0f)
+				mVel.y -= 5.0f * mWireBounceVel;
 			return ret;
 		}
 	}
 
-	if (mInput & 0x10000) {
-		mWireBounceVelPrev = 5.0f;
+	if (mInput & 0x8000) {
+		mWireBounceVel = 5.0f;
 		startVoice(MSD_SE_MV30_FRIGHT_01);
 		return changePlayerStatus(MARIO_STATUS_WIRE_WAIT_TO_HANG, 0, false);
 	}

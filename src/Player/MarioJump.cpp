@@ -355,7 +355,7 @@ BOOL TMario::landing()
 	if (mVel.y < 0.0f && mStatusArg < 3) {
 		if (mStatusTimer++ > 240) {
 			mStatusTimer = 240;
-			startSoundActor(MSD_SE_MV10B_CRY_JUMP_01);
+			startVoice(MSD_SE_MV10B_CRY_JUMP_01);
 			mStatusArg = 3;
 		}
 	}
@@ -439,6 +439,8 @@ BOOL TMario::jumpCatch()
 			isStrong = false;
 
 		if (mVel.y > -70.0f)
+			isStrong = false;
+		if (!isMario())
 			isStrong = false;
 
 		if (isStrong && checkFlag(MARIO_FLAG_ON_SAND)) {
@@ -1025,7 +1027,7 @@ BOOL TMario::rotateJumping()
 	if (mStatus == MARIO_STATUS_RIGHT_ROTATE_JUMP)
 		mModelFaceAngle = mStatusTimer * 4096;
 	else
-		mModelFaceAngle = -(mStatusTimer * 4096);
+		mModelFaceAngle = -(u32)(mStatusTimer * 4096);
 
 	if (!(gpMarDirector->mMoveTickCount & 0x3F))
 		rumbleStart(0x14, mMotorParams.mMotorWall.get() / 2);
@@ -1288,7 +1290,7 @@ BOOL TMario::diving()
 	return 0;
 }
 
-BOOL TMario::fallDead()
+inline BOOL TMario::fallDead()
 {
 	jumpProcess(0);
 	return FALSE;

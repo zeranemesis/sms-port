@@ -50,7 +50,7 @@ public:
 	virtual bool doKeepDistance();
 
 	// fabricated
-	void isDamageToCannon();
+	bool isDamageToCannon();
 
 	static bool mSerialBomb;
 

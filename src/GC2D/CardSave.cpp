@@ -7,6 +7,8 @@
 #include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/J2D/J2DTextBox.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
+#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+#include <JSystem/JSupport/JSUMemoryOutputStream.hpp>
 #include <JSystem/JParticle/JPAEmitterManager.hpp>
 #include <JSystem/JParticle/JPAEmitter.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -344,6 +346,84 @@ void TCardSave::setMessage(J2DTextBox* text_box, s32 param_2, u32 param_3)
 	        param_2);
 }
 
+void TCardSave::setMessageC(J2DTextBox* text_box, long message_id,
+                            u32 length)
+{
+	JSUMemoryInputStream input(SMSGetMessageData(unk2E4, (u16)message_id),
+	                           length);
+	JSUMemoryOutputStream output(text_box->getStringPtr(), length);
+	char buffer[0x100];
+
+	while (input.getPosition() != input.getLength()) {
+		u8 character;
+		input.read(&character, 1);
+
+		if (character == '\n') {
+			output.write(&character, 1);
+			continue;
+		}
+		if (character == '\0') {
+			output.write(&character, 1);
+			break;
+		}
+		if (character == 0x1A) {
+			u8 sequence_length;
+			input.read(&sequence_length, 1);
+			input.skip(sequence_length - 2);
+			continue;
+		}
+
+		u8 color[3];
+		bool colored = true;
+		switch (character) {
+		case '#':
+			color[0] = 0xFF;
+			color[1] = 0xA0;
+			color[2] = 0x64;
+			break;
+		case '$':
+			color[0] = 0x6E;
+			color[1] = 0xE6;
+			color[2] = 0xFF;
+			break;
+		case '%':
+			color[0] = 0xFF;
+			color[1] = 0xFF;
+			color[2] = 0x00;
+			break;
+		case '+':
+		case '<':
+		case '>':
+		case 0xA5:
+			color[0] = 0xDC;
+			color[1] = 0xDC;
+			color[2] = 0xDC;
+			break;
+		case '@':
+			color[0] = 0x64;
+			color[1] = 0xFF;
+			color[2] = 0x64;
+			break;
+		default:
+			colored = false;
+			break;
+		}
+
+		if (colored) {
+			snprintf(buffer, 0xFF,
+			         "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]",
+			         color[0], color[1], color[2]);
+			output.write(buffer, 29);
+		}
+		output.write(&character, 1);
+		if (colored) {
+			snprintf(buffer, 0xFF,
+			         "\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]");
+			output.write(buffer, 24);
+		}
+	}
+}
+
 s8 TCardSave::waitForStop(TEProgress param_1)
 {
 	s8 result = -1;
@@ -352,8 +432,8 @@ s8 TCardSave::waitForStop(TEProgress param_1)
 	case 0:
 		setMessage(unkA0, 0x200, getCurMessageID());
 		setMessage(unkA4, 0x200, getCurMessageID());
-		setMessage(unkD8, 0x200, 0);
-		setMessage(unkDC, 0x200, 0);
+		setMessage(unkD8, 0x200, 1);
+		setMessage(unkDC, 0x200, 1);
 
 		unkA4->hide();
 		unk48->getPane()->show();
@@ -364,7 +444,8 @@ s8 TCardSave::waitForStop(TEProgress param_1)
 
 		if (unk310 == PROGRESS_UNK4 || unk310 == PROGRESS_UNK3
 		    || unk310 == PROGRESS_UNK5 || unk310 == PROGRESS_UNKC
-		    || unk310 == PROGRESS_UNKD || unk310 == PROGRESS_UNK2D) {
+		    || unk310 == PROGRESS_UNKD || unk310 == PROGRESS_UNK2D
+		    || unk310 == PROGRESS_UNK35) {
 			unkC4->getPane()->show();
 		} else {
 			unkC4->getPane()->hide();
@@ -676,18 +757,22 @@ s8 TCardSave::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 				}
 			} else {
 				if (getBookmarkInfo().unk0 == 1) {
+					J2DTextBox* textBox = unk124;
 					const char* message = SMSGetMessageData(unk2E4, 0);
-					strncpy(unk124->getStringPtr(), message, 0x14);
+					strncpy(textBox->getStringPtr(), message, 0x14);
+					textBox = unk128;
 					message = SMSGetMessageData(unk2E4, 0);
-					strncpy(unk128->getStringPtr(), message, 0x14);
+					strncpy(textBox->getStringPtr(), message, 0x14);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
 				} else if (getBookmarkInfo().unk18 == 0) {
+					J2DTextBox* textBox = unk124;
 					const char* message = SMSGetMessageData(unk2E4, 0x19);
-					strncpy(unk124->getStringPtr(), message, 0x14);
+					strncpy(textBox->getStringPtr(), message, 0x14);
+					textBox = unk128;
 					message = SMSGetMessageData(unk2E4, 0x19);
-					strncpy(unk128->getStringPtr(), message, 0x14);
+					strncpy(textBox->getStringPtr(), message, 0x14);
 					unk128->show();
 					unk134->hide();
 					unk138->hide();
@@ -1126,23 +1211,23 @@ s8 TCardSave::waitForSelect2(TEProgress param_1, TEProgress param_2)
 		u32 messageID = cMessageID[unk310];
 		switch (unk308) {
 		case 1:
-			messageID = 0x1C;
+			messageID = 0x24;
 			break;
 		case 2:
-			messageID = 0x1D;
+			messageID = 0x25;
 			break;
 		case 3:
-			messageID = 0x1E;
+			messageID = 0x26;
 			break;
 		case 4:
-			messageID = 0x1F;
+			messageID = 0x27;
 			break;
 		case 5:
-			messageID = 0x20;
+			messageID = 0x28;
 			break;
 		}
 
-		setMessage(unk190, 0x200, (u16)messageID);
+		setMessageC(unk190, (long)messageID, 0x200);
 		setMessage(unk194, 0x200, (u16)messageID);
 
 		unk194->hide();
@@ -1249,8 +1334,8 @@ s8 TCardSave::waitForSelect3(TEProgress param_1, TEProgress param_2,
 		                        0);
 
 		unk204->hide();
-		setMessage(unk200, 0x200, 0x21);
-		setMessage(unk204, 0x200, 0x21);
+		setMessage(unk200, 0x200, 0x29);
+		setMessage(unk204, 0x200, 0x29);
 
 		unk1E8[0][1]->hide();
 		unk1D0[0][0]->hide();
@@ -1289,14 +1374,22 @@ s8 TCardSave::waitForSelect3(TEProgress param_1, TEProgress param_2,
 			unk22C->show();
 
 			if (getBookmarkInfo().unk0 == 1) {
-				strncpy(unk208->getStringPtr(), "こわれています", 0x14);
-				strncpy(unk20C->getStringPtr(), "こわれています", 0x14);
+				J2DTextBox* textBox = unk208;
+				const char* message = SMSGetMessageData(unk2E4, 0);
+				strncpy(textBox->getStringPtr(), message, 0x14);
+				textBox = unk20C;
+				message = SMSGetMessageData(unk2E4, 0);
+				strncpy(textBox->getStringPtr(), message, 0x14);
 				unk20C->show();
 				unk210->hide();
 				unk214->hide();
 			} else if (getBookmarkInfo().unk18 == 0) {
-				strncpy(unk208->getStringPtr(), "NEW", 0x14);
-				strncpy(unk20C->getStringPtr(), "NEW", 0x14);
+				J2DTextBox* textBox = unk208;
+				const char* message = SMSGetMessageData(unk2E4, 0x19);
+				strncpy(textBox->getStringPtr(), message, 0x14);
+				textBox = unk20C;
+				message = SMSGetMessageData(unk2E4, 0x19);
+				strncpy(textBox->getStringPtr(), message, 0x14);
 				unk20C->show();
 				unk210->hide();
 				unk214->hide();
@@ -1329,7 +1422,7 @@ s8 TCardSave::waitForSelect3(TEProgress param_1, TEProgress param_2,
 		break;
 
 	case 2: {
-		u8 oldSelect = unk2E9;
+		s8 oldSelect = unk2E9;
 		u32 input    = unk270->mEnabledFrameMeaning;
 
 		if (input & TMarioGamePad::MEANING_MENU_A) {
@@ -1434,14 +1527,22 @@ s8 TCardSave::waitForAnyKeyBM(TEProgress param_1)
 			unk130->show();
 
 			if (getBookmarkInfo().unk0 == 1) {
-				strncpy(unk124->getStringPtr(), "こわれています", 0x14);
-				strncpy(unk128->getStringPtr(), "こわれています", 0x14);
+				J2DTextBox* textBox = unk124;
+				const char* message = SMSGetMessageData(unk2E4, 0);
+				strncpy(textBox->getStringPtr(), message, 0x14);
+				textBox = unk128;
+				message = SMSGetMessageData(unk2E4, 0);
+				strncpy(textBox->getStringPtr(), message, 0x14);
 				unk128->show();
 				unk134->hide();
 				unk138->hide();
 			} else if (getBookmarkInfo().unk18 == 0) {
-				strncpy(unk124->getStringPtr(), "NEW", 0x14);
-				strncpy(unk128->getStringPtr(), "NEW", 0x14);
+				J2DTextBox* textBox = unk124;
+				const char* message = SMSGetMessageData(unk2E4, 0x19);
+				strncpy(textBox->getStringPtr(), message, 0x14);
+				textBox = unk128;
+				message = SMSGetMessageData(unk2E4, 0x19);
+				strncpy(textBox->getStringPtr(), message, 0x14);
 				unk128->show();
 				unk134->hide();
 				unk138->hide();
@@ -1643,7 +1744,7 @@ void TCardSave::execMovement_()
 			break;
 
 		if (status == CARD_RESULT_READY) {
-			s8 r = waitForChoice(PROGRESS_UNK9, PROGRESS_UNK4, 1);
+			s8 r = waitForChoice(PROGRESS_UNK9, PROGRESS_UNK35, 1);
 			if (r == 0) {
 				unk2E0 = 0;
 				gpCardManager->format();
@@ -1708,7 +1809,7 @@ void TCardSave::execMovement_()
 
 	case PROGRESS_UNKB:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
-			gpCardManager->getBookmarkInfos(&unk278[0]);
+			unk310 = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNKE:
@@ -1809,7 +1910,7 @@ void TCardSave::execMovement_()
 	case PROGRESS_UNK15: {
 		s32 status = gpCardManager->getLastStatus();
 		if (status == CARD_RESULT_READY) {
-			s32 r = waitForChoiceBM(PROGRESS_UNK16, PROGRESS_UNK1, 1);
+			s32 r = waitForChoiceBM(PROGRESS_UNK16, PROGRESS_UNK1, 0);
 			gpCardManager->probe();
 			if (r == 0) {
 				TCardBookmarkInfo& bm = getBookmarkInfo();
@@ -1927,7 +2028,7 @@ void TCardSave::execMovement_()
 
 	case PROGRESS_UNK18:
 		if (waitForAnyKeyBM(PROGRESS_UNK2) != -1)
-			gpCardManager->getBookmarkInfos(&unk278[0]);
+			unk310 = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNK2A:
@@ -2018,7 +2119,7 @@ void TCardSave::execMovement_()
 	case PROGRESS_UNK33: {
 		s32 status = gpCardManager->getLastStatus();
 		if (status == CARD_RESULT_READY) {
-			s32 r = waitForChoiceBM(PROGRESS_UNK16, PROGRESS_UNK1, 1);
+			s32 r = waitForChoiceBM(PROGRESS_UNK16, PROGRESS_UNK1, 0);
 			gpCardManager->probe();
 			if (r == 0) {
 				TCardBookmarkInfo& bm = getBookmarkInfo();

@@ -279,6 +279,9 @@ void TTobiPuku::reset()
 
 void TTobiPuku::moveObject()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_moveObject[8];
+	(void)framePad_8_moveObject;
 	mTurnSpeed = unk19C->mSLTurnSpeedLow.get();
 	if (mBoundSw && TTobiPuku::isInhibitedForceMove())
 		hitWall();
@@ -442,6 +445,9 @@ bool TTobiPuku::isRoll()
 
 void TTobiPuku::behaveToWater(THitActor* param_1)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_behaveToWater[8];
+	(void)framePad_8_behaveToWater;
 	if (mSpine->getCurrentNerve() != &TNerveTobiPukuHitWater::theNerve()) {
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_FLY, &mPosition, 0,
 		                                nullptr, 0, 4);
@@ -494,6 +500,9 @@ bool TTobiPuku::isReachedToGoalXZ()
 
 void TTobiPuku::generateEffectColumWater()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_generateEffectColumWater[8];
+	(void)framePad_8_generateEffectColumWater;
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
@@ -585,6 +594,9 @@ void TTobiPuku::genEventCoin() { isDeadBck(); }
 
 void TTobiPuku::changeOut()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_changeOut[8];
+	(void)framePad_8_changeOut;
 	offLiveFlag(LIVE_FLAG_HIDDEN);
 	mPosition = mJuiceBlock->mPosition;
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
@@ -690,6 +702,9 @@ void TMoePuku::calcRootMatrix()
 
 void TMoePuku::hitWater()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_hitWater[8];
+	(void)framePad_8_hitWater;
 	TTobiPuku::hitWater();
 
 	MtxPtr mtx = mMActor->getModel()->getAnmMtx(1);
@@ -771,6 +786,9 @@ void TMoePuku::setJumpStartAnm()
 
 void TMoePuku::generateEffectColumWater()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_generateEffectColumWater[8];
+	(void)framePad_8_generateEffectColumWater;
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 

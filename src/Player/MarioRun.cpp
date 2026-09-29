@@ -35,7 +35,7 @@ BOOL TMario::considerRotateStart()
 	return 0;
 }
 
-static int unknown_inline_10(TMario* mario)
+static inline int unknown_inline_10(TMario* mario)
 {
 	if ((mario->mInput & 0x8000)
 	    && mario->mForwardVel > mario->mRunParams.mDoJumpCatchSp.get()
@@ -76,7 +76,7 @@ void TMario::clashStandard(u32, u32) { }
 
 void TMario::changePlayerPower(f32, u32, u32) { }
 
-BOOL TMario::isRunningSlipStart()
+inline BOOL TMario::isRunningSlipStart()
 {
 	if ((mInput & 0x8) && (mForwardVel <= 0.1f || isFrontSlip(0)))
 		return true;
@@ -84,7 +84,7 @@ BOOL TMario::isRunningSlipStart()
 		return false;
 }
 
-BOOL TMario::isRunningTurnning()
+inline BOOL TMario::isRunningTurnning()
 {
 	if (isUpperPumpingStyle())
 		return false;
@@ -111,7 +111,7 @@ bool TMario::isRunningInWater()
 	return false;
 }
 
-f32 TMario::getRunningInWaterBrake()
+inline f32 TMario::getRunningInWaterBrake()
 {
 	return 1.0f
 	       - ((mFloorPosition.z - mPosition.y) / mRunParams.mSwimDepth.get())
@@ -472,7 +472,7 @@ void TMario::slopeProcess()
 
 void TMario::doSlipping(f32) { }
 
-BOOL TMario::doStopping()
+inline BOOL TMario::doStopping()
 {
 	BOOL zeroed = false;
 	f32 v       = FConverge(mForwardVel, 0.0f, 1.0f, 1.0f);
@@ -548,7 +548,7 @@ TMario::TSurfingParams* TMario::getSurfingParamsWater()
 	}
 }
 
-TMario::TSurfingParams* TMario::getSurfingParamsGround()
+inline TMario::TSurfingParams* TMario::getSurfingParamsGround()
 {
 	switch (mSurfGessoType) {
 	case SURF_GESSO_TYPE_YELLOW:
@@ -996,7 +996,7 @@ BOOL TMario::surfing()
 	return 0;
 }
 
-BOOL TMario::toroccoing()
+inline BOOL TMario::toroccoing()
 {
 	soundTorocco();
 	toroccoEffect();

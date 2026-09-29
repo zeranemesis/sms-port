@@ -11,8 +11,8 @@
 #include <MSound/MSoundBGM.hpp>
 
 // TODO: fake!! use a real inline!
-static void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
-                                 u32 param_4)
+static inline void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
+                                        u32 param_4)
 {
 	SMSGetMSound()->startForceJumpSound(param_1, param_2, param_3, param_4);
 }
@@ -717,9 +717,6 @@ u32 TMario::startVoice(u32 param_1)
 
 u32 TMario::startVoiceIfNoVoice(u32 param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_startVoiceIfNoVoice[8];
-	(void)framePad_8_startVoiceIfNoVoice;
 	if (SMSGetMSound()->getMarioVoiceID(0) == -1)
 		return startVoice(param_1);
 

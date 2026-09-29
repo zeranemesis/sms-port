@@ -2189,7 +2189,7 @@ void TGCConsole2::startDisappearTank()
 	unk270->setPanePosition(40, start, mid, end);
 	unk26C->setPanePosition(40, start, mid, end);
 
-	if (gpMarioOriginal->mYoshi->mState != TYoshi::STATE_MOUNTED) {
+	if (gpMarioOriginal->mYoshi->mState == TYoshi::STATE_MOUNTED) {
 		unk324->hide();
 		for (int i = 0; i < 4; ++i)
 			unk314[i]->hide();
@@ -2812,9 +2812,10 @@ bool TGCConsole2::startAppearBalloon(u32 messageID, bool autoClose)
 	// TODO: the ROM copies the contents rect twice here, as if
 	// J2DWindow::getContentsBounds() returned a JUTRect by value.
 	JUTRect contents(unk3B0->getContentsBounds());
+	JUTRect contentsCopy(contents);
 	unk3B0->resize(unk3BC.getWidth(),
-	               unk3BC.getHeight() - contents.getHeight());
-	unk3B0->add(0, contents.getHeight());
+	               unk3BC.getHeight() - contentsCopy.getHeight());
+	unk3B0->add(0, contentsCopy.getHeight());
 
 	((JSUMemoryOutputStream*)unk3D8)->setBuffer(unk3B4->getStringPtr(), 0x400);
 	((JSUMemoryOutputStream*)unk3DC)->setBuffer(unk3B8->getStringPtr(), 0x400);
@@ -2823,8 +2824,9 @@ bool TGCConsole2::startAppearBalloon(u32 messageID, bool autoClose)
 	((JSUMemoryInputStream*)unk3D4)->setBuffer(messageText, 0x400);
 
 	unk3E0 = messageID;
+	u32 messageLength = strlen((const char*)messageText);
 	unk3F8 = autoClose;
-	unk3E4 = (s32)(strlen((const char*)messageText) * unk3EC + unk3E8);
+	unk3E4 = (s32)(messageLength * unk3EC + unk3E8);
 
 	if (unk3E0 == 0x2C)
 		unk3E4 = 0x96;
@@ -2836,7 +2838,7 @@ bool TGCConsole2::startAppearBalloon(u32 messageID, bool autoClose)
 	unk14 = 0;
 	unk10 = 1;
 
-	s32 soundID = scNozzleSoundList[(u8)entry->unk8[0]];
+	s32 soundID = scNozzleSoundList[(u8)entry->unk8[2]];
 	if (soundID != -1 && SMSGetMSound()->gateCheck(soundID))
 		MSoundSESystem::MSoundSE::startSoundSystemSE(soundID, 0, nullptr, 0);
 
@@ -3092,6 +3094,8 @@ void TGCConsole2::setTimer(s32 param_1)
 				timerValue = unk514 - timerValue;
 			}
 		}
+	} else {
+		timerValue = param_1;
 	}
 
 	// Cap at 5999.99 seconds (99:59.99)
@@ -3237,7 +3241,11 @@ bool TGCConsole2::processAppearStar(int param_1)
 	for (int i = 0; i < 3; ++i) {
 		if (param_1 == i * 6 + 28) {
 			if (i == 2) {
-				if ((!unk50 && shines >= 100) || (unk50 && shines > 100))
+				if ((!unk50 && shines >= 100)
+				    || (unk50
+				        && (gpMarDirector->checkDemoFlag(0x10)
+				                ? shines > 99
+				                : shines > 100)))
 					unk134[i]->getPane()->show();
 			} else {
 				unk134[i]->getPane()->show();

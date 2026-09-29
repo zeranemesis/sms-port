@@ -8,7 +8,21 @@
 
 class TWireTrap;
 
-// TODO: nerve bodies are not yet reconstructed (execute() logic still unknown).
+// TWireTrapParams: TSpineEnemyParams plus the three params the wire trap
+// nerve chain reads.  Offsets recovered from TWireTrapManager::load, which
+// news the object (0xE4 bytes) and then constructs the three TParamRTs at
+// 0xA8/0xBC/0xD0 with the keycodes/names/defaults below.  The constructor is
+// out of line in the .cpp: mario.MAP lists it as UNUSED, and UNUSED symbols
+// are never weak.
+class TWireTrapParams : public TSpineEnemyParams {
+public:
+	TWireTrapParams(const char* path);
+
+	/* 0xA8 */ TParamRT<f32> mInWaterPowerRate;
+	/* 0xBC */ TParamRT<s32> mScaleTimerMax;
+	/* 0xD0 */ TParamRT<s32> mGoTimerMax;
+};
+
 DECLARE_NERVE(TNerveWireTrapGoWait, TLiveActor)
 DECLARE_NERVE(TNerveWireTrapWait, TLiveActor)
 DECLARE_NERVE(TNerveWireTrapSearch, TLiveActor)
@@ -21,9 +35,8 @@ class TWireTrapManager : public TEnemyManager {
 public:
 	TWireTrapManager(const char* name = "ワイヤートラップマネージャ");
 
-	virtual ~TWireTrapManager();
+	virtual ~TWireTrapManager() { }
 	virtual void load(JSUMemoryInputStream&);
-	virtual TSpineEnemy* createEnemyInstance() { return nullptr; } // TODO
 
 	void createModelData();
 };
@@ -32,7 +45,7 @@ class TWireTrap : public TSpineEnemy {
 public:
 	TWireTrap(const char* name = "ワイヤートラップ");
 
-	virtual ~TWireTrap();
+	virtual ~TWireTrap() { }
 	virtual void load(JSUMemoryInputStream&);
 	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();
@@ -45,13 +58,72 @@ public:
 	TWireBinder* getWireBinder() const;
 	const JGeometry::TVec3<f32>& getWireDir() const;
 
-private:
-	// TODO: remaining TWireTrap fields (mode/timer at 0x160/0x164 relative to
-	// TSpineEnemy base, plus scale/vec fields around 0x24-0x5c) are not yet
-	// reconstructed; only functions not touching them are implemented so far.
+	// TODO: bodies reconstructed from the call sites in the nerve chain and
+	// from mario.MAP, which lists all of these as UNUSED (fully inlined).
+	// doScaleUp/doScaleDown are the bodies of the matching nerve execute().
+	void setMoveMode(int mode);
+	bool isReflect() const;
+	bool isStartWire() const;
+	bool isEndWire() const;
+	f32 getRangePosInWire() const;
+	f32 getWaterPow() const;
+	void emitEffects();
+	void updateCollision();
+	void doResetToEdge();
+	bool doScaleDown();
+	BOOL doScaleUp();
+	// UNUSED in the map (it only exists so the nerve bodies read well); the
+	// target inlines it into the nerves, so it must stay inlinable here.
+	void doSearchMove();
+	void doOnewayMove();
+	void doReturnMove();
+	void calcMomentum();
+	JGeometry::TVec3<f32> getDirAtWirePos() const;
+	void initWire();
+	void initParticle();
+	void initCollision();
+	void initThisColor(const GXColorS10*);
+	// TODO: TWireTrap* parameter and the by-const-ref Vec arguments come
+	// straight from the mangled name; the bodies are not reconstructed yet.
+	void behaveHitWireTrap(TWireTrap*, const JGeometry::TVec3<f32>&,
+	                       const JGeometry::TVec3<f32>&);
+	void behaveHitWater(THitActor*);
+
+	// TODO: mario.MAP also lists a non-const `getWireBinder()` (8 bytes,
+	// UNUSED).  Declaring that overload here would make the non-const call
+	// sites in checkHitActors()/calcRootMatrix() bind to it, but the target
+	// calls the const overload everywhere, so it is deliberately left out.
+
+	// fabricated accessor
+	TWireTrapParams* getWireTrapParams() const
+	{
+		return (TWireTrapParams*)getSaveParam();
+	}
+	// TODO: reconstructed from codegen.  TWireTrap::moveObject re-reads
+	// mScaleTimer for the decrement after testing it, which is the signature
+	// of a by-value getter (the return value is force-loaded into a
+	// compiler temporary rather than shared with the caller's read).
+	int getScaleTimer() const { return mScaleTimer; }
+	void setScaleTimer(int timer) { mScaleTimer = timer; }
+
 public:
-	/* 0x150 */ u8 unk150[0x24];
+	/* 0x150 */ f32 unk150;
+	/* 0x154 */ f32 unk154;
+	/* 0x158 */ f32 unk158;
+	/* 0x15C */ f32 unk15C;
+	/* 0x160 */ int mMoveMode;
+	/* 0x164 */ int mScaleTimer;
+	/* 0x168 */ f32 mScale;
+	/* 0x16C */ int mSearchTimer;
+	// TODO: 0x170 is set to +/-1.0 (or the sign of the Mario-to-wire dot
+	// product) by load()/doSearchMove(), negated by TNerveWireTrapReturnMove
+	// and fed to TWireBinder::getPoint() by TNerveWireTrapOnewayMoveEnd as
+	// "which end of the wire am I at".  "mWireLength" is a guess.
+	/* 0x170 */ f32 mWireLength;
 	/* 0x174 */ int mWaitTime; // compared against the spine timer in TNerveWireTrapWait
+	/* 0x178 */ f32 mMomentum;
+	/* 0x17C */ f32 mScaleRate;
+	/* 0x180 */ s16 mWireNumber;
 };
 
 #endif

@@ -217,7 +217,7 @@ public:
 	                                 const JGeometry::TVec3<f32>&) const;
 	JPABaseEmitter* emitAndScale(s32, u8, const JGeometry::TVec3<f32>*) const;
 	void emitAndRotateScale(s32, u8, const JGeometry::TVec3<f32>*) const;
-	static void emitAndSRT(s32, u8, const JGeometry::TVec3<f32>*,
+			static void emitAndSRT(s32, u8, const JGeometry::TVec3<f32>*,
 	                       const JGeometry::TVec3<f32>&,
 	                       const JGeometry::TVec3<f32>&);
 	void emitColumnWater();

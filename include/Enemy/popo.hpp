@@ -2,6 +2,8 @@
 #define ENEMY_POPO_HPP
 
 #include <Enemy/WalkerEnemy.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JGadget/std-list.hpp>
 
 // ============= params =============
 
@@ -22,7 +24,8 @@ public:
 	f32 getWaterScaleMax() const { return mSLWaterScaleMax.get(); }
 	f32 getThrownGravity() const { return mSLThrownGravity.get(); }
 	f32 getPumpRate() const { return mSLPumpRate.get(); }
-	s32 getLevelLimit() const { return mSLLevelLimit.get(); }
+	// NOTE: the binary stores a float here (lfs @1.2 / stfs), not an int.
+	f32 getLevelLimit() const { return mSLLevelLimit.get(); }
 	f32 getScaleRate() const { return mSLScaleRate.get(); }
 
 	/* 0x32C */ TParamRT<f32> mSLMoveDist;
@@ -38,13 +41,15 @@ public:
 	/* 0x3F4 */ TParamRT<f32> mSLWaterScaleMax;
 	/* 0x408 */ TParamRT<f32> mSLThrownGravity;
 	/* 0x41C */ TParamRT<f32> mSLPumpRate;
-	/* 0x430 */ TParamRT<s32> mSLLevelLimit;
+	/* 0x430 */ TParamRT<f32> mSLLevelLimit;
 	/* 0x444 */ TParamRT<f32> mSLScaleRate;
 };
 
 // ============= manager =============
 
 class TPopo;
+
+class TWaterEmitInfo;
 
 class TPopoManager : public TSmallEnemyManager {
 public:
@@ -56,9 +61,34 @@ public:
 	virtual void createModelData();
 	virtual void initSetEnemies();
 	virtual TSpineEnemy* createEnemyInstance();
+
+	// fabricated
+	TPopoSaveLoadParams* getSaveParam2() const
+	{
+		return (TPopoSaveLoadParams*)unk38;
+	}
+	TWaterEmitInfo* getWaterEmitInfo1() const { return unk64; }
+	TWaterEmitInfo* getWaterEmitInfo2() const { return unk68; }
+
+public:
+	/* 0x60 */ u8 unk60;
+	/* 0x64 */ TWaterEmitInfo* unk64;
+	/* 0x68 */ TWaterEmitInfo* unk68;
 };
 
 // ============= collision =============
+
+// fabricated: the "敵グループ" name-ref that TPopo::init registers the
+// collision actor with resolves to a TNameRef subclass carrying a JGadget
+// list of the registered objects at +0x10.
+class TEnemyNameRefGroup : public JDrama::TNameRef {
+public:
+	TEnemyNameRefGroup(const char* name)
+	    : TNameRef(name)
+	{
+	}
+	/* 0x10 */ JGadget::TList_pointer_void mObjects;
+};
 
 class TPopoCollision : public THitActor {
 public:
@@ -70,6 +100,12 @@ public:
 	// TODO: 2 UNUSED functions found in mario.MAP that were not reconstructed
 	// yet: kill__14TPopoCollisionFv (size 0x10), checkHit__14TPopoCollisionFv
 	// (size 0xa4). Likely inlined into receiveMessage.
+
+	// fabricated
+	THitActor* getOwner() const { return mOwner; }
+	void setOwner(THitActor* owner) { mOwner = owner; }
+
+	/* 0x68 */ THitActor* mOwner;
 };
 
 // ============= instance =============
@@ -109,6 +145,7 @@ public:
 	{
 		return (TPopoSaveLoadParams*)getSaveParam();
 	}
+	f32 getUnk1B8() const { return unk1B8; }
 
 	static bool mRollSw;
 	static bool mTriggerSw;
@@ -130,15 +167,18 @@ public:
 	static bool mLevelShootSw;
 
 public:
-	/* 0x194 */ s32 unk194;
+	/* 0x194 */ TPopoSaveLoadParams* unk194;
 	/* 0x198 */ f32 unk198;
 	/* 0x19C */ s32 unk19C;
 	/* 0x1A0 */ f32 unk1A0;
-	/* 0x1A4 */ u8 unk1A4[0x10];
-	/* 0x1B4 */ u8 unk1B4[4];
-	/* 0x1B8 */ f32 unk1B8[5];
+	/* 0x1A4 */ bool unk1A4;
+	/* 0x1A8 */ JGeometry::TVec3<f32> unk1A8;
+	/* 0x1B4 */ bool unk1B4;
+	/* 0x1B8 */ f32 unk1B8;
+	/* 0x1BC */ f32 unk1BC[4];
 	/* 0x1CC */ u8 unk1CC;
-	/* 0x1CD */ u8 unk1CD[0x6F];
+	/* 0x1CD */ bool unk1CD;
+	/* 0x1CE */ u8 unk1CE[0x6E];
 	/* 0x23C */ TPopoCollision* unk23C;
 };
 
