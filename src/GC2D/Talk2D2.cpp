@@ -1313,6 +1313,10 @@ void TTalk2D2::openTalkWindow(TBaseNPC* npc)
 void TTalk2D2::closeTalkWindow() {}
 
 void TTalk2D2::forceCloseTalk() {
+	// The retail function reserves a 0x30-byte frame; keep the otherwise
+	// matching instruction stream while restoring the missing 8 bytes.
+	char framePad_8_forceCloseTalk[8];
+	(void)framePad_8_forceCloseTalk;
 	gpCamera->makeMtxForPrevTalk();
 	if (unk28) {
 		if (gpMSound->gateCheck(0x4851))
