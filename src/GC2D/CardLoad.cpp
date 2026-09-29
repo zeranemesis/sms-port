@@ -980,7 +980,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 // cases to the front, and making the field unsigned all fail to flip it.
 bool TCardLoad::titleDraw()
 {
-	switch (unk18) {
+	switch ((u32)unk18) {
 	case 0:
 		unk18 = 1;
 		break;
