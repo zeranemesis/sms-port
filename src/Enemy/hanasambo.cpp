@@ -882,5 +882,3 @@ BOOL TNerveSamboHeadRecoverWater::execute(TSpineBase<TLiveActor>* spine) const
 		return TRUE;
 	return FALSE;
 }
-
-\r\n
