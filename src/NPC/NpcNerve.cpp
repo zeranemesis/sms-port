@@ -8,6 +8,17 @@
 #include <Player/MarioAccess.hpp>
 #include <NPC/NpcBase.hpp>
 
+static inline void doThing(TBaseNPC::TNpcUnk22CStruct** param_1)
+{
+	int maxFrame = TBaseNPC::mPtrSaveNormal->mSLGraphWaitMaxFrame.get();
+	int minFrame = TBaseNPC::mPtrSaveNormal->mSLGraphWaitMinFrame.get();
+	TBaseNPC::TNpcUnk22CStruct* timer = *param_1;
+
+	timer->unk0 = 0;
+	int rnd = rand() * (1.f / (RAND_MAX + 1)) * (maxFrame - minFrame);
+	timer->unk4 = 1 + minFrame + rnd;
+}
+
 DEFINE_NERVE(TNerveNPCGraphWander, TLiveActor)
 {
 	TBaseNPC* self = (TBaseNPC*)spine->getBody();
@@ -77,7 +88,7 @@ DEFINE_NERVE(TNerveNPCGraphWait, TLiveActor)
 	TBaseNPC* self = (TBaseNPC*)spine->getBody();
 
 	if (spine->getTime() == 0)
-		self->unk22C->startGraphWait();
+		doThing(&self->unk22C);
 
 	if (self->getMarchSpeed() < 0.001f) {
 		if (self->unk22C->doThing2()) {
