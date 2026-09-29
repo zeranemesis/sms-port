@@ -24,12 +24,6 @@
 
 JGeometry::TVec3<f32> TSelectShineManager::cCenter;
 
-static inline f32 calcBezier(f32 t, f32 p0, f32 p1, f32 p2)
-{
-	f32 omt = 1.0f - t;
-	return p0 * (omt * omt) + p1 * (2.0f * omt * t) + p2 * (t * t);
-}
-
 TSelectShine::TSelectShine(J3DModelData* modelData, J3DAnmColor* anmColor,
                            JPAEmitterManager* emitterManager,
                            JGeometry::TVec3<f32>& pos, s16 param5, u8 param6,
@@ -121,103 +115,133 @@ TSelectShine::~TSelectShine() { }
 
 void TSelectShine::move()
 {
-	f32 t = unk28;
-	f32 splineY;
-	if (t < 1.0f) {
-		f32 amp  = unk2c;
-		f32 amp9 = amp * 0.9f;
-		splineY  = calcBezier(t, 0.0f, amp9, amp);
-	} else if (t < 2.0f) {
-		f32 u    = t - 1.0f;
-		f32 amp  = unk2c;
-		f32 amp9 = amp * 0.9f;
-		splineY  = calcBezier(u, amp, amp9, 0.0f);
-	} else if (t < 3.0f) {
-		f32 u    = t - 2.0f;
-		f32 amp  = -unk2c;
-		f32 amp9 = amp * 0.9f;
-		splineY  = calcBezier(u, 0.0f, amp9, amp);
-	} else if (t < 4.0f) {
-		f32 u    = t - 3.0f;
-		f32 amp  = -unk2c;
-		f32 amp9 = amp * 0.9f;
-		splineY  = calcBezier(u, amp, amp9, 0.0f);
-	} else {
-		splineY = unk18.y;
+	const f32 phase = unk28;
+	f32 eased = unk18.y;
+	if (phase < 1.0f) {
+		const f32 remain = 1.0f - phase;
+		f32 deltaScaled = unk2c * 0.9f;
+		f32 cross = 2.0f * remain;
+		const f32 remainSquared = remain * remain;
+		cross *= phase;
+		cross *= deltaScaled;
+		cross += 0.0f * remainSquared;
+		cross += unk2c * (phase * phase);
+		eased = cross;
+	} else if (phase < 2.0f) {
+		const f32 t = phase - 1.0f;
+		const f32 remain = unk2c - t;
+		f32 deltaScaled = unk2c * 0.9f;
+		f32 cross = 2.0f * remain;
+		const f32 remainSquared = remain * remain;
+		cross *= t;
+		cross *= deltaScaled;
+		cross += 0.0f * remainSquared;
+		cross += unk2c * (t * t);
+		eased = cross;
+	} else if (phase < 3.0f) {
+		const f32 t = phase - 2.0f;
+		const f32 remain = unk2c - t;
+		const f32 negativeVelocity = -unk2c;
+		f32 deltaScaled = negativeVelocity * 0.9f;
+		f32 cross = 3.0f * remain;
+		const f32 remainSquared = remain * remain;
+		cross *= t;
+		cross *= deltaScaled;
+		cross += 0.0f * remainSquared;
+		cross += negativeVelocity * (t * t);
+		eased = cross;
+	} else if (phase < 4.0f) {
+		const f32 t = phase - 3.0f;
+		const f32 remain = unk2c - t;
+		const f32 negativeVelocity = -unk2c;
+		f32 deltaScaled = negativeVelocity * 0.9f;
+		f32 cross = 4.0f * remain;
+		const f32 remainSquared = t * t;
+		cross *= t;
+		cross *= deltaScaled;
+		cross += negativeVelocity * (remain * remain);
+		cross += 0.0f * remainSquared;
+		eased = cross;
 	}
-	unk18.y = splineY;
+	unk18.y = eased;
 
-	MtxPtr modelMtx = mModel->getBaseTRMtx();
-	JGeometry::TVec3<f32> world;
-	world = mPos + unk18;
-	modelMtx[0][3] = world.x;
-	modelMtx[1][3] = world.y;
-	modelMtx[2][3] = world.z;
+	MtxPtr baseMtx = mModel->getBaseTRMtx();
+	JGeometry::TVec3<f32> translated(mPos);
+	translated.add(unk18);
+	baseMtx[0][3] = translated.x;
+	baseMtx[1][3] = translated.y;
+	baseMtx[2][3] = translated.z;
 
-	s32 capped = static_cast<s32>(-0.05f * world.z);
-	s16 cap16  = static_cast<s16>(capped);
-	if (cap16 < 30)
-		capped = 30;
+	s32 target = static_cast<s16>(translated.z * -0.05f);
+	if (target < 30)
+		target = 30;
 
 	if (unk48 != 0) {
-		unk3c = static_cast<s16>(unk3c - 8);
-		if (unk3c < static_cast<s16>(capped))
-			unk3c = static_cast<s16>(capped);
+		unk3c -= 8;
+		if (unk3c < target)
+			unk3c = target;
 	} else if (unk49 != 0) {
-		unk3c = static_cast<s16>(unk3c + 8);
-		s32 maxFrame = mAnmColor->getFrameMax() - 1;
-		if (unk3c > maxFrame)
-			unk3c = maxFrame;
+		unk3c += 8;
+		const s16 lastFrame = mAnmColor->getFrameMax() - 1;
+		if (unk3c > lastFrame)
+			unk3c = lastFrame;
 	} else {
-		unk3c = static_cast<s16>(capped);
-		if (static_cast<s16>(capped) < 0)
+		unk3c = target;
+		if (unk3c < 0)
 			unk3c = 0;
-		s16 maxFrame = mAnmColor->getFrameMax();
-		if (static_cast<s16>(capped) > maxFrame)
-			unk3c = maxFrame;
+		const s16 lastFrame = mAnmColor->getFrameMax();
+		if (unk3c > lastFrame)
+			unk3c = lastFrame;
 	}
 
-	s32 alpha = static_cast<s32>(
-	    255.0f * (1.0f - static_cast<f32>(unk3c / mAnmColor->getFrameMax())));
-
+	const s16 maxFrame = mAnmColor->getFrameMax();
+	const s32 alpha
+	    = static_cast<s32>((1.0f - static_cast<f32>(unk3c / maxFrame))
+	                       * 255.0f);
 	if (unk4a != 2) {
 		if (unk4a == 0) {
-			mEmitter0->setGlobalRTMatrix(modelMtx);
-			mEmitter1->setGlobalRTMatrix(modelMtx);
+			mEmitter0->setGlobalRTMatrix(baseMtx);
+			mEmitter1->setGlobalRTMatrix(baseMtx);
 			mEmitter0->setGlobalAlpha(static_cast<u8>(alpha));
 			mEmitter1->setGlobalAlpha(static_cast<u8>(alpha));
 		}
-		mEmitter2->setGlobalRTMatrix(modelMtx);
+		mEmitter2->setGlobalRTMatrix(baseMtx);
 		mEmitter2->setGlobalAlpha(static_cast<u8>(alpha));
 	}
 
 	if (unk24 != 0) {
-		f32 rate = SMSGetAnmFrameRate();
-		Mtx rotMtx;
-		PSMTXRotRad(rotMtx, 'y', 0.017453292f * static_cast<f32>(unk38) * rate);
+		const f32 frameRate = SMSGetAnmFrameRate();
+		const f32 angleStep = static_cast<f32>(static_cast<s8>(unk38)) * frameRate;
+		Mtx rotation;
+		PSMTXRotRad(rotation, 'y', angleStep * 0.017453292f);
 
-		f32 rate2 = SMSGetAnmFrameRate();
-		unk34 = static_cast<s32>(
-		    static_cast<f32>(unk34) + static_cast<f32>(unk38) * rate2);
+		const f32 accumulated
+		    = static_cast<f32>(unk34)
+		      + static_cast<f32>(static_cast<s8>(unk38)) * SMSGetAnmFrameRate();
+		unk34 = static_cast<s32>(accumulated);
 		if (unk34 > 360)
 			unk34 -= 360;
 		if (unk34 < 0)
 			unk34 += 360;
-		PSMTXConcat(modelMtx, rotMtx, modelMtx);
+		PSMTXConcat(baseMtx, rotation, baseMtx);
 	} else if (unk34 != 0) {
-		f32 rate = SMSGetAnmFrameRate();
-		s16 advance = static_cast<s16>(static_cast<f32>(unk38) * rate);
-		unk34 += advance;
+		const s32 delta = static_cast<s16>(
+		    static_cast<s32>(static_cast<f32>(static_cast<s8>(unk38)) * SMSGetAnmFrameRate()));
+		const s32 accumulated = unk34 + delta;
+		unk34 = accumulated;
+		s32 angle = delta;
 		if (unk34 > 360) {
-			advance = static_cast<s16>(advance - unk34 + 360);
+			angle = delta - unk34 + 360;
 			unk34 = 0;
 		}
-		Mtx rotMtx;
-		PSMTXRotRad(rotMtx, 'y', 0.017453292f * static_cast<f32>(advance));
-		PSMTXConcat(modelMtx, rotMtx, modelMtx);
+
+		Mtx rotation;
+		PSMTXRotRad(rotation, 'y', static_cast<f32>(static_cast<s16>(angle))
+		                               * 0.017453292f);
+		PSMTXConcat(baseMtx, rotation, baseMtx);
 	}
 
-	unk28 = unk28 + unk30;
+	unk28 += unk30;
 	if (unk28 > 4.0f)
 		unk28 = 0.0f;
 }
