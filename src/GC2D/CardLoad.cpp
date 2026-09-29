@@ -990,9 +990,10 @@ bool TCardLoad::titleDraw()
 			switch (unk248[i]) {
 			case 4:
 				if (unk258 > unk22E[i]) {
-					unk1D4[i]->getPane()->show();
-					JUTRect bounds = unk1D4[i]->getPane()->getBounds();
-					unk1D4[i]->setPaneAlpha(40, 180, 0);
+					TExPane*& pane = unk1D4[i];
+					pane->getPane()->show();
+					JUTRect bounds = pane->getPane()->getBounds();
+					pane->setPaneAlpha(40, 180, 0);
 					unk248[i] = 0;
 				}
 				break;
@@ -1046,6 +1047,7 @@ bool TCardLoad::titleDraw()
 	case 2: {
 		u16 alpha = unkF0->getPane()->getAlpha() + 1;
 		if (alpha > 255) {
+			alpha = 255;
 			bool any = true;
 			for (int i = 0; i < 18; ++i)
 				any &= unk1D4[i]->update();
@@ -1059,7 +1061,7 @@ bool TCardLoad::titleDraw()
 	} break;
 
 	case 4: {
-		for (int i = 0; i < 11; ++i) {
+		for (int i = 0; i < unk7D4; ++i) {
 			switch (unk222[i]) {
 			case 0:
 				if (unkF8[i]->update()) {
@@ -1070,10 +1072,10 @@ bool TCardLoad::titleDraw()
 
 			case 1:
 				unk20C[i] += 1;
-				if (unk20C[i] > 500) {
+				if (unk20C[i] > 600) {
 					JUTRect bounds = unkF8[i]->getPane()->getBounds();
 					unkF8[i]->setPaneAlpha(25, 0, 255);
-					unk222[i] = 3;
+					unk222[i] = 2;
 				}
 				break;
 
@@ -1086,12 +1088,12 @@ bool TCardLoad::titleDraw()
 
 			case 3:
 				++unk20C[i];
-				if (unk20C[i] > 300) {
+				if (unk20C[i] > 400) {
 					JUTRect local_124 = unkF8[i]->getPane()->getBounds();
 
 					unkF8[i]->setCenteredSize(
-					    25, local_124.getWidth() * 2, local_124.getHeight() * 2,
-					    local_124.getWidth(), local_124.getHeight());
+					    25, local_124.getWidth(), local_124.getHeight(),
+					    local_124.getWidth() * 2, local_124.getHeight() * 2);
 
 					unkF8[i]->setPaneAlpha(25, 255, 0);
 					unk222[i] = 0;
@@ -1114,7 +1116,9 @@ bool TCardLoad::titleDraw()
 		++unk258;
 	} break;
 
-	default:
+	case 5:
+	case 6:
+	case 7:
 		break;
 	}
 
