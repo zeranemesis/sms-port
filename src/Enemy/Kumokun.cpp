@@ -1150,9 +1150,7 @@ DEFINE_NERVE(TNerveKumokunWait, TLiveActor)
 
 DEFINE_NERVE(TNerveKumokunFreeze, TLiveActor)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
+	JGeometry::TVec3<f32> position;
 	TKumokun* self = (TKumokun*)spine->getBody();
 	if (spine->getTime() == 0) {
 		self->clearAnmStack();
@@ -1176,6 +1174,7 @@ DEFINE_NERVE(TNerveKumokunFreeze, TLiveActor)
 
 DEFINE_NERVE(TNerveKumokunPostFreeze, TLiveActor)
 {
+	JGeometry::TVec2<f32> position;
 	TKumokun* self = (TKumokun*)spine->getBody();
 	if (spine->getTime() == 0)
 		self->changeBck("kumo_hit_end");
