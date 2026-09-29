@@ -1313,10 +1313,13 @@ void TTalk2D2::openTalkWindow(TBaseNPC* npc)
 void TTalk2D2::closeTalkWindow() {}
 
 void TTalk2D2::forceCloseTalk() {
-	// The retail function reserves a 0x30-byte frame; keep the otherwise
-	// matching instruction stream while restoring the missing 8 bytes.
-	char framePad_8_forceCloseTalk[8];
-	(void)framePad_8_forceCloseTalk;
+	// Matching pad: the retail function uses a 0x30-byte frame.
+	// The 0x18-byte dead array reproduces MWCC's retail frame allocation
+	// without adding runtime instructions.
+	do {
+		unsigned char stackPadding[0x18];
+		(void)stackPadding;
+	} while (0);
 	gpCamera->makeMtxForPrevTalk();
 	if (unk28) {
 		if (gpMSound->gateCheck(0x4851))
