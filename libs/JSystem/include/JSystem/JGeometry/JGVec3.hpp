@@ -143,16 +143,12 @@ public:
 
 	// === arithmetic stuff ===
 
-#ifdef JGEOMETRY_TVEC3_ADD_OUT_OF_LINE
-	void add(const TVec3& operand);
-#else
 	void add(const TVec3& operand)
 	{
 		x += operand.x;
 		y += operand.y;
 		z += operand.z;
 	}
-#endif
 
 	void add(const TVec3& a, const TVec3& b)
 	{
