@@ -211,13 +211,13 @@ void TSelectShine::move()
 
 	if (unk24 != 0) {
 		const f32 frameRate = SMSGetAnmFrameRate();
-		const f32 angleStep = static_cast<f32>(unk38) * frameRate;
+		const f32 angleStep = static_cast<f32>(static_cast<s8>(unk38)) * frameRate;
 		Mtx rotation;
 		PSMTXRotRad(rotation, 'y', angleStep * 0.017453292f);
 
 		const f32 accumulated
 		    = static_cast<f32>(unk34)
-		      + static_cast<f32>(unk38) * SMSGetAnmFrameRate();
+		      + static_cast<f32>(static_cast<s8>(unk38)) * SMSGetAnmFrameRate();
 		unk34 = static_cast<s32>(accumulated);
 		if (unk34 > 360)
 			unk34 -= 360;
@@ -226,7 +226,7 @@ void TSelectShine::move()
 		PSMTXConcat(baseMtx, rotation, baseMtx);
 	} else if (unk34 != 0) {
 		const s32 delta = static_cast<s16>(
-		    static_cast<s32>(static_cast<f32>(unk38) * SMSGetAnmFrameRate()));
+		    static_cast<s32>(static_cast<f32>(static_cast<s8>(unk38)) * SMSGetAnmFrameRate()));
 		const s32 accumulated = unk34 + delta;
 		unk34 = accumulated;
 		s32 angle = delta;
