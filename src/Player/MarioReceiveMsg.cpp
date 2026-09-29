@@ -98,24 +98,25 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 
 	// Generic "Mario hit by enemy" thump sound.
 	if (sender->checkActorType(0x20000000)) {
+		const u32 senderType = sender->mActorType;
 		bool playThump = true;
-		if (sender->mActorType == 0x2000000E)
+		if (senderType - 0x20000000 == 0x0E)
 			playThump = false;
-		if (sender->mActorType == 0x2000000F)
+		if (senderType - 0x20000000 == 0x0F)
 			playThump = false;
-		if (sender->mActorType == 0x20000010)
+		if (senderType - 0x20000000 == 0x10)
 			playThump = false;
-		if (sender->mActorType == 0x20000011)
+		if (senderType - 0x20000000 == 0x11)
 			playThump = false;
-		if (sender->mActorType == 0x20000013)
+		if (senderType - 0x20000000 == 0x13)
 			playThump = false;
-		if (sender->mActorType == 0x2000001F)
+		if (senderType - 0x20000000 == 0x1F)
 			playThump = false;
-		if (sender->mActorType == 0x20000026)
+		if (senderType - 0x20000000 == 0x26)
 			playThump = false;
-		if (sender->mActorType == 0x20000022)
+		if (senderType - 0x20000000 == 0x22)
 			playThump = false;
-		if (sender->mActorType == 0x2000002A)
+		if (senderType - 0x20000000 == 0x2A)
 			playThump = false;
 
 		if (playThump == true)
