@@ -25,9 +25,10 @@ static bool is_near(f32 h00, f32 h01, f32 h10, f32 h11)
 
 u8 TPollutionObj::getDepthFromMap(int x, int z)
 {
+	const TBGCheckData* tmp;
+	const TBGCheckData* tmp2;
 	// TODO: inlines are wrong here!
 	(void)0;
-	const TBGCheckData* tmp;
 	f32 worldX = mLayer->getWorldPosX(x);
 	f32 worldZ = mLayer->getWorldPosZ(z);
 
