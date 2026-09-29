@@ -113,9 +113,7 @@ void MSBgmXFade::xFadeBgm(f32 param_1)
 
 void MSBgmXFade::xFadeBgmForce(f32 param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_xFadeBgmForce[8];
-	(void)framePad_8_xFadeBgmForce;
+	u32 timing[2];
 	u8 tmp = getTimingForce(param_1);
 	if (tmp != 0xff) {
 		MSBgm::setTrackVolume(0, scExp[17 - tmp], 0, 0);
