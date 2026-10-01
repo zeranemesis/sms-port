@@ -2,6 +2,7 @@
 #define MARIO_UTIL_SCREEN_UTIL_HPP
 
 #include <JSystem/JDrama/JDRViewObj.hpp>
+#include <JSystem/JGeometry/JGVec3.hpp>
 
 void SMS_FillScreenAlpha(u8);
 
@@ -20,6 +21,14 @@ public:
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
+	void setGateBlur(u8 type, u8 alpha, f32 scale,
+	                 JGeometry::TVec3<f32> direction)
+	{
+		unk15 = type;
+		unk1C = alpha;
+		unk50 = scale;
+		mBlurDirection = direction;
+	}
 	void setBlurDefaultValue();
 	void calcDashBlurValue();
 
@@ -52,9 +61,7 @@ public:
 	/* 0x54 */ f32 unk54;
 	/* 0x58 */ u8 unk58;
 	/* 0x59 */ u8 unk59;
-	/* 0x5C */ f32 unk5C;
-	/* 0x60 */ f32 unk60;
-	/* 0x64 */ f32 unk64;
+	/* 0x5C */ JGeometry::TVec3<f32> mBlurDirection;
 };
 
 class TScreenTexture;

@@ -26,7 +26,7 @@ public:
 	void makeMountain();
 
 	f32& heightAt(int x, int z) { return mHeightMap[x + z * mExtents]; }
-	const JGeometry::TVec3<f32>& normalAt(int x, int z)
+	JGeometry::TVec3<f32>& normalAt(int x, int z)
 	{
 		return mNormalMap[x + z * mExtents];
 	}

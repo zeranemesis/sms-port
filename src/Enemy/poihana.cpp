@@ -396,6 +396,13 @@ void TPoiHana::walkBehavior(int param_1, float param_2)
 
 				mSpine->setNext(&TNervePoihanaSleep::theNerve());
 				unk195 = true;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_poihanaWalkBehavior[8];
+	(void)framePad_8_poihanaWalkBehavior;
 			}
 		}
 	}

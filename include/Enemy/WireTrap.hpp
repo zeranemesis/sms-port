@@ -71,7 +71,11 @@ public:
 	void updateCollision();
 	void doResetToEdge();
 	bool doScaleDown();
-	BOOL doScaleUp();
+	// NOTE: the target tests the inlined doScaleUp() result with
+	// `clrlwi. r0, r3, 24` (a byte-wide bool test) rather than the `cmpwi`
+	// an int return would give, so this returns bool even though doScaleDown
+	// was originally written as BOOL.
+	bool doScaleUp();
 	// UNUSED in the map (it only exists so the nerve bodies read well); the
 	// target inlines it into the nerves, so it must stay inlinable here.
 	void doSearchMove();
@@ -103,8 +107,15 @@ public:
 	// mScaleTimer for the decrement after testing it, which is the signature
 	// of a by-value getter (the return value is force-loaded into a
 	// compiler temporary rather than shared with the caller's read).
+	// NOTE: none of the getter/operator spellings actually stops MWCC from
+	// folding the two loads together, so both re-reads are still missing
+	// (one instruction in moveObject and in each of the three move nerves).
 	int getScaleTimer() const { return mScaleTimer; }
 	void setScaleTimer(int timer) { mScaleTimer = timer; }
+	// Same reconstruction for mSearchTimer: the three nerves that tick it
+	// re-read the field between the test and the decrement.
+	int getSearchTimer() const { return mSearchTimer; }
+	void setSearchTimer(int timer) { mSearchTimer = timer; }
 
 public:
 	/* 0x150 */ f32 unk150;
@@ -115,10 +126,11 @@ public:
 	/* 0x164 */ int mScaleTimer;
 	/* 0x168 */ f32 mScale;
 	/* 0x16C */ int mSearchTimer;
-	// TODO: 0x170 is set to +/-1.0 (or the sign of the Mario-to-wire dot
-	// product) by load()/doSearchMove(), negated by TNerveWireTrapReturnMove
-	// and fed to TWireBinder::getPoint() by TNerveWireTrapOnewayMoveEnd as
-	// "which end of the wire am I at".  "mWireLength" is a guess.
+	// 0x170 is which way along the wire the trap faces: load() sets it to
+	// +/-1.0 from the actor's Y rotation, doSearchMove() overwrites it with
+	// (f32)(dot(mario - pos, wireDir) > 0 ? 1 : < 0 ? -1 : 0), it is negated
+	// by TNerveWireTrapReturnMove and fed to TWireBinder::getPoint() by
+	// TNerveWireTrapOnewayMoveEnd.  "mWireLength" is a guess.
 	/* 0x170 */ f32 mWireLength;
 	/* 0x174 */ int mWaitTime; // compared against the spine timer in TNerveWireTrapWait
 	/* 0x178 */ f32 mMomentum;

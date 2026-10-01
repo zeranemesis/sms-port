@@ -896,8 +896,10 @@ u8 TMarDirector::updateGameMode()
 				offFlag(DIRECTOR_FLAG_ACTOR_DEMO_STAGE_TRANSITION_PENDING);
 				onFlag(DIRECTOR_FLAG_STAGE_TRANSITION_PENDING);
 				unk126 = 3;
+				// The target builds a TFlagT<u16> of 1 here (li r0, 1; sth r0,
+				// 0x100(r1)), not 0 like the sibling sites above.
 				fireStartDemoCamera(nullptr, nullptr, -1, 0.0f, false, nullptr,
-				                    0, unk250, 0);
+				                    0, unk250, 1);
 				break;
 			}
 

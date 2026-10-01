@@ -15,6 +15,7 @@ set(PORT_FILES
         src/port/recomp_dolphin_sdk.cpp
         src/port/recomp_exi.cpp
         src/port/recomp_gx_fifo.cpp
+        src/port/recomp_gx_copy.cpp
         src/port/recomp_host.cpp
         src/port/recomp_interrupt.cpp
         src/port/recomp_pad.cpp

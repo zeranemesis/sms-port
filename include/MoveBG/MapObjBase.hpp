@@ -145,9 +145,18 @@ public:
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual MtxPtr getTakingMtx();
+	// The bodies below are defined here rather than in the .cpp, exactly like
+	// kill()/appear(): the map records them as weak symbols, and each TU whose
+	// vtable mentions one keeps its own copy after dead-strip.
+	virtual MtxPtr getTakingMtx()
+	{
+		if (unkF8 & MAP_OBJ_FLAG_UNK40) {
+			return nullptr;
+		}
+		return TLiveActor::getTakingMtx();
+	}
 	virtual void ensureTakeSituation();
-	virtual f32 getRadiusAtY(f32) const;
+	virtual f32 getRadiusAtY(f32) const { return mBodyRadius; }
 	virtual Mtx* getRootJointMtx() const;
 	virtual void calcRootMatrix();
 	virtual void setGroundCollision();
@@ -166,23 +175,27 @@ public:
 	virtual void updateObjMtx();
 	virtual void setUpCurrentMapCollision();
 	virtual void setObjHitData(u16);
+	// TODO: not reconstructed yet. The target body is
+	// PSMTXCopy(mtx, getModel()->mNodeMatrices), but mNodeMatrices is
+	// protected in J3DModel, so this needs either a friend declaration there
+	// (JSystem: out of bounds for an agent) or a public accessor.
 	virtual void setModelMtx(MtxPtr);
 	virtual void initMapObj();
-	virtual void loadBeforeInit(JSUMemoryInputStream&);
+	virtual void loadBeforeInit(JSUMemoryInputStream&) { }
 	virtual void initMapCollisionData();
 	virtual void makeMActors();
 	virtual u32 getSDLModelFlag() const;
 	virtual void checkIllegalAttr() const;
-	virtual void calc();
-	virtual void draw() const;
-	virtual void dead();
+	virtual void calc() { }
+	virtual void draw() const { }
+	virtual void dead() { }
 	virtual void touchActor(THitActor*);
 	virtual void touchPlayer(THitActor*);
-	virtual u32 touchWater(THitActor*);
+	virtual u32 touchWater(THitActor*) { return 0; }
 	virtual void touchEnemy(THitActor*);
 	virtual void touchBoss(THitActor*);
 	virtual void makeObjDefault();
-	virtual u16 getHitObjNumMax();
+	virtual u16 getHitObjNumMax() { return 5; }
 	virtual f32 getDepthAtFloating() { return 0.0f; }
 
 	void initAndRegister(const char*);
@@ -317,7 +330,13 @@ public:
 	static void loadHideObjInfo(JSUMemoryInputStream&, s32*, f32*, f32*, s32*);
 	static bool isDemo();
 	static bool isHideObj(THitActor*);
-	void getObjCollisionHeightOffset() const { }
+	// weak 0x8 in the map: `lfs f1, 0x108(r3); blr`.
+	// TMuddyBoat::bind reaches this through a real `bl` three times, so the
+	// definition lives in src/MoveBG/MapObjMare.cpp under #pragma
+	// dont_inline -- MWCC ignores that pragma for a header body, and an
+	// `inline` definition here is always expanded away instead. The cost is
+	// that the emitted symbol is global where the map says weak.
+	f32 getObjCollisionHeightOffset() const;
 
 	// fabricated
 	bool checkMapObjFlag(u32 flag) const { return unkF8 & flag; }
@@ -402,6 +421,12 @@ public:
 	/* 0x124 */ JGeometry::TVec3<f32> mInitialScaling;
 	/* 0x130 */ TMapObjData* mMapObjData;
 	/* 0x134 */ u32 mEventId;
+	// sizeof(TMapObjBase) == 0x138: the ROM's ctor stores nothing past
+	// mEventId, and every subclass here starts its own fields at 0x138
+	// (e.g. TShellCup's unk138[6] of 0x90-byte TPinnaShell ends exactly at
+	// unk498). TNerveBossTelesaDie writes one f32 per mStageSlotObjects[i]
+	// at +0x144, but that is a *subclass* field reached through a
+	// TMapObjBase* -- not a base-class member.
 };
 
 #endif

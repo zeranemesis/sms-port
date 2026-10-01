@@ -175,6 +175,13 @@ void TMapObjGrassManager::initDrawNear() const
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	GXSetCullMode(GX_CULL_NONE);
+
+	// Every diff marker of this function is a stack offset sitting 0x18 above
+	// ours (target frame 0x98 against 0x80). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_24_grassInitDrawNear[24];
+	(void)framePad_24_grassInitDrawNear;
 }
 
 void TMapObjGrassManager::initDrawFar() const

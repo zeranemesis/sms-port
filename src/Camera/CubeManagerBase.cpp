@@ -34,11 +34,10 @@ TCubeManagerBase::TCubeManagerBase(const char* name, u8 param_2)
     , unk14(nullptr)
     , unk18(nullptr)
 {
-	initializer();
-}
-
-void TCubeManagerBase::initializer()
-{
+	// NOTE: this body is NOT a separate `initializer()` method. There is no such
+	// symbol in marioEU.MAP, and keeping it one inline level deeper stops MWCC
+	// from expanding `TCubeGeneralInfo`'s constructor at the `new` below, which
+	// is expanded out of line in the ROM.
 	unk14 = new TNameRefPtrAryT<TCubeGeneralInfo>;
 	unk14->reserve(unk10);
 	for (int i = 0; i < unk10; ++i)
@@ -134,7 +133,7 @@ bool TCubeManagerArea::isInAreaCube(const Vec& pos) const
 	return result;
 }
 
-inline bool TCubeManagerFast::isInOtherCube(const Vec& pos) const
+bool TCubeManagerFast::isInOtherCube(const Vec& pos) const
 {
 	bool result = false;
 	int in      = getInCubeNo(pos);

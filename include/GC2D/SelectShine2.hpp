@@ -21,8 +21,11 @@ public:
 	             JPAEmitterManager* emitterManager,
 	             JGeometry::TVec3<f32>& pos, s16 param5, u8 param6,
 	             f32 param7, f32 param8, f32 param9);
-	virtual ~TSelectShine();
+	virtual ~TSelectShine() { }
 	virtual void move();
+
+	// UNUSED in the original binary (mario.MAP: 0x2c bytes)
+	void makeNewPosition(f32 param_1, f32 param_2, f32 param_3, f32 param_4);
 
 public:
 	/* 0x00 */ // vtable
@@ -59,13 +62,17 @@ public:
 	static JGeometry::TVec3<f32> cCenter;
 
 	TSelectShineManager(const char*);
-	virtual ~TSelectShineManager();
+	virtual ~TSelectShineManager() { }
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
 	void initData(u8*, u8, u8, JPAEmitterManager*);
 	void startClose();
 	void startIncrease(int);
 	void startDecrease(int);
+
+	// UNUSED in the original binary (mario.MAP: 0x8c and 0x88 bytes)
+	void getPosition(s16);
+	void getAngle(const JGeometry::TVec3<f32>&);
 
 public:
 	/* 0x10 */ TSelectShine* mSelectShines[8];

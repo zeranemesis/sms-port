@@ -65,6 +65,13 @@ public:
 		}
 
 		sortByFileNameRaw((void**)mAnimations);
+
+		// All six instantiations of this template are 8 bytes short: every
+		// stack reference of each one sits 0x8 above ours (target frame 0x238
+		// against 0x230). Declared last on purpose, mwcc gives the low frame
+		// addresses to the last-declared local.
+		char framePad_8_loadAnmPtrArray[8];
+		(void)framePad_8_loadAnmPtrArray;
 	}
 
 	T* getAnmPtr(int idx) const

@@ -153,7 +153,14 @@ static bool run_menu_loop()
 #ifdef DOLPHINJET_HAVE_RECOMPILED_GAME
     // Guest frame pacing, read before every present - see the block inside the
     // loop for why the decision has to precede aurora_begin_frame().
-    constexpr double kGuestFrameSeconds = 1.0 / 60.0;
+    //
+    // The period comes from include/port/recomp_boot.h, where it sits next to
+    // the __OSTVMode format byte, because the two have to agree: the host
+    // paces the guest and the host is what raises its VI retrace interrupts, so
+    // a 50Hz disc paced at 60Hz gets a sixth more retraces per second than a
+    // real PAL console delivers, and everything the guest times against
+    // OSGetTime runs fast. This was the constant half of the mismatch
+    // docs/port_todo.md section 3.3 records.
     constexpr unsigned kMaxCatchUpFrames = 4;
     double guestFrameDebt = 0.0;
     Uint64 lastStepTicks = SDL_GetTicks();
@@ -197,10 +204,10 @@ static bool run_menu_loop()
             const Uint64 nowTicks = SDL_GetTicks();
             guestFrameDebt += double(nowTicks - lastStepTicks) / 1000.0;
             lastStepTicks = nowTicks;
-            if (guestFrameDebt > kMaxCatchUpFrames * kGuestFrameSeconds) {
-                guestFrameDebt = kMaxCatchUpFrames * kGuestFrameSeconds;
+            if (guestFrameDebt > kMaxCatchUpFrames * sms::recomp::kGuestFrameSeconds) {
+                guestFrameDebt = kMaxCatchUpFrames * sms::recomp::kGuestFrameSeconds;
             }
-            if (g_gameRunning && guestFrameDebt < kGuestFrameSeconds) {
+            if (g_gameRunning && guestFrameDebt < sms::recomp::kGuestFrameSeconds) {
                 // Sleep rather than spin: this is the majority of iterations
                 // on a high-refresh display, and burning a core on them would
                 // take host time away from the guest.
@@ -303,8 +310,8 @@ static bool run_menu_loop()
             // capped, so nothing is lost - the port simply stops trying to
             // catch up faster than it can draw.
             const Uint64 stepStart = SDL_GetPerformanceCounter();
-            if (frameBegun && g_gameRunning && guestFrameDebt >= kGuestFrameSeconds) {
-                guestFrameDebt -= kGuestFrameSeconds;
+            if (frameBegun && g_gameRunning && guestFrameDebt >= sms::recomp::kGuestFrameSeconds) {
+                guestFrameDebt -= sms::recomp::kGuestFrameSeconds;
                 ++steps;
                 g_gameRunning = sms::recomp::step_game(&g_gameCpu, kGameBlocksPerFrame);
             }

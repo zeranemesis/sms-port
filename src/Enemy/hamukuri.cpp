@@ -364,10 +364,11 @@ void THaneHamuKuriManager::load(JSUMemoryInputStream& stream)
 }
 
 // TODO: retail keeps `bl THaneHamuKuri::THaneHamuKuri` here (name "はねハムクリ")
-// but MWCC inlines the 96B ctor (base-ctor bl + vtable/float stores);
-// all 6 sibling `new X;` sites keep bl, incl. the smaller 68B
-// TDoroHamuKuri ctor, so this is not a size threshold. Explicit-arg
-// spelling tested, no change. Inline-steering TBD.
+// but MWCC inlines the 96B ctor (base-ctor bl + vtable/float stores), giving
+// 31.6%. `#pragma dont_inline` on the *ctor* fixes this site (100%) and
+// TDoroHaneKuriManager's, but drops THaneHamuKuri2::THaneHamuKuri2 to 56.6%,
+// because retail inlines the ctor there -- the two requirements contradict.
+// Byte-weighted the two options are a wash; leaving it inlined for now.
 TSpineEnemy* THaneHamuKuriManager::createEnemyInstance()
 {
 	return new THaneHamuKuri;
@@ -771,7 +772,7 @@ void THamuKuri::behaveToWater(THitActor* param_1)
 		}
 
 		if (mVelocity.y < 0.0f)
-			forceRoll(SMS_GetMarioPos(), true);
+			forceRoll(*gpMarioPos, true);
 	}
 }
 
@@ -1208,16 +1209,39 @@ bool THamuKuri::isResignationAttack()
 
 bool THamuKuri::isHitValid(u32 param_1)
 {
+	// NOTE: retail inlines the body of THamuKuriManager::requestSerialKill()
+	// here (while keeping a real `bl` at the TFireHamuKuri::isHitValid site).
+	// MWCC will not do that on its own -- see the framePad in
+	// requestSerialKill -- so the loop is spelled out. Keep the two copies in
+	// sync.
 	if (isBckAnm(3)) {
-		getManager()->requestSerialKill(this);
+		THamuKuriManager* manager = getManager();
+		int trampled              = 1;
+
+		s32 trampleBonusNum
+		    = ((THamuKuriSaveLoadParams*)manager->unk38)
+		          ->mSLTrampleBonusNum.get();
+
+		for (int i = 0; i < manager->getActiveObjNum(); ++i) {
+			THamuKuri* obj = (THamuKuri*)manager->unk18[i];
+			if (obj != this && obj->isBckAnm(3)) {
+				obj->kill();
+				++trampled;
+			}
+		}
+
+		if (trampled >= trampleBonusNum) {
+			gpItemManager->makeObjAppear(mPosition.x, mPosition.y,
+			                             mPosition.z, 0x20000005, true);
+		}
 		return true;
 	}
 
-	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
+	if (mLiveFlag & LIVE_FLAG_HIDDEN)
 		return false;
 
 	if (param_1 == HIT_MESSAGE_UNKB)
-		onLiveFlag(LIVE_FLAG_HIDDEN);
+		mLiveFlag |= LIVE_FLAG_HIDDEN;
 
 	return true;
 }
@@ -1290,6 +1314,11 @@ void THamuKuri::forceRoll(JGeometry::TVec3<f32> param_1, bool param_2)
 
 	MsVECNormalize(&local_20, &local_20);
 
+	// NOTE: operator* form must stay. Retail copies local_20 into ONE scratch
+	// slot, calls the out-of-line scale() and copies back, i.e. `operator*`
+	// must return a *reference* -- but JGVec3.hpp (libs/, off limits) has it
+	// returning by value, which costs one extra copy per branch. Spelling
+	// this as an in-place scale() inlines to fmuls and drops to 76%.
 	if (mSpine->getCurrentNerve() == &TNerveWalkerAttack::theNerve()) {
 		local_20 = local_20 * unk1F4->mSLWaterAttackCoeff.get();
 	} else {
@@ -1348,7 +1377,163 @@ void THaneHamuKuri::reset()
 	unk21C = 0.0f;
 }
 
-void THaneHamuKuri::walkBehavior(int, f32) { }
+void THaneHamuKuri::walkBehavior(int param_1, f32 param_2)
+{
+	f32 flyBaseHeight = unk22C->mSLFlyBaseHeight.get();
+	// Frame-padding: target frame is 0x30 bytes larger (MWCC stack-padding
+	// quirk). Retail's local slots are not contiguous (there are 8/12/108
+	// byte holes between them) so this only recovers the upper offsets.
+	// TODO: reconstruct the real locals/inlines to explain those holes, and
+	// to get `sub()` below emitted out-of-line (MWCC always inlines it here).
+	char framePad_48[48];
+	(void)framePad_48;
+
+	// Hoisted to the top purely so the stack layout matches the retail
+	// build: retail's frame hands out these slots in this order
+	// (vel, dir, ...) even though `dir` is only used at the very bottom
+	// of the function.
+	JGeometry::TVec3<f32> vel;
+	JGeometry::TVec3<f32> dir;
+
+	if (mBoundFly) {
+		if (!isAirborne()) {
+			f32 vy = unk22C->mSLNormalJumpVy.get();
+			if (param_1 == 2)
+				vy = unk22C->mSLAttackJumpVy.get();
+			vel.set(0.0f, vy, 0.0f);
+			mPosition.y += 10.0f;
+			onLiveFlag(LIVE_FLAG_AIRBORNE);
+			mVelocity = vel;
+		}
+	} else {
+		if (unk21C == 0.0f) {
+			if (unk214 == 0.0f && fabsf(unk230 - mGroundHeight) > 5.0f) {
+				unk214 = (mGroundHeight - unk230) / 120.0f;
+				if (unk214 > 10.0f)
+					unk214 = 10.0f;
+				if (unk214 < -10.0f)
+					unk214 = -10.0f;
+			}
+			if (unk214 > 0.0f) {
+				unk230 += unk214;
+				if (unk230 > mGroundHeight)
+					unk214 = 0.0f;
+			}
+			if (unk214 < 0.0f) {
+				unk230 += unk214;
+				if (unk230 < mGroundHeight) {
+					unk214 = 0.0f;
+					unk230 = mGroundHeight + 1.0f;
+				}
+			}
+		}
+
+		f32 flyBaseFrequency = unk22C->mSLFlyBaseFrequency.get();
+		f32 flyBaseAmplitude = unk22C->mSLFlyBaseAmplitude.get();
+
+		if (mSpine->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()
+		    || mSpine->getCurrentNerve() == &TNerveWalkerAttack::theNerve()
+		    || mSpine->getCurrentNerve()
+		           == &TNerveDoroHanePrepareAttack::theNerve()) {
+			if (unk21C == 0.0f) {
+				unk20C += 1.0f;
+				if (unk20C > flyBaseFrequency)
+					unk20C = 0.0f;
+				if (unk234 < flyBaseHeight)
+					unk234 += 1.0f;
+				if (unk234 > flyBaseHeight)
+					unk234 -= 1.0f;
+			}
+
+			if (mSpine->getCurrentNerve() == &TNerveWalkerAttack::theNerve()
+			    || mSpine->getCurrentNerve()
+			           == &TNerveWalkerGraphWander::theNerve()) {
+				if (unk21C != 0.0f) {
+					mGroundHeight = gpMap->checkGround(
+					    mPosition.x, 2.0f * mHeadHeight + mPosition.y,
+					    mPosition.z, &mGroundPlane);
+
+					if (unk230 + unk234 + unk210 > mGroundHeight) {
+						param_1 = 3;
+						unk234 -= 15.0f;
+						unk230 = mGroundHeight;
+						unk210 = 0.0f;
+						unk214 = 0.0f;
+						unk20C = 0.0f;
+
+						if (unk234 + unk210 > 200.0f)
+							mScaling.y = MsClamp(mScaling.y * 1.1f, 0.0f,
+							                      mBodyScale * 1.3f);
+						else
+							mScaling.y = MsClamp(mScaling.x * 0.8f,
+							                      mBodyScale * 0.5f,
+							                      mBodyScale * 1.3f);
+					} else {
+						unk21C = 0.0f;
+						unk214 = 0.0f;
+						unk210 = 0.0f;
+						unk234 = 0.0f;
+						unk20C = 0.0f;
+
+						gpMarioParticleManager->emit(PARTICLE_MS_HIPDROP_C,
+						                             &mPosition, 0,
+						                             nullptr);
+						SMSRumbleMgr->start(0x15, 5, (f32*)nullptr);
+
+						if (gpMSound->gateCheck(MSD_SE_MA_HIP_ATTACK))
+							SMSGetMSound()->startSoundActor(
+							    MSD_SE_MA_HIP_ATTACK, &mPosition, 0,
+							    nullptr, 0, 4);
+
+						TPathNode goalNode((THitActor*)gpMarioAddress);
+						setGoalPath(goalNode);
+						mSpine->pushNerve(
+						    &TNerveHaneHamuKuriUpWait::theNerve());
+					}
+				} else if (isReachedToGoal()) {
+					if (unk234 > flyBaseHeight - 10.0f) {
+						unk21C = 1.0f;
+						mSpine->pushNerve(
+						    &TNerveDoroHanePrepareAttack::theNerve());
+					}
+				}
+			}
+		} else if (unk234 > 0.0f) {
+			unk234 -= 1.0f;
+		}
+
+		if (unk21C == 0.0f)
+			unk210 = MsSin(unk20C * 360.0f / flyBaseFrequency)
+			         * flyBaseAmplitude;
+
+		mPosition.y = unk230 + unk234 + unk210;
+	}
+
+	if (mSpine->getCurrentNerve() == &TNerveHaneHamuKuriUpWait::theNerve()
+	    && unk234 < flyBaseHeight)
+		unk234 += 1.0f;
+
+	JGeometry::TVec3<f32> cur;
+	cur = mPosition;
+	cur.sub(unk220);
+
+	dir = cur;
+	MsVECNormalize(&dir, &dir);
+
+	if (mSpine->getCurrentNerve() == &TNerveHaneHamuKuriUpWait::theNerve())
+		mRotation.x *= 0.8f;
+
+	mRotation.z = MsGetRotFromZaxis(dir).z;
+
+	if (unk21C == 0.0f && !isBckAnm(4))
+		TWalkerEnemy::walkBehavior(param_1, param_2);
+
+	unk220 = mPosition;
+	unk218 = mRotation.y;
+
+	if (unk21C != 0.0f && mPosition.y < mGroundHeight)
+		mPosition.y = mGroundHeight;
+}
 
 void THaneHamuKuri::bind()
 {
@@ -1499,6 +1684,9 @@ void TDoroHaneKuri::reset()
 
 void TDoroHaneKuri::attackToMario()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_attackToMario[8];
+	(void)framePad_8_attackToMario;
 	if (!gpMarioOriginal->isWearingCap()) {
 		if (SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK))
 			SMSGetMSound()->startSoundActor(MSD_SE_EN_HANEKURI_ATTACK,
@@ -1745,22 +1933,27 @@ void TDangoHamuKuri::setRunAnm()
 void TDangoHamuKuri::calcRootMatrix()
 {
 	getModel()->setBaseScale(mScaling);
-	if (mHolder && mHolder->mHeldObject == this) {
-		MtxPtr takingMtx = getTakingMtx();
+	// NOTE: retail calls getTakingMtx() on the *holder*, not on `this`
+	// (the virtual dispatch at vtable+0xa4 is taken on the mHolder pointer).
+	TDangoHamuKuri* holder = (TDangoHamuKuri*)mHolder;
+	if (holder && holder->mHeldObject == this) {
+		MtxPtr takingMtx = holder->getTakingMtx();
 		if (takingMtx) {
 			if (unk230) {
 				unk210 += 40.0f;
 				if (unk210 > 360.0f) {
-					// TODO: retail evaluates (20-10) BEFORE rand() and
-					// keeps it across the call; MsRandF(l, r) header is
-					// rand-first. Explicit range-first regressed (const
-					// folding) so kept as-is; see TMsRange in RandomUtil.
-					unk210 = -MsRandF(10.0f, 20.0f);
+					// Retail materialises the range on the stack and
+					// keeps (mMax - mMin) in a saved FP register across
+					// the `bl rand`, which is exactly TMsRange<f32>::rand()
+					// -- and TMsRange has a non-trivial dtor, so it is
+					// pinned to memory rather than scalar-replaced.
+					TMsRange<f32> range(10.0f, 20.0f);
+					unk210 = -range.rand();
 					unk230 = 0;
 				}
-				TDangoHamuKuri* holder = (TDangoHamuKuri*)mHolder;
-				if (holder->unk230)
-					unk210 = -holder->unk210;
+				TDangoHamuKuri* holder2 = (TDangoHamuKuri*)mHolder;
+				if (holder2->unk230)
+					unk210 = -holder2->unk210;
 				takingMtx[3][0] += unk21C;
 				takingMtx[3][1] += unk220;
 				takingMtx[3][2] += unk224;
@@ -2192,11 +2385,6 @@ void TFireHamuKuri::walkBehavior(int param_1, f32 param_2)
 	}
 }
 
-// TODO: retail tail (after HIDDEN check) is `if (param_1 ==
-// HIT_MESSAGE_UNKB) onLiveFlag(LIVE_FLAG_HIDDEN); return true;`
-// (same tail as THamuKuri::isHitValid, verified there 93.0% -> 96.6%),
-// but retail keeps `bl requestSerialKill` out-of-line here while MWCC
-// inlines it (0.0%); re-apply tail once inline steering is solved.
 bool TFireHamuKuri::isHitValid(u32 param_1)
 {
 	if (param_1 == 11)
@@ -2210,8 +2398,13 @@ bool TFireHamuKuri::isHitValid(u32 param_1)
 		return true;
 	}
 
-	if (checkLiveFlag(LIVE_FLAG_HIDDEN))
+	// Direct mLiveFlag access (not check/onLiveFlag) so MWCC reuses the
+	// loaded value instead of reloading it for the `|=` below.
+	if (mLiveFlag & LIVE_FLAG_HIDDEN)
 		return false;
+
+	if (param_1 == HIT_MESSAGE_UNKB)
+		mLiveFlag |= LIVE_FLAG_HIDDEN;
 
 	return true;
 }
@@ -2740,7 +2933,7 @@ DEFINE_NERVE(TNerveDoroHaneHitWater, TLiveActor)
 		                                ANM_TYPE_BCK);
 	}
 
-	if (self->mPosition.y > self->getGroundHeight() + 50.0f)
+	if (self->mPosition.y > self->mGroundHeight + 50.0f)
 		self->unk234 -= 4.0f;
 
 	self->unk210 = 0.0f;

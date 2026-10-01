@@ -108,6 +108,13 @@ bool TDolpicEventRiccoMammaGate::control()
 		SMSRumbleMgr->start(0x13, (f32*)nullptr);
 		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk48, 0, nullptr, 0,
 		                                4);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_dolpicGateControl[8];
+	(void)framePad_8_dolpicGateControl;
 	}
 
 	if (unk44 > 0) {
@@ -157,6 +164,13 @@ bool TDolpicEventRiccoMammaGate::watch()
 			gpMarioParticleManager->emit(MAP_MAP_MS_OBJUP_TOUDAI_B, &unk48, 2,
 			                             this);
 			gpPollution->getLayer(1)->startDecay();
+
+	// Every diff marker of this function is a stack offset sitting 0x18 above
+	// ours (target frame 0xa0 against 0x88). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_24_dolpicGateWatch[24];
+	(void)framePad_24_dolpicGateWatch;
 		}
 
 		SMS_MarioWarpRequest(unk54, unk60);

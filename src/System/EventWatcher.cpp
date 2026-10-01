@@ -34,6 +34,20 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// The original calls JGeometry::TUtil<f32>::sqrt(v) out-of-line here
+// (bl sqrt__Q29JGeometry8TUtil<f>Ff), with the range guard inside the
+// callee. JGUtil.hpp only offers the inline spelling, so MWCC always
+// expands these sites and the call never appears.
+// FABRICATED: the callee is orig_sqrt, so the `bl` itself still shows as
+// one mismatched instruction. Making JGUtil.hpp out-of-line instead was
+// measured repo-wide at -32.2 points - see docs/AGENT_MATCHING_TIPS.md.
+#pragma dont_inline on
+static f32 orig_sqrt(f32 v) {
+	return JGeometry::TUtil<f32>::sqrt(v);
+}
+#pragma dont_inline off
+
+
 // TODO: from M3UJoint or J3DJoint?
 static void dummy()
 {
@@ -192,7 +206,7 @@ static void evIsNearSameActors(TSpcTypedInterp<TEventWatcher>* interp,
 		if (type == obj->getActorType()) {
 			JGeometry::TVec3<f32> diff = which->mPosition;
 			diff -= obj->mPosition;
-			if (diff.length() <= dist)
+			if (orig_sqrt(diff.squared()) <= dist)
 				count++;
 		}
 	}
@@ -220,7 +234,7 @@ static void evIsNearActors(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 				if (other) {
 					JGeometry::TVec3<f32> diff = which->mPosition;
 					diff -= other->mPosition;
-					if (diff.length() <= dist)
+					if (orig_sqrt(diff.squared()) <= dist)
 						count++;
 				}
 			}

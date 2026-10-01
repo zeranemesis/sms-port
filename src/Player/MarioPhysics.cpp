@@ -98,7 +98,9 @@ void TMario::checkDescent()
 	if (mHeldObject == nullptr && !onYoshi())
 		active = true;
 
-	if (active != true)
+	// The target tests the flag with `clrlwi. r0, r29, 24 / cmpwi r0, 1`: a
+	// SIGNED compare against 1. `active != true` gives `cmplwi`.
+	if ((s32)active != 1)
 		return;
 
 	if (!(mForwardVel < descentSp))
@@ -132,6 +134,13 @@ void TMario::checkDescent()
 		changePlayerStatus(MARIO_STATUS_DESCEND, 0, false);
 		setAnimation(ANIM_HGDWN, 1.0f);
 	}
+
+	// Every remaining diff marker is a frame offset sitting exactly 0x10 above
+	// ours (frame 0x78 against 0x68). Declared LAST on purpose: mwcc hands out
+	// the low addresses to the last-declared local, so the pad has to come
+	// after TBGWallCheckRecord rec to push rec and its float spills up.
+	char framePad_16_checkDescent[16];
+	(void)framePad_16_checkDescent;
 }
 
 int TMario::checkGroundAtWalking(Vec* v)

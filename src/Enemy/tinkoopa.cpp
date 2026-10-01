@@ -28,6 +28,8 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
+#include <Enemy/popo.hpp>
+
 // TODO: this translation unit is freshly scaffolded from marioEU.MAP. Class
 // layouts only contain the fields verified so far; the effect emitters, the
 // break nerve, TTinKoopa::init and the parts setup are not decompiled yet.
@@ -305,7 +307,49 @@ bool TTinKoopaFlame::isHighPosition()
 
 void TTinKoopaFlame::emitFlameEffects()
 {
-	// TODO: not decompiled yet
+	if (mOwner->mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()) {
+		MtxPtr mtx
+		    = mOwner->getModel()->getAnmMtx(TTinKoopa_jointIndexTable[8]);
+
+		f32 phaseScale = 1.0f;
+		if (mOwner->mPhase != 0)
+			phaseScale = 1.6f;
+		if (mOwner->mFlameTimer > 0) {
+			unk6C -= 0.05f;
+			if (unk6C < 0.3f)
+				unk6C = 0.3f;
+		} else {
+			unk6C += 0.05f;
+			if (unk6C > 1.0f)
+				unk6C = 1.0f;
+		}
+
+		f32 scale  = unk6C * phaseScale;
+		f32 scaleY = scale;
+		if (mOwner->mFlameTimer > 0)
+			scaleY *= 0.5f;
+
+		JGeometry::TVec3<f32> emitterScale(scale, scaleY, scale);
+
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    0x1BB, mtx, 1, this);
+		if (emitter)
+			emitter->setGlobalScale(emitterScale);
+
+		emitter = gpMarioParticleManager->emitAndBindToMtxPtr(0x1BC, mtx,
+		                                                     1, this);
+		if (emitter)
+			emitter->setGlobalScale(emitterScale);
+
+		emitter = gpMarioParticleManager->emitAndBindToMtxPtr(0x1F2, mtx,
+		                                                     3, this);
+		if (emitter)
+			emitter->setGlobalScale(emitterScale);
+
+		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_MKP_FIRE, &mPosition,
+		                                        nullptr, scale, 0, 0,
+		                                        nullptr, 0, 4);
+	}
 }
 
 TTinKoopaLaunchOrder::TTinKoopaLaunchOrder(TTinKoopa* owner)
@@ -376,7 +420,25 @@ TTinKoopaPartsBase::TTinKoopaPartsBase(const char* name, int index,
 
 void TTinKoopaPartsBase::initTinKoopaPartsBase()
 {
-	// TODO: not decompiled yet
+	initHitActor(TTinKoopa_getActorType(mIndex), 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+
+	TEnemyNameRefGroup* group = (TEnemyNameRefGroup*)
+	    JDrama::TNameRefGen::search("敵グループ");
+	group->mObjects.insert(group->mObjects.end(), this);
+
+	mCollision = new TMapCollisionMove();
+	mCollision->init(TTinKoopa_getCollisionFileName(mIndex), 0, this);
+	mCollision->setUpTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+
+	const char* bmdName = TTinKoopa_getPartsFileName(mIndex);
+	if (bmdName != nullptr) {
+		mBreakActor = mOwner->getActorKeeper()->createMActor(bmdName, 0);
+		mBreakActor->setLightType(1);
+	}
+
+	mIsBreaking = 0;
+	mCollision->setUpTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
 }
 
 void TTinKoopaPartsBase::reset()
@@ -550,6 +612,9 @@ void TTinKoopa::makeCoasterDistanceTable()
 	// TODO: UNUSED in the map (size 0x16c), inlined into init
 }
 
+// TODO: the ROM calls this out of line from checkTinKoopaKillerApproachingMessage;
+// dont_inline is a stopgap.
+#pragma dont_inline on
 f32 TTinKoopa::calcCoasterDistance(int from, int to)
 {
 	f32 distance = 0.0f;
@@ -557,6 +622,7 @@ f32 TTinKoopa::calcCoasterDistance(int from, int to)
 		distance += mCoasterDistanceTable[i];
 	return distance;
 }
+#pragma dont_inline off
 
 f32 TTinKoopa::calcCoasterDistanceInOrder(int, int)
 {
@@ -639,7 +705,13 @@ void TTinKoopa::makeKillerQueue(int num, s8 side)
 
 void TTinKoopa::checkLap()
 {
-	// TODO: UNUSED in the map (size 0x8c), contents unknown
+	if (mTruck != nullptr
+	    && mTruck->getFrameCtrl(0)->checkPass(
+	        -(mTruck->getFrameCtrl(0)->getEnd() - 1))) {
+		mLap++;
+		if (mLap > 2)
+			mLap = 0;
+	}
 }
 
 bool TTinKoopa::checkTruckAnimationPass(int frame)
@@ -656,8 +728,22 @@ void printTinKoopaDebugInfo(TTinKoopa*)
 
 void TTinKoopa::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// TODO: not decompiled yet
+	if (cue & CUE_CALC_ANIM) {
+		emitTinKoopaEffects();
+		checkKillerLaunch();
+	}
+
+	if (cue & CUE_CALC_ANIM) {
+		updateTimers();
+		checkLap();
+		checkTinKoopaMessage();
+	}
+
 	TSpineEnemy::perform(cue, graphics);
+	mFlame->perform(cue, graphics);
+
+	for (int i = 0; i < 6; ++i)
+		mParts[i]->perform(cue, graphics);
 }
 
 void TTinKoopa::makeEyeBeamEffect()
@@ -667,7 +753,12 @@ void TTinKoopa::makeEyeBeamEffect()
 
 void TTinKoopa::updateTimers()
 {
-	// TODO: UNUSED in the map (size 0x4c), contents unknown
+	if (mKillerTimer > 0)
+		mKillerTimer--;
+	if (mFlameTimer > 0)
+		mFlameTimer--;
+	if (mDefeatTimer > 0)
+		mDefeatTimer--;
 }
 
 const char** TTinKoopa::getBasNameTable() const { return tinkoopa_bastable; }
@@ -687,6 +778,10 @@ BOOL TTinKoopa::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
+// TODO: the ROM calls this out of line from both receiveMessage() overloads, but
+// MWCC's inline ladder pulls it into them here. dont_inline is a stopgap until
+// the real reason (probably a statement-count difference) is found.
+#pragma dont_inline on
 void TTinKoopa::hitParts()
 {
 	if (mSpine->getCurrentNerve() != &TNerveTinKoopaBreak::theNerve()
@@ -700,6 +795,7 @@ void TTinKoopa::hitParts()
 			mSpine->pushNerve(&TNerveTinKoopaDamage::theNerve());
 	}
 }
+#pragma dont_inline off
 
 void TTinKoopa::startBreakingParts()
 {
@@ -728,22 +824,57 @@ void TTinKoopa::launchKiller(int side)
 
 void TTinKoopa::checkKillerLaunch()
 {
-	// TODO: UNUSED in the map (size 0xd8), contents unknown
+	if (mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	    && mKillerQueueIdx < mKillerQueueNum && mKillerTimer <= 0) {
+		launchKiller(mKillerQueue[mKillerQueueIdx]);
+		mKillerQueueIdx++;
+		mKillerTimer = getParams()->mSLKillerInterval.get();
+	}
 }
 
 void TTinKoopa::checkTinKoopaMessage()
 {
-	// TODO: UNUSED in the map (size 0x1e0), contents unknown
+	for (int i = 0; i < mLaunchSchedule->mOrderNum; ++i)
+		mLaunchSchedule->mOrders[i]->checkOrder();
+
+	checkTinKoopaKillerApproachingMessage();
+	checkTinKoopaFirstRocketMessage();
 }
 
 void TTinKoopa::checkTinKoopaKillerApproachingMessage()
 {
-	// TODO: not decompiled yet
+	// TODO: the tested flag is 0x80000000, which has no name in LiveActor.hpp
+	// yet; it needs adding to the LIVE_FLAG_ enum in that shared header.
+	for (int i = 0; i < mKillerManager->getActiveObjNum(); ++i) {
+		TCoasterEnemy* enemy = (TCoasterEnemy*)mKillerManager->getObj(i);
+		if (enemy->checkLiveFlag(0x80000001))
+			continue;
+
+		f32 distance = getParams()->mSLKillerApproachingDistance.get();
+		JGeometry::TVec3<f32> marioPos = *gpMarioPos;
+
+		bool approaching = false;
+		if (!enemy->checkLiveFlag(0x80000001) && enemy->mPathDir == 0) {
+			int idx = mGraph->findNearestNodeIndex(marioPos, -1);
+			f32 d;
+			if (idx >= enemy->mPathIdx)
+				d = calcCoasterDistance(enemy->mPathIdx, idx);
+			else
+				d = calcCoasterDistance(0, mGraph->unk8 - 1)
+				    + calcCoasterDistance(0, idx);
+			approaching = d <= distance;
+		}
+
+		if (approaching)
+			gpMarDirector->mConsole->startAppearBalloon(0x9, true);
+	}
 }
 
 void TTinKoopa::checkTinKoopaFirstRocketMessage()
 {
-	// TODO: UNUSED in the map (size 0x6c), contents unknown
+	if (mTruck != nullptr && mLap == 0
+	    && mTruck->getFrameCtrl(0)->checkPass(300.0f))
+		gpMarDirector->mConsole->startAppearBalloon(0xA, true);
 }
 
 void TTinKoopa::checkTinKoopaFirstFlameMessage()

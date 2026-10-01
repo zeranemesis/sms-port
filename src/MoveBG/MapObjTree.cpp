@@ -180,6 +180,13 @@ void TMapObjTree::initMapObj()
 			snprintf(buffer, 0x100, "/mapObj/palmLeaf%02d", i + 1);
 		} else {
 			snprintf(buffer, 0x100, "/mapObj/%sLeaf%02d", unkF4, i + 1);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_mapObjTreeInit[8];
+	(void)framePad_8_mapObjTreeInit;
 		}
 		leaf.mCollision->init(buffer, 0, this);
 		leaf.mCollision->setAllData(i);

@@ -40,19 +40,23 @@ f32 BHSCalcCentrifugalForce(const JGeometry::TVec3<f32>& param_1,
 	return force;
 }
 
-// TODO: sin/cos end up in swapped registers and the frame is 0x20 too small,
-// this is probably a rotation inline applied to (dist, 0, 0)
+// Frame-padding: the hole (frame 0x58 - lowest live slot 0x48) is 0x10 on BOTH
+// sides, so this is MWCC's bottom padding and a pad is the right lever.
 void BHSCalcRevisionDistXZByRotateZ(f32 param_1, f32 param_2, f32 param_3,
                                     f32* param_4, f32* param_5)
 {
+	char framePad_32_BHSCalcRevisionDistXZByRotateZ[32];
+	(void)framePad_32_BHSCalcRevisionDistXZByRotateZ;
 	f32 dist  = param_3 * param_2;
 	s16 angle = CLBRoundf<s16>(param_1 * (65536.0f / 360.0f));
-	f32 sin   = JMASSin(angle);
+	// NOTE: cos MUST be declared before sin. The ROM allocates the sin lookup to
+	// r3/f4 and the cos lookup to r4/f3; declaring them the other way round
+	// swaps both pairs and costs 2 instructions.
 	f32 cos   = JMASCos(angle);
+	f32 sin   = JMASSin(angle);
 	f32 zero  = 0.0f;
 	*param_4  = dist * cos + zero * sin;
-	*param_5  = -dist * sin + zero * cos;
-}
+	*param_5  = -dist * sin + zero * cos;}
 
 void TWaterHitActor::onWaterHitCounter() { mWaterHitCounter = 0x3C; }
 
@@ -160,8 +164,11 @@ BOOL TSphereLink::setDegreeZAndRevisionPosXZ(int index, f32 degree)
 
 		f32 dist  = unk14 * (degree - oldDegree);
 		s16 angle = CLBRoundf<s16>(rotY * (65536.0f / 360.0f));
-		f32 sin   = JMASSin(angle);
+		// NOTE: cos MUST be declared before sin (same as
+		// BHSCalcRevisionDistXZByRotateZ) so the ROM's allocation (sin lookup in
+		// r3/f5, cos lookup in r4/f4) is reproduced; the other order swaps both.
 		f32 cos   = JMASCos(angle);
+		f32 sin   = JMASSin(angle);
 		f32 zero  = 0.0f;
 		point.unkC.x += dist * cos + zero * sin;
 		point.unkC.z += -dist * sin + zero * cos;

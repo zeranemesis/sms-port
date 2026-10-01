@@ -282,6 +282,14 @@ void TSlotDrum::moveObject()
 	for (int i = 0; i < unk148; ++i) {
 		if (unk138[i] != 0.0f) {
 			unk188[i] += fabsf(unk138[i]);
+			// TODO: 80.9%. The ROM does NOT divide here. It builds the
+			// int-to-double idiom 2^52+unk168 on the stack and subtracts a
+			// double constant (lfd f30, used exactly once in the function),
+			// then compares with cror eq,gt,eq. Both objects carry identical
+			// .sdata2 constants (360/180/2.5/...), so the operands agree and
+			// only the expression shape differs. The exact double could not
+			// be resolved (objdump shows 0(0); the sda21 reloc is unapplied),
+			// so the formula is left as-is rather than guessed.
 			if (unk188[i] > 360.0f / (f32)unk168) {
 				unk188[i] = 0.0f;
 				switch (i) {
@@ -855,20 +863,24 @@ void TDonchou::calcRootMatrix()
 	if (unk144 != nullptr && unk144->unk194 && unk148->unk194)
 		unk13C = 1;
 	if (unk13C != 0) {
-		unk14C++;
-		if (unk14C > 100) {
-			if (mMActor->checkCurAnm("donchou", ANM_TYPE_BCK)) {
-				if (mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
-					unk138->remove();
-			} else {
-				SMSGetMSound()->startSoundActor(MSD_SE_SY_DONCHO_OPEN,
-				                                &mPosition, 0, nullptr, 0, 4);
-				mMActor->setBck("donchou");
-				SMSGetMarDirector()->fireStartDemoCamera(
-				    "どん帳カメラ", &mPosition, -1, 0.0f, true, nullptr, 0,
-				    nullptr, JDrama::TFlagT<u16>(0));
-				J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-				fc->setRate(0.5f * fc->getRate());
+		// The ROM gates the whole counter block on the game being in talk mode
+		// (unk124 == 1 || == 2) and trips at 20, not 100.
+		if (SMSGetMarDirector()->isTalkModeNow()) {
+			unk14C++;
+			if (unk14C > 20) {
+				if (mMActor->checkCurAnm("donchou", ANM_TYPE_BCK)) {
+					if (mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
+						unk138->remove();
+				} else {
+					SMSGetMSound()->startSoundActor(MSD_SE_SY_DONCHO_OPEN,
+					                                &mPosition, 0, nullptr, 0, 4);
+					mMActor->setBck("donchou");
+					SMSGetMarDirector()->fireStartDemoCamera(
+					    "どん帳カメラ", &mPosition, -1, 0.0f, true, nullptr, 0,
+					    nullptr, JDrama::TFlagT<u16>(0));
+					J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+					fc->setRate(0.5f * fc->getRate());
+				}
 			}
 		}
 	}

@@ -30,34 +30,43 @@ void TMapWarp::warp(int) { }
 
 void TMapWarp::watchToWarp()
 {
+	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+	// Measured: worth +0.1 pp here (45 -> 25 differing instructions).
+	// TODO: the residual is an INTERIOR shift, not bottom padding - the ROM puts
+	// `marioPos` (0xe8) and its `SMS_GetMarioPos()+unk4[point].unk8` scratch (0xa0)
+	// BELOW `mtx`/`vec2`, we put them above. checkData lands 0x10 low as a result.
+	char framePad_24_watchToWarp[24];
+	(void)framePad_24_watchToWarp;
 	const TBGCheckData* checkData;
 	f32 fVar8 = gpMap->checkGroundExactY(gpMarioPos->x, gpMarioPos->y + 30.0f,
 	                                     gpMarioPos->z, &checkData);
 
 	if (checkData->isWarp()) {
-		int warp = unk4[checkData->getData()].unk0;
-		if (warp != unk8) {
+		int point = checkData->getData();
+		int warp = unk4[point].unk0;
+		if (unk8 != warp) {
 			gpMap->getModelManager()->getJointModel(0)->getChild(unk8)->sleep();
 			gpMap->getModelManager()->getJointModel(0)->getChild(warp)->awake();
-			unk8 = warp;
+			unk8 = unk4[point].unk0;
 
 			// TODO: inlines
 			JGeometry::TVec3<f32> marioPos
-			    = SMS_GetMarioPos() + unk4[checkData->getData()].unk8;
+			    = SMS_GetMarioPos() + unk4[point].unk8;
 			SMS_MarioWarpRequest(marioPos,
 			                     (*gpMarioAngleY * 180.0f) / 32768.0f);
 		}
 	}
 
 	if (checkData->isMapChange()) {
-		if (checkData->getData() != unk8) {
+		int point = checkData->getData();
+		if (unk8 != point) {
 			gpMap->getModelManager()->getJointModel(0)->getChild(unk8)->sleep();
 			gpMap->getModelManager()
 			    ->getJointModel(0)
-			    ->getChild(checkData->getData())
+			    ->getChild(point)
 			    ->awake();
 
-			unk8 = checkData->getData();
+			unk8 = point;
 		}
 	}
 
@@ -70,7 +79,8 @@ void TMapWarp::watchToWarp()
 	MsMtxSetXYZRPH(mtx, 0.0f, 0.0f, 0.0f, info.unk18.x, info.unk18.y,
 	               info.unk18.z);
 
-	JGeometry::TVec3<f32> vec2(0.0f, 0.0f, info.unk40 * 0.01f);
+	JGeometry::TVec3<f32> vec2(0.0f, 0.0f, 0.0f);
+	vec2.z = info.unk40 * 0.01f;
 	MTXMultVec(mtx, &vec2, &vec2);
 	if ((info.unk38 == 0 ? true : false) || (info.unk38 == 1 ? true : false))
 		SMS_FlowMoveMario(vec2);
@@ -99,6 +109,20 @@ void loadWarpPointPos(JSUMemoryInputStream&, int, Vec*) { }
 
 void TMapWarp::init(JSUMemoryInputStream& stream)
 {
+	// TODO(matching): 95.9% (808B). Stack layout now exact (frame 0x230 vs
+	// target 0x238; all local offsets match). Residuals are MWCC register-
+	// allocator artifacts we could not reproduce:
+	//  - register rotation: target binds stream->r25 / this->r31, ours
+	//    stream->r31 / this->r30 (target saves r19-r31 via stmw r19 @0x204,
+	//    ours r20-r31 via stmw r20 @0x200 -> frame differs by 8).
+	//  - 3 target-only instructions: two eager vec-address copies
+	//    (addi r4, r5, 0 / addi r20, r5, 8 before the first stream>> read of
+	//    local_130[idx]) and one extra stream copy used as `this` for the 3rd
+	//    dummy read (target keeps 5 stream copies, our stream>>-chain
+	//    intermediates coalesce to 4).
+	// Attempted: frame pads at top/bottom, shared read temp, chained
+	// stream>> expressions in several groupings (all measured via
+	// tools/decomp-diff.py). Instruction sequence otherwise matches 100%.
 	// Fabricated
 	struct NameTableEntry {
 		const char* unk0;
@@ -112,20 +136,27 @@ void TMapWarp::init(JSUMemoryInputStream& stream)
 		{ "warpI1", 16 }, { "warpI0", 17 }, { nullptr, 0 },
 	};
 
-	unk0 = stream.readU32();
+	// Single shared read temp: the ROM passes the SAME stack slot (top of frame,
+	// just above local_130) for all four integer reads.
+	u32 tmp;
+	stream.read(tmp);
+	unk0 = tmp;
 	if (!unk0)
 		return;
 
-	unk8 = stream.readU32();
+	stream.read(tmp);
+	unk8 = tmp;
 	unk4 = new TMapWarpInfo[unk0 * 2];
 
-	u32 local_1d0[20];
-	u32 local_180[20];
 	JGeometry::TVec3<f32> local_130[20];
+	u32 local_180[20];
+	u32 local_1d0[20];
 
 	for (int i = 0; i < unk0; ++i) {
-		local_1d0[i] = stream.readU32();
-		local_180[i] = stream.readU32();
+		stream.read(tmp);
+		local_1d0[i] = tmp;
+		stream.read(tmp);
+		local_180[i] = tmp;
 	}
 
 	int cnt = unk0 * 2;
@@ -136,17 +167,12 @@ void TMapWarp::init(JSUMemoryInputStream& stream)
 			++needle;
 
 		u32 idx = point_name_table[needle].unk4;
-		stream >> local_130[idx].x;
-		stream >> local_130[idx].y;
-		stream >> local_130[idx].z;
+		stream >> local_130[idx].x >> local_130[idx].y >> local_130[idx].z;
 
 		u32 dummy;
+		stream >> dummy >> dummy >> dummy;
 		stream >> dummy;
-		stream >> dummy;
-		stream >> dummy;
-		stream >> dummy;
-		stream >> dummy;
-		stream >> dummy;
+		stream >> dummy >> dummy;
 	}
 
 	for (int i = 0; i < unk0; ++i) {
@@ -168,6 +194,13 @@ void TMapWarp::init(JSUMemoryInputStream& stream)
 	if (gpMarDirector->mMap == 4) {
 		unkC = 8.0f;
 	}
+
+	// Frame-padding: target's local block sits 0x34 above our base (measured
+	// target layout: dummy at 0x64, arrays at 0x68/0xb8/0x108, temp at 0x1f8).
+	// Our frame = 0x30 base + 0x28 of MWCC expression-temporary slots (5
+	// stream>>-chain intermediates, measured) + this 12-byte pad = 0x64.
+	char framePad_12_init[12];
+	(void)framePad_12_init;
 }
 
 TMapWarp::TMapWarp()

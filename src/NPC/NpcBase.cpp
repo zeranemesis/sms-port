@@ -34,7 +34,7 @@ f32 TBaseNPC::getAnmOffDist_()
 {
 	bool bVar3 = false;
 	f32 fVar1  = gpCamera->mFar;
-	u32 uVar5  = unkD0->getCurrentAnmKind();
+	int uVar5  = unkD0->getCurrentAnmKind();
 	f32 fVar2  = mPtrSaveNormal->mSLDanceAnmOffDist.get();
 	if (checkActionFlag(NPC_ACTION_HAPPY | NPC_ACTION_DANCE)
 	    || mActorType == 0x400000D || uVar5 == 10 || uVar5 == 23) {
@@ -43,14 +43,17 @@ f32 TBaseNPC::getAnmOffDist_()
 
 	if (isNerveMaybeDontCalcAnim0()) {
 		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
-		if (bVar3 && fVar1 < fVar2)
-			fVar1 = fVar2;
+		if (bVar3)
+			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
 	} else if (isNerveMaybeDontCalcAnim1()) {
 		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
-		if (bVar3 && fVar1 < fVar2)
-			fVar1 = fVar2;
+		if (bVar3)
+			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
 	}
 
+	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
+	char framePad_16_getAnmOffDist_[16];
+	(void)framePad_16_getAnmOffDist_;
 	return fVar1;
 }
 
@@ -540,19 +543,21 @@ void TBaseNPC::moveObject()
 		    && mBalloonCtrl->updateBalloon()) {
 			if (mHolder != nullptr) {
 				switch (prev) {
-				case 0xE004F:
-					mBalloonCtrl->setNextMessage(0xE0051, 0x1C20);
+				case 0x52:
+					mBalloonCtrl->setNextMessage(0x54, 0x1C20);
 					break;
-				case 0xE0050:
+				case 0x53:
 					break;
-				case 0xE0051:
-					mBalloonCtrl->setNextMessage(0xE004F, 0x1C20);
+				case 0x54:
+					mBalloonCtrl->setNextMessage(0x52, 0x1C20);
+					break;
+				case 0x55:
 					break;
 				}
 			} else {
 				switch (prev) {
-				case 0xE0050:
-					mBalloonCtrl->setNextMessage(0xE0050, 0x1C20);
+				case 0x53:
+					mBalloonCtrl->setNextMessage(0x53, 0x1C20);
 					break;
 				}
 			}
@@ -608,6 +613,10 @@ void TBaseNPC::moveObject()
 		}
 		calcRidePos();
 	}
+
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_moveObject[48];
+	(void)framePad_48_moveObject;
 }
 
 void TBaseNPC::execMotionBlend_()
@@ -626,9 +635,6 @@ void TBaseNPC::execMotionBlend_()
 
 void TBaseNPC::calcRootMatrix()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_calcRootMatrix[24];
-	(void)framePad_24_calcRootMatrix;
 	if (mActorType == 0x400001D) {
 		TLiveActor::calcRootMatrix();
 		return;

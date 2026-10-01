@@ -271,6 +271,8 @@ void CPolarSubCamera::setUpFromLButtonCamera_()
 
 void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 {
+	int frameProbe;
+	(void)frameProbe;
 	bool bVar11 = false;
 	if (mode == -1) {
 		mode   = unk60->getThing();
@@ -360,29 +362,28 @@ void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 		if (willBeFixedMode) {
 			const TCameraMapTool* tool = unk70;
 			bool bVar11                = (tool->unk28 & 0x2) != 0;
+			JGeometry::TVec3<f32> save;
 			switch (mMode) {
 			case CAMERA_MODE_FIX_A:
 			case CAMERA_MODE_FIX_B:
 			case CAMERA_MODE_DEFINITE_A:
-			case CAMERA_MODE_DEFINITE_B: {
-				JGeometry::TVec3<f32> save;
+			case CAMERA_MODE_DEFINITE_B:
 				if (bVar11)
 					save = mCurrentTarget.mPosition;
 				tool->calcPosAndAt(&mCurrentTarget.mPosition,
 				                   &mCurrentTarget.mTarget);
 				if (bVar11)
 					mCurrentTarget.mPosition.set(save);
-			} break;
+				break;
 
-			default: {
-				JGeometry::TVec3<f32> save;
+			default:
 				if (bVar11)
 					save = mPosition;
 				tool->calcPosAndAt(&mPosition, &mTarget);
 				if (bVar11)
 					mPosition.set(save);
 				warpPosAndAt(mPosition, mTarget);
-			} break;
+				break;
 			}
 		}
 
@@ -572,6 +573,12 @@ bool CPolarSubCamera::isChangeToParallelCameraCByMoveBG_() const
 // hence the hacks above...
 void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 {
+	// Frame-padding: target frame is 88 bytes larger (0x100 vs 0xa8); nloc is 0
+	// on both sides - every byte of the local region is dead on both sides, so
+	// the pad only recreates the unreferenced space MWCC allocated in the ROM.
+	char framePad_88_execCameraModeChangeProc_[88];
+	(void)framePad_88_execCameraModeChangeProc_;
+
 	if (SMS_isMultiPlayerMap()) {
 		changeCamMode_(CAMERA_MODE_MULTI_PLAYER);
 		return;
@@ -582,11 +589,15 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 		return;
 	}
 
-	if (isFixOrDefiniteCameraSpecifyMode(param_1))
+	if (isFixOrDefiniteCameraSpecifyMode(param_1)) {
+		if (unk120->mEnabledFrameMeaning & TMarioGamePad::MEANING_Y)
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
+			                                  nullptr, 0);
 		return;
+	}
 
 	if (unk64 & CAMERA_FLAG_NOTICE_ACTIVE)
-		execNoticeOnOffProc_(NOTICE_MODE_UNK0);
+		execNoticeOnOffProc_(NOTICE_MODE_UNK1);
 
 	int prevMode = mMode;
 
@@ -599,6 +610,9 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 			doLButtonCameraOff_(true);
 		if (unk120->checkFrameMeaning(TMarioGamePad::MEANING_CAM_L))
 			execFrontRotate_();
+		if (unk120->mEnabledFrameMeaning & TMarioGamePad::MEANING_Y)
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
+			                                  nullptr, 0);
 	} else {
 		if (isLButtonCameraSpecifyMode(mMode)) {
 			if (SMS_GetMarioStatus() & MARIO_STATUS_FLAG_UNK20000) {
@@ -646,7 +660,9 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 	int currentMap = gpMarDirector->getCurrentMap();
 
 	int newMode;
-	if (gpMarioOriginal->checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
+	if (param_1 == CAMERA_MODE_FOLLOW_D) {
+		newMode = param_1;
+	} else if (gpMarioOriginal->checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		newMode = CAMERA_MODE_DIVING;
 	} else if (SMS_CheckMarioFlag(2)) {
 		if (currentMap == 9)

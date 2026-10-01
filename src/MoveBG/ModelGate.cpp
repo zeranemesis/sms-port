@@ -4,7 +4,7 @@
 // rogue include: the original TU opens .rodata with the dummy string
 // pair from System/DummyStrings.hpp; without it every string offset in
 // this object is shifted.
-#include <System/DummyStrings.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <M3DUtil/MActorUtil.hpp>
 #include <M3DUtil/SampleCtrlModel.hpp>
@@ -21,12 +21,15 @@
 #include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
 #include <JSystem/J3D/J3DGraphBase/Components/J3DTevStage.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JDrama/JDRViewObjPtrList.hpp>
 #include <M3DUtil/SampleCtrlNode.hpp>
 #include <Camera/Camera.hpp>
 #include <MarioUtil/ScreenUtil.hpp>
 #include <stdio.h>
 #include <dolphin/mtx.h>
 #include <stdlib.h>
+#include <math.h>
 
 // rogue include: pulls in JALList.hpp's JSUList<T>::smList template
 // statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
@@ -37,42 +40,47 @@
 static const char* gateMActorNames[5]
     = { "05_gate01", "05_gate02rico", "05_gate03manma", "05_gate04monte",
 	    "05_gate05mare" };
-static const char* gateDestinationNames[5]
-    = { "Gate", "GateToRicco", "GateToMamma", "GateToMonte", "GateToMare" };
 
 void TModelGate::loadAfter()
 {
+	static const char* gateNames[] = { "Gate", "GateToRicco", "GateToMamma",
+	                                 "GateToMonte", "GateToMare", nullptr };
 	initHitActor(0x080000C0, 5, -0x80000000, 300.0f, 400.0f, 300.0f, 400.0f);
 	mHitFlags |= HIT_FLAG_NO_COLLISION;
 	unk70 = 0;
 	unk71 = 0;
 
 	for (u8 i = 0; i < 5; ++i) {
-		if (strcmp(getName(), gateDestinationNames[i]) == 0) {
+		if (strcmp(gateNames[i], getName()) == 0) {
 			unk71 = i;
 			break;
 		}
 	}
 
+	u32 loaderFlags = 0x11100000;
 	char modelPath[0x100];
 	snprintf(modelPath, sizeof(modelPath), "/scene/map/map/gate/%s.bmd",
 	         gateMActorNames[unk71]);
 	unk78 = SMS_MakeMActor("/scene/map/map/gate", modelPath, 0,
-	                       0x11100000);
+	                       loaderFlags);
 	unk72 = unk78->getModel()->getModelData()->getJointName()->getIndex(
 	    "center");
 
 	if (ActivePlayer.open) {
 		THPVideoInfo videoInfo;
 		THPPlayerGetVideoInfo(&videoInfo);
-		ResTIMG* images = unk78->getModel()->getModelData()->getTexture()->getResTIMG(0);
-		images[0].format = 1;
-		images[0].width = videoInfo.xSize;
-		images[0].height = videoInfo.ySize;
+		u32 width = videoInfo.xSize;
+		u32 height = videoInfo.ySize;
+		J3DTexture* texture = unk78->getModel()->getModelData()->getTexture();
+		ResTIMG* image = texture->getResTIMG(0);
+		image->format = 1;
+		image->width = width;
+		image->height = height;
 		for (u8 i = 1; i < 3; ++i) {
-			images[i].format = 1;
-			images[i].width = (videoInfo.xSize >> 1) & 0x7fff;
-			images[i].height = (videoInfo.ySize >> 1) & 0x7fff;
+			image = texture->getResTIMG(i);
+			image->format = 1;
+			image->width = (width >> 1) & 0x7fff;
+			image->height = (height >> 1) & 0x7fff;
 		}
 	}
 
@@ -85,9 +93,9 @@ void TModelGate::loadAfter()
 	unk78->setBrk(gateMActorNames[unk71]);
 	unk78->getFrameCtrl(5)->setRate(0.0f);
 	unkC0 = new SampleCtrlModelData(unk78->getModel()->getModelData());
-	unkC4 = 1;
 	unkC5[0] = 0x20;
 	unkC5[1] = 0xFF;
+	unkC4 = 1;
 	unkC8 = 360;
 	unkCA = 0;
 	unkCC = 0;
@@ -98,26 +106,26 @@ void TModelGate::loadAfter()
 	unkDC = 0.025f;
 	mScaling.set(1.0f, 1.0f, 1.0f);
 
-	TMapObjBase::joinToGroup("マップグループ", this);
+	static_cast<JDrama::TViewObjPtrListT<THitActor>*>(
+	    JDrama::TNameRefGen::search("マップグループ"))->push_back(this);
 
 	Mtx actorMtx;
 	SMS_GetActorMtx(*this, actorMtx);
 	PSMTXCopy(actorMtx, unk78->getModel()->getBaseTRMtx());
-	unk78->getModel()->update();
+	unk78->getModel()->calc();
 
-	Mtx localMtx;
-	PSMTXTrans(localMtx, 0.0f, 0.0f, 250.0f);
-	MtxPtr centerMtx = unk78->getModel()->getAnmMtx(unk72);
-	PSMTXConcat(centerMtx, localMtx, localMtx);
+	PSMTXTrans(actorMtx, 0.0f, 0.0f, 250.0f);
+	PSMTXConcat(unk78->getModel()->getAnmMtx(unk72), actorMtx, actorMtx);
 	unkAC.set(0.0f, 0.0f, 0.0f);
-	PSMTXMultVec(localMtx, (Vec*)&unkAC, (Vec*)&unkAC);
-	PSMTXInverse(centerMtx, unk7C);
+	PSMTXMultVec(actorMtx, (Vec*)&unkAC, (Vec*)&unkAC);
+	PSMTXInverse(unk78->getModel()->getAnmMtx(unk72), unk7C);
+	MtxPtr centerMtx = unk78->getModel()->getAnmMtx(unk72);
 	unk74 = matan(centerMtx[2][2], centerMtx[0][2]);
 
 	unkE0 = 0;
 	unkE4 = 0.0f;
 	unkE8 = 0.01f;
-	unkEC = 0.025f;
+	unkEC = 0.02f;
 	unkF0 = 500.0f;
 	unkF4 = 1000.0f;
 	unkF8 = 0.7f;
@@ -129,42 +137,34 @@ void TModelGate::loadAfter()
 	unk110 = 0.0f;
 	unk114 = 300.0f;
 
-	static const char* particlePaths[] = {
-	    "/scene/map/map/gate/ms_mariowp_body.jpa",
-	    "/scene/map/map/gate/ms_mariowp_head.jpa",
-	    "/scene/map/map/gate/ms_mariowp_cap.jpa",
-	    "/scene/map/map/gate/ms_mariowp_rhand.jpa",
-	    "/scene/map/map/gate/ms_mariowp_lhand.jpa",
-	    "/scene/map/map/gate/ms_mariowp_rleg.jpa",
-	    "/scene/map/map/gate/ms_mariowp_rfoot.jpa",
-	    "/scene/map/map/gate/ms_mariowp_lleg.jpa",
-	    "/scene/map/map/gate/ms_mariowp_lfoot.jpa",
-	    "/scene/map/map/gate/ms_mariowp_watgun.jpa",
-	    "/scene/map/map/gate/ms_mariowp_dust.jpa",
-	    "/scene/map/map/gate/ms_mariowp_senko.jpa",
-	    "/scene/map/map/gate/ms_gatewind_a.jpa",
-	    "/scene/map/map/gate/ms_gatewind_a2.jpa",
-	    "/scene/map/map/gate/ms_gatewind_a3.jpa",
-	    "/scene/map/map/gate/ms_gatewind_b.jpa",
-	    "/scene/map/map/gate/ms_gatehit_a.jpa",
-	    "/scene/map/map/gate/ms_gatehit_b.jpa",
-	};
-	static const u16 particleIds[] = {
-	    0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22,
-	    0x23, 0x3C, 0x51, 0x131, 0x132, 0x133, 0x134, 0x1DD, 0x1DE,
-	};
-	for (u32 i = 0; i < sizeof(particleIds) / sizeof(particleIds[0]); ++i)
-		SMS_LoadParticle(particlePaths[i], particleIds[i]);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_body.jpa", 0x1A);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_head.jpa", 0x1B);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_cap.jpa", 0x1C);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_rhand.jpa", 0x1D);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_lhand.jpa", 0x1E);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_rleg.jpa", 0x1F);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_rfoot.jpa", 0x20);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_lleg.jpa", 0x21);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_lfoot.jpa", 0x22);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_watgun.jpa", 0x23);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_dust.jpa", 0x3C);
+	SMS_LoadParticle("/scene/map/map/gate/ms_mariowp_senko.jpa", 0x51);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatewind_a.jpa", 0x131);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatewind_a2.jpa", 0x132);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatewind_a3.jpa", 0x133);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatewind_b.jpa", 0x134);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatehit_a.jpa", 0x1DD);
+	SMS_LoadParticle("/scene/map/map/gate/ms_gatehit_b.jpa", 0x1DE);
 
 	bool opened = false;
 	switch (unk71) {
 	case 0: opened = TFlagManager::getInstance()->getBool(0x10385); break;
 	case 1: opened = TFlagManager::getInstance()->getBool(0x10386); break;
-	case 2:
-	case 3:
+	case 2: opened = TFlagManager::getInstance()->getBool(0x10387); break;
+	case 3: opened = TFlagManager::getInstance()->getBool(0x10387); break;
 	case 4: opened = TFlagManager::getInstance()->getBool(0x10387); break;
 	}
-	if (opened) {
+	if (opened == true) {
 		unk70 |= 1;
 		mHitFlags &= ~HIT_FLAG_NO_COLLISION;
 	} else {
@@ -185,16 +185,19 @@ void TModelGate::startOpen()
 
 void TModelGate::screenBlur(JDrama::TGraphics* graphics)
 {
-	JGeometry::TVec3<f32> direction(gpMarioPos->x - mPosition.x, 0.0f,
-	                                gpMarioPos->z - mPosition.z);
+	Vec screenDirection;
+	JGeometry::TVec3<f32> direction;
+	direction.x = gpMarioPos->x - mPosition.x;
+	direction.y = 0.0f;
+	direction.z = gpMarioPos->z - mPosition.z;
 	PSVECNormalize((Vec*)&direction, (Vec*)&direction);
 
-	Vec screenDirection;
 	PSMTXMultVecSR(graphics->getViewMtx(), (Vec*)&direction,
 	                &screenDirection);
 
 	JGeometry::TVec3<f32> localMario;
-	PSMTXMultVec(unk7C, (Vec*)gpMarioPos, (Vec*)&localMario);
+	JGeometry::TVec3<f32> marioPosition = *gpMarioPos;
+	PSMTXMultVec(unk7C, (Vec*)&marioPosition, (Vec*)&localMario);
 
 	f32 distanceStrength = 0.0f;
 	if (-250.0f <= localMario.x && localMario.x <= 250.0f
@@ -202,26 +205,26 @@ void TModelGate::screenBlur(JDrama::TGraphics* graphics)
 	    && 0.0f <= localMario.z && localMario.z <= unkF4) {
 		if (localMario.z < unkF0) {
 			distanceStrength = 1.0f;
-		} else if (localMario.z <= unkF4) {
+		}
+		if (unkF0 <= localMario.z && localMario.z <= unkF4) {
 			distanceStrength
 			    = 1.0f - (localMario.z - unkF0) / (unkF4 - unkF0);
 		}
+		if (unkF4 < localMario.z)
+			distanceStrength = 0.0f;
 	}
 
+	f32 targetStrength = (f32)unkE0 * distanceStrength;
 	const s16 gateCameraAngle = (s16)(s32)(
 	    182.04445f * mRotation.y - (f32)gpCamera->unk258);
-	f32 targetStrength = (f32)unkE0 * distanceStrength;
 	if (gateCameraAngle < -10922 || gateCameraAngle > 10922)
 		targetStrength = 0.0f;
 
 	unkE4 += unkE8 * (targetStrength - unkE4);
-	gpAfterEffect->unk15 = 2;
-	gpAfterEffect->unk1C
-	    = (u8)((s32)((1.0f - gpCamera->unk270) * unkE4));
-	gpAfterEffect->unk50 = unkEC;
-	gpAfterEffect->unk5C = screenDirection.x;
-	gpAfterEffect->unk60 = screenDirection.y;
-	gpAfterEffect->unk64 = screenDirection.z;
+	f32 blurAlpha = unkE4;
+	s32 alpha = (s32)(blurAlpha * (1.0f - gpCamera->unk270));
+	f32 blurScale = unkEC;
+	gpAfterEffect->setGateBlur(2, alpha, blurScale, JGeometry::TVec3<f32>(screenDirection.x, screenDirection.y, screenDirection.z));
 }
 
 BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
@@ -238,7 +241,8 @@ BOOL TModelGate::receiveMessage(THitActor* sender, u32 message)
 		JGeometry::TVec3<f32> localPos;
 		Mtx localMtx;
 		PSMTXMultVec(unk7C, (Vec*)&sender->mPosition, (Vec*)&localPos);
-		PSMTXCopy(unk78->getModel()->getAnmMtx(unk72), localMtx);
+		MtxPtr anmMtx = unk78->getModel()->getAnmMtx(unk72);
+		PSMTXCopy(anmMtx, localMtx);
 
 		if (localPos.x * localPos.x + localPos.y * localPos.y < 40000.0f) {
 			if (-100.0f < localPos.z) {
@@ -277,23 +281,21 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 		return;
 
 	if ((cue & 8) && ActivePlayer.open && ActivePlayer.dispTextureSet != nullptr) {
-		ResTIMG* images
-		    = unk78->getModel()->getModelData()->getTexture()->getResTIMG(0);
-		images[0].imageDataOffset
-		    = (u32)ActivePlayer.dispTextureSet->ytexture - (u32)&images[0];
-		images[1].imageDataOffset
-		    = (u32)ActivePlayer.dispTextureSet->utexture - (u32)&images[1];
-		images[2].imageDataOffset
-		    = (u32)ActivePlayer.dispTextureSet->vtexture - (u32)&images[2];
+		THPTextureSet* textureSet = ActivePlayer.dispTextureSet;
+		J3DTexture* texture = unk78->getModel()->getModelData()->getTexture();
+		ResTIMG* image = texture->getResTIMG(0);
+		image->imageDataOffset = (u32)textureSet->ytexture - (u32)image;
+		image = texture->getResTIMG(1);
+		image->imageDataOffset = (u32)textureSet->utexture - (u32)image;
+		image = texture->getResTIMG(2);
+		image->imageDataOffset = (u32)textureSet->vtexture - (u32)image;
 	}
 
 	unk78->perform(cue, graphics);
 
 	if (cue & 1) {
 		if (!(unk70 & 2)) {
-			JGeometry::TVec3<f32> fromGate = *gpMarioPos;
-			fromGate -= mPosition;
-			if (fromGate.length() < 1000.0f) {
+			if (SMS_DistanceFromMario(mPosition) < 1000.0f) {
 				unkD0 += 0.01f;
 				if (unkD0 > 1.0f) {
 					unkD0 = 1.0f;
@@ -313,15 +315,17 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 		    && unk108 < localMario.y && localMario.y < unk10C
 		    && unk110 < localMario.z && localMario.z < unk114) {
 			if (unkCA > 0) {
-				if (SMS_IsMarioStatusTypeJumping()) {
-					THitActor* marioActor = SMS_GetMarioHitActor();
-					if (marioActor->receiveMessage(this, 4) == 1)
-						mHeldObject = (TTakeActor*)marioActor;
+				bool jumping = false;
+				if (SMS_IsMarioStatusTypeJumping())
+					jumping = true;
+				if (jumping == true) {
+					if (SMS_GetMarioHitActor()->receiveMessage(this, 4) == 1)
+						mHeldObject = (TTakeActor*)SMS_GetMarioHitActor();
 				}
 			} else {
 				f32 dx = gpMarioPos->x - mPosition.x;
 				f32 dz = gpMarioPos->z - mPosition.z;
-				f32 distance = JGeometry::TUtil<f32>::sqrt(dx * dx + dz * dz);
+				f32 distance = std::sqrtf(dx * dx + dz * dz);
 				if (distance < unk100) {
 					JGeometry::TVec3<f32> moveRequest = *gpMarioPos;
 					moveRequest.x += 10.0f * (dx / distance);
@@ -333,15 +337,21 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & 2) {
-		if (unkC4 == 0) {
-			if (unk78->getFrameCtrl(2)->getState() & 3)
+		switch (unkC4) {
+		case 0:
+			if (unk78->getFrameCtrl(2)->checkState(3))
 				unkC4 = 1;
-		} else if (unkC4 == 1) {
+			break;
+		case 1:
 			if (unkCA > 0) {
-				MtxPtr jointMtx = unk78->getModel()->getAnmMtx(unk72);
-				for (u16 particle = 0x131; particle <= 0x134; ++particle)
-					gpMarioParticleManager->emitAndBindToMtxPtr(particle, jointMtx,
-					                                            1, this);
+				gpMarioParticleManager->emitAndBindToMtxPtr(
+				    0x131, unk78->getModel()->getAnmMtx(unk72), 1, this);
+				gpMarioParticleManager->emitAndBindToMtxPtr(
+				    0x132, unk78->getModel()->getAnmMtx(unk72), 1, this);
+				gpMarioParticleManager->emitAndBindToMtxPtr(
+				    0x133, unk78->getModel()->getAnmMtx(unk72), 1, this);
+				gpMarioParticleManager->emitAndBindToMtxPtr(
+				    0x134, unk78->getModel()->getAnmMtx(unk72), 1, this);
 
 				--unkCA;
 				++unkCC;
@@ -354,7 +364,8 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 				if (unkD0 < 0.0f)
 					unkD0 = 0.0f;
 			}
-		} else {
+			break;
+		default:
 			unkD0 -= unkDC;
 		}
 
@@ -363,6 +374,8 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 		if (unkD0 < 0.0f)
 			unkD0 = 0.0f;
 
+		J3DTevBlock* tevBlock = unk78->getModel()->getModelData()
+		                           ->getMaterialNodePointer(0)->getTevBlock();
 		if (unkB8 == 1) {
 			unkBA = unkB9;
 			--unkBC;
@@ -373,65 +386,62 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
 					unkB9 = 0;
 			}
 			SampleCtrlMaterial* sampledMaterial = unkC0->mMaterials[0];
-			J3DMaterial* material
-			    = unk78->getModel()->getModelData()->getMaterialNodePointer(0);
-			J3DTevStageInfo* tevInfo = sampledMaterial->unk3C;
-			tevInfo[0].field_0x5 = 0;
-			tevInfo[2].field_0x5 = 0;
-			tevInfo[3].field_0x5 = 0;
-			tevInfo[3].field_0x6 = 0;
-			tevInfo[3].field_0x8 = 1;
-			tevInfo[5].field_0x11 = 1;
-			if (unkB9 == 0) {
-				tevInfo[2].field_0x5 = 1;
-				tevInfo[3].field_0x6 = 0;
-			} else if (unkB9 == 1) {
-				tevInfo[0].field_0x5 = 8;
-			} else if (unkB9 == 2) {
-				tevInfo[2].field_0x5 = 8;
-			} else if (unkB9 == 3) {
-				tevInfo[3].field_0x7 = 1;
-			} else if (unkB9 == 4) {
-				tevInfo[5].field_0x11 = 0;
-			} else if (unkB9 == 5) {
-				tevInfo[2].field_0x7 = 1;
-			} else if (unkB9 == 6) {
-				tevInfo[2].field_0x5 = 1;
-			} else if (unkB9 == 7) {
-				tevInfo[2].field_0x5 = 0;
-				tevInfo[3].field_0x6 = 1;
-				tevInfo[3].field_0x8 = 0;
+			u8& color0 = sampledMaterial->unk3C[0].field_0x5;
+			J3DTevStageInfo& stage2 = sampledMaterial->unk3C[2];
+			u8& color2 = stage2.field_0x5;
+			J3DTevStageInfo& stage3 = sampledMaterial->unk3C[3];
+			u8& color3 = stage3.field_0x5;
+			u8& bias3 = stage3.field_0x6;
+			J3DTevStageInfo& stage5 = sampledMaterial->unk3C[5];
+			u8& scale3 = stage3.field_0x7;
+			u8& clamp3 = stage3.field_0x8;
+			u8& clampAlpha5 = stage5.field_0x11;
+			color0 = 0;
+			color2 = 0;
+			color3 = 0;
+			bias3 = 0;
+			scale3 = 0;
+			clamp3 = 1;
+			clampAlpha5 = 1;
+			switch (unkB9) {
+			case 1:
+				color3 = 1;
+				clamp3 = 0;
+				break;
+			case 2:
+				color0 = 8;
+				break;
+			case 3:
+				color3 = 8;
+				break;
+			case 4:
+				scale3 = 1;
+				break;
+			case 5:
+				clampAlpha5 = 0;
+				break;
+			case 6:
+				color2 = 1;
+				break;
+			case 7:
+				color3 = 0;
+				bias3 = 1;
+				clamp3 = 0;
+				break;
 			}
 
-#pragma dont_inline on
-			const u8 stageIndices[4] = { 0, 2, 3, 5 };
-			for (u32 i = 0; i < 4; ++i) {
-				const J3DTevStageInfo& info = tevInfo[stageIndices[i]];
-				J3DTevStage* stage = material->getTevStage(stageIndices[i]);
-				stage->setTevColorOp(info.field_0x5, info.field_0x6,
-				                     info.field_0x7, info.field_0x8,
-				                     info.field_0x9);
-				stage->setTevColorAB(info.field_0x1, info.field_0x2);
-				stage->setTevColorCD(info.field_0x3, info.field_0x4);
-				stage->setAlphaABCD(info.field_0xa, info.field_0xb,
-				                    info.field_0xc, info.field_0xd);
-				stage->setTevAlphaOp(info.field_0xe, info.field_0xf,
-				                     info.field_0x10, info.field_0x11,
-				                     info.field_0x12);
-			}
-#pragma dont_inline off
+			J3DTevStageInfo& stage0 = sampledMaterial->unk3C[0];
+			tevBlock->getTevStage(0)->setTevStageInfo(stage0);
+			tevBlock->getTevStage(2)->setTevStageInfo(stage2);
+			tevBlock->getTevStage(3)->setTevStageInfo(stage3);
+			tevBlock->getTevStage(5)->setTevStageInfo(stage5);
 		}
 
-		J3DFrameCtrl* btkCtrl = unk78->getFrameCtrl(5);
-		btkCtrl->setRate(unkD0 * btkCtrl->getEnd());
+		f32 frame = unkD0 * unk78->getFrameCtrl(5)->getEnd();
+		unk78->getFrameCtrl(5)->setFrame(frame);
 	}
 	if (cue & 4)
 		screenBlur(graphics);
 
 	THitActor::perform(cue, graphics);
-}
-
-MtxPtr TModelGate::getTakingMtx()
-{
-	return nullptr;
 }

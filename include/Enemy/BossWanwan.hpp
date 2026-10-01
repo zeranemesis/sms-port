@@ -41,6 +41,7 @@ public:
 
 class TBossWanwan;
 class TBWLeash;
+class TRope;
 
 class TBWBinder : public TBinder {
 public:
@@ -50,6 +51,15 @@ public:
 
 class TBossWanwanMtxCalc : public M3UMtxCalcSIAnmBlendQuat {
 public:
+	// `basic` is always false and the blend ratio is always reset to 0 here;
+	// the remaining store of 0 goes to the J3DMtxCalc virtual base's tail.
+	TBossWanwanMtxCalc(TBossWanwan* owner)
+	    : M3UMtxCalcSIAnmBlendQuat(false)
+	    , mOwner(owner)
+	{
+		mMotionBlendRatio = 0.0f;
+	}
+
 	virtual ~TBossWanwanMtxCalc() { }
 	virtual void calc(u16);
 
@@ -81,7 +91,10 @@ public:
 	TBWPicket(TBossWanwan* owner, const char* name)
 	    : TTakeActor(name)
 	    , mOwner(owner)
+	    , mTakingMtx()
+	    , mPicketMActor(nullptr)
 	{
+		MTXIdentity(mTakingMtx.mMtx);
 	}
 	virtual ~TBWPicket() { }
 	virtual void perform(u32, JDrama::TGraphics*);
@@ -91,6 +104,9 @@ public:
 
 public:
 	/* 0x70 */ TBossWanwan* mOwner;
+	/* 0x74 */ JGeometry::SMatrix34C<f32> mTakingMtx; ///< returned by
+	                                             ///< getTakingMtx()
+	/* 0xA4 */ MActor* mPicketMActor; ///< chain model of this stake
 };
 
 class TBWLeash;
@@ -111,7 +127,7 @@ public:
 
 public:
 	/* 0x68 */ TBWLeash* mLeash;
-	/* 0x6C */ int unk6C; // TODO: unknown
+	/* 0x6C */ MActor* mMActor;
 	/* 0x70 */ f32 mTemperature;
 	/* 0x74 */ int mIndex;
 };
@@ -124,7 +140,7 @@ public:
 
 public:
 	/* 0x10 */ TBossWanwan* mOwner; // TODO: guessed
-	/* 0x14 */ void* unk14;         // TODO: a TRope*
+	/* 0x14 */ TRope* mRope;
 	/* 0x18 */ TBWLeashNode** mNodes;
 };
 
@@ -160,28 +176,28 @@ public:
 public:
 	/* 0x150 */ TBossWanwanMtxCalc* mMtxCalc;
 	/* 0x154 */ TBWLeash* mLeash;
-	/* 0x158 */ TBWPicket* unk158; // TODO: type is a guess
+	/* 0x158 */ TBWPicket* unk158; // TODO: name is a guess
 	/* 0x15C */ JGeometry::TVec3<f32> unk15C;
 	/* 0x168 */ f32 unk168;
 	/* 0x16C */ int unk16C;
-	/* 0x170 */ f32 unk170;
-	/* 0x174 */ f32 unk174;
+	/// The two hit boxes. The ROM walks this pair as one 2-element array
+	/// (`this + i*4 + 0x170`), so keep it as an array.
+	/* 0x170 */ TBWHit* unk170[2];
 	/* 0x178 */ f32 unk178; // 1 / frame count of the current bck
 	/* 0x17C */ int unk17C;
 	/* 0x180 */ int unk180;
 	/* 0x184 */ int unk184;
 	/* 0x188 */ int unk188;
-	/* 0x18C */ bool unk18C;
+	/* 0x18C */ s8 unk18C;
 	/* 0x18D */ bool unk18D;
 	/* 0x190 */ int unk190;
 	/* 0x194 */ s8 unk194;
-	/* 0x195 */ bool unk195;
+	/* 0x195 */ s8 unk195;
 	/* 0x198 */ int unk198;
 	/* 0x19C */ int unk19C;
-	/* 0x1A0 */ bool unk1A0;
-	/* 0x1A4 */ f32 unk1A4;
-	/* 0x1A8 */ f32 unk1A8;
-	/* 0x1AC */ f32 unk1AC;
+	/* 0x1A0 */ s8 unk1A0;
+	/* 0x1A4 */ JGeometry::TVec3<f32> unk1A4; ///< scratch position for
+	                                        ///< the 0x168 particle emitter
 	/* 0x1B0 */ int unk1B0;
 	/* 0x1B4 */ s16 unk1B4;
 };

@@ -37,6 +37,14 @@ public:
 	/* 0x194 */ JGeometry::TVec3<f32> unk194; // TODO: spawn/reset position?
 	/* 0x1A0 */ JGeometry::TQuat4<f32> unk1A0; // TODO: reset to identity in ::reset
 	/* 0x1B0 */ s32 unk1B0; // TODO: wait-nerve timeout, compared against spine time
+
+	// TODO: 0x20 bytes of unmodelled trailing data. marioEU.MAP lists no
+	// members, and 0x1B0 is the highest offset anything ever touches on
+	// `this` (checked over every function in build/GMSP01/asm/Enemy/Kazekun.s
+	// -- the 0x1B4..0x1DC hits there are all stack slots, not `this`). The
+	// only hard evidence for the size is MarNameRefGen_Enemy's "Kazekun"
+	// branch, which does `li r3, 0x1D4` for `new TKazekun`. Layout unknown.
+	/* 0x1B4 */ char unk1B4[0x1D4 - 0x1B4];
 };
 
 class TKazekunParams : public TSmallEnemyParams {

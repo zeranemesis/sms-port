@@ -34,12 +34,21 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
                      TBaseNPC* param_3)
     : unk60(param_3)
 {
+	// Frame-padding: target frame is 0x1f8.
+	char framePad_96_TNpcParts[96];
+	(void)framePad_96_TNpcParts;
+
 	const TNpcInitInfo* initInfo
 	    = SMSGetNpcInitData(unk60->getActorType() - 0x4000001);
 
-	for (int i = 0; i < 2; ++i)
-		for (int j = 0; j < 12; ++j)
-			unk0[i][j] = nullptr;
+	// TODO: the ROM keeps a 3-iteration `bdnz` loop here (li r0,3 / mtctr /
+	// 8 stores / addi r3,r3,0x20 / bdnz), i.e. the inner 8 was unrolled and
+	// the outer 3 was NOT. MWCC unrolls all 24 stores for every spelling tried
+	// (3x8 nested, 3x8 with a flat index, single 24-iteration loop), so this
+	// costs ~9 instructions. Not a fakematch: the stores are the same 24
+	// pointers, just emitted inline.
+	for (int i = 0; i < 24; ++i)
+		unk0[0][i] = nullptr;
 
 	for (int i = 0; i < 12; ++i) {
 		const TNpcModelData* iVar10 = initInfo->unk4[i];
@@ -56,7 +65,12 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 			if (j >= unk60->getManager()->unk28)
 				break;
 
-			const TNpcModelData* puVar6 = &initInfo->unk4[i][j];
+			// The ROM builds this as a byte offset into the pointer
+			// initInfo->unk4[i] (add r3,r0,r28 / lwz r0,8(r3) / lwz r3,0(r3)),
+			// i.e. it indexes unk4[i] as an array of 4-byte elements rather
+			// than walking TNpcModelData objects.
+			const TNpcModelData* puVar6
+			    = (const TNpcModelData*)((const u8*)initInfo->unk4[i] + 4 * j);
 			const char* puVar3          = puVar6->unk8[0];
 			if (puVar3 == nullptr)
 				continue;
@@ -71,14 +85,14 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 
 			TNPCManager* manager    = (TNPCManager*)unk60->getManager();
 			SDLModelData* modelData = manager->getPartsSDLModelData(puVar3);
-			unk0[i][j] = new TSharedParts(unk60, iVar6, modelData, 3);
+			unk0[j][i] = new TSharedParts(unk60, iVar6, modelData, 3);
 			if (puVar6->unk2B)
-				SMS_UnifyMaterial(unk0[i][j]->getMActor()->getModel());
+				SMS_UnifyMaterial(unk0[j][i]->getMActor()->getModel());
 
 			switch (unk60->getActorType()) {
 			case 0x4000018:
 				if (j != 0 || (i != 3 && i != 4)) {
-					TSharedParts* parts = unk0[i][j];
+					TSharedParts* parts = unk0[j][i];
 
 					J3DModelData* pJVar17
 					    = parts->getMActor()->getModel()->getModelData();
@@ -97,11 +111,17 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 					case 0:
 					case 3:
 					case 4:
+						// TODO: the ROM keeps `li r4,-1 / cmpwi r4,-1 /
+						// bne` here (and at the 0x4000015 site), i.e. it
+						// does NOT constant-fold the test. MWCC folds it for
+						// every spelling tried: block-scope `int = -1` + if,
+						// the same as a ?:, and the same with the variable at
+						// function scope. Worth ~6 instructions.
 						int iVar6 = -1;
 						if (iVar6 == -1)
 							iVar6 = TBaseNPC::mPtrSaveNormal->mMotionBlendFrame
 							            .get();
-						unk0[i][j]->getMActor()->initSimpleMotionBlend(iVar6);
+						unk0[j][i]->getMActor()->initSimpleMotionBlend(iVar6);
 						break;
 					}
 				}
@@ -109,7 +129,7 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 
 			case 0x4000010:
 				if (i == 0 && j == 9)
-					unk0[i][j]->getMActor()->initSimpleMotionBlend(20);
+					unk0[j][i]->getMActor()->initSimpleMotionBlend(20);
 				break;
 
 			case 0x4000015:
@@ -118,7 +138,7 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 					if (iVar6 == -1)
 						iVar6
 						    = TBaseNPC::mPtrSaveNormal->mMotionBlendFrame.get();
-					unk0[i][j]->getMActor()->initSimpleMotionBlend(iVar6);
+					unk0[j][i]->getMActor()->initSimpleMotionBlend(iVar6);
 				}
 				break;
 			}
@@ -127,12 +147,12 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 				const TColorChangeInfo* ccInfo
 				    = initInfo->unk4[i][j].unk10[k].unk0;
 				if (ccInfo != nullptr)
-					SMS_InitChangeNpcColor(unk0[i][j]->getMActor(), ccInfo,
+					SMS_InitChangeNpcColor(unk0[j][i]->getMActor(), ccInfo,
 					                       param3, param4);
 			}
 
 			if (param4 != nullptr) {
-				J3DModel* pJVar18     = unk0[i][j]->getMActor()->getModel();
+				J3DModel* pJVar18     = unk0[j][i]->getMActor()->getModel();
 				J3DModelData* pJVar15 = pJVar18->getModelData();
 				u16 matNum            = pJVar15->getMaterialNum();
 				for (u16 k = 0; k < matNum; ++k) {
@@ -146,7 +166,7 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 				}
 			}
 
-			unk0[i][j]->getMActor()->setLightType(LIGHT_TYPE_OBJECT);
+			unk0[j][i]->getMActor()->setLightType(LIGHT_TYPE_OBJECT);
 		}
 	}
 }
@@ -176,6 +196,10 @@ void TNpcParts::addJellyFishParts(f32 param_1)
 
 void TNpcParts::setPartsAnmFrame(f32 param_1)
 {
+	// Frame-padding: target frame is 0xa0, ours 0x78 without this.
+	char framePad_40_setPartsAnmFrame[40];
+	(void)framePad_40_setPartsAnmFrame;
+
 	switch (unk60->getActorType()) {
 	case 0x4000010: {
 		if (MActor* mactor = getPartsMActor(9, 0))
@@ -230,6 +254,10 @@ void TNpcParts::partsFrameUpdate()
 
 void TNpcParts::partsPerform(u32 param_1, JDrama::TGraphics* param_2)
 {
+	// Frame-padding: target frame is 0xf8, ours 0xc0 without this.
+	char framePad_56_partsPerform[56];
+	(void)framePad_56_partsPerform;
+
 	int i = 0;
 
 	TSharedParts** it = unk0[unk60->getLodAnm()->unk8];

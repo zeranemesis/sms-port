@@ -380,6 +380,13 @@ void TTelesaBlock::perform(u32 cue, JDrama::TGraphics* graphics)
 		mtx.setScale(unk140.y, unk140.y, unk140.z);
 		MTXConcat(getModel()->getAnmMtx(0), mtx, getModel()->getAnmMtx(0));
 	}
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_telesaBlockPerform[8];
+	(void)framePad_8_telesaBlockPerform;
 }
 
 void TTelesaBlock::setGroundCollision()

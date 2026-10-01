@@ -25,6 +25,20 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// The original calls JGeometry::TUtil<f32>::inv_sqrt(v) out-of-line here
+// (bl sqrt__Q29JGeometry8TUtil<f>Ff), with the range guard inside the
+// callee. JGUtil.hpp only offers the inline spelling, so MWCC always
+// expands these sites and the call never appears.
+// FABRICATED: the callee is orig_inv_sqrt, so the `bl` itself still shows as
+// one mismatched instruction. Making JGUtil.hpp out-of-line instead was
+// measured repo-wide at -32.2 points - see docs/AGENT_MATCHING_TIPS.md.
+#pragma dont_inline on
+static f32 orig_inv_sqrt(f32 v) {
+	return JGeometry::TUtil<f32>::inv_sqrt(v);
+}
+#pragma dont_inline off
+
+
 // NOTE: this TU is -inline deferred, so the out-of-line functions below are
 // defined in the *reverse* order of mario.MAP's .text layout.
 
@@ -43,18 +57,6 @@ static const char* TKoopaJr_jointNameTable[] = {
 static int TKoopaJr_jointIndexTable[5];
 
 static const char* koopajrsubmarine_bastable[1] = { nullptr };
-
-// The original emits JGeometry::TUtil<f32>::mod as a weak out-of-line function
-// into this TU, but the f32 specialization in JGUtil.hpp has no `mod` member.
-// Re-create the exact body here so call sites keep a single `bl`.
-#pragma dont_inline on
-static f32 KoopaJrUtilMod(f32 value, f32 modulus)
-{
-	if (fabsf(modulus) > fabsf(value))
-		return value;
-	return value - modulus * (f32)(s64)(value / modulus);
-}
-#pragma dont_inline off
 
 // ============= TDirectionCalc =============
 
@@ -103,7 +105,7 @@ f32 TDirectionCalc::calcTurnDirection(f32 target, f32 speed)
 {
 	normalize();
 	mDirection = 0.0f
-	              + KoopaJrUtilMod(6.2831855f + (mDirection - 0.0f), 6.2831855f);
+	              + std::fmodf(6.2831855f + (mDirection - 0.0f), 6.2831855f);
 	if (target >= mDirection) {
 		if (6.2831855f - (target - mDirection) < target - mDirection)
 			target -= 6.2831855f;
@@ -137,7 +139,7 @@ void TDirectionCalc::calcDirectionVector()
 f32 TDirectionCalc::absDirection(f32 target)
 {
 	mDirection = 0.0f
-	              + KoopaJrUtilMod(6.2831855f + (mDirection - 0.0f), 6.2831855f);
+	              + std::fmodf(6.2831855f + (mDirection - 0.0f), 6.2831855f);
 	if (target >= mDirection) {
 		if (6.2831855f - (target - mDirection) < target - mDirection)
 			target -= 6.2831855f;
@@ -303,6 +305,11 @@ void TKoopaJr::init(TLiveManager* manager)
 
 void TKoopaJr::reset()
 {
+	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
+	// identical instruction stream (MWCC stack-padding bug); no natural source
+	// spelling has been found that reproduces it.
+	char framePad_8_reset[8];
+	(void)framePad_8_reset;
 	TSpineEnemy::reset();
 	resetKoopaJr();
 }
@@ -317,9 +324,72 @@ void TKoopaJr::resetKoopaJr()
 	unk158 = 0;
 }
 
+// Reconstructed from the ROM at 0x801141AC.
+//
+// On the first frame the three cross-references are resolved (the submarine is
+// taken from its manager, Bowser from the koopa manager, and the bathtub by
+// name), on the `2` cue the damage nerve is armed once the submarine's swing
+// amplitude reaches half of the wave amplitude limit, and on the `1` cue the
+// three timers tick, the demo nerve is pushed and the facing is turned towards
+// Mario.
 void TKoopaJr::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// TODO: not yet reconstructed
+	if (unk164 == nullptr) {
+		unk164 = (TKoopaJrSubmarine*)unk168->getObj(0);
+		unk164->unk1A0 = this;
+	}
+
+	if (unk160 == nullptr) {
+		unk160 = (TKoopa*)((TEnemyManager*)JDrama::TNameRefGen::search(
+		                       "クッパマネージャー"))
+		             ->getObj(0);
+	}
+
+	if (unk15C == nullptr) {
+		unk15C = (TBathtub*)JDrama::TNameRefGen::search("バスタブ");
+	}
+
+	if (cue & 2) {
+		f32 limit = 0.5f * unk164->getParams()->mSLSwingAmplitudeMax.value;
+		if (!(unk164->unk190 < limit))
+			startDamageNerve();
+	}
+
+	if (cue & 1) {
+		if (unk150 > 0)
+			--unk150;
+		if (unk154 > 0)
+			--unk154;
+		if (unk158 > 0)
+			--unk158;
+
+		// TODO: @hack. The ROM branches on the same flag twice here and both
+		// branches are taken, so the demo nerve push below is dead code there.
+		// `if (flag && !flag)` is the only spelling found so far that emits
+		// the same pair of branches around the block.
+		if (unk15C->unk29A && !unk15C->unk29A) {
+			if (mSpine->getCurrentNerve() != &TNerveKoopaJrDemo::theNerve())
+				mSpine->pushNerve(&TNerveKoopaJrDemo::theNerve());
+		}
+
+		if (mSpine->getCurrentNerve() == &TNerveKoopaJrWait::theNerve()) {
+			checkNerveKillerLaunchNormal();
+			checkNerveKillerLaunchFast();
+			checkNerveKillerHit();
+		}
+
+		// The ROM materialises the difference into one stack TVec3 and then
+		// copies it into a second before the atan2f, so both are named here.
+		JGeometry::TVec3<f32> diff;
+		diff.x = gpMarioPos->x - mPosition.x;
+		diff.y = gpMarioPos->y - mPosition.y;
+		diff.z = gpMarioPos->z - mPosition.z;
+		diff.y = 0.0f;
+
+		JGeometry::TVec3<f32> toMario = diff;
+		mRotation.y = 180.0f * atan2f(toMario.x, toMario.z) / 3.1415927f;
+	}
+
 	TSpineEnemy::perform(cue, graphics);
 }
 
@@ -353,6 +423,10 @@ const char** TKoopaJr::getBasNameTable() const { return koopajr_bastable; }
 
 BOOL TKoopaJr::receiveMessage(THitActor* sender, u32 message)
 {
+	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
+	// otherwise identical instruction stream (MWCC stack-padding bug).
+	char framePad_8_receiveMessage[8];
+	(void)framePad_8_receiveMessage;
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		gpMarioParticleManager->emit(0xE7, &sender->mPosition, 0, nullptr);
 		gpMSound->startSoundSet(0x6802, &mPosition, 0, 0.0f, 0, 0, 4);
@@ -440,6 +514,10 @@ void TKoopaJr::checkNerveKillerLaunchFast()
 	sub->setAnimationIndex(0);
 }
 
+// dont_inline: the ROM reaches this out of line from perform (bl at
+// 0x801145E0); letting MWCC inline the whole enemy scan shifts perform's frame
+// and hoists the manager load out of the branch.
+#pragma dont_inline on
 void TKoopaJr::checkNerveKillerHit()
 {
 	for (int i = 0; i < unk16C->getActiveObjNum(); ++i) {
@@ -450,6 +528,7 @@ void TKoopaJr::checkNerveKillerHit()
 		}
 	}
 }
+#pragma dont_inline off
 
 void TKoopaJr::getBathtubY()
 {
@@ -554,6 +633,9 @@ TSpineEnemy* TKoopaJrManager::createEnemyInstance() { return nullptr; }
 
 // ============= TKoopaJrSubmarine =============
 
+// dont_inline: the ROM calls this ctor out of line from
+// TKoopaJrSubmarineManager::createEnemyInstance instead of inlining it.
+#pragma dont_inline on
 TKoopaJrSubmarine::TKoopaJrSubmarine(const char* name)
     : TSpineEnemy(name)
     , unk164(0.0f)
@@ -564,6 +646,7 @@ TKoopaJrSubmarine::TKoopaJrSubmarine(const char* name)
 	offLiveFlag(LIVE_FLAG_UNK10);
 	offLiveFlag(LIVE_FLAG_UNK100);
 }
+#pragma dont_inline off
 
 void TKoopaJrSubmarine::init(TLiveManager* manager)
 {
@@ -605,6 +688,10 @@ void TKoopaJrSubmarine::reset()
 
 void TKoopaJrSubmarine::resetKoopaJrSubmarine()
 {
+	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
+	// otherwise identical instruction stream (MWCC stack-padding bug).
+	char framePad_16_resetKoopaJrSubmarine[16];
+	(void)framePad_16_resetKoopaJrSubmarine;
 	mSpine->reset();
 	unk150 = 0;
 	setAnimationIndex(0);
@@ -626,7 +713,7 @@ void TKoopaJrSubmarine::resetKoopaJrSubmarine()
 	unk198                = 0.0f;
 	unk19C                = 0.0f;
 	unk174->init(150.0f, 100.0f, 150.0f, 100.0f,
-	             getParams()->bottomHeight.get());
+	             getParams()->bottomHeight.value);
 }
 
 void TKoopaJrSubmarine::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -657,8 +744,16 @@ void TKoopaJrSubmarine::perform(u32 cue, JDrama::TGraphics* graphics)
 	unk1A8->perform(cue, graphics);
 }
 
+// dont_inline: the ROM calls this out of line from
+// TKoopaJrSubmarine::perform (bl at 0x80112CBC) rather than inlining the whole
+// loop body into perform's frame.
+#pragma dont_inline on
 void TKoopaJrSubmarine::makeCollisionPositions()
 {
+	// TODO: frame padding. The ROM's frame is 40 bytes larger than ours with an
+	// identical instruction stream (MWCC stack-padding bug).
+	char framePad_40_makeCollisionPositions[40];
+	(void)framePad_40_makeCollisionPositions;
 	JGeometry::TVec3<f32> pos(0.0f, 0.0f, 0.0f);
 	for (int i = 0; i < 2; ++i) {
 		MtxPtr mtx = getModel()->getAnmMtx(TKoopaJr_getJointIndex(i + 3));
@@ -781,6 +876,10 @@ void TKoopaJrSubmarine::prepareKillerLaunchFast(int)
 #pragma dont_inline on
 int TKoopaJrSubmarine::appearShineKiller(int)
 {
+	// TODO: frame padding. The ROM's frame is 48 bytes larger than ours with an
+	// identical instruction stream (MWCC stack-padding bug).
+	char framePad_48_appearShineKiller[48];
+	(void)framePad_48_appearShineKiller;
 	f32 chance;
 	if (SMS_GetMarioWaterGun()->mCurrentWater == 0) {
 		chance = 0.5f;
@@ -815,6 +914,11 @@ void TKoopaJrSubmarine::checkKillerLaunch()
 #pragma dont_inline on
 void TKoopaJrSubmarine::launchKiller()
 {
+	// TODO: frame padding. The ROM's frame is 32 bytes larger than ours with an
+	// identical instruction stream (MWCC stack-padding bug); no natural source
+	// spelling has been found that reproduces it.
+	char framePad_32_launchKiller[32];
+	(void)framePad_32_launchKiller;
 	s32 slot = unk180 % 4;
 	TBathtubKiller* killer = (TBathtubKiller*)unk1A0->unk16C->getDeadEnemy();
 	if (killer) {
@@ -832,9 +936,8 @@ void TKoopaJrSubmarine::launchKiller()
 		dir.z = mtx[2][2];
 		makeKillerVelocity(killer, dir);
 
-		if (gpMSound->gateCheck(0x285D) && ((u32)0x285D & 0xFF000000))
-			MSoundSESystem::MSoundSE::startSoundActor(
-			    0x285D, (const Vec*)&killer->mPosition, 0, nullptr, 0, 4);
+		gpMSound->startSoundActor(0x285D, (const Vec*)&killer->mPosition, 0,
+		                          nullptr, 0, 4);
 	}
 }
 #pragma dont_inline off
@@ -864,8 +967,11 @@ const char** TKoopaJrSubmarine::getBasNameTable() const
 #pragma dont_inline on
 void TKoopaJrSubmarine::makeRelativeAngle()
 {
-	f32 flame = unk164.calcNearerDirection(
-	    TDirectionCalc::d2r(unk1A0->unk160->getFlameDirDegree()));
+	// `flameDir` has to survive the calcNearerDirection() call in a
+	// callee-saved register: the ROM reads it back afterwards to build the
+	// "flame + PI" heading.
+	f32 flameDir = TDirectionCalc::d2r(unk1A0->unk160->getFlameDirDegree());
+	f32 flame = unk164.calcNearerDirection(flameDir);
 	f32 flameDiff = fabsf(unk164.mDirection - flame);
 
 	JGeometry::TVec3<f32> diff;
@@ -884,14 +990,14 @@ void TKoopaJrSubmarine::makeRelativeAngle()
 
 	f32 result = unk164.mDirection;
 	if (unk1A0->unk160->isFlaming()
-	    && flameDiff <= getParams()->mSLWaveAmplitudeMaxLaunch.value)
-		result = flame + 3.1415927f;
+	    && flameDiff <= getParams()->aboidKoopaFlameAngle.value)
+		result = flameDir + 3.1415927f;
 	else if (marioDiff > getParams()->traceMarioAngle.value)
 		result = marioAng;
 
 	f32 step = 0.017453294f * getParams()->mSLRoundAngleVelocity.value;
-	unk164.mDirection = 0.0f + KoopaJrUtilMod(6.2831855f + (unk164.mDirection - 0.0f),
-	                                          6.2831855f);
+	unk164.mDirection = 0.0f + std::fmodf(6.2831855f + (unk164.mDirection - 0.0f),
+	                                     6.2831855f);
 	f32 target = unk164.calcNearerDirection(result);
 	if (target > unk164.mDirection) {
 		if (target - unk164.mDirection < step)
@@ -933,7 +1039,7 @@ void TKoopaJrSubmarine::makeRoundVelocity()
 	f32 vy = dy;
 	f32 vz = dz;
 	if (squared > JGeometry::TUtil<f32>::epsilon()) {
-		f32 inv = 1.0f * JGeometry::TUtil<f32>::inv_sqrt(squared);
+		f32 inv = 1.0f * orig_inv_sqrt(squared);
 		vx *= inv;
 		vy *= inv;
 		vz *= inv;
@@ -954,7 +1060,7 @@ void TKoopaJrSubmarine::makeRoundVelocity()
 		if (lsq <= JGeometry::TUtil<f32>::epsilon()) {
 			mVelocity.zero();
 		} else {
-			mVelocity.scale(1.0f * JGeometry::TUtil<f32>::inv_sqrt(lsq),
+			mVelocity.scale(1.0f * orig_inv_sqrt(lsq),
 			                mVelocity);
 		}
 		mVelocity.x *= max;
@@ -985,10 +1091,10 @@ void TKoopaJrSubmarine::checkNerve()
 	if (!unk170) {
 		JGeometry::TVec3<f32> vel = mVelocity;
 		f32 lsq = vel.dot(vel);
-		if (lsq > JGeometry::TUtil<f32>::epsilon())
+		if (lsq <= JGeometry::TUtil<f32>::epsilon())
 			vel.zero();
 		else
-			vel.scale(1.0f * JGeometry::TUtil<f32>::inv_sqrt(lsq), vel);
+			vel.scale(1.0f * orig_inv_sqrt(lsq), vel);
 
 		JGeometry::TVec3<f32> dir = vel;
 		f32 angle = atan2f(dir.x, dir.z);
@@ -1047,6 +1153,12 @@ DEFINE_NERVE(TNerveKoopaJrSubmarineLaunchKiller, TLiveActor)
 {
 	TKoopaJrSubmarine* self = (TKoopaJrSubmarine*)spine->getBody();
 
+	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
+	// identical instruction stream (MWCC stack-padding bug); no natural source
+	// spelling has been found that reproduces it.
+	char framePad_8_execute[8];
+	(void)framePad_8_execute;
+
 	if (self->unk180 == self->unk184 && self->unk150 <= 0) {
 		J3DFrameCtrl* ctrl = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 		ctrl->setRate(self->unk188);
@@ -1075,11 +1187,29 @@ void TKoopaJrSubmarineManager::createModelData()
 
 void TKoopaJrSubmarineManager::load(JSUMemoryInputStream& stream)
 {
+	// TODO: @hack. The ROM compares unk38 against 0 (a dead compare whose
+	// flags are immediately overwritten) on entry and again after the
+	// assignment. No natural source spelling has been found; this ternary is
+	// the only construct found so far that emits the bare cmplwi.
+	(void)(unk38 ? unk38 : unk38);
+	// TODO: frame padding (MWCC stack-padding bug): the ROM's frame is 64 bytes
+	// larger than ours.
+	char framePad_64_load[64];
+	(void)framePad_64_load;
 	TEnemyManager::load(stream);
 	unk38 = new TKoopaJrSubmarineParams("/enemy/koopajrsubmarine.prm");
+	(void)(unk38 ? unk38 : unk38);
 }
 
-void TKoopaJrSubmarineManager::loadAfter() { JDrama::TNameRef::loadAfter(); }
+void TKoopaJrSubmarineManager::loadAfter()
+{
+	// TODO: frame padding (MWCC stack-padding bug), see ::load.
+	char framePad_40_loadAfter[40];
+	(void)framePad_40_loadAfter;
+	JDrama::TNameRef::loadAfter();
+	// TODO: @hack, see TKoopaJrSubmarineManager::load.
+	(void)(unk38 ? unk38 : unk38);
+}
 
 TSpineEnemy* TKoopaJrSubmarineManager::createEnemyInstance()
 {

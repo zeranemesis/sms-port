@@ -68,12 +68,12 @@ void TWalker::reset()
 
 void TWalker::bind(TLiveActor* param_1)
 {
-	TSpineEnemy* enemy = (TSpineEnemy*)param_1;
-
 	if (unk28 == 1 && unk2C != nullptr) {
-		unk2C->bind(enemy);
+		unk2C->bind(param_1);
 		return;
 	}
+
+	TSpineEnemy* enemy = (TSpineEnemy*)param_1;
 
 	JGeometry::TVec3<f32> lv       = enemy->mLinearVelocity;
 	JGeometry::TVec3<f32> local_30 = enemy->mPosition;

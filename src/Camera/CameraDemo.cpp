@@ -65,37 +65,37 @@ void CPolarSubCamera::updateDemoCamera_(bool param_1)
 				if (mCameraDemo->unk0 != nullptr)
 					origin = *mCameraDemo->unk0;
 
-				{
-					JGeometry::TVec3<f32> result = origin;
-					f32 dx                       = unk124.x - origin.x;
-					f32 dy                       = unk124.y - origin.y;
-					f32 dz                       = unk124.z - origin.z;
-					f32 sn                       = JMASSin(angle);
-					f32 cs                       = JMASCos(angle);
-					result.x += dx * cs + dz * sn;
-					result.y += dy;
-					result.z += -dx * sn + dz * cs;
-					unk124 = result;
-				}
+				JGeometry::TVec3<f32> rel;
+				rel.set(unk124.x - origin.x, unk124.y - origin.y,
+				        unk124.z - origin.z);
+				f32 relx = rel.x;
+				rel.x    = relx * JMASCos(angle) + rel.z * JMASSin(angle);
+				rel.z    = -relx * JMASSin(angle) + rel.z * JMASCos(angle);
+				// Must be operator+ and not `pos.add(rel)`: the by-value
+				// first argument is what makes MWCC expand
+				// JGeometry::TVec3<f32>::add out of line, like the ROM does.
+				unk124 = origin + rel;
 
-				{
-					JGeometry::TVec3<f32> result = origin;
-					f32 dx                       = unk148.x - origin.x;
-					f32 dy                       = unk148.y - origin.y;
-					f32 dz                       = unk148.z - origin.z;
-					f32 sn                       = JMASSin(angle);
-					f32 cs                       = JMASCos(angle);
-					result.x += dx * cs + dz * sn;
-					result.y += dy;
-					result.z += -dx * sn + dz * cs;
-					unk148 = result;
-				}
+				JGeometry::TVec3<f32> rel2;
+				rel2.set(unk148.x - origin.x, unk148.y - origin.y,
+				         unk148.z - origin.z);
+				f32 rel2x = rel2.x;
+				rel2.x    = rel2x * JMASCos(angle) + rel2.z * JMASSin(angle);
+				rel2.z    = -rel2x * JMASSin(angle) + rel2.z * JMASCos(angle);
+				unk148 = origin + rel2;
 
 				f32 ux = mUp.x;
 				f32 uz = mUp.z;
 				mUp.x  = ux * JMASCos(angle) + uz * JMASSin(angle);
 				mUp.z  = -ux * JMASSin(angle) + uz * JMASCos(angle);
 			}
+			// TODO: the ROM keeps the two operator+ temporaries at 0x58/0x4c,
+			// 0x24 bytes lower than ours, and keeps origin.y/origin.z live in
+			// f30/f31 across the calls (hence its 0xc8 frame vs our 0xb8).
+			// That needs three more 12-byte compiler temporaries: adding
+			// named locals does NOT move them, only extra inlined-call
+			// temporaries do, and no source shape producing three has been
+			// found yet.
 
 			calcFinalPosAndAt_();
 			C_MTXPerspective(unk16C, mFovy, mAspect, mNear, mFar);

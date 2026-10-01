@@ -61,22 +61,9 @@ std::array<u32, (kViEnd - kViBase) / 4> g_viShadow {};
 // used.
 constexpr u32 kViDisplayInterruptOffsets[] = { 0x30u, 0x34u, 0x38u, 0x3Cu };
 
-// The shared sub-word read/write these shadows need. Both blocks are accessed
-// as halfwords by the SDK (`u16* __VIRegs`) and as words by others, so the
-// containing big-endian word is the unit that is stored and the access picks
-// bytes out of it - same shape as recomp_exi.cpp's handlers.
-u32 extract(u32 word, u32 addr, u8 size)
-{
-    const u32 shift = (4 - size - (addr & 3u)) * 8;
-    return (word >> shift) & ((size == 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1));
-}
-
-void insert(u32 &word, u32 addr, u64 value, u8 size)
-{
-    const u32 shift = (4 - size - (addr & 3u)) * 8;
-    const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
-    word = (word & ~mask) | ((u32(value) << shift) & mask);
-}
+// The shared sub-word read/write these shadows need now live in
+// include/port/recomp_interrupt.h, inline, so run_pe_lane_self_test() can use
+// the same implementation rather than a copy of it.
 
 u64 pi_read(CPUState *, u32 addr, u8 size)
 {
@@ -121,6 +108,82 @@ void vi_write(CPUState *, u32 addr, u64 value, u8 size)
     }
     if (!anyOutstanding) {
         g_piShadow[kPiCauseOffset / 4] &= ~kCauseVi;
+    }
+}
+
+// --- PE: pixel engine token and finish ---------------------------------------
+//
+// The block __peReg points at: `__peReg = OSPhysicalToUncached(0xC001000)`
+// (libs/dolphin/src/gx/GXInit.c:79), the uncached alias of 0xCC001000.
+// __peReg is a u16*, so an index is twice the byte offset.
+//
+// __GXPEInit (libs/dolphin/src/gx/GXMisc.c:263-270) is what gives the two
+// handlers this emulates their meaning, and it is the whole contract:
+//
+//     __OSSetInterruptHandler(0x12, GXTokenInterruptHandler);
+//     __OSSetInterruptHandler(0x13, GXFinishInterruptHandler);
+//     __OSUnmaskInterrupts(0x2000);
+//     __OSUnmaskInterrupts(0x1000);
+//
+// 0x12 and 0x13 are __OS_INTERRUPT_PI_PE_TOKEN and __OS_INTERRUPT_PI_PE_FINISH
+// (OSInterrupt.h:33-34), and their PI cause bits are 0x00000200 and 0x00000400
+// (OSInterrupt.c:371 and :368). Address, cause bits and both handlers are all
+// readable off the tree, which is why this needs no datasheet and no guess.
+//
+// The acknowledge direction is the opposite of the VI's, and that is the part
+// worth getting right: vi_write drops the PI cause when the guest *clears* the
+// status bit, because __VIRetraceHandler clears it. GXFinishInterruptHandler
+// *sets* __peReg[5] bit 3 and GXTokenInterruptHandler *sets* bit 2
+// (GXMisc.c:239 and :232). So the clear hangs off a write that raises the bit,
+// not off a read or a clearing write.
+//
+// What a finish means to the guest: GXFinishInterruptHandler sets DrawDone = 1,
+// runs DrawDoneCB and wakes FinishQueue (GXMisc.c:242-260), which is what
+// GXWaitDrawDone is parked on (GXMisc.c:93). Before this block existed the port
+// bridged GXSetDrawDone away and forced the DrawDone flag, so the flag never
+// cycled and a genuinely late GP stayed invisible - the defect
+// docs/port_todo.md section 3.1 records.
+constexpr u32 kPeBase = 0xCC001000u;
+constexpr u32 kPeEnd = 0xCC001020u;
+constexpr u32 kPeControlOffset = 0x0Au; // __peReg[5]
+constexpr u32 kPeControlTokenBit = 1u << 2; // set by GXTokenInterruptHandler
+constexpr u32 kPeControlFinishBit = 1u << 3; // set by GXFinishInterruptHandler
+
+// PE_TOKEN (cause 0x200) is deliberately never raised. Its handler
+// (GXTokenInterruptHandler) exists to pass a draw-sync token to TokenCB, and
+// the token is produced when a GXSetDrawSync write reaches the GPU - a point
+// that lives inside the FIFO flush path, in recomp_gx_fifo.cpp, which is being
+// worked on in parallel. Raising it from the frame boundary instead would
+// deliver a callback with a token nobody wrote. The token register itself
+// (__peReg[7], byte offset 0x0E) is covered by the shadow below, so a guest
+// write to it lands and reads back rather than being logged as unmapped.
+
+std::array<u32, (kPeEnd - kPeBase) / 4> g_peShadow {};
+
+u64 pe_read(CPUState *, u32 addr, u8 size)
+{
+    const size_t index = ((addr & ~3u) - kPeBase) / 4;
+    const u32 word = index < g_peShadow.size() ? g_peShadow[index] : 0;
+    return extract(word, addr, size);
+}
+
+void pe_write(CPUState *, u32 addr, u64 value, u8 size)
+{
+    const size_t index = ((addr & ~3u) - kPeBase) / 4;
+    if (index >= g_peShadow.size()) {
+        return;
+    }
+    insert(g_peShadow[index], addr, value, size);
+
+    // The guest acknowledges by setting its own handler's status bit, so a
+    // write here that raises one *is* the acknowledgement. Drop the PI cause
+    // once the bit is set, or dispatch would fire on it forever.
+    const u32 control = extract(g_peShadow[kPeControlOffset / 4], kPeBase + kPeControlOffset, 2);
+    if ((control & kPeControlFinishBit) != 0) {
+        g_piShadow[kPiCauseOffset / 4] &= ~kCausePeFinish;
+    }
+    if ((control & kPeControlTokenBit) != 0) {
+        g_piShadow[kPiCauseOffset / 4] &= ~kCausePeToken;
     }
 }
 
@@ -284,6 +347,15 @@ void install()
         .read = &vi_read,
         .write = &vi_write,
     });
+
+    g_peShadow.fill(0);
+    register_mmio_range({
+        .base = kPeBase,
+        .end = kPeEnd,
+        .name = "PE",
+        .read = &pe_read,
+        .write = &pe_write,
+    });
 }
 
 void raise(u32 causeBits)
@@ -302,6 +374,22 @@ void raise_vi_retrace(CPUState *)
     raise(kCauseVi);
 }
 
+void raise_pe_finish()
+{
+    // Set through the same insert()/extract() pair pe_read and pe_write use,
+    // rather than by shifting a bit into the shadow by hand. __peReg[5] is the
+    // halfword at byte offset 0x0A, which is the *low* half of the word at
+    // 0x08 - getting that wrong puts the status bit in __peReg[4] instead,
+    // which is a register this emulates but nothing acknowledges, so the finish
+    // would never be cleared and would re-fire every frame.
+    //
+    // The guest clears this by writing the bit back through pe_write, so the
+    // flag stays set until it does - which is what makes a second finish before
+    // the first acknowledge visible instead of silently lost.
+    insert(g_peShadow[kPeControlOffset / 4], kPeBase + kPeControlOffset, kPeControlFinishBit, 2);
+    raise(kCausePeFinish);
+}
+
 u32 debug_cause()
 {
     return g_piShadow[kPiCauseOffset / 4];
@@ -310,6 +398,60 @@ u32 debug_cause()
 u32 debug_mask()
 {
     return g_piShadow[kPiMaskOffset / 4];
+}
+
+bool run_pe_lane_self_test()
+{
+    // Start from a known-empty block and cause, the way install() leaves them.
+    g_peShadow.fill(0);
+    g_piShadow.fill(0);
+
+    raise_pe_finish();
+
+    if ((debug_cause() & kCausePeFinish) == 0) {
+        Log.error("pe self-test: raise_pe_finish did not raise the PE_FINISH cause");
+        return false;
+    }
+
+    // The whole point: read the status back the way the guest does, a halfword
+    // at __peReg[5]. If the bit had landed in __peReg[4] - the other half of
+    // the same 32-bit word - this read comes back zero and the guest's
+    // GXFinishInterruptHandler would never see its own flag.
+    const u32 control = extract(g_peShadow[kPeControlOffset / 4], kPeBase + kPeControlOffset, 2);
+    if ((control & kPeControlFinishBit) == 0) {
+        Log.error("pe self-test: the finish status bit is not visible at __peReg[5] (control={:#x})",
+            control);
+        return false;
+    }
+    // And the neighbouring register must NOT have it.
+    const u32 neighbour = extract(g_peShadow[kPeControlOffset / 4], kPeBase + kPeControlOffset - 2, 2);
+    if ((neighbour & kPeControlFinishBit) != 0) {
+        Log.error("pe self-test: the finish status bit also landed in __peReg[4] ({:#x})", neighbour);
+        return false;
+    }
+
+    // The token register is an ordinary shadowed halfword; a guest write has to
+    // land and read back rather than being dropped.
+    pe_write(nullptr, kPeBase + 0x0Eu, 0x1234u, 2);
+    if (pe_read(nullptr, kPeBase + 0x0Eu, 2) != 0x1234u) {
+        Log.error("pe self-test: the PE token register did not round-trip, got {:#x}",
+            pe_read(nullptr, kPeBase + 0x0Eu, 2));
+        return false;
+    }
+
+    // The acknowledge: GXFinishInterruptHandler writes its own status bit back,
+    // and that write is what drops the cause.
+    pe_write(nullptr, kPeBase + kPeControlOffset, kPeControlFinishBit, 2);
+    if ((debug_cause() & kCausePeFinish) != 0) {
+        Log.error("pe self-test: the guest's acknowledge did not drop the PE_FINISH cause");
+        return false;
+    }
+
+    g_peShadow.fill(0);
+    g_piShadow.fill(0);
+    Log.info("pe self-test: the pixel-engine finish flag survives the block's halfword addressing "
+             "and the guest's acknowledge clears its cause");
+    return true;
 }
 
 bool pending(CPUState *)

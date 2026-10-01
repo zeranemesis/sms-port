@@ -82,4 +82,11 @@ void SMS_EmitSinkInPollutionEffect(const JGeometry::TVec3<float>& arg0,
 
 	gpMarioParticleManager->emitAndBindToMtx(PARTICLE_MS_MARI_RAKUHAMON,
 	                                         matrix.mMtx, 2U, nullptr);
+
+	// Every diff marker of this function is a stack offset sitting 0x10 above
+	// ours (target frame 0xd8 against 0xc8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_16_emitSinkPollution[16];
+	(void)framePad_16_emitSinkPollution;
 }

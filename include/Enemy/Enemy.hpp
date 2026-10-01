@@ -46,7 +46,11 @@ public:
 	virtual f32 getPhaseShift() const { return 0.0f; }
 	virtual BOOL isReachedToGoal() const
 	{
-		return unk104.getPoint().distance(mPosition) < 100.0f ? TRUE : FALSE;
+		// operator- takes its left operand BY VALUE, so the delta is
+		// materialised as a 12-byte stack temporary; distance()/squared(other)
+		// recompute each difference in registers and never spill.
+		return (unk104.getPoint() - mPosition).length() < 100.0f ? TRUE
+		                                                       : FALSE;
 	}
 
 	void calcEnemyRootMatrix();

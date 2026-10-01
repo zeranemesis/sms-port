@@ -4,7 +4,6 @@
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Enemy/WalkerEnemy.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjSirena.hpp>
 #include <System/ParamInst.hpp>
@@ -35,6 +34,7 @@ public:
 	/* 0x1E8 */ TParamRT<s32> mSLStopSlotTime1;
 	/* 0x1FC */ TParamRT<s32> mSLStopSlotTime2;
 	/* 0x210 */ TParamRT<s32> mSLSpicyTime;
+	/* 0x220 */ TParamRT<s32> mSLPrepareSlotTime;
 };
 
 class TTelesaSlot;
@@ -77,8 +77,7 @@ public:
 	static f32 mCameraMoveSp;
 
 public:
-	/* 0x13C */ u8 unk13C;
-	/* 0x13D */ u8 mPad13D[0x150 - 0x13D];
+	/* 0x13C is TEnemy::mHitPoints (inherited) - do not redeclare it here. */
 	/* 0x150 */ u8 unk150;
 	/* 0x154 */ void* unk154;
 	/* 0x158 */ void* unk158;
@@ -96,8 +95,12 @@ public:
 	/* 0x1AC */ TMapObjBase* mItems[50];
 	/* 0x274 */ s32 mItemNum;
 	/* 0x278 */ JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > mTakingMtx;
-	/* 0x2A8 */ TMapObjBase* mSlotFruits[20];
-	/* 0x2F8 */ TMapObjBase* mSpicies[10];
+	// 25 wide, not 20: loadAfter runs five unrolled `newAndRegisterObj`
+	// loops (6+6+2+6+5) that all store through `this + 0x2A8 + 4*n`
+	// with one running n, so the last five land at 0x2F8..0x30B.  See
+	// the five loops in loadAfter.
+	/* 0x2A8 */ TMapObjBase* mSlotFruits[25];
+	/* 0x30C */ TMapObjBase* unk30C[5];
 	/* 0x320 */ TMapObjBase* mCoins[10];
 	/* 0x348 */ GXColor mTevColorA;
 	/* 0x34C */ GXColor mTevColorB;
@@ -151,6 +154,12 @@ public:
 	/* 0x1AC */ JGeometry::TVec3<f32> unk1AC[4];
 	/* 0x1DC */ TMapCollisionMove* mMapCollision;
 	/* 0x1E0 */ u8 unk1E0;
+	// TNerveBossTelesaDie zeroes these three one at a time (stfs at
+	// 0x1e4 / 0x1e8 / 0x1ec) alongside one f32 per mStageSlotObjects[i].
+	// The names are unknown; only the offsets and the f32 width are known.
+	// unk1E0 is a lone u8, so the padding to the next f32 is explicit.
+	u8 mPad1E1[0x1E4 - 0x1E1];
+	/* 0x1E4 */ f32 mRouletteRollSpeeds[3];
 };
 
 DECLARE_NERVE(TNerveBossTelesaSpit, TLiveActor);

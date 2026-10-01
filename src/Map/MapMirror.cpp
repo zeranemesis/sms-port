@@ -255,26 +255,58 @@ bool TMirrorModelManager::isInMirror(JGeometry::TVec3<f32>& param_1) const
 	           : false;
 }
 
+// NOTE on scaleAdd: the ROM's out-of-line body is `this->c = b.c * scale +
+// c.c`, while the one in libs/ computes `b.c + c.c * scale` (the operands are
+// swapped). Addition is commutative, so passing the two references the other
+// way round gives the ROM's result; the argument registers are then the wrong
+// way round, which is the cheaper of the two mismatches.
 void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_MOVE) {
 		JGeometry::TVec3<f32> local_44 = *gpMarioPos;
 		unk18 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_44));
-		if (!(unk18 != -1 ? true : false)
+		if (!isUnk18Present()
 		    && !gpMarioGroundPlane[0]->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
-			unk24->unk84 = gpMarioGroundPlane[1]->mNormal;
-			unk24->unk90 = gpMarioGroundPlane[1]->mPlaneDistance;
+			unk24->setUnk84AndUnk90(gpMarioGroundPlane[0]->mNormal.x,
+			                       gpMarioGroundPlane[0]->mNormal.y,
+			                       gpMarioGroundPlane[0]->mNormal.z,
+			                       gpMarioGroundPlane[0]->mPlaneDistance);
 
-			JGeometry::TVec3<f32> local_7C;
-			local_7C.set(unk24->unk84);
-			f32 fVar4
-			    = (local_7C.dot(gpCamera->unk124) - -unk24->unk90) * -2.0f;
-			unk24->unk98.scaleAdd(fVar4, gpCamera->unk124, local_7C);
-			// TODO: awful vector math, one of unused functions inlined
+			JGeometry::TVec3<f32> normal;
+			normal.set(unk24->unk84.x, unk24->unk84.y, unk24->unk84.z);
+			f32 negPlaneD = -unk24->unk90;
+
+			// The three scaleAdds of this block are inlined in the ROM (they
+			// sit one nesting level shallower than the CUE_ENTRY ones), so
+			// they are written out as `dst = a + normal * scale`.
+			f32 scale = -2.0f * (normal.dot(gpCamera->unk124) - negPlaneD);
+			unk24->unk98.set(gpCamera->unk124.x + scale * normal.x,
+			                 gpCamera->unk124.y + scale * normal.y,
+			                 gpCamera->unk124.z + scale * normal.z);
+
+			// NOTE: CPolarSubCamera's `mUp` sits at 0x30 and `mTarget` at
+			// 0x3C, but the ROM reflects 0x30 into the vector that is then
+			// handed to C_MTXLookAt as the *target*.  The header's names for
+			// these two fields are probably swapped; go by the offsets.
+			JGeometry::TVec3<f32> reflectedUp;
+			JGeometry::TVec3<f32> reflectedTarget;
+
+			scale = -2.0f * (normal.dot(gpCamera->unk148) - negPlaneD);
+			reflectedUp.set(gpCamera->unk148.x + scale * normal.x,
+			                gpCamera->unk148.y + scale * normal.y,
+			                gpCamera->unk148.z + scale * normal.z);
+
+			scale = -2.0f * (normal.dot(gpCamera->mUp) - negPlaneD);
+			reflectedTarget.set(gpCamera->mUp.x + scale * normal.x,
+			                    gpCamera->mUp.y + scale * normal.y,
+			                    gpCamera->mUp.z + scale * normal.z);
+
+			C_MTXLookAt(unk24->unk30, &unk24->unk98, &reflectedTarget,
+			            &reflectedUp);
 		}
 	}
 
-	if (unk18 != -1) {
+	if (isUnk18Present()) {
 		if (cue & CUE_CALC_ANIM)
 			unk1C[unk18]->calc();
 
@@ -282,36 +314,42 @@ void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 			unk1C[unk18]->unk4->viewCalc();
 
 		if (cue & CUE_ENTRY) {
+			Mtx effectMtx;
+			Mtx lightProjection;
+
 			TMirrorModel* model = unk1C[unk18];
 			model->setPlane();
 
 			TMirrorCamera* mirrorCamera = model->unk8;
-			const JGeometry::TVec3<f32>& normal = mirrorCamera->unk84;
-			f32 planeD                       = mirrorCamera->unk90;
-
+			JGeometry::TVec3<f32> normal;
+			normal.set(mirrorCamera->unk84.x, mirrorCamera->unk84.y,
+			           mirrorCamera->unk84.z);
+			f32 negPlaneD = -mirrorCamera->unk90;
 			JGeometry::TVec3<f32> reflectedUp;
 			JGeometry::TVec3<f32> reflectedTarget;
-			f32 offset = -2.0f * (normal.dot(gpCamera->unk124) + planeD);
+
+			f32 offset
+			    = -2.0f * (normal.dot(gpCamera->unk124) - negPlaneD);
 			mirrorCamera->unk98.scaleAdd(offset, gpCamera->unk124, normal);
 
-			offset = -2.0f * (normal.dot(gpCamera->mTarget) + planeD);
-			reflectedTarget.scaleAdd(offset, gpCamera->mTarget, normal);
+			offset = -2.0f * (normal.dot(gpCamera->unk148) - negPlaneD);
+			reflectedUp.scaleAdd(offset, gpCamera->unk148, normal);
 
-			offset = -2.0f * (normal.dot(gpCamera->mUp) + planeD);
-			reflectedUp.scaleAdd(offset, gpCamera->mUp, normal);
+			offset = -2.0f * (normal.dot(gpCamera->mUp) - negPlaneD);
+			reflectedTarget.scaleAdd(offset, gpCamera->mUp, normal);
 
 			C_MTXLookAt(mirrorCamera->unk30, &mirrorCamera->unk98,
-			            &reflectedUp, &reflectedTarget);
+			            &reflectedTarget, &reflectedUp);
 
-			Mtx lightProjection;
-			Mtx effectMtx;
 			C_MTXLightPerspective(lightProjection,
 			                      mirrorCamera->unk80 * gpCamera->mFovy,
 			                      gpCamera->mAspect, 1.0f, -1.0f, 1.0f, 1.0f);
 			PSMTXConcat(lightProjection, mirrorCamera->unk30, effectMtx);
 
 			J3DMaterial* material
-			    = model->unk4->getModel()->getModelData()->getMaterialNodePointer(0);
+			    = model->unk4->getModel()
+			          ->getModelData()
+			          ->getMaterialNodePointer(0);
 			material->change();
 			material->getTexGenBlock()->getTexMtx(0)->setEffectMtx(effectMtx);
 			model->unk4->entry();

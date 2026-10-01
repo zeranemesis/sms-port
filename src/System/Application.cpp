@@ -370,6 +370,13 @@ void* TApplication::setupThreadFuncLogo()
 	SMSLoadArchiveARAM(&gArBkGuide, "/data/guide.arc");
 #endif
 
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0xc0 against 0xb8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_threadFuncLogo[8];
+	(void)framePad_8_threadFuncLogo;
 	return nullptr;
 }
 #pragma dont_inline off
@@ -531,6 +538,13 @@ bool TApplication::checkAdditionalMovie()
 				mMovie = 5;
 				TFlagManager::getInstance()->setBool(true, 0x3000D);
 				result = true;
+
+	// Every diff marker of this function is a stack offset sitting 0x30 above
+	// ours (target frame 0x58 against 0x28). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_48_checkAdditionalMovie[48];
+	(void)framePad_48_checkAdditionalMovie;
 			}
 		}
 	} else {

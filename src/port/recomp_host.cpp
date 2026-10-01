@@ -18,28 +18,86 @@ std::unordered_map<u32, HostCallEntry> &table()
 }
 
 // A miss here fires on every cross-chunk branch/host call the recompiled
-// game makes to an address with no registered trampoline yet - which, once
-// real game code actually runs (not just the self-tests), is many times
-// per frame at the same handful of addresses. Logging every hit rather
-// than every distinct address filled a 1.4GB log file in under two minutes
-// running against a real GMSP01 dump. Each address is still worth exactly
-// one warning - that's what tells you which HostCallEntry to add next -
-// just not one per occurrence.
-std::unordered_set<u32> &already_warned()
+// game makes to an address with no registered trampoline. Logging every hit
+// filled a 1.4GB log in under two minutes; deduplicating to one line per
+// distinct address then still produced 16,050 lines - 2.9MB - at boot, and
+// buried the handful of boot messages that actually mean something.
+//
+// Deduping was the wrong shape of fix, and the reason is worth recording.
+// dispatch() returning false is not a failure: it is exactly the signal
+// dr_cpu uses to run the guest's *own* body for that address, so an
+// unbridged function keeps working. Measured both ways in this port - the
+// "bootrom" OSReport loop, and EXIInit, where a no-op stub that did not
+// maintain the guest-side flag its caller polls for turned a working
+// function into an infinite loop. A bridge is only *needed* for a call that
+// has to reach hardware Aurora owns; every other address is a bookkeeping
+// gap, not a defect, and reporting it in the same voice as a real defect is
+// what made the log unusable.
+//
+// So: the first few distinct addresses get a line, because each one does
+// say "here is a call to consider bridging", and the rest are reported as a
+// single rolling count. The count is the part that stayed worth having, and
+// deduplicating alone kept it hidden behind the noise it was meant to
+// replace.
+
+// Individual lines stop here. Twenty is enough to recognise a pattern
+// (all Dolphin SDK, all one subsystem, all one chunk boundary) and few
+// enough that the summary below stays the thing the eye lands on.
+constexpr size_t kMaxIndividuallyLoggedMisses = 20;
+
+// The distinct-address set is capped for the same reason the unmapped-MMIO
+// one is: past this point a growing number is no longer "calls we could
+// bridge" but a pointer running away, and the cap is what says so rather
+// than letting a 2.9MB log grow into the next one.
+constexpr size_t kMaxDistinctMissedAddresses = 4096;
+
+// 40.5MHz timebase (486MHz core / 12, see kCoreCyclesPerTimebaseTick below),
+// so this is one second of guest time. The summary reports a rate, and a
+// rate sampled faster than a human reads is just the flood again.
+constexpr u64 kMissReportIntervalTimebase = 40500000ull;
+
+void report_missed_host_call(CPUState *cpu, u32 address)
 {
-    static std::unordered_set<u32> instance;
-    return instance;
+    static std::unordered_set<u32> distinct;
+    static std::unordered_set<u32> logged;
+    static u64 calls = 0;
+    static u64 lastReportTimebase = 0;
+    static bool capReported = false;
+
+    ++calls;
+    const bool isNew = distinct.size() < kMaxDistinctMissedAddresses
+        && distinct.insert(address).second;
+
+    if (isNew && logged.size() < kMaxIndividuallyLoggedMisses) {
+        logged.insert(address);
+        Log.info("unresolved host call to {:#010x} from pc={:#010x} - not a failure, the guest "
+                 "body runs; a HostCallEntry is only needed if this call must reach hardware",
+            address, cpu->pc);
+        return;
+    }
+    if (isNew && !capReported) {
+        capReported = true;
+        Log.info("more than {} distinct unresolved host call addresses seen - per-address lines have "
+                 "stopped, the rolling count below is the real one",
+            kMaxIndividuallyLoggedMisses);
+    }
+
+    if (cpu->timebase < lastReportTimebase + kMissReportIntervalTimebase) {
+        return;
+    }
+    lastReportTimebase = cpu->timebase;
+    Log.info("unresolved host calls in the last second: calls={} distinct seen={}{}",
+        calls,
+        distinct.size(),
+        distinct.size() >= kMaxDistinctMissedAddresses ? " (capped, not counting further)" : "");
+    calls = 0;
 }
 
 bool dispatch(CPUState *cpu, u32 address)
 {
     const auto it = table().find(address);
     if (it == table().end()) {
-        if (already_warned().insert(address).second) {
-            Log.warn("unresolved host call to {:#010x} from pc={:#010x} - "
-                     "needs a HostCallEntry once the real MAP address is known",
-                address, cpu->pc);
-        }
+        report_missed_host_call(cpu, address);
         return false;
     }
     if (!it->second.fn(cpu, address)) {

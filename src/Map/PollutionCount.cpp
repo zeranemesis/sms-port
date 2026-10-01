@@ -350,6 +350,13 @@ void TPollutionCounterLayer::drawJointObjStamp(int layer_index) const
 		} else {
 			GXSetChanMatColor(GX_COLOR0A0,
 			                  (GXColor) { 0xff, 0xff, 0xff, 0xff });
+
+	// Every diff marker of this function is a stack offset sitting 0x10 above
+	// ours (target frame 0xe0 against 0xd0). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_16_drawJointObjStamp[16];
+	(void)framePad_16_drawJointObjStamp;
 		}
 		GXSetNumTevStages(1);
 		GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL,

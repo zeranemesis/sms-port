@@ -16,14 +16,46 @@
 
 class TMBindShadowBody;
 class THanaSambo;
+class TSamboFlowerManager;
+class SDLModelData;
+class SDLModel;
+class TSamboFlower;
+class TFlowerCoin;
+
 class TSamboFlowerCoinUnit {
 public:
+	TSamboFlowerCoinUnit(int count);
+
+	void add(TSamboFlower* flower);
 	void checkGenCoin();
+
+public:
+	/* 0x00 */ TSamboFlower** unk0;
+	/* 0x04 */ JGeometry::TVec3<f32> unk4;
+	/* 0x10 */ int unk10;
+	/* 0x14 */ int unk14;
+	/* 0x18 */ TFlowerCoin* unk18;
+	/* 0x1C */ int unk1C;
 };
 
 class TSamboLeaf : public JDrama::TViewObj {
 public:
+	// TODO: reconstructed from marioEU.MAP; UNUSED (0xB8)
+	TSamboLeaf(TSamboFlowerManager*, SDLModelData*,
+	           const char* name = "サンボリーフ");
+
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+
+	void generate(JGeometry::TVec3<f32>& position);
+
+public:
+	/* 0x10 */ SDLModel* mModel;
+	/* 0x14 */ JGeometry::TVec3<f32> mPosition;
+	/* 0x20 */ JGeometry::TVec3<f32> unk20;
+	/* 0x2C */ JGeometry::TVec3<f32> unk2C;
+	/* 0x38 */ JGeometry::TVec3<f32> mVelocity;
+	/* 0x44 */ u8 unk44;
+	/* 0x48 */ TSamboFlowerManager* unk48;
 };
 class TMapObjBase;
 class J3DMaterialTable;
@@ -71,6 +103,10 @@ public:
 		actor->getModel()->lock();
 	}
 
+	void bloom();
+	void hide();
+	bool isBloomEnd();
+
 public:
 	/* 0x150 */ u8 unk150;
 	/* 0x154 */ s32 unk154;
@@ -84,6 +120,20 @@ public:
 
 class TSamboFlowerManager : public TEnemyManager {
 public:
+	// marioEU.MAP has no __ct__19TSamboFlowerManager, and MarNameRefGen_Enemy
+	// builds it by calling __ct__13TEnemyManagerFPCc, patching
+	// __vt__19TSamboFlowerManager (0x58 bytes = TEnemyManager's 0x54 plus the
+	// one slot TSamboFlowerManager::dropLeaf adds) and then zeroing the four
+	// members at +0x54..+0x60 -- so the constructor was inline.
+	TSamboFlowerManager(const char* name = "サンボフラワーマネージャー")
+	    : TEnemyManager(name)
+	{
+		unk54 = 0;
+		unk58 = 0;
+		unk5C = 0;
+		unk60 = 0;
+	}
+
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -102,7 +152,15 @@ public:
 // The flower-head hit volume that follows THanaSambo's head joint.
 class THanaSamboHead : public THitActor {
 public:
+	THanaSamboHead()
+	    : THitActor("ハナサンボ頭あたり")
+	{
+	}
+
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
+
+	void checkHit();
+	void kill() { onHitFlag(1); }
 
 public:
 	/* 0x68 */ THanaSambo* mOwner;
@@ -156,12 +214,22 @@ public:
 	virtual f32 getGravityY() const;
 	virtual void load(JSUMemoryInputStream&);
 	virtual void setAfterDeadEffect();
+	virtual void init(TLiveManager*);
+	virtual void behaveToWater(THitActor*);
+	virtual void attackToMario();
+	virtual void genEventCoin();
+
+	void initFlower();
+	void setCrashAnm();
+	bool isUseCallBack();
+
+	static u8 mBodyJntIndex;
 
 public:
 	/* 0x194 */ TSamboHeadSaveLoadParams* unk194;
 	/* 0x198 */ TSamboFlower* unk198;
 	/* 0x19C */ u32 unk19C;
-	/* 0x1A0 */ char unk1A0[0x1AC - 0x1A0];
+	/* 0x1A0 */ JGeometry::TVec3<f32> unk1A0;
 	/* 0x1AC */ f32 unk1AC;
 	/* 0x1B0 */ u8 unk1B0;
 };
@@ -189,10 +257,14 @@ public:
 	virtual void drawObject(JDrama::TGraphics*);
 	virtual void behaveToWater(THitActor*);
 	virtual bool isCollidMove(THitActor*);
-	virtual BOOL isHitValid(u32 message);
+	virtual bool isHitValid(u32 message);
 	virtual void load(JSUMemoryInputStream&);
 	virtual void moveObject();
+	virtual void init(TLiveManager*);
 
+	void initFlower();
+	void setAttackAnm();
+	void waterDamage();
 	void createPollen();
 
 	static u8 mHeadJntIndex;
@@ -242,5 +314,6 @@ DECLARE_INLINE_NERVE(TNerveSamboHeadAttack, TLiveActor);
 DECLARE_INLINE_NERVE(TNerveSamboHeadHitWater, TLiveActor);
 DECLARE_INLINE_NERVE(TNerveSamboHeadAppear, TLiveActor);
 DECLARE_INLINE_NERVE(TNerveSamboHeadHide, TLiveActor);
+DECLARE_INLINE_NERVE(TNerveSamboHeadHitWall, TLiveActor);
 
 #endif

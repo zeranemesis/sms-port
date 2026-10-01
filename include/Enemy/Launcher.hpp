@@ -59,6 +59,31 @@ public:
 	virtual void load(JSUMemoryInputStream&);
 };
 
+// The two launcher flavours. Neither declares a destructor and neither adds a
+// virtual of its own: both vtables are 0x54 bytes, exactly TLauncherManager's,
+// and marioEU.MAP lists no other member. The only symbols either class has
+// anywhere in the binary are its vtable (weak) and its implicit destructor
+// (weak, 0x74 bytes), and MarNameRefGen_Enemy is the one TU that emits both --
+// because the classes have no out-of-line virtuals, so there is no TU that
+// owns their vtable. The implicit ~TLauncherManager is what gets inlined into
+// them (it sets __vt__16TLauncherManager and then calls
+// __dt__13TEnemyManagerFv directly, never __dt__16TLauncherManagerFv).
+class THamuKuriLauncherManager : public TLauncherManager {
+public:
+	THamuKuriLauncherManager(const char* name = "ハムクリランチャーマネージャー")
+	    : TLauncherManager(name)
+	{
+	}
+};
+
+class TNameKuriLauncherManager : public TLauncherManager {
+public:
+	TNameKuriLauncherManager(const char* name = "ナメクリランチャーマネージャー")
+	    : TLauncherManager(name)
+	{
+	}
+};
+
 class TCommonLauncher : public TLauncher {
 public:
 	TCommonLauncher(const char* name = "コモンランチャー");

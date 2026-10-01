@@ -5,11 +5,31 @@
 #include <NPC/NpcNerve.hpp>
 #include <Camera/cameralib.hpp>
 
+// Reconstructed inline layer (see isCanWalk): returns the horizontal delta
+// to a path point through the TVec3<f32> 3-float ctor (JGVec3.hpp:91),
+// which routes to set<f32>(f32,f32,f32). Same shape as polarXZ in
+// src/Enemy/enemy.cpp:396. Fully inlined, no emitted symbol.
+static inline JGeometry::TVec3<f32>
+horizontalDeltaTo(const JGeometry::TVec3<f32>& point,
+                  const JGeometry::TVec3<f32>& pos)
+{
+	return JGeometry::TVec3<f32>(point.x - pos.x, 0.0f, point.z - pos.z);
+}
+
 bool TBaseNPC::isCanWalk() const
 {
 	bool result = true;
-	// TODO: TVec3::sub should use set internally I guess?
-	if ((unkF4.getPoint() - mPosition).squared() < CLBSquared(2.5625f))
+	// The ROM builds the horizontal delta through an out-of-line
+	// TVec3<f32>::set<float>(f32, f32, f32) (16 B, local in NpcWalkTurn.o).
+	// The set call only goes out of line when it sits at expansion depth
+	// >= 2 (AGENT_MATCHING_TIPS depth table), so the delta is built by a
+	// file-static by-value helper exactly like src/Enemy/enemy.cpp's
+	// polarXZ, whose return-ctor produces the ROM's `bl set` sites in
+	// walkToCurPathNode/zigzag/goToDirLimited. Fully inlined: the helper
+	// has no symbol in marioEU.MAP (same as polarXZ).
+	JGeometry::TVec3<f32> point = unkF4.getPoint();
+	JGeometry::TVec3<f32> delta = horizontalDeltaTo(point, mPosition);
+	if (delta.squared() < CLBSquared(2.5625f))
 		result = false;
 	return result;
 }
@@ -30,14 +50,16 @@ void TBaseNPC::execWalk(bool param_1)
 
 		SMS_GoRotate(mPosition, unkF4.getPoint(), fVar1, &mRotation.y);
 
-		// TODO: vector math is borked
+		// TODO: vector math is borked - the ROM chains two redundant word
+		// copies (copy/copy2, same idiom as NpcNerve.cpp) and wraps the
+		// *absolute* rotation difference.
 		JGeometry::TVec3<f32> local_54 = unkF4.getPoint();
 		local_54 -= mPosition;
-		JGeometry::TVec3<f32> copy;
-		copy.set(local_54);
+		JGeometry::TVec3<f32> copy = local_54;
+		JGeometry::TVec3<f32> copy2 = copy;
 
-		f32 angle = MsGetRotFromZaxisY(copy);
-		if (MsWrap(mRotation.y - angle, 0.0f, 360.0f) < 0.001f)
+		f32 angle = MsGetRotFromZaxisY(copy2);
+		if (MsWrap(abs(mRotation.y - angle), 0.0f, 360.0f) < 0.001f)
 			offUnk1DA(UNK1DA_FLAG_UNK1);
 
 		return;

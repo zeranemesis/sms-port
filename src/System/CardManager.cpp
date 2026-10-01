@@ -507,7 +507,9 @@ s32 TCardManager::setCardStat_(CARDFileInfo* file)
 
 void TCardManager::buildHeader_(HeaderData* header)
 {
-	int iVar8 = TFlagManager::getInstance()->getFlag(0xA0001);
+	// unsigned: the target tests the flag with `cmplwi r30, 0 / bne`, i.e. the
+	// local is compared as unsigned, not as int.
+	u32 iVar8 = TFlagManager::getInstance()->getFlag(0xA0001);
 
 	snprintf(header->mTitle, 0x20, titles[iVar8]);
 	OSCalendarTime auStack_54;

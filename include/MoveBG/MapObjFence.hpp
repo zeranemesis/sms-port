@@ -29,6 +29,7 @@ public:
 
 	TRevolvingFenceOuter(const char* name = "フェンス外側")
 	    : TFence(name)
+	    , unk13C(0)
 	{
 	}
 
@@ -77,6 +78,9 @@ public:
 
 	TFenceWater(const char* name = "水回転フェンス（垂直）")
 	    : TFence(name)
+	    , unk13C(0.0f)
+	    , unk140(0.0f)
+	    , unk144(0)
 	{
 	}
 

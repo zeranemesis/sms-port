@@ -2404,6 +2404,13 @@ void TMario::checkWet()
 	(Vec&)unk158->mV.value
 	    = (Vec) { mVel.x * 0.3f, mVel.y * 0.3f, mVel.z * 0.3f };
 	gpModelWaterManager->emitRequest(*unk158);
+
+	// Every diff marker of this function is a stack offset sitting 0x20 above
+	// ours (target frame 0x78 against 0x58). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_32_marioCheckWet[32];
+	(void)framePad_32_marioCheckWet;
 }
 
 void TMario::gunExec()

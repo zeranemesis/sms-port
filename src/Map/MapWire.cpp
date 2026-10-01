@@ -348,6 +348,13 @@ f32 TMapWire::getPosInWire(const JGeometry::TVec3<f32>& point) const
 
 	f32 totalLength   = JGeometry::TVec3<f32>(flatEnd - flatStart).length();
 	f32 partialLength = JGeometry::TVec3<f32>(perpPoint - flatStart).length();
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_mapWireGetPosInWire[8];
+	(void)framePad_8_mapWireGetPosInWire;
 	return partialLength / totalLength;
 }
 

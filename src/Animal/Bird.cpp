@@ -230,48 +230,66 @@ void TAnimalBird::moveObject()
 
 	TSpineBase<TLiveActor>* spine = mSpine;
 
-	{
-		const TNerveBase<TLiveActor>* latest = spine->getLatestNerve();
-		if (latest == &TNerveAnimalBirdWaitOnGround::theNerve()
-		    || latest == &TNerveAnimalBirdActionOnGround::theNerve()
-		    || latest == &TNerveAnimalBirdWalkOnGround::theNerve()) {
-			if (isAirborne()) {
-				unk17C++;
-				if (getBirdParams()->mFloatingTimerMax.get() < unk17C) {
-					spine->reset();
-					spine->setNext(&TNerveAnimalBirdTakeoff::theNerve());
-				}
-			} else
-				unk17C = 0;
-		}
+	// Written as a single `||` chain over fresh getLatestNerve()/theNerve()
+	// calls: the target materialises its own intermediate bools for such a
+	// chain (flag registers merged with `li 1` / `addi` / `clrlwi.`) and only
+	// expands the first operand's calls inline, calling the rest out of line.
+	bool onGroundNerve
+	    = (spine->getLatestNerve() == &TNerveAnimalBirdWaitOnGround::theNerve()
+	        || spine->getLatestNerve()
+	               == &TNerveAnimalBirdActionOnGround::theNerve())
+	      || spine->getLatestNerve()
+	             == &TNerveAnimalBirdWalkOnGround::theNerve();
+
+	if (onGroundNerve) {
+		// checkLiveFlag() rather than isAirborne(): the latter's `? 1 : 0`
+		// body makes MWCC materialise a bool, the target just masks the bit.
+		if (checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+			// The increment lives in the condition: the target evaluates the
+			// getBirdParams() call first and only then bumps unk17C.
+			if (getBirdParams()->mFloatingTimerMax.get() < ++unk17C) {
+				spine->reset();
+				spine->setNext(&TNerveAnimalBirdTakeoff::theNerve());
+			}
+		} else
+			unk17C = 0;
 	}
 
-	if (spine->getLatestNerve() == &TNerveAnimalBirdChangeToCoin::theNerve()
-	    && mHitPoints == 0) {
+	// The comparison result is kept in a named bool: the target materialises it
+	// with subf/cntlzw/extrwi. instead of fusing it into the branch, and calls
+	// theNerve()/getLatestNerve() out of line here.
+	bool isCoinNerve = spine->isNerve(&TNerveAnimalBirdChangeToCoin::theNerve());
+	if (isCoinNerve && mHitPoints == 0) {
 		spine->reset();
 		spine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
 	}
 
-	{
-		const TNerveBase<TLiveActor>* latest = spine->getLatestNerve();
-		if (latest != &TNerveAnimalBirdGraphWander::theNerve()
-		    && latest != &TNerveAnimalBirdComeback::theNerve())
-			gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_FLYING1,
-			                          mInstanceIndex);
+	bool flying = spine->getLatestNerve()
+	                  == &TNerveAnimalBirdGraphWander::theNerve()
+	              || spine->getLatestNerve()
+	                     == &TNerveAnimalBirdComeback::theNerve();
+	if (!flying) {
+		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_FLYING1,
+		                          mInstanceIndex);
 	}
 
-	{
-		const TNerveBase<TLiveActor>* latest = spine->getLatestNerve();
-		if (latest != &TNerveAnimalBirdWaitOnGround::theNerve()
-		    && latest != &TNerveAnimalBirdActionOnGround::theNerve()
-		    && latest != &TNerveAnimalBirdWalkOnGround::theNerve())
-			gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_CHUN,
-			                          mInstanceIndex);
+	onGroundNerve
+	    = (spine->getLatestNerve() == &TNerveAnimalBirdWaitOnGround::theNerve()
+	        || spine->getLatestNerve()
+	               == &TNerveAnimalBirdActionOnGround::theNerve())
+	      || spine->getLatestNerve()
+	             == &TNerveAnimalBirdWalkOnGround::theNerve();
+	if (!onGroundNerve) {
+		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_CHUN, mInstanceIndex);
 	}
 
 	TLiveActor::moveObject();
 }
 
+// TODO: 56 %, and the only thing wrong is the first operand of the || chain
+// that isOnGroundNerve() (inlined twice) contributes. The target calls
+// theNerve()/getLatestNerve() out of line there, so it must reach that inline
+// at one level deeper than we do. See the note on isOnGroundNerve().
 void TAnimalBird::bind()
 {
 	if (!isCheckWithWireBinder())
@@ -345,6 +363,11 @@ bool TAnimalBird::isCheckWithWireBinder() const
 
 void TAnimalBird::doFlyToCurPathNode()
 {
+	// quat/v are declared up here and filled in further down: locals run from
+	// the top of the frame in declaration order and the target has the quat at
+	// the highest address even though it is computed last.
+	JGeometry::TQuat4<f32> quat;
+	JGeometry::TVec3<f32> v;
 	JGeometry::TVec3<f32> diff = unkF4.getPoint();
 	diff -= mPosition;
 
@@ -362,26 +385,23 @@ void TAnimalBird::doFlyToCurPathNode()
 
 	TAnimalBase::getRotationFlyToDir(&mRotation, diff, marchSpeed, turnSpeed);
 
-	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
-	JGeometry::TQuat4<f32> v(0.0f, 0.0f, marchSpeed, 0.0f);
-	JGeometry::TQuat4<f32> q2;
-	// TODO: quaternions are still wrong
-	q2.mul(quat, v);
-	JGeometry::TQuat4<f32> q3;
-	q3.mul(quat, q2);
+	quat = SMS_Eular2Quat(mRotation);
+	v.set(0.0f, 0.0f, marchSpeed);
+	// The rotation itself is TQuat4::rotate() -- same `w * 0` residue as the
+	// other three rotate() sites in this file.
+	quat.rotate(v, v);
 
-	JGeometry::TVec3<f32> velocity(q3.x, q3.y, q3.z);
-
-	f32 rate = unk178 / getBirdParams()->mWaterproofTimerMax.get();
+	f32 rate  = unk178 / (f32)getBirdParams()->mWaterproofTimerMax.get();
 	f32 scale = 1.0f - rate;
-	velocity.x *= scale;
-	velocity.y *= scale;
-	velocity.z *= scale;
+	v.x *= scale;
+	v.y *= scale;
+	v.z *= scale;
 
-	velocity.y -= getBirdParams()->mWaterPowerY.get()
-	              * (getBirdParams()->mWaterproofTimerMax.get() / (f32)unk178);
+	// The target recomputes the ratio here rather than reusing `rate`.
+	v.y -= getBirdParams()->mWaterPowerY.get()
+	       * (unk178 / (f32)getBirdParams()->mWaterproofTimerMax.get());
 
-	mLinearVelocity = velocity;
+	mLinearVelocity = v;
 }
 
 bool TAnimalBird::doLanding(bool param_1)
@@ -392,7 +412,8 @@ bool TAnimalBird::doLanding(bool param_1)
 
 		JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
 		JGeometry::TVec3<f32> velocity;
-		// TODO: quaternions are still wrong
+		// The residual `w * 0` multiplies are the signature of this inline
+		// (MWCC folds explicit *0 but not one that came out of a function).
 		quat.rotate(JGeometry::TVec3<f32>(0.0f, 0.0f, speed), velocity);
 		mVelocity = velocity;
 	}
@@ -407,7 +428,9 @@ bool TAnimalBird::doLanding(bool param_1)
 	else
 		gpMap->checkGround(mPosition, &mGroundPlane);
 
-	if (isAirborne())
+	// checkLiveFlag() rather than isAirborne(): the latter's `? 1 : 0` body
+	// makes MWCC materialise a bool where the target just masks the bit.
+	if (checkLiveFlag(LIVE_FLAG_AIRBORNE))
 		fall.y = -getBirdParams()->mLandingGravityY.get();
 	else
 		grounded = true;
@@ -418,19 +441,29 @@ bool TAnimalBird::doLanding(bool param_1)
 	f32 torque = getBirdParams()->mLandingTorqueY.get();
 	torque      = torque * SMSGetAnmFrameRate();
 	f32 diff    = MsAngleDiff(mHomeRotation.y, mRotation.y);
-	f32 step    = MsClamp(diff, -torque, torque);
+	// MsClamp() as it is written in MathUtil.hpp tests the upper bound first;
+	// the target tests the lower bound first (and drops the redundant
+	// `step = -torque` store because the value is already in the register).
+	f32 step;
+	if (diff < -torque)
+		step = -torque;
+	else if (diff > torque)
+		step = torque;
+	else
+		step = diff;
 	mRotation.y = MsWrap<f32>(mRotation.y + step, 0.0f, 360.0f);
 
 	mLinearVelocity = fall;
 
+	// friction is built first and only then scaled by mLandingFric -- the
+	// target does not fold the two multiplications together.
+	JGeometry::TVec3<f32> friction;
 	JGeometry::TVec3<f32> vel = mVelocity;
-	f32 fric                  = JGeometry::TUtil<f32>::sqrt(vel.squared());
-	fric = fric * getBirdParams()->mLandingFric.get();
-	JGeometry::TVec3<f32> friction(0.0f, 0.0f, fric);
+	friction.set(0.0f, 0.0f, JGeometry::TUtil<f32>::sqrt(vel.squared()));
+	friction *= getBirdParams()->mLandingFric.get();
 
 	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
-	// TODO: quaternions are still wrong
-	quat.rotate(friction);
+	quat.rotate(friction, friction);
 	mVelocity = friction;
 
 	return grounded && fabs(step) < 0.01f;
@@ -509,13 +542,17 @@ DEFINE_NERVE(TNerveAnimalBirdWaitOnGround, TLiveActor)
 	}
 
 	if (bird->checkCurAnmEnd(0)) {
-		TAnimalBirdParams* params = bird->getBirdParams();
-		int time = spine->getTime() - params->mActionTimer.get();
+		// The target counts *up* to mActionTimer (mActionTimer - getTime())
+		// and halves MsRandF() instead of doubling the ratio; no `params`
+		// local either, so getBirdParams() is called twice.
+		int time = bird->getBirdParams()->mActionTimer.get() - spine->getTime();
 		bool wantAction = false;
 
 		if (time >= 0)
-			wantAction = MsRandF()
-			             < (f32)time / (f32)params->mActionTimerAdd.get();
+			wantAction = MsRandF() * 0.5f
+			             < (f32)time
+			                   / (f32)bird->getBirdParams()
+			                          ->mActionTimerAdd.get();
 
 		if (wantAction) {
 			spine->pushAfterCurrent(&TNerveAnimalBirdActionOnGround::theNerve());
@@ -590,15 +627,17 @@ DEFINE_NERVE(TNerveAnimalBirdWalkOnGround, TLiveActor)
 	                                    + bird->unk170 * torque,
 	                                0.0f, 360.0f);
 
+	// TQuat4::rotate() ends in TVec3<f32>::set<f32>(x, y, z), which is the
+	// out-of-line `set<f>` call the target emits right after this nerve
+	// (it is the very next symbol in the map's .text layout). `v` is
+	// declared before `quat` (locals run from the top of the frame down in
+	// declaration order) but filled in after, which is the order the target
+	// stores them in.
+	JGeometry::TVec3<f32> v;
 	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(bird->mRotation);
-	JGeometry::TQuat4<f32> v(0.0f, 0.0f,
-	                          bird->getBirdParams()->mWalkingSpeed.get(),
-	                          0.0f);
-	JGeometry::TQuat4<f32> q2;
-	q2.mul(quat, v);
-	v.x = q2.z;
-	v.y = q2.w;
-	bird->mLinearVelocity = v.xyz();
+	v.set(0.0f, 0.0f, bird->getBirdParams()->mWalkingSpeed.get());
+	quat.rotate(v, v);
+	bird->mLinearVelocity = v;
 
 	if (spine->getTime() > bird->getBirdParams()->mWalkTimer.get()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdWaitOnGround::theNerve());

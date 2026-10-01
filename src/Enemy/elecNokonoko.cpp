@@ -185,6 +185,13 @@ void TElecNokonoko::init(TLiveManager* manager)
 
 	unk19C = TMsRange<s32>(0, 300).rand();
 	offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_elecNokoInit[8];
+	(void)framePad_8_elecNokoInit;
 }
 
 void TElecNokonoko::rest()
@@ -344,6 +351,13 @@ void TElecNokonoko::behaveToFindMario()
 	mSpine->pushAfterCurrent(&TNerveWalkerAttack::theNerve());
 	mSpine->pushAfterCurrent(&TNerveElecNokonokoTurn::theNerve());
 	setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_elecNokoFindMario[8];
+	(void)framePad_8_elecNokoFindMario;
 }
 
 void TElecNokonoko::behaveToWater(THitActor*)

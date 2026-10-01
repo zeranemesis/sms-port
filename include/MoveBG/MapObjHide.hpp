@@ -29,7 +29,10 @@ public:
 
 class THideObj : public THideObjBase {
 public:
-	THideObj(const char* name = "隠しオブジェ");
+	THideObj(const char* name = "隠しオブジェ")
+	    : THideObjBase(name)
+	{
+	}
 
 	virtual void touchPlayer(THitActor*);
 };

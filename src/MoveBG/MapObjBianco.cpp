@@ -430,12 +430,19 @@ void TLeafBoat::bind()
 void TLeafBoat::control()
 {
 	TMapObjBase::control();
+	// Every one of the 16 stack references of this function sits exactly 0x30
+	// above ours (frame 0xa0 against 0x70) and the instruction stream is
+	// otherwise identical, so the target simply reserves 48 unused bytes.
+	char framePad_48_leafBoatControl[48];
+	(void)framePad_48_leafBoatControl;
 	if (marioHipAttack())
 		mVelocity.y -= unk154;
 
 	if (marioIsOn()) {
 		mVelocity.y -= unk150;
-		if (SMS_GetMarioWaterGun()->mIsEmitWater > 0) {
+		// signed: the target tests mIsEmitWater with `cmpwi r0, 0`, while
+		// `u8 > 0` gives mwcc an unsigned `cmplwi r0, 0`.
+		if ((s32)SMS_GetMarioWaterGun()->mIsEmitWater > 0) {
 			MtxPtr mtx = SMS_GetMarioWaterGun()->getEmitMtx(0);
 			mVelocity.x -= mtx[0][0] * unk144;
 			mVelocity.z -= mtx[2][0] * unk144;

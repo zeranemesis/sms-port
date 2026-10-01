@@ -1,0 +1,1900 @@
+diff --git a/cmake/aurora_dvd.cmake b/cmake/aurora_dvd.cmake
+index c7e8eac..2322169 100644
+--- a/cmake/aurora_dvd.cmake
++++ b/cmake/aurora_dvd.cmake
+@@ -7,3 +7,11 @@ set_target_properties(aurora_dvd PROPERTIES FOLDER "aurora")
+ target_compile_definitions(aurora_dvd PUBLIC AURORA TARGET_PC)
+ target_include_directories(aurora_dvd PUBLIC include)
+ target_link_libraries(aurora_dvd PUBLIC nod::nod fmt::fmt ${AURORA_SDL3_TARGET})
++# lib/dolphin/dvd/dvd.cpp calls OSPanic (defined in aurora_os), but this
++# target never declared that dependency - verified as a real MSVC link
++# failure (LNK2019: unresolved external symbol OSPanic) building
++# dolphinjet, which links aurora::dvd before aurora::os in its own list;
++# MSVC's linker doesn't rescan earlier static libraries for symbols only
++# needed by ones later, so this must be declared here rather than left to
++# consumers to order correctly by luck.
++target_link_libraries(aurora_dvd PRIVATE aurora::os)
+diff --git a/lib/card/CardGciFolder.cpp b/lib/card/CardGciFolder.cpp
+index ec4f379..f9b3ad3 100644
+--- a/lib/card/CardGciFolder.cpp
++++ b/lib/card/CardGciFolder.cpp
+@@ -121,7 +121,16 @@ ECardResult CardGciFolder::createFile(const char* filename, size_t size, FileHan
+   }
+ 
+   gciFileHeader->swapEndian();
+-  m_files.push_back({*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), false}); // push non-endian swapped header first
++  // The last field is `opened`, and it has to be true: this function hands
++  // back a usable FileHandle, and getFile() returns nothing for an entry that
++  // is not marked open, so every write and close through that handle failed.
++  // openFile() already sets opened = true for exactly this reason.
++  //
++  // Measured before the fix: the game created its save, then wrote nothing.
++  // The .gci had a valid header and 57,344 zero data bytes, and the calls
++  // reported result -3 (NOCARD) on write and -4 (NOFILE) on close - both the
++  // null return from getFile. The game read back zeros and showed "Corrupt".
++  m_files.push_back({*gciFileHeader, fileSize, reinterpret_cast<const char8_t*>(gciFilename.c_str()), true}); // push non-endian swapped header first
+   handleOut = FileHandle(m_files.size() - 1, 0);
+ 
+   return ECardResult::READY;
+diff --git a/lib/dolphin/card.cpp b/lib/dolphin/card.cpp
+index 626ce4f..f0c0a68 100644
+--- a/lib/dolphin/card.cpp
++++ b/lib/dolphin/card.cpp
+@@ -680,7 +680,7 @@ s32 CARDClose(CARDFileInfo* fileInfo) {
+   const auto res = card->closeFile(handle);
+ 
+   if (res != aurora::card::ECardResult::READY)
+-    Log.error("Failed to close file at idx: {}", fileInfo->fileNo);
++    Log.error("Failed to close file at idx: {} - result {}", fileInfo->fileNo, static_cast<int>(res));
+ 
+   return static_cast<s32>(res);
+ }
+@@ -725,7 +725,12 @@ s32 CARDWrite(const CARDFileInfo* fileInfo, const void* addr, const s32 length,
+   auto res = card->fileWrite(handle, addr, length);
+ 
+   if (res != aurora::card::ECardResult::READY) {
+-    Log.error("Failed to write {} bytes to card", length);
++    // Which failure it is matters: NOCARD means the handle named no open file,
++    // NOFILE that the backing .gci could not be opened, IOERROR that the write
++    // itself failed. They have completely different causes and the message
++    // used to distinguish none of them.
++    Log.error("Failed to write {} bytes to card at offset {} (fileNo {}): result {}", length, offset,
++              fileInfo->fileNo, static_cast<int>(res));
+   } else {
+     card->commit();
+   }
+diff --git a/lib/dolphin/os/OSReport.cpp b/lib/dolphin/os/OSReport.cpp
+index 319422b..08129c0 100644
+--- a/lib/dolphin/os/OSReport.cpp
++++ b/lib/dolphin/os/OSReport.cpp
+@@ -8,7 +8,6 @@
+ 
+ #include <cstdarg>
+ 
+-#if 0
+ static aurora::Module reporter("aurora::os::report");
+ 
+ void OSReport(const char* msg, ...) {
+@@ -40,4 +39,3 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
+ void OSFatal(GXColor fg, GXColor bg, const char* msg) {
+   reporter.fatal("{}", msg);
+ }
+-#endif
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index eff0c65..70f05b2 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -515,7 +515,16 @@ gx::DrawData* get_last_draw_command() {
+   if (g_currentRenderPass >= current_render_passes().size()) {
+     return nullptr;
+   }
+-  auto& last = current_render_passes()[g_currentRenderPass].commands.back();
++  // back() on an empty vector is undefined behaviour, and this is reached for
++  // the FIRST draw of a render pass whenever the state is not dirty - which
++  // only happens once real geometry arrives, because until then every draw
++  // dirtied the state again. There is no "last draw" to merge with at that
++  // point; that is a normal answer, not an error.
++  auto& commands = current_render_passes()[g_currentRenderPass].commands;
++  if (commands.empty()) {
++    return nullptr;
++  }
++  auto& last = commands.back();
+   if (last.type != CommandType::Draw || last.data.draw.type != ShaderType::GX) {
+     return nullptr;
+   }
+@@ -523,6 +532,39 @@ gx::DrawData* get_last_draw_command() {
+ }
+ 
+ static void push_draw_command(ShaderDrawCommand data) {
++  // Which render pass a draw lands in, and whether that pass is offscreen.
++  //
++  // Everything else about these draws has now been measured and is healthy -
++  // they reach the GPU, their pipelines are ready, their matrices, projection
++  // and viewport are correct, and their raster state is rich and sane - and
++  // the screen is still black. A draw recorded into an offscreen pass that is
++  // never resolved back is invisible no matter how correct it is, and this
++  // port does not bridge GXCopyTex, so that resolve may simply not happen.
++  {
++    static u64 onscreen = 0, offscreen = 0, noPass = 0;
++    static auto lastReport = std::chrono::steady_clock::now();
++    static unsigned reports = 0;
++    if (g_currentRenderPass >= current_render_passes().size()) {
++      ++noPass;
++    } else if (current_render_passes()[g_currentRenderPass].offscreen) {
++      ++offscreen;
++    } else {
++      ++onscreen;
++    }
++    const auto now = std::chrono::steady_clock::now();
++    if (now - lastReport >= std::chrono::seconds(1) && reports < 600) {
++      lastReport = now;
++      ++reports;
++        // An empty or tiny scissor rejects every fragment no matter how correct
++      // the geometry is, and nothing so far has looked at it.
++      Log.info("draw passes 1s: onscreen={} offscreen={} no_pass={} | passes this frame={} | scissor=({},{} {}x{}) "
++               "viewport=({},{} {}x{})",
++               onscreen, offscreen, noPass, current_render_passes().size(), g_cachedScissor.x, g_cachedScissor.y,
++               g_cachedScissor.width, g_cachedScissor.height, g_cachedViewport.left, g_cachedViewport.top,
++               g_cachedViewport.width, g_cachedViewport.height);
++      onscreen = offscreen = noPass = 0;
++    }
++  }
+   push_command(CommandType::Draw, Command::Data{.draw = data});
+   ++g_drawCallCount;
+ }
+diff --git a/lib/gfx/tex_copy_conv.cpp b/lib/gfx/tex_copy_conv.cpp
+index 50f4c43..4aa33cb 100644
+--- a/lib/gfx/tex_copy_conv.cpp
++++ b/lib/gfx/tex_copy_conv.cpp
+@@ -233,6 +233,21 @@ static constexpr std::string_view FragGB8 = R"(
+ }
+ )"sv;
+ 
++// GX_TF_Z24X8: full 24-bit depth -> RGBA8, high byte in R down to low byte in B.
++// Without this entry needs_conversion() is false for Z24X8 while is_depth_format()
++// is true, so a scaled copy fell through to blit(), whose pipeline is built with
++// g_bindGroupLayout while execute() binds a group laid out for g_depthBindGroupLayout.
++// The layouts do not match and the whole pass is rejected.
++static constexpr std::string_view FragZ24X8 = R"(
++@fragment fn fs_main(in: VertexOutput) -> @location(0) vec4f {
++    let z24 = gx_z24(in.uv);
++    let r = f32((z24 >> 16u) & 0xFFu) / 255.0;
++    let g = f32((z24 >> 8u) & 0xFFu) / 255.0;
++    let b = f32(z24 & 0xFFu) / 255.0;
++    return vec4f(r, g, b, 1.0);
++}
++)"sv;
++
+ // GX_TF_Z16: Upper 16-bits depth -> IA8
+ static constexpr std::string_view FragZ16 = R"(
+ @fragment fn fs_main(in: VertexOutput) -> @location(0) vec4f {
+@@ -269,6 +284,7 @@ static constexpr std::array ConvPipelines{
+ 
+ static constexpr std::array DepthConvPipelines{
+     ConvPipeline{GX_TF_Z16, FragZ16, wgpu::TextureFormat::RGBA8Unorm, "TexCopyConv Z16"},
++    ConvPipeline{GX_TF_Z24X8, FragZ24X8, wgpu::TextureFormat::RGBA8Unorm, "TexCopyConv Z24X8"},
+ };
+ 
+ static wgpu::BindGroupLayout g_bindGroupLayout;
+diff --git a/lib/gfx/texture.hpp b/lib/gfx/texture.hpp
+index ac7c91c..c214538 100644
+--- a/lib/gfx/texture.hpp
++++ b/lib/gfx/texture.hpp
+@@ -128,9 +128,24 @@ namespace aurora::gfx {
+ struct TextureBind {
+   TextureHandle ref;
+   GXTexObj_ texObj;
++  // What the resolved handle actually depends on besides the texture object itself.
++  // A palettised texture decodes to different pixels depending on the TLUT loaded in
++  // its slot, and a palettised EFB copy also depends on the revision of the copy it
++  // reads from; neither of those touches the texture object, so both have to be part
++  // of the "bind unchanged" test in resolve_sampled_textures.
++  u32 tlutObjId = 0;
++  u32 tlutDataVersion = 0;
++  u32 copyRevision = 0;
+ 
+   TextureBind() noexcept = default;
+   TextureBind(const GXTexObj_& obj, TextureHandle handle) noexcept : ref(std::move(handle)), texObj(obj) {}
++  TextureBind(const GXTexObj_& obj, TextureHandle handle, u32 tlutObjId_, u32 tlutDataVersion_,
++              u32 copyRevision_) noexcept
++  : ref(std::move(handle))
++  , texObj(obj)
++  , tlutObjId(tlutObjId_)
++  , tlutDataVersion(tlutDataVersion_)
++  , copyRevision(copyRevision_) {}
+   void reset() noexcept { ref.reset(); }
+   [[nodiscard]] wgpu::SamplerDescriptor get_descriptor() const noexcept;
+   operator bool() const noexcept { return ref.operator bool(); }
+diff --git a/lib/gfx/texture_convert.cpp b/lib/gfx/texture_convert.cpp
+index d1ed04c..c59ad9d 100644
+--- a/lib/gfx/texture_convert.cpp
++++ b/lib/gfx/texture_convert.cpp
+@@ -1,5 +1,8 @@
+ #include "texture_convert.hpp"
+ 
++#include <chrono>
++#include <cstdio>
++
+ #include "../internal.hpp"
+ #include "../gx/gx_fmt.hpp"
+ 
+@@ -634,6 +637,58 @@ ConvertedTexture convert_texture(u32 format, uint32_t width, uint32_t height, ui
+   if (!is_pc_texture_format(format) && wgpuFormat == wgpu::TextureFormat::RGBA8Unorm && mips > 1) {
+     hasArbitraryMips = arb_mip_check(width, height, mips, converted);
+   }
++  // One-shot: what the I8 decode actually produced for THPPlayer's luminance
++  // plane. The source bytes have been measured at a mean of ~130, the shader
++  // maths has been read and is correct, the uniforms and geometry are right -
++  // so if the decoded texels come out black, the defect is in this decode or
++  // in the data it was handed, and nowhere else.
++  if (format == GX_TF_I8 && width == 640 && height == 448) {
++    static bool dumped = false;
++    if (!dumped) {
++      dumped = true;
++      const auto* bytes = converted.data();
++      const size_t size = converted.size();
++      u64 sum = 0;
++      u8 lo = 0xFFu;
++      u8 hi = 0;
++      for (size_t i = 0; i < size; ++i) {
++        sum += bytes[i];
++        lo = bytes[i] < lo ? bytes[i] : lo;
++        hi = bytes[i] > hi ? bytes[i] : hi;
++      }
++      // Also the first few source bytes, so a decode fed an empty buffer is
++      // distinguishable from a decode that lost the data.
++      std::string srcHead;
++      for (size_t i = 0; i < 8 && i < data.size(); ++i) {
++        srcHead += fmt::format("{:02x} ", data[i]);
++      }
++      Log.info("THP I8 decode: src {} bytes [{}] -> {} bytes, mean={:.1f} min={} max={}", data.size(), srcHead, size,
++               size == 0 ? 0.0 : double(sum) / double(size), lo, hi);
++
++    }
++
++    // Is the luminance decode good EVERY time, or only the first? The
++    // one-shot probe above cannot tell: it measured the first decode, which
++    // was correct. Forcing this plane to a constant made the movie appear, so
++    // the upload, bind and sampling all work and only this plane's *contents*
++    // are suspect. Throttled to once a second, hard-capped.
++    {
++      static auto lastReport = std::chrono::steady_clock::now();
++      static unsigned reports = 0;
++      const auto now = std::chrono::steady_clock::now();
++      if (reports < 30 && now - lastReport >= std::chrono::seconds(1)) {
++        lastReport = now;
++        ++reports;
++        const auto* b = converted.data();
++        u64 s2 = 0;
++        for (size_t i = 0; i < converted.size(); ++i) {
++          s2 += b[i];
++        }
++        Log.info("THP Y decode #{}: {} bytes mean={:.1f}", reports, converted.size(),
++                 converted.empty() ? 0.0 : double(s2) / double(converted.size()));
++      }
++    }
++  }
+   return {
+       .format = wgpuFormat,
+       .width = width,
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 9748556..4d07419 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -1,5 +1,7 @@
+ #include "command_processor.hpp"
+ 
++#include <unordered_set>
++
+ #include "../gfx/common.hpp"
+ #include "dolphin/gx/GXAurora.h"
+ #include "gx.hpp"
+@@ -11,9 +13,12 @@
+ #include <absl/container/flat_hash_map.h>
+ #include <tracy/Tracy.hpp>
+ 
++#include <array>
++#include <chrono>
+ #include <cmath>
+ #include <cstring>
+ #include <optional>
++#include <string>
+ 
+ namespace aurora::gx::fifo {
+ static Module Log("aurora::gx::fifo");
+@@ -251,6 +256,13 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+       flat[i] = read_f32(data + i * 4, bigEndian);
+     }
+     g_gxState.stateDirty = true;
++    // This branch was missing its return, so a position-matrix load wrote the
++    // matrix correctly and then fell through the whole if-chain to the final
++    // `return false`, reporting failure. Every other branch returns true. The
++    // only consumer was a debug-only log, so nothing broke - but a probe built
++    // on this return value counted every position matrix as rejected, which
++    // read as "model-view matrices never arrive" when they always had.
++    return true;
+   } else if (addr < 0x0F0) {
+     // Texture matrices (0x078-0x0EF)
+     u32 texBase = addr - 0x078;
+@@ -365,27 +377,158 @@ static bool copy_xf_data(u32 addr, const u8* data, u32 len, bool bigEndian) {
+   return false;
+ }
+ 
++// Stream mode: the host frame boundary can cut this FIFO between a command's
++// opcode and its payload, because the guest is stepped for a fixed budget of
++// translated blocks and that budget expires at an arbitrary instruction.  Real
++// hardware never sees this - the GP reads a stream and simply waits for the
++// rest - so aborting on a short tail turns a normal cut into a fatal error.
++//
++// Measured twice: "draw vertex data overrun: need 80 bytes at pos N, have N",
++// at two completely different FIFO positions but with byte-identical preceding
++// commands (LOAD_CP_REG VAT_B0, LOAD_CP_REG VAT_C0, then draw quads x4).  The
++// buffer ended exactly on the draw header, which is a cut, not corruption.
++//
++// In stream mode a truncated command stops processing at that command's first
++// byte and reports the position, so drain() can carry the tail into the next
++// buffer.  Outside stream mode - display lists, which are complete by
++// construction - every CHECK below still fires exactly as before.
++// The last commands parsed, so a desync can say what led to it. The byte the
++// parser chokes on is never the byte that went wrong - it is wherever the
++// previous command's length was mis-computed and left the cursor stranded.
++struct ParsedCommand {
++  u32 pos;
++  u8 opcode;
++  u32 consumed;
++};
++static std::array<ParsedCommand, 12> s_recentCommands {};
++static size_t s_recentNext = 0;
++
++static void note_command(u32 pos, u8 opcode, u32 consumed) {
++  s_recentCommands[s_recentNext] = ParsedCommand{pos, opcode, consumed};
++  s_recentNext = (s_recentNext + 1) % s_recentCommands.size();
++}
++
++static void dump_recent_commands() {
++  std::string trail;
++  for (size_t i = 0; i < s_recentCommands.size(); ++i) {
++    const auto& c = s_recentCommands[(s_recentNext + i) % s_recentCommands.size()];
++    if (c.consumed == 0 && c.opcode == 0 && c.pos == 0) {
++      continue;
++    }
++    trail += fmt::format(" [pos {} op {:02x} +{}]", c.pos, c.opcode, c.consumed);
++  }
++  Log.error("  commands leading here:{}", trail);
++}
++
++// Installed by the host so guest physical addresses - in the CP array-base
++// registers and in GX_CMD_CALL_DL - can be turned into something Aurora can
++// actually read.
++GuestMemoryResolver g_guestMemoryResolver = nullptr;
++
++static bool s_streamMode = false;
++static bool s_streamTruncated = false;
++static u32 s_streamCmdStart = 0;
++
++static bool fifo_truncated(u32 pos, u32 need, u32 size) {
++  if (static_cast<u64>(pos) + need <= size) {
++    return false;
++  }
++  if (!s_streamMode) {
++    return false; // let the caller's CHECK report it, as before
++  }
++  s_streamTruncated = true;
++  return true;
++}
++
+ // Forward declarations for register handlers
+ static void handle_bp(u32 value, bool bigEndian);
+ static void handle_cp(u8 addr, u32 value, bool bigEndian);
+ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian);
+ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndian);
+ static void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian);
++static void call_display_list(u32 listAddress, u32 listBytes, bool bigEndian);
++
++// Executes a display list in place, the way the GP does.
++//
++// A display list lives in guest RAM and is complete by construction, so it is
++// processed OUTSIDE stream mode: it can never be "cut" the way the write-gather
++// FIFO can, and letting a truncation inside it set the stream flags would make
++// the outer FIFO believe it had been cut and carry over bytes that were never
++// its own. The flags are therefore saved and restored around the call.
++//
++// Depth is bounded because the hardware allows one level of nesting and a
++// corrupt pointer could otherwise recurse until the stack runs out. A list that
++// nests deeper is refused and reported rather than followed.
++static void call_display_list(u32 listAddress, u32 listBytes, bool bigEndian) {
++  static u32 s_displayListDepth = 0;
++  constexpr u32 kMaxDisplayListDepth = 2;
++
++  if (listBytes == 0) {
++    return;
++  }
++  if (s_displayListDepth >= kMaxDisplayListDepth) {
++    static bool warnedDepth = false;
++    if (!warnedDepth) {
++      warnedDepth = true;
++      Log.error("display list nested deeper than {} - refusing to follow it", kMaxDisplayListDepth);
++    }
++    return;
++  }
++
++  u32 readable = 0;
++  void* host = g_guestMemoryResolver != nullptr ? g_guestMemoryResolver(listAddress, &readable) : nullptr;
++  if (host == nullptr || readable < listBytes) {
++    // Bounded per address: this runs at thousands of lists per second, and an
++    // unbounded version of the line it replaces produced 512,094 entries in 70
++    // seconds.
++    static std::unordered_set<u32> warnedLists;
++    if (warnedLists.size() < 32 && warnedLists.insert(listAddress).second) {
++      Log.error("display list at {:#010x} ({} bytes) could not be resolved to host memory", listAddress, listBytes);
++    }
++    return;
++  }
++
++  const bool savedStreamMode = s_streamMode;
++  const bool savedTruncated = s_streamTruncated;
++  const u32 savedCmdStart = s_streamCmdStart;
++  s_streamMode = false;
++  s_streamTruncated = false;
++
++  ++s_displayListDepth;
++  process(static_cast<const u8*>(host), listBytes, bigEndian);
++  --s_displayListDepth;
++
++  s_streamMode = savedStreamMode;
++  s_streamTruncated = savedTruncated;
++  s_streamCmdStart = savedCmdStart;
++}
+ 
+ void process(const u8* data, u32 size, bool bigEndian) {
+   ZoneScoped;
+   u32 pos = 0;
+ 
+   while (pos < size) {
++    if (s_streamTruncated) {
++      // A helper bailed out of a command that runs past the end of this
++      // buffer. Its first byte is already recorded; stop before the loop
++      // mistakes that byte for the next opcode.
++      break;
++    }
++    s_streamCmdStart = pos;
++    const u32 commandStart = pos;
+     u8 cmd = data[pos++];
+     u8 opcode = cmd & CP_OPCODE_MASK;
+     // Log.warn("Processing opcode {:02x} at pos {} (size {})", opcode, pos - 1, size);
+ 
+     switch (opcode) {
+     case CP_CMD_NOP:
++      note_command(commandStart, cmd, 1);
+       continue;
+ 
+     case CP_CMD_LOAD_BP_REG: {
++      if (fifo_truncated(pos, 4, size)) {
++        return;
++      }
+       CHECK(pos + 4 <= size, "BP reg read overrun");
+       u32 value = read_u32(data + pos, bigEndian);
+       pos += 4;
+@@ -394,6 +537,9 @@ void process(const u8* data, u32 size, bool bigEndian) {
+     }
+ 
+     case CP_CMD_LOAD_CP_REG: {
++      if (fifo_truncated(pos, 5, size)) {
++        return;
++      }
+       CHECK(pos + 5 <= size, "CP reg read overrun");
+       u8 addr = data[pos++];
+       u32 value = read_u32(data + pos, bigEndian);
+@@ -413,28 +559,140 @@ void process(const u8* data, u32 size, bool bigEndian) {
+     case CP_CMD_LOAD_INDX_D: {
+       ZoneScopedN("LOAD_INDX");
+       // Indexed XF load: 4 bytes of data
++      if (fifo_truncated(pos, 4, size)) {
++        return;
++      }
+       CHECK(pos + 4 <= size, "indexed XF read overrun");
+-      u32 arrayType = GX_POS_MTX_ARRAY + (opcode - (CP_CMD_LOAD_INDX_A / 0x08));
+-      u8 srcArrayIdx = data[pos++];
++      // The division belongs on the DIFFERENCE, not on the constant alone.
++      // As written this was GX_POS_MTX_ARRAY + (0x20 - 4) = 21 + 28 = 49,
++      // indexing a 26-element array, so it read a garbage base pointer and
++      // stride and then dereferenced them - a hard crash with no FATAL line,
++      // which is exactly what the run showed once the parse above was fixed
++      // and indexed loads started being executed at all.
++      //
++      // 0x20/0x28/0x30/0x38 select the PosMtx, NrmMtx, TexMtx and Light
++      // arrays in that order.
++      const u32 arrayType = GX_POS_MTX_ARRAY + ((opcode - CP_CMD_LOAD_INDX_A) / 0x08);
++      CHECK(arrayType < GX_VA_MAX_ATTR, "indexed XF load: array index {} out of range", arrayType);
++      // One opcode byte and ONE u32, per the game's own emitter:
++      //
++      //     GX_WRITE_U8(0x20);
++      //     GX_WRITE_U32(reg);        (src/dolphin/gx/GXTransform.c:177)
++      //
++      // with reg laid out by the same function as offset in bits 0-11,
++      // length-1 in bits 12-15 and the 16-bit index in bits 16-31.
++      //
++      // This previously read the index as one byte, read addrLen from bytes
++      // 1-2 instead of the low half at 2-3, and consumed five payload bytes
++      // instead of four. One byte too many per indexed load desynchronises the
++      // whole stream: measured as a trail ending
++      //   [pos 7463 op 20 +6] [pos 7469 op 00 +1] [pos 7470 op 13 +135177]
++      // where 0x13 is not an opcode at all but the 0xF8 mask turns it into an
++      // XF load, whose garbage header then swallowed 135KB and left the parser
++      // inside vertex data for good.
++      const u32 indexed = read_u32(data + pos, bigEndian);
++      pos += 4;
++      const u16 srcArrayIdx = static_cast<u16>(indexed >> 16);
+       auto const& array = g_gxState.arrays[arrayType];
+-      u8* srcData = ((u8*)array.data) + srcArrayIdx * array.stride;
+-      u16 addrLen = read_u16(data + pos, bigEndian);
+-      u16 len = (addrLen >> 12) + 1;
+-      u16 dstAddr = addrLen & 0x0FFF;
+-      if (!copy_xf_data(dstAddr, srcData, len, bigEndian)) {
+-#ifndef NDEBUG
+-        Log.debug("Unimplemented indexed XF load (opcode 0x{:02X}, dstAddr=%04x)", opcode, dstAddr);
+-#endif
++      if (array.data == nullptr) {
++        // Say so once per array rather than dereferencing null plus an offset.
++        // A missing base means GXSetArray was never forwarded for this array,
++        // which is a fixable gap in the port, not something to crash on.
++        static std::array<bool, GX_VA_MAX_ATTR> warnedArray {};
++        if (!warnedArray[arrayType]) {
++          warnedArray[arrayType] = true;
++          Log.error("indexed XF load: array {} has no base address - GXSetArray was never forwarded for it",
++                    arrayType);
++        }
++        break;
++      }
++      // The index is 16 bits and the stride up to 255, so an indexed load can
++      // name a byte up to 16MB past the base. The hardware would read whatever
++      // is there; reading it here is a wild pointer into the host process, and
++      // following display lists is what first made these loads execute with
++      // real indices at all. array.size is the readable bound the host gave us
++      // with the base, so use it.
++      const u16 len = static_cast<u16>(((indexed >> 12) & 0xF) + 1);
++      const u16 dstAddr = static_cast<u16>(indexed & 0x0FFF);
++      const u64 srcOffset = u64(srcArrayIdx) * array.stride;
++      const u64 srcNeeded = u64(len) * 4u;
++      if (srcOffset + srcNeeded > array.size) {
++        static std::unordered_set<u32> warnedRanges;
++        if (warnedRanges.size() < 32 && warnedRanges.insert(arrayType).second) {
++          Log.error("indexed XF load: array {} index {} stride {} reads to {} past its {}-byte extent", arrayType,
++                    srcArrayIdx, array.stride, srcOffset + srcNeeded, array.size);
++        }
++        break;
++      }
++      u8* srcData = ((u8*)array.data) + srcOffset;
++      const bool copied = copy_xf_data(dstAddr, srcData, len, bigEndian);
++
++      // The 2D menu renders and the 3D world does not, and the 3D world is the
++      // only thing that depends on model-view matrices arriving. They arrive
++      // through exactly this path, and until now a rejection was reported only
++      // in a debug build - silent in the Release builds every measurement here
++      // is taken with. Count what actually lands, by destination range.
++      {
++        static u64 posMtx = 0, texMtx = 0, nrmMtx = 0, light = 0, rejected = 0;
++        static auto lastReport = std::chrono::steady_clock::now();
++        static unsigned reports = 0;
++        if (!copied) {
++          ++rejected;
++        } else if (dstAddr < 0x78) {
++          ++posMtx;
++        } else if (dstAddr < 0xF0) {
++          ++texMtx;
++        } else if (dstAddr >= 0x400 && dstAddr < 0x45A) {
++          ++nrmMtx;
++        } else {
++          ++light;
++        }
++        const auto now = std::chrono::steady_clock::now();
++        if (now - lastReport >= std::chrono::seconds(1) && reports < 600) {
++          lastReport = now;
++          ++reports;
++          // The matrix the draws are actually using, not just how many arrived:
++          // a count cannot tell a real view matrix from a zeroed one, and a
++          // zeroed one collapses every vertex to the origin.
++          const auto& m = g_gxState.pnMtx[g_gxState.currentPnMtx].pos;
++          Log.info("indexed XF 1s: posMtx={} texMtx={} nrmMtx={} light={} rejected={} | pnMtx[{}] row0=({:.3f} "
++                   "{:.3f} {:.3f} {:.3f})",
++                   posMtx, texMtx, nrmMtx, light, rejected, g_gxState.currentPnMtx, m.m0[0], m.m0[1], m.m0[2],
++                   m.m0[3]);
++          posMtx = texMtx = nrmMtx = light = rejected = 0;
++        }
+       }
+-      pos += 4;
+       break;
+     }
+ 
+     case CP_CMD_CALL_DL: {
+-      // Call display list: 8 bytes (address + size)
++      // Call display list: an 8-byte payload of guest address and byte count.
++      //
++      // This used to log "Ignoring nested GX_CMD_CALL_DL" and skip, on the
++      // assumption that a host-side GXCallDisplayList had already copied the
++      // list's bytes into the FIFO (lib/dolphin/gx/GXDispList.cpp:50-66). In
++      // this port nothing does: the guest's own GXCallDisplayList runs and
++      // emits opcode 0x40 with a guest pointer (src/dolphin/gx/GXDisplayList.c
++      // :9-23), so every list was dropped.
++      //
++      // That is not a corner case. All J3D geometry goes through display
++      // lists - the shapes themselves (J3DShape.cpp:91), the VCD/VAT
++      // descriptors (:229), the matrices (:59), the materials
++      // (J3DPacket.cpp:28,67) - so none of the 3D world ever reached a draw.
++      // Measured over 70 seconds of gameplay: 512,094 lists discarded, while
++      // the only draws arriving were 2D, single-TEV-stage, orthographic.
++      //
++      // The hardware behaviour is simply to follow the pointer and execute the
++      // list in place, which is what this now does through the host's guest
++      // memory resolver.
++      if (fifo_truncated(pos, 8, size)) {
++        return;
++      }
+       CHECK(pos + 8 <= size, "call DL read overrun");
+-      Log.warn("Ignoring nested GX_CMD_CALL_DL");
++      const u32 listAddress = read_u32(data + pos, bigEndian);
++      const u32 listBytes = read_u32(data + pos + 4, bigEndian);
+       pos += 8;
++      call_display_list(listAddress, listBytes, bigEndian);
+       break;
+     }
+ 
+@@ -482,6 +740,11 @@ void process(const u8* data, u32 size, bool bigEndian) {
+       }
+       break;
+     }
++
++    // Record what was just consumed. A desync's first bad byte is never where
++    // the fault is - it is wherever a preceding command's length was computed
++    // wrong and left the cursor stranded - so the trail is what identifies it.
++    note_command(commandStart, cmd, pos - commandStart);
+   }
+ }
+ 
+@@ -566,6 +829,19 @@ static void handle_bp(u32 value, bool bigEndian) {
+   switch (regId) {
+   // genMode (0x00)
+   case 0x00: {
++    // genMode is the register a zeroed guest GX shadow would land on, and it
++    // carries numTexGens - trace every distinct value, capped, so a clobber is
++    // visible with its ordering relative to the XF texgen writes.
++    {
++      static u32 lastGenMode = 0xFFFFFFFFu;
++      static u32 genModeLogged = 0;
++      if (value != lastGenMode && genModeLogged < 32) {
++        lastGenMode = value;
++        ++genModeLogged;
++        Log.info("genMode = 0x{:08X} (numTexGens={} numChans={} numTevStages={})", value, bp_get(value, 4, 0),
++                 bp_get(value, 3, 4), bp_get(value, 4, 10) + 1);
++      }
++    }
+     g_gxState.numTexGens = bp_get(value, 4, 0);
+     g_gxState.numChans = bp_get(value, 3, 4);
+     g_gxState.numTevStages = bp_get(value, 4, 10) + 1;
+@@ -1241,7 +1517,43 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+     }
+     // Array base addresses (0xA0-0xAF)
+     else if (addr >= 0xA0 && addr <= 0xAF) {
+-      Log.error("CP_REG_ARRAYBASE_ID is not supported on Aurora. Use GX_LOAD_AURORA_ARRAYBASE instead.");
++      // These registers hold a GUEST physical address, which Aurora has no way
++      // to turn into anything it can read - hence the flat refusal this used to
++      // be. A host that does have guest memory can supply the translation, so
++      // ask it, and only complain when nobody can.
++      //
++      // Refusing outright is not a safe default here: the guest re-sends these
++      // registers from its own shadow state on every dirty-state flush, so a
++      // bridged GXSetArray does not cover the path. Measured in one 70-second
++      // gameplay run: 351,846 rejections, and every piece of indexed geometry
++      // silently without vertex data.
++      //
++      // The mapping is the same one the stride registers at 0xB0-0xBF use, and
++      // it lands correctly on the matrix arrays too: GX_VA_POS + 12 is
++      // GX_POS_MTX_ARRAY, +13 NRM, +14 TEX, +15 LIGHT.
++      const u32 attrIdx = addr - 0xA0 + GX_VA_POS;
++      void* hostBase = nullptr;
++      u32 hostSize = 0;
++      if (attrIdx < GX_VA_MAX_ATTR && g_guestMemoryResolver != nullptr) {
++        hostBase = g_guestMemoryResolver(value, &hostSize);
++      }
++      if (hostBase != nullptr) {
++        auto& array = g_gxState.arrays[attrIdx];
++        if (array.data != hostBase || array.size != hostSize) {
++          array.data = hostBase;
++          array.size = hostSize;
++          array.le = false; // GameCube vertex data is big-endian
++          g_gxState.stateDirty = true;
++        }
++      } else {
++        // Bounded: this fires once per guest address, and an unbounded version
++        // of exactly this line produced 351,846 entries in one run.
++        static std::unordered_set<u32> warnedBases;
++        if (warnedBases.size() < 32 && warnedBases.insert(value).second) {
++          Log.error("CP array base {:#010x} for attribute {} could not be resolved to a host pointer", value,
++                    attrIdx);
++        }
++      }
+     }
+     // Array strides (0xB0-0xBF)
+     else if (addr >= 0xB0 && addr <= 0xBF) {
+@@ -1261,6 +1573,9 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+ 
+ // XF register handler - decodes XF (transform unit) register writes and updates g_gxState
+ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
++  if (fifo_truncated(pos, 4, size)) {
++    return;
++  }
+   CHECK(pos + 4 <= size, "XF header read overrun");
+   u32 header = read_u32(data + pos, bigEndian);
+   pos += 4;
+@@ -1269,6 +1584,9 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   u32 addr = header & 0xFFFF;
+   u32 dataBytes = count * 4;
+   // Log.warn("  xf: addr {:04x} count {} dataBytes {} pos {} -> {}", addr, count, dataBytes, pos, pos + dataBytes);
++  if (fifo_truncated(pos, dataBytes, size)) {
++    return;
++  }
+   CHECK(pos + dataBytes <= size, "XF data read overrun: need {} bytes at pos {}", dataBytes, pos);
+ 
+   const u8* xfData = data + pos;
+@@ -1282,6 +1600,17 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       u32 reg = xfAddr + i;
+       u32 val = read_u32(xfData + i * 4, bigEndian);
+ 
++      // Trace each XF register the first time it is ever written, so a missing
++      // texgen/numTexGens setup is visible as an absence rather than guessed at.
++      // One line per register, so this cannot run away.
++      {
++        static std::array<bool, 0x100> seenXfReg{};
++        if (reg < seenXfReg.size() && !seenXfReg[reg]) {
++          seenXfReg[reg] = true;
++          Log.info("first XF write: reg 0x{:02X} = 0x{:08X}", reg, val);
++        }
++      }
++
+       // Skip scalar register writes that haven't changed (viewport/projection handled below)
+       if (reg <= 0x19 && val == g_gxState.xfRegCache[reg])
+         continue;
+@@ -1378,6 +1707,15 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       case 0x1F: {
+         // Viewport: sx, sy, sz, ox, oy, oz at XF 0x101A-0x101F
+         u32 vpOff = reg - 0x1A;
++        if (i == 0 && (vpOff != 0 || count < 6)) {
++          static std::unordered_set<u32> warnedVp;
++          const u32 key = (vpOff << 16) | count;
++          if (warnedVp.size() < 16 && warnedVp.insert(key).second) {
++            Log.warn("viewport write ignored: starts at register {} of 6, covers {} - only a full write from the "
++                     "first register is applied",
++                     vpOff, count);
++          }
++        }
+         if (vpOff == 0 && count >= 6) {
+           f32 sx = read_f32(xfData + 0, bigEndian);
+           f32 sy = read_f32(xfData + 4, bigEndian);
+@@ -1407,6 +1745,27 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       case 0x26: {
+         // Projection: 6 params + type at XF 0x1020-0x1026
+         u32 projOff = reg - 0x20;
++        // A projection write that does not start at the first register or does
++        // not cover all seven was silently ignored, with no log at all. That is
++        // indistinguishable from "the game never set a projection", and the
++        // measurement says projType is only ever 1 (orthographic) while the 3D
++        // scene submits 640,000 vertices a second - so whether a perspective
++        // write is arriving and being dropped is exactly the question.
++        // Only on the write's FIRST register. handle_xf loops over every
++        // register the write covers, so a perfectly normal 7-register write
++        // starting at 0x1020 enters this case seven times with projOff 0..6 -
++        // and a probe that did not account for that reported four "ignored"
++        // writes per frame that were nothing of the kind. A write is only
++        // genuinely partial when its first register is not the block's first.
++        if (i == 0 && (projOff != 0 || count < 7)) {
++          static std::unordered_set<u32> warnedProj;
++          const u32 key = (projOff << 16) | count;
++          if (warnedProj.size() < 16 && warnedProj.insert(key).second) {
++            Log.warn("projection write ignored: starts at register {} of 7, covers {} - only a full write from the "
++                     "first register is applied",
++                     projOff, count);
++          }
++        }
+         if (projOff == 0 && count >= 7) {
+           f32 p0 = read_f32(xfData + 0, bigEndian);
+           f32 p1 = read_f32(xfData + 4, bigEndian);
+@@ -1432,6 +1791,11 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+             proj.m1[2] = p3;
+             proj.m3[2] = -1.0f;
+           }
++          static std::unordered_set<u32> seenProjTypes;
++          if (seenProjTypes.insert(projType).second) {
++            Log.info("projection applied: type {} ({})", projType,
++                     projType == GX_ORTHOGRAPHIC ? "orthographic" : "perspective");
++          }
+           g_gxState.stateDirty = true;
+         }
+         break;
+@@ -1551,6 +1915,9 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+     UNLIKELY { vtxSize = calculate_last_vtx_size(fmt); }
+ 
+   u32 totalVtxBytes = vtxCount * vtxSize;
++  if (fifo_truncated(pos, totalVtxBytes, size)) {
++    return;
++  }
+   if (pos + totalVtxBytes > size)
+     UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
+ 
+@@ -1558,6 +1925,100 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+   const bool canMerge = lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
+                         lastDraw->instanceCount == 1;
+ 
++  // One dump of a perspective draw's raw vertex bytes and the array it indexes.
++  //
++  // Everything else about these draws is measured and healthy - pipelines,
++  // matrices, projection, viewport, raster state, render pass - and the screen
++  // is black. What survives all of that is wrong vertex data: the arrays are
++  // resolved through this port's own resolver and indexed by the guest's
++  // indices, so a wrong base or stride places every vertex somewhere
++  // impossible while leaving every piece of state valid.
++  //
++  // Raw bytes rather than a decoded position, deliberately: a decoder written
++  // here could be wrong in the same way the thing it measures is, and this
++  // project has had three probes mislead it already. These get decoded by hand
++  // against the format printed beside them.
++  {
++    // Both projection types now, labelled. The 2D paths render and the 3D
++    // paths do not, so the only way to know whether clip depth explains that
++    // is to measure the same thing for both instead of only the one that
++    // fails.
++    static unsigned dumpedPersp = 0;
++    static unsigned dumpedOrtho = 0;
++    const bool persp = g_gxState.projType == GX_PERSPECTIVE;
++    unsigned& dumped = persp ? dumpedPersp : dumpedOrtho;
++    if (dumped < 2 && totalVtxBytes >= 16) {
++      ++dumped;
++      const auto posDesc = g_gxState.vtxDesc[GX_VA_POS];
++      const auto& posFmt = g_gxState.vtxFmts[fmt].attrs[GX_VA_POS];
++      const auto& posArray = g_gxState.arrays[GX_VA_POS];
++      std::string hex;
++      for (u32 i = 0; i < 32 && i < totalVtxBytes; ++i) {
++        hex += fmt::format(" {:02x}", data[pos + i]);
++      }
++      Log.info("{} vtx dump {}: prim={:#04x} vtxCount={} vtxSize={} | POS desc={} cnt={} type={} frac={} | "
++               "array base={} stride={} size={}",
++               persp ? "PERSP" : "ORTHO", dumped, static_cast<u32>(prim), vtxCount, vtxSize, static_cast<u32>(posDesc),
++               static_cast<u32>(posFmt.cnt), static_cast<u32>(posFmt.type), static_cast<u32>(posFmt.frac),
++               fmt::ptr(posArray.data), static_cast<u32>(posArray.stride), posArray.size);
++      Log.info("{} vtx dump {}: first 32 bytes:{}", persp ? "PERSP" : "ORTHO", dumped, hex);
++      // Redo the shader's own transform on the CPU, both ways round.
++      //
++      // Every input to it is verified and valid, so the fault is in how they
++      // combine. WGSL's `vec4f(pos,1.0) * mtx` is a row-vector product; if the
++      // matrix is stored the other way round the result is finite, non-zero
++      // and geometrically meaningless - which is exactly what "draws issued,
++      // nothing rasterised" looks like. Doing it here needs no GPU readback.
++      if (posArray.data != nullptr && posArray.size >= 6) {
++        const auto* p16 = static_cast<const u8*>(posArray.data);
++        const auto s16at = [&](u32 o) { return static_cast<s16>((u32(p16[o]) << 8) | p16[o + 1]); };
++        const f32 scale = 1.0f / static_cast<f32>(1u << posFmt.frac);
++        const f32 vx = static_cast<f32>(s16at(0)) * scale;
++        const f32 vy = static_cast<f32>(s16at(2)) * scale;
++        const f32 vz = static_cast<f32>(s16at(4)) * scale;
++        const auto& mv = g_gxState.pnMtx[g_gxState.currentPnMtx].pos;
++        const auto& pr = g_gxState.proj;
++
++        // Row-vector: the convention the generated WGSL uses.
++        const f32 rx = vx * mv.m0[0] + vy * mv.m1[0] + vz * mv.m2[0];
++        const f32 ry = vx * mv.m0[1] + vy * mv.m1[1] + vz * mv.m2[1];
++        const f32 rz = vx * mv.m0[2] + vy * mv.m1[2] + vz * mv.m2[2];
++        const f32 rw = vx * mv.m0[3] + vy * mv.m1[3] + vz * mv.m2[3];
++        // Column-vector: each row dotted with the vertex, plus translation.
++        const f32 cx = mv.m0[0] * vx + mv.m0[1] * vy + mv.m0[2] * vz + mv.m0[3];
++        const f32 cy = mv.m1[0] * vx + mv.m1[1] * vy + mv.m1[2] * vz + mv.m1[3];
++        const f32 cz = mv.m2[0] * vx + mv.m2[1] * vy + mv.m2[2] * vz + mv.m2[3];
++
++        const auto clipRow = [&](f32 x, f32 y, f32 z) {
++          const f32 w = x * pr.m0[3] + y * pr.m1[3] + z * pr.m2[3] + pr.m3[3];
++          const f32 cxx = x * pr.m0[0] + y * pr.m1[0] + z * pr.m2[0] + pr.m3[0];
++          const f32 cyy = x * pr.m0[1] + y * pr.m1[1] + z * pr.m2[1] + pr.m3[1];
++          const f32 czz = x * pr.m0[2] + y * pr.m1[2] + z * pr.m2[2] + pr.m3[2];
++          Log.info("   clip(row) = ({:.3f} {:.3f} {:.3f} w={:.3f}) -> ndc ({:.3f} {:.3f} {:.3f})", cxx, cyy, czz, w,
++                   w != 0.f ? cxx / w : 0.f, w != 0.f ? cyy / w : 0.f, w != 0.f ? czz / w : 0.f);
++        };
++
++        Log.info("{} cpu transform: vtx0=({:.3f} {:.3f} {:.3f}) pnMtx={} | mv row-vec=({:.3f} {:.3f} {:.3f} w={:.3f})"
++                 " | mv col-vec=({:.3f} {:.3f} {:.3f})",
++                 persp ? "PERSP" : "ORTHO", vx, vy, vz, g_gxState.currentPnMtx, rx, ry, rz, rw, cx, cy, cz);
++        clipRow(rx, ry, rz);
++        clipRow(cx, cy, cz);
++        Log.info("   proj rows: ({:.3f} {:.3f} {:.3f} {:.3f}) ({:.3f} {:.3f} {:.3f} {:.3f}) ({:.3f} {:.3f} {:.3f} "
++                 "{:.3f}) ({:.3f} {:.3f} {:.3f} {:.3f})",
++                 pr.m0[0], pr.m0[1], pr.m0[2], pr.m0[3], pr.m1[0], pr.m1[1], pr.m1[2], pr.m1[3], pr.m2[0], pr.m2[1],
++                 pr.m2[2], pr.m2[3], pr.m3[0], pr.m3[1], pr.m3[2], pr.m3[3]);
++      }
++      if (posArray.data != nullptr && posArray.size >= 32) {
++        std::string arrHex;
++        const auto* bytes = static_cast<const u8*>(posArray.data);
++        for (u32 i = 0; i < 32; ++i) {
++          arrHex += fmt::format(" {:02x}", bytes[i]);
++        }
++        Log.info("{} vtx dump {}: array first 32 bytes:{}", persp ? "PERSP" : "ORTHO", dumped, arrHex);
++      }
++    }
++  }
++
+   // Push raw vertex data to buffer. Merged draws must remain byte-contiguous with the previous range.
+   gfx::Range vertRange = gfx::push_verts(data + pos, totalVtxBytes, canMerge ? 0 : 4);
+   pos += totalVtxBytes;
+@@ -1604,10 +2065,153 @@ static void handle_draw(u8 cmd, const u8* data, u32& pos, u32 size, bool bigEndi
+   GXVtxFmt fmt = static_cast<GXVtxFmt>(cmd & CP_VAT_MASK);
+   GXPrimitive prim = static_cast<GXPrimitive>(cmd & CP_OPCODE_MASK);
+ 
++  // A primitive outside 0x80-0xB8 is not an unimplemented feature, it is a
++  // byte that was never an opcode: the parser is reading the stream at the
++  // wrong offset. "unsupported primitive type 192" says nothing about where
++  // that started, and the surrounding bytes do, so dump them the way the
++  // draw-overrun path already does rather than aborting blind.
++  switch (prim) {
++  case GX_QUADS:
++  case GX_TRIANGLES:
++  case GX_TRIANGLESTRIP:
++  case GX_TRIANGLEFAN:
++  case GX_LINES:
++  case GX_LINESTRIP:
++  case GX_POINTS:
++    break;
++  default: {
++    const u32 cmdPos = pos - 1;
++    const u32 dumpStart = cmdPos > 32 ? cmdPos - 32 : 0;
++    const u32 dumpEnd = cmdPos + 32 < size ? cmdPos + 32 : size;
++    std::string hex;
++    for (u32 i = dumpStart; i < dumpEnd; i++) {
++      hex += i == cmdPos ? fmt::format("[{:02x}]", data[i]) : fmt::format(" {:02x}", data[i]);
++    }
++    Log.error("FIFO desync: byte {:#04x} at pos {} is not a GX opcode (buffer size {})", cmd, cmdPos, size);
++    Log.error("  bytes {}-{}:{}", dumpStart, dumpEnd - 1, hex);
++    dump_recent_commands();
++    break;
++  }
++  }
++
++  if (fifo_truncated(pos, 2, size)) {
++
++    return;
++
++  }
++
+   CHECK(pos + 2 <= size, "draw vtxCount read overrun");
+   u16 vtxCount = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
++  // "The screen is one flat colour" is equally consistent with the game not
++  // having drawn anything yet and with it drawing into nowhere. This counts
++  // what actually arrives so the two can be told apart instead of guessed at.
++  //
++  // The gate is wall-clock, NOT every-Nth-draw. A 1-in-20000 gate was tried
++  // first and produced a measurement that read as "one draw in 90 seconds",
++  // which was simply wrong: 11,730 frames x 1 quad = 11,730 draws, under the
++  // threshold, so the second report never came. Anything rate-limited by its
++  // own subject cannot distinguish "rare" from "just below the threshold".
++  //
++  // What the shape of the output means, against src/System/Application.cpp:
++  //   GX_QUADS (0x80) / 4 verts, once per frame  -> only TSMSFader::draw is
++  //     running, i.e. APP_STATE_BOOT with no director created.
++  //   GX_TRIANGLES (0x90) / 6 verts, once per frame -> drawDVDErr() is
++  //     returning non-zero every frame (Application.cpp:609), which skips both
++  //     the state machine and all director rendering.
++  {
++    static u64 draws = 0;
++    static u64 vertices = 0;
++    static u64 drawsReported = 0;
++    static u64 verticesReported = 0;
++    static unsigned reports = 0;
++    static auto lastReport = std::chrono::steady_clock::now();
++
++    // Per-interval tally of the distinct {primitive, vertex count} pairs seen.
++    // Fixed size: first eight distinct kinds win and the rest are counted as
++    // overflow, so a pathological frame cannot grow this.
++    struct Kind {
++      u32 prim;
++      u16 vtxCount;
++      u32 count;
++    };
++    static std::array<Kind, 8> kinds{};
++    static u32 kindsUsed = 0;
++    static u32 kindOverflow = 0;
++
++    ++draws;
++    vertices += vtxCount;
++
++    bool counted = false;
++    for (u32 i = 0; i < kindsUsed; ++i) {
++      if (kinds[i].prim == static_cast<u32>(prim) && kinds[i].vtxCount == vtxCount) {
++        ++kinds[i].count;
++        counted = true;
++        break;
++      }
++    }
++    if (!counted) {
++      if (kindsUsed < kinds.size()) {
++        kinds[kindsUsed++] = {static_cast<u32>(prim), vtxCount, 1};
++      } else {
++        ++kindOverflow;
++      }
++    }
++
++    const auto now = std::chrono::steady_clock::now();
++    if (reports < 120 && now - lastReport >= std::chrono::seconds(1)) {
++      lastReport = now;
++      ++reports;
++      std::string breakdown;
++      for (u32 i = 0; i < kindsUsed; ++i) {
++        breakdown += fmt::format("{}{:#04x}/{} x{}", i == 0 ? "" : " ", kinds[i].prim, kinds[i].vtxCount,
++                                 kinds[i].count);
++      }
++      Log.info("draw 1s: total={} (+{}) verts={} (+{}) prims=[{}] overflow={}", draws, draws - drawsReported, vertices,
++               vertices - verticesReported, breakdown, kindOverflow);
++      drawsReported = draws;
++      verticesReported = vertices;
++      kindsUsed = 0;
++      kindOverflow = 0;
++    }
++  }
++
++  // One-shot dump of THPPlayer's video quad, decoded from the raw FIFO bytes.
++  // Aurora pushes vertex data straight to the GPU without parsing it, so the
++  // only way to see what geometry actually arrived is to decode it here.
++  //
++  // THPGXYuv2RgbSetup programs GX_VA_POS as XYZ/s16 and GX_VA_TEX0 as ST/u16
++  // (src/THPPlayer/THPDraw.c), so the stride is 6 + 4 = 10 bytes. The raw
++  // bytes are printed alongside the decode so a wrong stride is visible rather
++  // than silently producing plausible nonsense.
++  //
++  // The discriminator is four vertices with the four-stage TEV combine, which
++  // only the YUV draw uses.
++  if (vtxCount == 4 && g_gxState.numTevStages == 4 && pos + 40 <= size) {
++    static bool dumped = false;
++    if (!dumped) {
++      dumped = true;
++      std::string raw;
++      for (u32 i = 0; i < 40; ++i) {
++        raw += fmt::format("{:02x}", data[pos + i]);
++        if ((i % 10) == 9) {
++          raw += ' ';
++        }
++      }
++      Log.info("THP quad raw (stride 10 assumed): {}", raw);
++      for (u32 v = 0; v < 4; ++v) {
++        const u8* p = data + pos + v * 10;
++        const auto s16at = [&](u32 o) { return static_cast<s16>((u32(p[o]) << 8) | p[o + 1]); };
++        const auto u16at = [&](u32 o) { return static_cast<u16>((u32(p[o]) << 8) | p[o + 1]); };
++        Log.info("THP quad v{}: pos=({}, {}, {}) st=({}, {})", v, s16at(0), s16at(2), s16at(4), u16at(6), u16at(8));
++      }
++      Log.info("THP quad: renderViewport {}x{} logicalViewport {}x{} projType {}", g_gxState.renderViewport.width,
++               g_gxState.renderViewport.height, g_gxState.logicalViewport.width, g_gxState.logicalViewport.height,
++               static_cast<u32>(g_gxState.projType));
++    }
++  }
++
+   draw_prim(prim, fmt, vtxCount, data, pos, size);
+ }
+ 
+@@ -1633,10 +2237,39 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+       continue;
+     }
+     auto& array = g_gxState.arrays[i];
++    if (array.data == nullptr || array.stride == 0) {
++      continue;
++    }
+     if (array.cachedRange.size > 0) {
+       ranges.vaRanges[i - GX_VA_POS] = array.cachedRange;
+     } else {
+-      const auto range = gfx::push_storage(static_cast<const uint8_t*>(array.data), array.size);
++      // Upload only what the GP could actually reach from this base.
++      //
++      // A vertex array has no length register on the hardware, so the host
++      // resolver can only report "everything from here to the end of guest
++      // RAM" - up to 24MB. Handing that to push_storage aborts outright:
++      // ByteBuffer::resize() calls abort() when a non-owned staging buffer is
++      // asked to grow (lib/gfx/common.hpp:143-156), and the storage staging
++      // buffer is 8MB. That abort was this port's silent gameplay crash, and
++      // it only appeared once display lists started executing, because until
++      // then no indexed array was ever used to draw.
++      //
++      // The bound that is actually derivable: the vertex descriptor says
++      // whether this attribute is indexed with 8 or 16 bits, so the highest
++      // byte the GP could ever fetch is (maxIndex + 1) * stride.
++      const u32 maxEntries = g_gxState.vtxDesc[i] == GX_INDEX8 ? 256u : 65536u;
++      const u64 reachable = u64(maxEntries) * array.stride;
++      const u32 uploadSize = static_cast<u32>(std::min<u64>(array.size, reachable));
++      if (uploadSize < array.size) {
++        static std::unordered_set<u32> warnedClamps;
++        if (warnedClamps.size() < 16 && warnedClamps.insert(static_cast<u32>(i)).second) {
++          Log.info("array {}: uploading {} bytes of a {}-byte extent - {} entries of stride {} is all a {}-bit index "
++                   "can reach",
++                   i, uploadSize, array.size, maxEntries, array.stride,
++                   g_gxState.vtxDesc[i] == GX_INDEX8 ? 8 : 16);
++        }
++      }
++      const auto range = gfx::push_storage(static_cast<const uint8_t*>(array.data), uploadSize);
+       ranges.vaRanges[i - GX_VA_POS] = range;
+       array.cachedRange = range;
+     }
+@@ -1657,6 +2290,7 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+   } else if (prim == GX_POINTS) {
+     instanceCount = vtxCount;
+   }
++  note_draw_submitted(g_gxState.colorUpdate);
+   gfx::push_draw_command(DrawData{
+       .pipeline = pipeline,
+       .vertRange = vertRange,
+@@ -1671,10 +2305,16 @@ static void handle_draw_unmerged(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, g
+ }
+ 
+ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
++  if (fifo_truncated(pos, 2, size)) {
++    return {};
++  }
+   CHECK(pos + 2 <= size, "Aurora string length read overrun");
+   const u16 length = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
++  if (fifo_truncated(pos, length, size)) {
++    return {};
++  }
+   CHECK(pos + length <= size, "Aurora string read overrun");
+   std::string str(reinterpret_cast<const char*>(data) + pos, length);
+   pos += length;
+@@ -1683,12 +2323,18 @@ std::string read_string(const u8* data, u32& pos, u32 size, bool bigEndian) {
+ 
+ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   ZoneScoped;
++  if (fifo_truncated(pos, 2, size)) {
++    return;
++  }
+   CHECK(pos + 2 <= size, "Aurora cmd read overrun");
+   u16 subCmd = read_u16(data + pos, bigEndian);
+   pos += 2;
+ 
+   // Setting of vertex array bases.
+   if (subCmd == GX_LOAD_AURORA_VIEWPORT_RENDER) {
++    if (fifo_truncated(pos, 24, size)) {
++      return;
++    }
+     CHECK(pos + 24 <= size, "GX_LOAD_AURORA_VIEWPORT_RENDER read overrun");
+     const f32 left = read_f32(data + pos, bigEndian);
+     pos += 4;
+@@ -1711,6 +2357,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+         .zfar = farZ,
+     });
+   } else if (subCmd == GX_LOAD_AURORA_SCISSOR_RENDER) {
++    if (fifo_truncated(pos, 16, size)) {
++      return;
++    }
+     CHECK(pos + 16 <= size, "GX_LOAD_AURORA_SCISSOR_RENDER read overrun");
+     const int32_t left = static_cast<int32_t>(read_u32(data + pos, bigEndian));
+     pos += 4;
+@@ -1722,6 +2371,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     pos += 4;
+     set_render_scissor({left, top, width, height});
+   } else if (subCmd >= GX_LOAD_AURORA_ARRAYBASE && subCmd <= (GX_LOAD_AURORA_ARRAYBASE | 0x0f)) {
++    if (fifo_truncated(pos, 13, size)) {
++      return;
++    }
+     CHECK(pos + 13 <= size, "GX_LOAD_AURORA_ARRAYBASE read overrun");
+     u32 attrIdx = subCmd - GX_LOAD_AURORA_ARRAYBASE + GX_VA_POS;
+ 
+@@ -1743,6 +2395,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+       g_gxState.stateDirty = true;
+     }
+   } else if (subCmd == GX_LOAD_AURORA_TEXOBJ) {
++    if (fifo_truncated(pos, 34, size)) {
++      return;
++    }
+     CHECK(pos + 34 <= size, "GX_LOAD_AURORA_TEXOBJ read overrun");
+     const auto texMapId = data[pos];
+     pos += 1;
+@@ -1771,6 +2426,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     slot.set_no_cache(false); // Reset no-cache flag
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX_LOAD_AURORA_TLUT) {
++    if (fifo_truncated(pos, 23, size)) {
++      return;
++    }
+     CHECK(pos + 23 <= size, "GX_LOAD_AURORA_TLUT read overrun");
+     const auto idx = data[pos];
+     pos += 1;
+@@ -1789,6 +2447,9 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     slot.set_no_cache(false); // Reset no-cache flag
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX2_SET_POLYGON_OFFSET) {
++    if (fifo_truncated(pos, 20, size)) {
++      return;
++    }
+     CHECK(pos + 20 <= size, "GX2_SET_POLYGON_OFFSET read overrun");
+     g_gxState.frontOffset = read_f32(data + pos, bigEndian);
+     pos += 4;
+@@ -1802,18 +2463,30 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+     pos += 4;
+     g_gxState.stateDirty = true;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_TEXOBJ) {
++    if (fifo_truncated(pos, 4, size)) {
++      return;
++    }
+     CHECK(pos + 4 <= size, "GX_LOAD_AURORA_DESTROY_TEXOBJ read overrun");
+     evict_texture_object(read_u32(data + pos, bigEndian));
+     pos += 4;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_TLUT) {
++    if (fifo_truncated(pos, 4, size)) {
++      return;
++    }
+     CHECK(pos + 4 <= size, "GX_LOAD_AURORA_DESTROY_TLUT read overrun");
+     evict_tlut_object(read_u32(data + pos, bigEndian));
+     pos += 4;
+   } else if (subCmd == GX_LOAD_AURORA_DESTROY_COPY_TEX) {
++    if (fifo_truncated(pos, 8, size)) {
++      return;
++    }
+     CHECK(pos + 8 <= size, "GX_LOAD_AURORA_DESTROY_COPY_TEX read overrun");
+     evict_copy_texture(reinterpret_cast<const void*>(read_u64(data + pos, bigEndian)));
+     pos += 8;
+   } else if (subCmd == GX_LOAD_AURORA_DRAW_SIZED) {
++    if (fifo_truncated(pos, 5, size)) {
++      return;
++    }
+     CHECK(pos + 5 <= size, "GX_LOAD_AURORA_DRAW_SIZED read overrun");
+     u8 cmd = data[pos];
+     pos += 1;
+@@ -1849,4 +2522,19 @@ void handle_aurora(const u8* data, u32& pos, u32 size, bool bigEndian) {
+   }
+ }
+ 
++
++// Same processing, but for a buffer that may have been cut mid-command by the
++// host frame boundary. Returns how many bytes were actually consumed: anything
++// after that is the first bytes of a command whose rest has not arrived yet,
++// and the caller must keep it rather than discard it.
++u32 process_stream(const u8* data, u32 size, bool bigEndian) {
++  s_streamMode = true;
++  s_streamTruncated = false;
++  s_streamCmdStart = size;
++  process(data, size, bigEndian);
++  s_streamMode = false;
++  return s_streamTruncated ? s_streamCmdStart : size;
++}
++
++
+ } // namespace aurora::gx::fifo
+diff --git a/lib/gx/command_processor.hpp b/lib/gx/command_processor.hpp
+index 93feba1..9e2fb1b 100644
+--- a/lib/gx/command_processor.hpp
++++ b/lib/gx/command_processor.hpp
+@@ -4,7 +4,23 @@
+ 
+ namespace aurora::gx::fifo {
+ 
++// Turns a guest physical address into a host pointer, reporting how many bytes
++// are readable from it, or nullptr when it cannot be resolved. Installed by the
++// host, which is the only party that has guest memory to read.
++//
++// Two commands in the FIFO carry a guest pointer rather than data: the CP
++// array-base registers (0xA0-0xAF) and GX_CMD_CALL_DL (0x40). Neither can be
++// honoured without this, and both were previously refused outright.
++using GuestMemoryResolver = void* (*)(uint32_t guestAddress, uint32_t* sizeOut);
++extern GuestMemoryResolver g_guestMemoryResolver;
++
+ // Process a buffer of GX FIFO commands
+ void process(const uint8_t* data, uint32_t size, bool bigEndian);
+ 
++// Process a buffer that may have been cut mid-command, and report how many
++// bytes were usable. The remainder is the start of a command whose payload has
++// not arrived yet and must be carried over, exactly as the real GP waits for
++// the rest of a stream rather than treating a short read as an error.
++uint32_t process_stream(const uint8_t* data, uint32_t size, bool bigEndian);
++
+ } // namespace aurora::gx::fifo
+diff --git a/lib/gx/fifo.cpp b/lib/gx/fifo.cpp
+index 1e986e9..0afbc19 100644
+--- a/lib/gx/fifo.cpp
++++ b/lib/gx/fifo.cpp
+@@ -72,8 +72,24 @@ void drain() {
+   if (detail::sBufferSize == 0) {
+     return;
+   }
+-  process(detail::sBufferData, detail::sBufferSize, true);
+-  detail::sBufferSize = 0;
++  const uint32_t consumed = process_stream(detail::sBufferData, detail::sBufferSize, true);
++  if (consumed >= detail::sBufferSize) {
++    detail::sBufferSize = 0;
++    return;
++  }
++  // The host cut the stream inside a command. Keep that command's first bytes
++  // so the next drain sees it whole, instead of discarding them and aborting.
++  const uint32_t tail = detail::sBufferSize - consumed;
++  std::memmove(detail::sBufferData, detail::sBufferData + consumed, tail);
++  detail::sBufferSize = tail;
++  // A tail that never completes would grow without bound and silently stop
++  // every later command from being drawn, so say so once rather than let it
++  // look like a rendering bug.
++  static bool warned = false;
++  if (!warned && tail > 64 * 1024) {
++    warned = true;
++    Log.warn("fifo: {} bytes have been carried over without completing a command", tail);
++  }
+ }
+ 
+ const uint8_t* get_buffer_data() { return detail::sBufferData; }
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index 9ca9036..987c166 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -1,5 +1,7 @@
+ #include "gx.hpp"
+ 
++#include <unordered_set>
++
+ #include "pipeline.hpp"
+ #include "../dolphin/vi/vi_internal.hpp"
+ #include "../webgpu/gpu.hpp"
+@@ -445,35 +447,70 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
+ 
+     GXTexObj_ obj = g_gxState.loadedTextures[i];
+     auto& textureBind = g_gxState.textures[i];
++
++    const auto copyIt = g_gxState.copyTextures.find(obj.data);
++    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
++
++    // The texture object alone does not determine the pixels we resolve to. A
++    // palettised texture is decoded through whichever TLUT currently sits in its
++    // slot, and the game is free to load a different palette there without ever
++    // touching the texture object -- that is how palette animation works. Fold the
++    // palette's identity, and the source revision of a palettised EFB copy, into the
++    // early-out below, or such a texture keeps the first frame's colours forever.
++    u32 tlutObjId = 0;
++    u32 tlutDataVersion = 0;
++    const GXTlutObj_* tlut = nullptr;
++    if (is_palette_format(obj.format())) {
++      const auto tlutIdx = static_cast<size_t>(obj.tlut);
++      if (tlutIdx < g_gxState.loadedTluts.size() && g_gxState.loadedTluts[tlutIdx].data != nullptr) {
++        tlut = &g_gxState.loadedTluts[tlutIdx];
++        tlutObjId = tlut->tlutObjId;
++        tlutDataVersion = tlut->tlutDataVersion;
++      }
++    }
++    // Only a palettised copy re-reads its source here; a plain copy hands back the
++    // same handle whose contents update in place, so its revision is not a dependency.
++    const u32 copyRevision = (tlut != nullptr && copyRef != nullptr) ? copyRef->revision : 0;
++
+     if (obj.texObjId != 0 && obj.texObjId == textureBind.texObj.texObjId &&
+-        obj.texDataVersion == textureBind.texObj.texDataVersion) {
++        obj.texDataVersion == textureBind.texObj.texDataVersion && tlutObjId == textureBind.tlutObjId &&
++        tlutDataVersion == textureBind.tlutDataVersion && copyRevision == textureBind.copyRevision) {
+       // Texture bind unchanged
+       continue;
+     }
+ 
+     gfx::TextureHandle handle;
+-    const auto copyIt = g_gxState.copyTextures.find(obj.data);
+-    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
+-    if (is_palette_format(obj.format())) {
+-      const auto tlutIdx = static_cast<size_t>(obj.tlut);
+-      if (tlutIdx < g_gxState.loadedTluts.size()) {
+-        const auto& tlut = g_gxState.loadedTluts[tlutIdx];
+-        if (tlut.data != nullptr) {
+-          if (copyRef != nullptr) {
+-            handle = resolve_dynamic_palette_texture(obj, *copyRef, tlut);
+-          } else {
+-            handle = resolve_static_palette_texture(obj, tlut);
+-          }
+-        }
++    if (tlut != nullptr) {
++      if (copyRef != nullptr) {
++        handle = resolve_dynamic_palette_texture(obj, *copyRef, *tlut);
++      } else {
++        handle = resolve_static_palette_texture(obj, *tlut);
+       }
++    } else if (is_palette_format(obj.format())) {
++      // No palette loaded in the slot yet: leave the bind empty rather than decoding
++      // the indices as if they were colours.
+     } else if (copyRef != nullptr) {
+       handle = copyRef->handle;
+     } else if (obj.data != nullptr) {
+       handle = resolve_static_texture(obj);
+     }
+ 
++    // One-shot: whether the THP YUV planes actually resolve to a texture. If
++    // obj.data is null, or no handle comes back, the bind is left empty and
++    // the sampler reads zero - which looks exactly like a correct shader fed
++    // correct uniforms drawing a correct quad, and produces black.
++    if (info.sampledTextures.count() >= 3) {
++      static u32 dumped = 0;
++      if (dumped < 3) {
++        ++dumped;
++        Log.info("THP texture map={}: data={} {}x{} fmt={} texObjId={:#x} version={} -> handle {}", i,
++                 static_cast<const void*>(obj.data), obj.width(), obj.height(), static_cast<u32>(obj.format()),
++                 obj.texObjId, obj.texDataVersion, handle ? "VALID" : "EMPTY");
++      }
++    }
++
+     obj.mFormat = resolved_format_for_handle(handle);
+-    textureBind = gfx::TextureBind{obj, std::move(handle)};
++    textureBind = gfx::TextureBind{obj, std::move(handle), tlutObjId, tlutDataVersion, copyRevision};
+   }
+ }
+ 
+@@ -879,6 +916,54 @@ void populate_pipeline_config(PipelineConfig& config, GXPrimitive primitive, GXV
+       .alphaUpdate = g_gxState.alphaUpdate,
+       .colorUpdate = g_gxState.colorUpdate,
+   };
++
++  // The fog actually in force, one line per distinct setting.
++  //
++  // The scene is still brighter than the real game after the depth remap, and
++  // fog is the term that mixes towards a flat colour. A wrong type, a white
++  // fog colour, or an a/b/c triple that saturates would each wash the picture
++  // out while leaving every other state valid - and the shader applies fog
++  // unconditionally once the type is not GX_FOG_NONE.
++  if (g_gxState.projType == GX_PERSPECTIVE) {
++    static std::unordered_set<u64> seenFog;
++    const auto& f = g_gxState.fog;
++    const u64 key = (u64(f.type) << 56) ^ (u64(std::bit_cast<u32>(f.a)) << 24) ^ u64(std::bit_cast<u32>(f.b)) ^
++                    (u64(std::bit_cast<u32>(f.c)) << 12);
++    if (seenFog.size() < 16 && seenFog.insert(key).second) {
++      Log.info("fog: type={} a={:.4f} b={:.4f} c={:.4f} colour=({:.3f} {:.3f} {:.3f} {:.3f})",
++               static_cast<u32>(f.type), f.a, f.b, f.c, f.color.x(), f.color.y(), f.color.z(), f.color.w());
++    }
++  }
++
++  // One line per distinct raster configuration the 3D scene uses.
++  //
++  // Draws reach the GPU and are issued, the projection, viewport and
++  // model-view matrices are all verified correct, and the screen is still
++  // black - so what is left is the per-draw state that decides whether an
++  // issued draw writes any pixel. colorUpdate false writes no colour at all;
++  // depthCompare with a depth func that never passes rejects everything; a
++  // cull mode that removes both faces does the same.
++  //
++  // Keyed on the combination, not sampled: a rate-limited dump would show
++  // whichever configuration happened to be current, and the one that matters
++  // may be rare. Perspective only, because the 2D menu already renders and its
++  // state is not in question.
++  if (g_gxState.projType == GX_PERSPECTIVE) {
++    static std::unordered_set<u64> seen;
++    const u64 key = (u64(config.depthCompare) << 0) | (u64(config.depthUpdate) << 1) |
++                    (u64(config.colorUpdate) << 2) | (u64(config.alphaUpdate) << 3) |
++                    (u64(config.depthFunc) << 8) | (u64(config.cullMode) << 16) |
++                    (u64(config.blendMode) << 24) | (u64(g_gxState.alphaCompare.comp0) << 32) | (u64(g_gxState.alphaCompare.comp1) << 36) |
++                    (u64(g_gxState.numTevStages) << 40) | (u64(g_gxState.numTexGens) << 48);
++    if (seen.size() < 24 && seen.insert(key).second) {
++      Log.info("3D raster state: colorUpdate={} depthCompare={} depthUpdate={} depthFunc={} cull={} blend={} "
++               "alphaComp0={} alphaComp1={} tevStages={} texGens={}",
++               config.colorUpdate, config.depthCompare, config.depthUpdate, static_cast<u32>(config.depthFunc),
++               static_cast<u32>(config.cullMode), static_cast<u32>(config.blendMode),
++               static_cast<u32>(g_gxState.alphaCompare.comp0), static_cast<u32>(g_gxState.alphaCompare.comp1),
++               static_cast<u32>(g_gxState.numTevStages), static_cast<u32>(g_gxState.numTexGens));
++    }
++  }
+ }
+ 
+ GXBindGroups build_bind_groups(const ShaderInfo& info) noexcept {
+diff --git a/lib/gx/pipeline.cpp b/lib/gx/pipeline.cpp
+index a5088fd..2bb0b10 100644
+--- a/lib/gx/pipeline.cpp
++++ b/lib/gx/pipeline.cpp
+@@ -5,6 +5,8 @@
+ #include "shader_info.hpp"
+ #include "tracy/Tracy.hpp"
+ 
++#include <chrono>
++
+ namespace aurora::gx {
+ static Module Log("aurora::gx");
+ 
+@@ -14,8 +16,82 @@ wgpu::RenderPipeline create_pipeline(const PipelineConfig& config) {
+   return build_pipeline(config, {}, shader, "GX Pipeline");
+ }
+ 
++namespace {
++u64 g_submitted = 0;
++u64 g_reachedRender = 0;
++u64 g_pipelineNotReady = 0;
++u64 g_issued = 0;
++u64 g_issuedWithoutTexture = 0;
++u64 g_issuedEmpty = 0;
++u64 g_issuedNoColorWrite = 0;
++
++void report_draw_fate() {
++  static auto lastReport = std::chrono::steady_clock::now();
++  static unsigned reports = 0;
++  static u64 lastSubmitted = 0;
++  static u64 lastReached = 0;
++  static u64 lastNotReady = 0;
++  static u64 lastIssued = 0;
++  static u64 lastNoTexture = 0;
++
++  const auto now = std::chrono::steady_clock::now();
++  if (now - lastReport < std::chrono::seconds(1) || reports >= 600) {
++    return;
++  }
++  lastReport = now;
++  ++reports;
++
++  const u64 submitted = g_submitted - lastSubmitted;
++  const u64 reached = g_reachedRender - lastReached;
++  const u64 notReady = g_pipelineNotReady - lastNotReady;
++  const u64 issued = g_issued - lastIssued;
++  const u64 noTexture = g_issuedWithoutTexture - lastNoTexture;
++  const u64 empty = g_issuedEmpty;
++  const u64 noColor = g_issuedNoColorWrite;
++  lastSubmitted = g_submitted;
++  lastReached = g_reachedRender;
++  lastNotReady = g_pipelineNotReady;
++  lastIssued = g_issued;
++  lastNoTexture = g_issuedWithoutTexture;
++
++  // The probe checks its own arithmetic. Every draw that reaches render()
++  // either loses its pipeline or is issued, so those two must add up - and if
++  // they ever do not, the counter is lying and says so rather than being
++  // believed. Six probes in this port have already produced a false reading by
++  // being coarser than their subject.
++  // Check the CUMULATIVE totals, not the per-second deltas. A draw submitted
++  // in one frame is rendered in the next, so a delta window can legitimately
++  // straddle that boundary and show reached slightly above or below submitted -
++  // which made the check cry wolf on its first run. The invariant that really
++  // holds is that every draw reaching render() either loses its pipeline or is
++  // issued, and that is exact over the totals.
++  const bool consistent = g_pipelineNotReady + g_issued == g_reachedRender;
++  Log.info("draw fate 1s: submitted={} reached_render={} (dropped_before_render={}) | pipeline_not_ready={} "
++           "issued={} of which without_texture={} empty_total={} no_color_write_total={}{}",
++           submitted, reached, submitted >= reached ? submitted - reached : 0, notReady, issued, noTexture, empty,
++           noColor, consistent ? "" : "  <-- COUNTER INCONSISTENT, do not trust this line");
++}
++} // namespace
++
++void note_draw_submitted(bool colorUpdate) {
++  ++g_submitted;
++  // A draw whose colour write mask is off writes no pixel whatever the shader
++  // returns - which is why forcing the fragment shader to solid magenta left
++  // the screen black and read as "nothing rasterises at all". This separates
++  // "never drawn" from "drawn into a closed write mask".
++  if (!colorUpdate) {
++    ++g_issuedNoColorWrite;
++  }
++}
++
+ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
++  ++g_reachedRender;
+   if (!gfx::bind_pipeline(data.pipeline, pass)) {
++    // Not an error state Aurora reports: find_pipeline_impl hands back a valid
++    // reference for a pipeline that is only queued, so the draw is pushed and
++    // then quietly discarded here until the build catches up.
++    ++g_pipelineNotReady;
++    report_draw_fate();
+     return;
+   }
+ 
+@@ -29,10 +105,24 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass) {
+     const wgpu::Color color{0.f, 0.f, 0.f, data.dstAlpha / 255.f};
+     pass.SetBlendConstant(&color);
+   }
++  ++g_issued;
++  if (!data.bindGroups.textureBindGroup) {
++    // Issued, but every texture unit samples zero - visually black, and
++    // indistinguishable from a correct shader without this count.
++    ++g_issuedWithoutTexture;
++  }
++  if (data.indexCount == 0 && data.vtxCount == 0) {
++    // Issued with nothing to draw. Counted rather than assumed away: a draw
++    // call with a zero count rasterises nothing and is invisible to every
++    // other counter here.
++    ++g_issuedEmpty;
++  }
+   if (data.indexCount == 0) {
+     pass.Draw(data.vtxCount, data.instanceCount);
+   } else {
+     pass.DrawIndexed(data.indexCount, data.instanceCount);
+   }
++  // Now that this draw is classified, the invariant holds.
++  report_draw_fate();
+ }
+ } // namespace aurora::gx
+diff --git a/lib/gx/pipeline.hpp b/lib/gx/pipeline.hpp
+index 474c85c..2d71b99 100644
+--- a/lib/gx/pipeline.hpp
++++ b/lib/gx/pipeline.hpp
+@@ -4,6 +4,20 @@
+ #include "gx.hpp"
+ 
+ namespace aurora::gx {
++
++// Separates draws that were SUBMITTED from draws that actually reached the
++// GPU, and says where the others went.
++//
++// 80,000 draws a second were being submitted to a black screen, and nothing in
++// the port could tell whether they were drawn and invisible or never drawn at
++// all - render() drops a draw silently when its pipeline is not ready, and a
++// texture that failed to resolve samples zero, which looks exactly like a
++// correct shader and produces black.
++//
++// Called from command_processor.cpp when a draw is pushed; the rest is counted
++// inside render(), which reports once per second.
++void note_draw_submitted(bool colorUpdate);
++
+ struct DrawData {
+   gfx::PipelineRef pipeline;
+   gfx::Range vertRange;
+diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
+index 3671ed5..4079cf9 100644
+--- a/lib/gx/shader.cpp
++++ b/lib/gx/shader.cpp
+@@ -1194,8 +1194,35 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, nbt_slice_local(NbtSlice::B));
+     } else if (tcg.src == GX_TG_TANGENT) {
+       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0);", i, nbt_slice_local(NbtSlice::T));
+-    } else
+-      UNLIKELY FATAL("unhandled tcg src {}", underlying(tcg.src));
++    } else {
++      // GX_MAX_TEXGENSRC is TcgConfig's "never configured" sentinel, and build_shader_config only
++      // copies tcgs[0..numTexGens), so hitting it here means a TEV stage sampled a texcoord the
++      // game never generated. Dump the whole picture once - the index alone does not say whether
++      // the game really referenced an ungenerated coord or whether numTexGens arrived wrong.
++      {
++        Log.error("texgen {} is sampled but was never configured (src={})", i, underlying(tcg.src));
++        Log.error("  sampledTexCoords = {}", info.sampledTexCoords.to_string());
++        for (int j = 0; j < config.tcgs.size(); ++j) {
++          const auto& t = config.tcgs[j];
++          Log.error("  tcgs[{}]: src={} type={} mtx={} post={} norm={} embossSrc={}", j, underlying(t.src),
++                    underlying(t.type), underlying(t.mtx), underlying(t.postMtx), t.normalize, t.embossSrc);
++        }
++        Log.error("  tevStageCount = {}", config.tevStageCount);
++        for (u32 j = 0; j < config.tevStageCount && j < config.tevStages.size(); ++j) {
++          const auto& s = config.tevStages[j];
++          Log.error("  tevStages[{}]: texCoordId={} texMapId={} channelId={} indTexMtxId={}", j,
++                    underlying(s.texCoordId), underlying(s.texMapId), underlying(s.channelId),
++                    underlying(s.indTexMtxId));
++        }
++        Log.error("  numIndStages = {}", config.numIndStages);
++        for (u32 j = 0; j < config.numIndStages && j < config.indStages.size(); ++j) {
++          const auto& s = config.indStages[j];
++          Log.error("  indStages[{}]: texCoordId={} texMapId={}", j, underlying(s.texCoordId),
++                    underlying(s.texMapId));
++        }
++        FATAL("unhandled tcg src {}", underlying(tcg.src));
++      }
++    }
+     if (tcg.type == GX_TG_MTX2x4 || tcg.type == GX_TG_MTX3x4) {
+       if (info.indexAttr.test(GX_VA_TEX0MTXIDX + i)) {
+         vtxXfrAttrs += fmt::format("\n    var tc{0}_tmp = tc{0} * ubuf.postex_mtx[in_texmtxidx{0} / 3u];", i);
+diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
+index bb9ddec..fa476a3 100644
+--- a/lib/gx/shader_info.cpp
++++ b/lib/gx/shader_info.cpp
+@@ -1,6 +1,8 @@
+ #include "shader_info.hpp"
+ 
+ #include <cmath>
++#include <set>
++#include <string_view>
+ 
+ #include <tracy/Tracy.hpp>
+ 
+@@ -27,6 +29,38 @@ Vec4<float> texture_size_bias(const gfx::TextureBind& tex) {
+   return {width, height, tex.texObj.lod_bias() + vpBias, 0.0f};
+ }
+ 
++// A TEV stage whose texture or texcoord id falls outside the eight the
++// hardware has used to kill the whole port: std::bitset<8>::set throws
++// std::out_of_range, nothing catches it, and std::terminate takes the process
++// down. That is what ended a 13-minute session at 272 seconds, in
++// color_arg_reg_info, reached from a display-list draw.
++//
++// GXSetTevOrder (src/dolphin/gx/GXTev.c) says what the hardware does with an
++// id it cannot represent:
++//
++//     tmap = map & ~0x100;                                 // strip GX_TEX_DISABLE
++//     tmap = (tmap >= GX_MAX_TEXMAP) ? GX_TEXMAP0 : tmap;  // clamp
++//
++// so the same rule is applied here rather than an invented one. This is not a
++// silent recovery: every distinct out-of-range id is reported once with where
++// it came from, because the id should never have got here and the report is
++// what says which decode produced it.
++template <size_t N>
++static void set_sampled_id(std::bitset<N>& bits, u32 id, const char* what) {
++  if (id < N) {
++    bits.set(id);
++    return;
++  }
++  const u32 clamped = (id & ~0x100u) < N ? (id & ~0x100u) : 0u;
++  static std::set<std::pair<u32, std::string_view>> reported;
++  if (reported.size() < 32 && reported.emplace(id, std::string_view(what)).second) {
++    Log.error("{} id {:#x} is outside the {} the hardware has; clamping to {} as GXSetTevOrder does. "
++              "The decode that produced this id is wrong.",
++              what, id, N, clamped);
++  }
++  bits.set(clamped);
++}
++
+ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, ShaderInfo& info) {
+   switch (arg) {
+   case GX_CC_CPREV:
+@@ -57,8 +91,8 @@ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CC_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    set_sampled_id(info.sampledTexCoords, stage.texCoordId, "tev stage texcoord");
++    set_sampled_id(info.sampledTextures, stage.texMapId, "tev stage texmap");
+     break;
+   case GX_CC_RASC:
+   case GX_CC_RASA:
+@@ -131,8 +165,8 @@ void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CA_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    set_sampled_id(info.sampledTexCoords, stage.texCoordId, "tev stage texcoord");
++    set_sampled_id(info.sampledTextures, stage.texMapId, "tev stage texmap");
+     break;
+   case GX_CA_RASA:
+     if (stage.channelId != GX_COLOR_NULL && stage.channelId != GX_COLOR_ZERO &&
+@@ -233,20 +267,20 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+     const bool usesTevTexCoord = stage.indTexMtxId != GX_ITM_OFF || stage.indTexWrapS != GX_ITW_OFF ||
+                                  stage.indTexWrapT != GX_ITW_OFF || stage.indTexAddPrev;
+     if (usesTevTexCoord && stage.texCoordId != GX_TEXCOORD_NULL) {
+-      info.sampledTexCoords.set(stage.texCoordId);
++      set_sampled_id(info.sampledTexCoords, stage.texCoordId, "indirect tev texcoord");
+     }
+     if (usesTevTexCoord && stage.texMapId != GX_TEXMAP_NULL &&
+         (stage.indTexMtxId != GX_ITM_OFF || stage.indTexAddPrev)) {
+-      info.sampledTextures.set(stage.texMapId);
++      set_sampled_id(info.sampledTextures, stage.texMapId, "indirect tev texmap");
+     }
+     if (!usesIndStage) {
+       continue;
+     }
+     info.usedIndStages.set(stage.indTexStage);
+     const auto& indStage = config.indStages[stage.indTexStage];
+-    info.sampledTextures.set(indStage.texMapId);
+-    info.sampledTexCoords.set(indStage.texCoordId);
+-    info.sampledIndTextures.set(indStage.texMapId);
++    set_sampled_id(info.sampledTextures, indStage.texMapId, "ind stage texmap");
++    set_sampled_id(info.sampledTexCoords, indStage.texCoordId, "ind stage texcoord");
++    set_sampled_id(info.sampledIndTextures, indStage.texMapId, "ind stage ind texmap");
+     // Track which indirect matrix is used
+     if (stage.indTexMtxId >= GX_ITM_0 && stage.indTexMtxId <= GX_ITM_2) {
+       info.usedIndTexMtxs.set(stage.indTexMtxId - GX_ITM_0);
+@@ -264,7 +298,7 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+     }
+     const auto& tcg = config.tcgs[i];
+     if (tcg.type >= GX_TG_BUMP0 && tcg.type <= GX_TG_BUMP7) {
+-      info.sampledTexCoords.set(tcg.embossSrc);
++      set_sampled_id(info.sampledTexCoords, tcg.embossSrc, "emboss source texcoord");
+       info.lightingEnabled = true;
+     }
+   }
+@@ -371,6 +405,38 @@ static u32 line_texcoord_mask() noexcept {
+ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRanges& ranges) noexcept {
+   ZoneScoped;
+ 
++  // One-shot dump of the values that actually reach the shader for THPPlayer's
++  // YUV combine. The whole build path has been verified by reading - the TEV
++  // stage config, the BP decode of GXSetTevColorS10, the loadsTevReg and
++  // sampledKColors gating - so what is left is whether the *numbers* are right
++  // at draw time, and that cannot be read, only measured.
++  //
++  // Expected, derived from src/THPPlayer/THPDraw.c and the 11-bit signed BP
++  // encoding in src/dolphin/gx/GXTev.c:
++  //   colorRegs[0] (TEVREG0, GXSetTevColorS10 {65446, 0, 65422, 135})
++  //                         -> (-90, 0, -114, 135) / 255
++  //   kcolors[0] = (0, 0, 226, 88) / 255
++  //   kcolors[1] = (179, 0, 0, 182) / 255
++  //   kcolors[2] = (255, 0, 255, 128) / 255
++  //
++  // The signature of that draw is three sampled textures plus TEVREG0 loaded.
++  if (info.sampledTextures.count() >= 3 && info.loadsTevReg.test(GX_TEVREG0)) {
++    static bool dumped = false;
++    if (!dumped) {
++      dumped = true;
++      const auto& cr = g_gxState.colorRegs[GX_TEVREG0];
++      Log.info("THP uniforms: colorRegs[0] = ({}, {}, {}, {}) i.e. ({}, {}, {}, {}) x255", cr[0], cr[1], cr[2], cr[3],
++               cr[0] * 255.f, cr[1] * 255.f, cr[2] * 255.f, cr[3] * 255.f);
++      for (int i = 0; i < 3; ++i) {
++        const auto& kc = g_gxState.kcolors[i];
++        Log.info("THP uniforms: kcolors[{}] = ({}, {}, {}, {}) x255, sampled={}", i, kc[0] * 255.f, kc[1] * 255.f,
++                 kc[2] * 255.f, kc[3] * 255.f, info.sampledKColors.test(i));
++      }
++      Log.info("THP uniforms: renderViewport {}x{} logicalViewport {}x{}", g_gxState.renderViewport.width,
++               g_gxState.renderViewport.height, g_gxState.logicalViewport.width, g_gxState.logicalViewport.height);
++    }
++  }
++
+   static ByteBuffer buf;
+   buf.clear();
+   buf.reserve_extra(info.uniformSize);
+@@ -398,7 +464,39 @@ gfx::Range build_uniform(const ShaderInfo& info, u32 vtxStart, const BindGroupRa
+       buf.append<u32>(line_texcoord_mask());
+     }
+   }
+-  buf.append(g_gxState.proj);
++  {
++    // GX puts normalised depth in [-1, 0] - near at 0, far at -1 - which is
++    // what OpenGL accepts. WebGPU clips to [0, 1], so every vertex with a
++    // negative ndc z is discarded before rasterisation.
++    //
++    // Measured: a perspective draw's first vertex lands at ndc z = -0.015 and
++    // is clipped, while the orthographic paths that do render sit at exactly
++    // ndc z = 0.000 and survive only by being on the boundary. That is why 2D
++    // appeared and the whole 3D world did not, with every other piece of state
++    // - pipelines, matrices, projection, viewport, raster state, vertex data -
++    // measuring valid.
++    //
++    // Aurora runs REVERSED Z (gx.hpp's UseReversedZ): it wants near at 1 and
++    // far at 0, clears depth to 0, and its fog term reads (1.0 - in.pos.z).
++    //
++    // So the remap is z + w, not -z. Negating alone produced near at 0 and far
++    // at 1 - forward Z, the mirror image of what the rest of Aurora assumes.
++    // Geometry appeared, because it was finally inside [0, 1] at all, but the
++    // depth order was inverted and the fog term was fed 1 - 0.015 = 0.985
++    // instead of 0.015, which is full fog on everything. That was the white
++    // haze over the whole scene.
++    //
++    // Adding the w column to the z column maps [-1, 0] onto [0, 1] the right
++    // way round: near (z = 0) becomes w, so ndc 1, and far (z = -w) becomes 0.
++    // Done on the uploaded copy only, so GXGetProjectionv and anything else
++    // reading g_gxState.proj still sees what the guest set.
++    auto proj = g_gxState.proj;
++    proj.m0[2] += proj.m0[3];
++    proj.m1[2] += proj.m1[3];
++    proj.m2[2] += proj.m2[3];
++    proj.m3[2] += proj.m3[3];
++    buf.append(proj);
++  }
+ 
+   for (int i = 0; i < MaxPnMtx; i++) {
+     buf.append(g_gxState.pnMtx[i].pos);
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index a969465..6f5e446 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -177,13 +177,15 @@ wgpu::PresentMode best_present_mode(bool vsync) {
+       return wgpu::PresentMode::FifoRelaxed;
+     }
+   } else {
+-    // Dawn only disables CAMetalLayer displaySyncEnabled for Immediate on Metal
+-    if (g_backendType != wgpu::BackendType::Metal && supports(wgpu::PresentMode::Mailbox)) {
+-      return wgpu::PresentMode::Mailbox;
+-    }
++    // Mailbox still waits for the display refresh and therefore caps unlocked
++    // rendering to the monitor's rate. Prefer Immediate when VSync is disabled
++    // so user-selected targets such as 240 FPS are actually reachable.
+     if (supports(wgpu::PresentMode::Immediate)) {
+       return wgpu::PresentMode::Immediate;
+     }
++    if (supports(wgpu::PresentMode::Mailbox)) {
++      return wgpu::PresentMode::Mailbox;
++    }
+   }
+   return wgpu::PresentMode::Fifo;
+ }
+diff --git a/lib/window.cpp b/lib/window.cpp
+index 0d1a5c2..1d80f01 100644
+--- a/lib/window.cpp
++++ b/lib/window.cpp
+@@ -359,6 +359,19 @@ void show_window() {
+ 
+ bool initialize() {
+   /* We don't want to initialize anything input related here, otherwise the add events will get lost to the void */
++  // The official Nintendo adapter (WUP-028, VID 057E / PID 0337) needs
++  // SDL's HIDAPI GameCube driver and its libusb transport on Windows.  Keep
++  // these explicit instead of relying on SDL defaults so a system-wide SDL
++  // environment variable cannot silently fall back to a generic joystick
++  // mapping (which loses the analogue triggers, C-stick and adapter rumble).
++  TRY(SDL_SetHintWithPriority(SDL_HINT_HIDAPI_LIBUSB, "1", SDL_HINT_OVERRIDE), "Error setting {}: {}",
++      SDL_HINT_HIDAPI_LIBUSB, SDL_GetError());
++  TRY(SDL_SetHintWithPriority(SDL_HINT_HIDAPI_LIBUSB_GAMECUBE, "1", SDL_HINT_OVERRIDE), "Error setting {}: {}",
++      SDL_HINT_HIDAPI_LIBUSB_GAMECUBE, SDL_GetError());
++  TRY(SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_HIDAPI, "1", SDL_HINT_OVERRIDE), "Error setting {}: {}",
++      SDL_HINT_JOYSTICK_HIDAPI, SDL_GetError());
++  TRY(SDL_SetHintWithPriority(SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, "1", SDL_HINT_OVERRIDE), "Error setting {}: {}",
++      SDL_HINT_JOYSTICK_HIDAPI_GAMECUBE, SDL_GetError());
+   TRY(SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight"), "Error setting {}: {}", SDL_HINT_ORIENTATIONS,
+       SDL_GetError());
+   TRY(SDL_InitSubSystem(SDL_INIT_EVENTS | SDL_INIT_VIDEO), "Error initializing SDL: {}", SDL_GetError());

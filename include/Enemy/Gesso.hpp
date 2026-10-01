@@ -120,6 +120,12 @@ public:
 	// fabricated
 	TGessoSaveLoadParams* getSaveParams() const { return unk1E8; }
 
+	// TODO: the ROM inlines this 4-way decision at every MsIsInSight call site
+	// and never emits a symbol for it, but MWCC keeps emitting a weak
+	// out-of-line copy of this helper and calling it, which costs ~6% on
+	// TGesso::walkBehavior and TNerveGessoStay::execute. Spelling the decision
+	// out at each call site is the remaining lever; see the inline-budget
+	// sections of docs/AGENT_MATCHING_TIPS.md.
 	inline f32 getSightDirection() const
 	{
 		if (mState == STATE_WANDERING)

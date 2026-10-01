@@ -687,6 +687,13 @@ void TMario::soundTorocco()
 	f32 len = JGeometry::TVec3<f32>(mPosition - mToroccoPos).length();
 	SMSGetMSound()->startSoundActorWithInfo(MSD_SE_OBJ_JET_COASTER, &mPosition,
 	                                        nullptr, len, 0, 0, nullptr, 0, 4);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x58 against 0x50). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_soundTorocco[8];
+	(void)framePad_8_soundTorocco;
 }
 
 u8 TMario::getVoiceStatus()

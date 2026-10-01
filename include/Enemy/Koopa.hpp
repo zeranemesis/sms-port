@@ -202,6 +202,20 @@ public:
 	virtual const char** getBasNameTable() const;
 
 	void changeAnm(int, int, f32);
+
+	// fabricated: byte-identical body to changeAnm() below. The ROM expands
+	// changeAnm inline at most call sites but calls it out of line from
+	// TNerveKoopaTurnL/TurnR and TKoopaFlame::attack_, where MWCC's inlining
+	// budget is spent. Marking changeAnm itself #pragma dont_inline and using
+	// this inline for the other sites reproduces both shapes.
+	void changeAnmInline(int bck, int btp, f32 rate)
+	{
+		changeBck(bck);
+		changeBtp(btp);
+		J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+		ctrl->setRate(0.5f * (rate * SMSGetAnmFrameRate()));
+	}
+
 	void fall();
 	BOOL allowsLaunch() const;
 	f32 getTargetDir(const JGeometry::TVec3<f32>&) const;
@@ -282,6 +296,14 @@ class TNerveKoopaTurn : public TNerveBase<TLiveActor> {
 
 // In the retail binary theNerve() is inlined in every user (weak function-local
 // statics), so the accessor is defined in the class.
+//
+// TODO: mario.MAP lists TNerveKoopaTurnL::execute and TNerveKoopaTurnR::execute
+// as *weak*, i.e. they were defined in this header, while every other execute in
+// the TU is a global defined in Koopa.cpp. Defining the two out of line in the
+// header would fix validate-symbol-order.py's linkage check, but it drags the
+// -180.0f / 360.0f literals into koopajr.o (which also includes this header) and
+// shifts its .sdata2 by 8 bytes, breaking every `@sda21` offset there. Left to a
+// human decision.
 #define KOOPA_NERVE(Name, Base)                                                	class Name : public Base {                                                 	public:                                                                    		virtual BOOL execute(TSpineBase<TLiveActor>*) const;                   		static const Name& theNerve()                                          		{                                                                      			static Name nerve;                                                 			return nerve;                                                      		}                                                                      	};
 
 KOOPA_NERVE(TNerveKoopaTurnL, TNerveKoopaTurn);

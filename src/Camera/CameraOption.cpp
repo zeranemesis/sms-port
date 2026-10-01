@@ -107,6 +107,13 @@ TCameraOption::TCameraOption(JGeometry::TVec3<f32> param1,
 		s16 a = CLBRoundf<s16>(DEG2SHORTANGLE(tool->getYaw()));
 		s16 b = CLBRoundf<s16>(DEG2SHORTANGLE(60.0f));
 		CLBPolarToCross(origin, &unk30, 1000.0f, b, a);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_cameraOptionCtor[8];
+	(void)framePad_8_cameraOptionCtor;
 	}
 }
 

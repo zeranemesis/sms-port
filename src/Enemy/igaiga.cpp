@@ -152,7 +152,7 @@ void TRollEnemy::behaveToWater(THitActor*)
 		mBodyScale *= rate;
 		unk158 *= rate;
 		mScaledBodyRadius *= rate;
-		mScaling.x = mScaling.y = mScaling.z = mScaling.z * rate;
+		mScaling.x = mScaling.y = mScaling.z *= rate;
 
 		f32 attackRadius = getSaveParams()->getSLAttackRadius();
 		f32 attackHeight = getSaveParams()->getSLAttackHeight();
@@ -983,17 +983,17 @@ void TGorogoro::behaveToWater(THitActor*)
 		mBodyScale *= rate;
 		unk158 *= rate;
 		mScaledBodyRadius *= rate;
-		mScaling.z *= rate;
-		mScaling.y = mScaling.x = mScaling.z;
+		mScaling.x = mScaling.y = mScaling.z *= rate;
 
 		f32 attackRadius = getSaveParams()->getSLAttackRadius();
 		f32 attackHeight = getSaveParams()->getSLAttackHeight();
 		f32 damageRadius = getSaveParams()->getSLDamageRadius();
 		f32 damageHeight = getSaveParams()->getSLDamageHeight();
-		attackRadius *= mBodyScale / unk154;
-		attackHeight *= mBodyScale / unk154;
-		damageRadius *= mBodyScale / unk154;
-		damageHeight *= mBodyScale / unk154;
+		f32 scale = mBodyScale / unk154;
+		attackRadius *= scale;
+		attackHeight *= scale;
+		damageRadius *= scale;
+		damageHeight *= scale;
 		setHitParams(attackRadius, attackHeight, damageRadius, damageHeight);
 	}
 

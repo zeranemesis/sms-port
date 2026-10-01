@@ -343,9 +343,17 @@ def main() -> None:
                          "was built for)")
     ap.add_argument("--map-tu",
                     help="override the map .text-layout TU identifier")
+    ap.add_argument("--forward", action="store_true",
+                    help="accepted for symmetry; the forward comparison is the "
+                         "default and is what currently passes on most units")
     ap.add_argument("--reverse", action="store_true",
-                    help="compare against the reversed object order (escape hatch; "
-                         "no known unit needs this)")
+                    help="compare against the reversed object order. Only useful "
+                         "for a unit whose object order is genuinely the reverse "
+                         "of the map's; MEASURED 2026-09-30 and it is NOT implied "
+                         "by the unit's reverse_fn_order metadata — auto-applying "
+                         "it broke mario/MoveBG/MapObjBall and "
+                         "mario/Enemy/BossHanachanNerve, which both pass forward. "
+                         "Try both and keep whichever matches.")
     ap.add_argument("--baseline-object",
                     help="freshly built base-revision object; fail only on new "
                          "strict errors while reporting inherited errors; "
@@ -374,7 +382,11 @@ def main() -> None:
     obj_syms = obj_functions(base_path)
     baseline_syms = (obj_functions(args.baseline_object)
                      if args.baseline_object else None)
-    if args.reverse:
+    # NOTE: reverse_fn_order=true does NOT imply the object order must be
+    # reversed -- measured 2026-09-30, reversing breaks units that pass
+    # forward.  Only reverse when explicitly asked.
+    do_reverse = bool(args.reverse)
+    if do_reverse:
         obj_syms = list(reversed(obj_syms))
         if baseline_syms is not None:
             baseline_syms = list(reversed(baseline_syms))
@@ -397,7 +409,7 @@ def main() -> None:
     print(f"Map symbols : {len(map_names)} ({len(unused_names)} UNUSED)   "
           f"Object .text symbols: {len(obj_names)}")
     print(f"reverse_fn_order: {reverse_fn}"
-          + ("   [comparing reversed]" if args.reverse else ""))
+          + ("   [comparing reversed]" if do_reverse else ""))
     print("-" * 78)
 
     failures = 0

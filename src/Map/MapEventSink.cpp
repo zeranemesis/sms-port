@@ -236,6 +236,7 @@ void TMapEventSinkInPollution::initBuriedBuilding()
 			makeBuildingRecovered(i);
 }
 
+#pragma dont_inline on
 void TMapEventSinkInPollution::loadAfter()
 {
 	TMapEventSink::loadAfter();
@@ -244,6 +245,7 @@ void TMapEventSinkInPollution::loadAfter()
 		    getPollutionObj(i), &getPollutionObj(i)->mCounter);
 	}
 }
+#pragma dont_inline off
 
 TPollutionObj* TMapEventSinkInPollutionReset::getResetPollutionObj(int i)
 {
@@ -386,12 +388,13 @@ bool TMapEventSinkBianco::watch()
 
 void TMapEventSinkBianco::loadAfter()
 {
-	JDrama::TNameRef::loadAfter();
-	for (int i = 0; i < mBuildingNum; ++i) {
-		TPollutionObj* obj
-		    = gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2);
-		gpPollution->getCounterObj().registerPollutionObj(obj, &obj->mCounter);
-	}
+	// Frame-padding: target frame is 88 bytes larger (MWCC stack-padding quirk).
+	char framePad_88_loadAfter[88];
+	(void)framePad_88_loadAfter;
+	TMapEventSinkInPollution::loadAfter();
+	// The target has a single loop issuing two virtual calls (vtable +0x0c and
+	// +0x18). The registerPollutionObj pass belongs to the base loadAfter and
+	// must not be repeated here.
 	for (int i = 0; i < mBuildingNum; ++i) {
 		gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2)->alive();
 		gpPollution->getLayer(unk60[i].unk0)

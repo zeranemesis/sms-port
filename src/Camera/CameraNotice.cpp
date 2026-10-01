@@ -52,8 +52,14 @@ TLiveActor* CPolarSubCamera::getNoticeActor_()
 	if (mNoticeActor != nullptr && !mNoticeActor->checkLiveFlag(LIVE_FLAG_DEAD)
 	    && !mNoticeActor->checkLiveFlag(LIVE_FLAG_HIDDEN)) {
 
-		if (mNoticeActor->mPosition.squared(*gpMarioPos)
-		    < CLBSquared<f32>(mSaveNotice->mOffDist.get())) {
+		f32 dxA = mNoticeActor->mPosition.x - gpMarioPos->x;
+		f32 dyA = mNoticeActor->mPosition.y - gpMarioPos->y;
+		f32 dzA = mNoticeActor->mPosition.z - gpMarioPos->z;
+		f32 rx = dxA * dxA;
+		f32 ry = dyA * dyA;
+		f32 rz = dzA * dzA;
+		f32 dist2A = rx + ry + rz;
+		if (dist2A < CLBSquared<f32>(mSaveNotice->mOffDist.get())) {
 			JGeometry::TVec2<f32> clipPos;
 			CLBCalc2DFPos(&clipPos, unk16C, unk1EC, mNoticeActor->mPosition,
 			              nullptr, false);
@@ -151,10 +157,12 @@ void CPolarSubCamera::calcNoticeTargetYrot_(const Vec& target)
 	f32 dz2      = CLBSquared<f32>(mPos.z - target.z);
 	f32 dx2      = CLBSquared<f32>(mPos.x - target.x);
 	f32 dist2    = dx2 + dz2;
-	f32 farClip2 = CLBSquared<f32>(mSaveNotice->mRotateMinDistXZ.get());
-	f32 near2    = CLBSquared<f32>(mSaveNotice->mRotateFastMinDistXZ.get());
+	// The ROM tests `dist2` against the mRotateMinDistXZ value first and uses it as
+	// CLBCalcRatio's first argument, so the two save params are read in that order.
+	f32 minDist2 = CLBSquared<f32>(mSaveNotice->mRotateMinDistXZ.get());
+	f32 fastDist2 = CLBSquared<f32>(mSaveNotice->mRotateFastMinDistXZ.get());
 
-	if (dist2 > near2) {
+	if (dist2 > minDist2) {
 		JGeometry::TVec3<f32> diff(mPos.x - target.x, mPos.y - target.y,
 		                           mPos.z - target.z);
 		MsVECNormalize(&diff, &diff);
@@ -163,23 +171,22 @@ void CPolarSubCamera::calcNoticeTargetYrot_(const Vec& target)
 		f32 dz       = diff.z * 500.0f + mPos.z;
 		s16 ang      = matan(dz - mCurrentTarget.mTarget.z,
 		                     dx - mCurrentTarget.mTarget.x);
-		int absAngle = ang - mCurrentTarget.mYaw >= 0
-		                   ? ang - mCurrentTarget.mYaw
-		                   : -(ang - mCurrentTarget.mYaw);
+		s16 diff2    = ang - mCurrentTarget.mYaw;
+		s16 absAngle = diff2 < 0 ? -diff2 : diff2;
 		f32 ratio    = DEG2SHORTANGLE(1.0f) * (f32)absAngle;
 
 		f32 chase;
-		if (dist2 > farClip2) {
+		if (dist2 > fastDist2) {
 			chase = 1.0f;
 		} else {
-			chase = CLBCalcRatio<f32>(near2, farClip2, dist2);
+			chase = CLBCalcRatio<f32>(minDist2, fastDist2, dist2);
 		}
 		f32 base = CLBLinearInbetween<f32>(
 		    1.0f, mSaveNotice->mRotateMagnifXmax.get(), mCurrentTarget.unk28);
 		f32 speed
 		    = unk288
-		      * (chase
-		         * (ratio * ((f32)mSaveNotice->mRotateYSpeed.get() * base)));
+		      * (base * (chase
+		                 * (ratio * ((f32)mSaveNotice->mRotateYSpeed.get()))));
 		if (speed > 32766.998f)
 			speed = 32766.998f;
 		s16 delta = CLBRoundf<s16>(speed);

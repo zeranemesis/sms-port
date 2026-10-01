@@ -154,6 +154,13 @@ void TBaseNPC::emitHappyEffect_()
 		SMS_EasyEmitParticle(PARTICLE_MS_MARE_KIRA, mHappyEffectMtxPtr, this,
 		                     scale);
 	}
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x40 against 0x38). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_emitHappyEffect[8];
+	(void)framePad_8_emitHappyEffect;
 }
 
 inline void TBaseNPC::emitPollutionParticle_(int particle, MtxPtr mtx)

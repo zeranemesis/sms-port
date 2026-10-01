@@ -1528,6 +1528,9 @@ void TEnemyMario::reachGoal()
 
 void TEnemyMario::checkReturn()
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_checkReturn[8];
+	(void)framePad_8_checkReturn;
 	if (!mGroundPlane->checkFlag(BG_CHECK_FLAG_ILLEGAL))
 		return;
 

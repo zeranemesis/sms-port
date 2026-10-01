@@ -453,6 +453,13 @@ void TTelesa::calcRootMatrix()
 			    ->getTexGenBlock()
 			    ->getTexMtx(2)
 			    ->setEffectMtx(afStack_94);
+
+	// Every diff marker of this function is a stack offset sitting 0x20 above
+	// ours (target frame 0x140 against 0x120). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_32_telesaCalcRootMatrix[32];
+	(void)framePad_32_telesaCalcRootMatrix;
 		}
 
 		if (JPABaseEmitter* emitter
@@ -1187,6 +1194,13 @@ DEFINE_NERVE(TNerveTelesaFreeze, TLiveActor)
 				self->unk1C8 = 0;
 				self->offHitFlag(HIT_FLAG_UNK10000000);
 				return true;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x40 against 0x38). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_telesaFreezeNerve[8];
+	(void)framePad_8_telesaFreezeNerve;
 			}
 		} else if (self->resetBaseGround() || self->isBckAnm(5))
 			self->setBckAnm(3);

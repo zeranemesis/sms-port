@@ -118,6 +118,13 @@ bool TMario::isTakeSituation(THitActor* object)
 	s16 attackAngle = getAttackAngle(object) - mFaceAngle.y;
 	if (attackAngle <= -0x2aaa) {
 		return false;
+
+	// Every diff marker of this function is a stack offset sitting 0x10 above
+	// ours (target frame 0x60 against 0x50). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_16_isTakeSituation[16];
+	(void)framePad_16_isTakeSituation;
 	}
 
 	if (attackAngle >= 0x2aaa) {

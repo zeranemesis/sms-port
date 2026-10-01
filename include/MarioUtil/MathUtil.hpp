@@ -231,6 +231,14 @@ inline f32 MsSqrtf(f32 x)
 inline f32 MsSin(f32 v) { return JMASSin(v * (65536.0f / 360.0f)); }
 inline f32 MsCos(f32 v) { return JMASCos(v * (65536.0f / 360.0f)); }
 
+#ifdef SMS_MSMtxSetRotX_OUTOFLINE
+// TUs that define SMS_MSMtxSetRotX_OUTOFLINE provide their own out-of-line
+// copy (see src/MoveBG/MapObjPinna.cpp). marioEU.MAP marks the ROM's
+// MsMtxSetRotX__FPA4_ff as `weak`, and MapObjPinna is the only TU in the ROM
+// that reaches it through a real `bl`; every other caller has it expanded
+// inline. Opting in per-TU keeps the other callers matching.
+void MsMtxSetRotX(MtxPtr mtx, f32 x);
+#else
 inline void MsMtxSetRotX(MtxPtr mtx, f32 x)
 {
 	f32 s = MsSin(x);
@@ -249,6 +257,7 @@ inline void MsMtxSetRotX(MtxPtr mtx, f32 x)
 	mtx[2][2] = c;
 	mtx[2][3] = 0.0f;
 }
+#endif
 
 inline void MsMtxSetRotY(MtxPtr mtx, f32 y)
 {

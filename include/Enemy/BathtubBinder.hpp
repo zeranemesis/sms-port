@@ -5,6 +5,8 @@
 #include <dolphin/types.h>
 
 class TLiveActor;
+class TBathtub;
+class TBathWaterManager;
 
 // NOTE: no reference to TBathtubBinder exists anywhere else in the codebase
 // (no allocation site was found), so the object's total size could not be
@@ -24,13 +26,13 @@ public:
 
 public:
 	// set to nullptr in the ctor; populated in init() via a
-	// TNameRef::calcKeyCode() lookup + virtual call (returns a pointer, not
-	// an int -- bind() dereferences unk4 and reads a byte at offset 0x29a,
-	// consistent with a TLiveActor* whose exact pointee type/offset meaning
-	// was not confirmed). unk8 is cleared back to 0 in init() when unk4 is
-	// null.
-	/* 0x04 */ void* unk4;
-	/* 0x08 */ s32 unk8;
+	// TNameRefGen::search() lookup whose result is stored verbatim (the map
+	// has no `new TBathtubBinder` site, so the ctor was most likely called
+	// on an already-allocated TBathtubBinder). unk4 is the "バスタブ"
+	// bathtub object and unk8 the "バスタブの水" water manager; both are
+	// cleared back to 0 in init() when unk4 is null.
+	/* 0x04 */ TBathtub* unk4;
+	/* 0x08 */ TBathWaterManager* unk8;
 	/* 0x0c */ f32 unkC;
 	/* 0x10 */ f32 unk10;
 	/* 0x14 */ f32 unk14;

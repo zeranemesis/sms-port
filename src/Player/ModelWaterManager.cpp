@@ -230,7 +230,7 @@ void TModelWaterManager::loadAfter()
 f32 TModelWaterManager::getWPGravity(int i) const
 {
 	if (SMS_isDivingMap())
-		return unk5D88[0];
+		return unk5D88[12];
 	else
 		return mWaterParticleTypes[mParticleTypeSOA[i]]->mGravity.get();
 }
@@ -251,7 +251,13 @@ bool TModelWaterManager::askHitWaterParticleOnGround(
 }
 
 static inline f32 MsRandF() { return rand() * (1.f / (RAND_MAX + 1)); }
-static inline f32 rand11() { return ((rand() & 0xff) - 128) / 128.0f; }
+// Two spellings of the same [-1, 1] value, because the operand order of the
+// resulting fmuls differs between the two kinds of use site in marioEU.o:
+//   * 0.0078f  -> `fmuls fD, f_const, f_val`  (the 3 direction sites)
+//   * 0.0078f with the value first -> `fmuls fD, f_val, f_const` (the 2
+//     tremble sites); `/ 128.0f` lands in the same second shape.
+static inline f32 rand11() { return 0.0078125f * ((rand() & 0xff) - 128); }
+static inline f32 rand11r() { return ((rand() & 0xff) - 128) * 0.0078125f; }
 
 void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
 {
@@ -273,7 +279,7 @@ void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
 			local_3c.y = -1.0f;
 
 		VECNormalize(&local_3c, &local_3c);
-		f32 scale = rand11() * param_1.mPowTremble.get() + param_1.mPow.get();
+		f32 scale = rand11r() * param_1.mPowTremble.get() + param_1.mPow.get();
 		VECScale(&local_3c, &local_3c, scale);
 
 		VECAdd(&local_3c, param_1.mV.get(), &local_3c);
@@ -283,7 +289,7 @@ void TModelWaterManager::makeEmit(const TWaterEmitInfo& param_1)
 	}
 
 	mParticleSizeSOA[mParticleCount]
-	    = rand11() * param_1.mSizeTremble.get() + param_1.mSize.get();
+	    = rand11r() * param_1.mSizeTremble.get() + param_1.mSize.get();
 
 	mParticleTypeSOA[mParticleCount] = param_1.mType.get();
 
@@ -414,6 +420,18 @@ void TModelWaterManager::garbageCollect()
 	mParticleCount = nextFreeSlot;
 }
 
+// TODO: 88.3%, and the residue is a stack-layout problem, not a logic one.
+// Ours is 0x230, the target's 0x2E8. The target keeps 9 callee-saved FP
+// registers, we need 10, and its local set is genuinely different rather
+// than shifted: used span 0x114..0x258 (target) vs 0x8C..0x198 (ours), and
+// the last five locals need a constant +0xC4 shift while the block above
+// them needs +0xE0. The target owns a 64-byte object at +0x204 that we have
+// no counterpart for (accessed at +0x204/+0x208/+0x20C as 3-word copies, so
+// it is a Vec, not a TBGWallCheckRecord which is 0x2C) - recovering that
+// local is what the next 10% lives on. Separately, marioEU.o calls
+// JGeometry::TVec3<f32>::scale and TVec3<f32>::add out of line here; that is
+// the known libs/ inliner-threshold gap (measured: writing `v *= f` instead
+// of `v.scale(f)` changes nothing, because operator*= is defined as scale).
 void TModelWaterManager::move()
 {
 	f32 fVar1 = unk5E08;
@@ -422,17 +440,16 @@ void TModelWaterManager::move()
 			mStaticHitActor.mPosition = mParticlePositionSOA[i];
 			mStaticHitActor.unk68     = i;
 
-			if (!unk2514[i]->receiveMessage(&mStaticHitActor,
-			                                HIT_MESSAGE_SPRAYED_BY_WATER))
+			if (unk2514[i]->receiveMessage(&mStaticHitActor,
+			                               HIT_MESSAGE_SPRAYED_BY_WATER)) {
+				splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
+				if (MsRandF() < unk5D88[8])
+					gpSplashManager->newSplash(mParticlePositionSOA[i], 5.0f);
+				mParticleLifetimeSOA[i] = 0.0f;
 				continue;
-
-			splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
-
-			if (MsRandF() < unk5D88[8])
-				gpSplashManager->newSplash(mParticlePositionSOA[i], 5.0f);
-
-			mParticleLifetimeSOA[i] = 0.0f;
-		} else {
+			}
+		}
+		{
 			JGeometry::TVec3<f32> thing;
 			thing.sub(SMS_GetMarioPos(), mParticlePositionSOA[i]);
 
@@ -448,9 +465,11 @@ void TModelWaterManager::move()
 				f32 horLen = std::sqrtf(horVelSq);
 
 				mParticleVelocitySOA[i].x
-				    *= (mParticleSizeSOA[i] - 0.1f) * (1.0f / horLen);
+				    = (mParticleSizeSOA[i] - 0.1f)
+				      * (mParticleVelocitySOA[i].x * (1.0f / horLen));
 				mParticleVelocitySOA[i].z
-				    *= (mParticleSizeSOA[i] - 0.1f) * (1.0f / horLen);
+				    = (mParticleSizeSOA[i] - 0.1f)
+				      * (mParticleVelocitySOA[i].z * (1.0f / horLen));
 			}
 
 			switch (mParticleFlagSOA[i] & 0xf) {
@@ -490,73 +509,73 @@ void TModelWaterManager::move()
 	for (int i = 0; i < mParticleCount; ++i) {
 		if (mParticleVelocitySOA[i].y < 0.0f) {
 			f31 = gpMap->checkGroundIgnoreWaterThrough(
-			    mParticlePositionSOA[i].x, mParticlePositionSOA[i].y - fVar1,
+			    mParticlePositionSOA[i].x, mParticlePositionSOA[i].y - mParticleVelocitySOA[i].y,
 			    mParticlePositionSOA[i].z, &local_248);
 
-			if (!local_248->isLegal() || 1.0f + f31 < mParticlePositionSOA[i].y)
-				continue;
+			if (local_248->isLegal() && 1.0f + f31 >= mParticlePositionSOA[i].y) {
+				if (local_248->isWaterSurface()) {
+					if (MsRandF() < unk5D88[11])
+						SMS_EmitRippleTiny(&mParticlePositionSOA[i]);
 
-			if (local_248->isWaterSurface()) {
-				if (MsRandF() < unk5D88[11])
-					SMS_EmitRippleTiny(&mParticlePositionSOA[i]);
-
-				mParticleLifetimeSOA[i] = 0.0f;
-
-				gpMSound->startSoundSet(MSD_SE_WT_INTO_WATER,
-				                        &mParticlePositionSOA[i], 0.0f, 0.0f,
-				                        0.0f, 0, 4);
-				continue;
-			}
-
-			if (local_248->isPool()) {
-				mParticleLifetimeSOA[i] = 0.0f;
-				if (MsRandF() < unk5D88[11])
-					SMS_EmitRippleTiny(&mParticlePositionSOA[i]);
-
-				splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
-				continue;
-			}
-
-			mParticlePositionSOA[i].y = f31 - getWPGravity(i);
-
-			if (getFlagBottom4Bits(i) == 3) {
-				mParticleLifetimeSOA[i] = 0.0f;
-				continue;
-			}
-
-			if (getFlagBottom4Bits(i) == 1) {
-				if (MsRandF() < unk5D88[9])
-					gpSplashManager->newSplash(mParticlePositionSOA[i], 5.0f);
-
-				splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
-
-				mParticleSizeSOA[i]
-				    *= mWaterParticleTypes[mParticleTypeSOA[i]]->mMagnify.get();
-				f32 fVar1;
-				if (gpCamera->isLButtonCamera())
-					fVar1 = unk5D88[0];
-				else
-					fVar1 = unk5D88[1];
-
-				if (MsRandF() < fVar1) {
-					setFlagBottom4Bits(i, 2);
-				} else {
 					mParticleLifetimeSOA[i] = 0.0f;
+
+					gpMSound->startSoundSet(MSD_SE_WT_INTO_WATER,
+					                        &mParticlePositionSOA[i], 0.0f, 0.0f,
+					                        0.0f, 0, 4);
+					continue;
 				}
 
+				if (local_248->isPool()) {
+					mParticleLifetimeSOA[i] = 0.0f;
+					if (MsRandF() < unk5D88[11])
+						SMS_EmitRippleTiny(&mParticlePositionSOA[i]);
+
+					splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
+					continue;
+				}
+
+				mParticlePositionSOA[i].y = f31 - getWPGravity(i);
+
+				if (getFlagBottom4Bits(i) == 3) {
+					mParticleLifetimeSOA[i] = 0.0f;
+					continue;
+				}
+
+				if (getFlagBottom4Bits(i) == 1) {
+					if (MsRandF() < unk5D88[9])
+						gpSplashManager->newSplash(mParticlePositionSOA[i], 5.0f);
+
+					splashSound(mParticlePositionSOA[i], mParticleSizeSOA[i]);
+
+					mParticleSizeSOA[i]
+					    *= mWaterParticleTypes[mParticleTypeSOA[i]]->mMagnify.get();
+					f32 fVar1;
+					if (gpCamera->isLButtonCamera())
+						fVar1 = unk5D88[1];
+					else
+						fVar1 = unk5D88[0];
+
+					if (MsRandF() < fVar1) {
+						setFlagBottom4Bits(i, 2);
+					} else {
+						mParticleLifetimeSOA[i] = 0.0f;
+						continue;
+					}
+				}
+
+				unk2914[i] = local_248;
+				if (local_248->mActor != nullptr) {
+					mStaticHitActor.mPosition = mParticlePositionSOA[i];
+					mStaticHitActor.unk68     = i;
+					THitActor* hit            = (THitActor*)local_248->mActor;
+					if (hit->receiveMessage(&mStaticHitActor,
+					                        HIT_MESSAGE_SPRAYED_BY_WATER))
+						mParticleLifetimeSOA[i] = 0.0f;
+				}
 				continue;
 			}
-
-			unk2914[i] = local_248;
-			if (local_248->mActor != nullptr) {
-				mStaticHitActor.mPosition = mParticlePositionSOA[i];
-				mStaticHitActor.unk68     = i;
-				THitActor* hit            = (THitActor*)local_248->mActor;
-				if (hit->receiveMessage(&mStaticHitActor,
-				                        HIT_MESSAGE_SPRAYED_BY_WATER))
-					mParticleLifetimeSOA[i] = 0.0f;
-			}
-		} else {
+		}
+		{
 			static TBGWallCheckRecord wcheck;
 
 			wcheck.set(mParticlePositionSOA[i].x,
@@ -569,6 +588,7 @@ void TModelWaterManager::move()
 
 				if (getFlagBottom4Bits(i) == 2) {
 					mParticleLifetimeSOA[i] = 0.0f;
+					continue;
 				} else {
 					if (local_248 != nullptr && local_248->isLegal()
 					    && mParticlePositionSOA[i].y
@@ -578,6 +598,7 @@ void TModelWaterManager::move()
 					                               ->mMagnify.get()
 					                 + f31) {
 						mParticleLifetimeSOA[i] = 0.0f;
+						continue;
 					} else {
 						if (r27->mActor != nullptr) {
 							mStaticHitActor.mPosition = mParticlePositionSOA[i];
@@ -587,16 +608,16 @@ void TModelWaterManager::move()
 							                    HIT_MESSAGE_SPRAYED_BY_WATER);
 						}
 
-						JGeometry::TVec3<f32> local_194 = r27->getNormal();
-						local_194.scale(
-						    r27->mPlaneDistance
-						    + mParticlePositionSOA[i].dot(r27->getNormal()));
+						JGeometry::TVec3<f32> local_194
+						    = r27->getNormal()
+						      * (r27->mPlaneDistance + mParticlePositionSOA[i].dot(
+						            r27->getNormal()));
 
 						mParticlePositionSOA[i] -= local_194;
 
 						if (getFlagBottom4Bits(i) == 1) {
-							JGeometry::TVec3<f32> local_1d4 = r27->getNormal();
-							local_1d4.scale(mParticleSizeSOA[i]);
+							JGeometry::TVec3<f32> local_1d4
+							    = r27->getNormal() * mParticleSizeSOA[i];
 
 							JGeometry::TVec3<f32> local_1A4
 							    = mParticlePositionSOA[i];
@@ -685,10 +706,10 @@ void TModelWaterManager::move()
 						mParticleSizeSOA[r20]     = mParticleSizeSOA[i];
 						mParticleLifetimeSOA[r20] = mParticleLifetimeSOA[i];
 						mParticleLifetimeSOA[i]   = 0.0f;
+					} else {
+						r20 = i;
 					}
 				}
-			} else {
-				r20 = i;
 			}
 			break;
 		}
@@ -712,10 +733,10 @@ void TModelWaterManager::move()
 						mParticleSizeSOA[r26]     = mParticleSizeSOA[i];
 						mParticleLifetimeSOA[r26] = mParticleLifetimeSOA[i];
 						mParticleLifetimeSOA[i]   = 0.0f;
+					} else {
+						r26 = i;
 					}
 				}
-			} else {
-				r26 = i;
 			}
 			break;
 		}
@@ -775,9 +796,75 @@ void TModelWaterManager::calcWorldMinMax()
 	unk5D7C.z = local_max.z + 200.0f;
 }
 
-#pragma dont_inline on
-void TModelWaterManager::calcDrawVtx(MtxPtr) { }
-#pragma dont_inline off
+// Builds the screen-facing quads for every airborne water droplet: each one is
+// a square of side mParticleSizeSOA[i] (the 0.5 * 1.414 factor is half a
+// diagonal) rotated to line up with the droplet's horizontal velocity.
+//
+// TODO: 86.9%. Everything is right except two things.
+//  1) Frame: ours is 0x120, the target's is 0xE0 - 64 bytes too much
+//     slack under the locals (target's lowest local is at +0x28, ours at
+//     +0x78), and the target's MsSqrtf region is 16 bytes (y + the double
+//     `guess`) where ours is 4. The 24-byte block of leading slack is the
+//     interesting part: 4 TVec3 + 2 f32 are only 76 bytes, so it is not
+//     outgoing-args for any of the 3-argument calls here.
+//  2) The rotating branch: the target CSEs `-a` (one `fneg`) and then uses
+//     `pos.y + f12` / `pos.y - f12` for vtx[1].y / vtx[3].y, and re-loads
+//     unk5D18 into a fresh register for each of the three uses. We get
+//     `fsubs`/`fadds` pairs off a single positive `a`. 9 instructions.
+void TModelWaterManager::calcDrawVtx(MtxPtr param_1)
+{
+	unk5D30->reset();
+
+	for (int i = 0; i < mParticleCount; ++i) {
+		if ((mParticleFlagSOA[i] & 0xf) != 1)
+			continue;
+
+		// a droplet that outlived its type's max lifetime is not drawn.
+		// NOTE: the ROM compares mParticleLifetimeSOA here and reads the
+		// type's *mAlive* (+0x68); the two TWaterParticleType members it uses
+		// here are otherwise swapped relative to their (unverified) names.
+		if (mParticleLifetimeSOA[i]
+		    < mWaterParticleTypes[mParticleTypeSOA[i]]->mAlive.get()
+		          - unk5D88[7]) {
+			JGeometry::TVec3<f32> vtx[4];
+			JGeometry::TVec3<f32> pos;
+			JGeometry::TVec3<f32> vel;
+
+			MTXMultVec(param_1, &mParticlePositionSOA[i], &pos);
+
+			if (pos.z > 0.0f)
+				continue;
+			if (pos.z < -unk5D28)
+				continue;
+
+			MTXMultVecSR(param_1, &mParticleVelocitySOA[i], &vel);
+			vel *= mWaterParticleTypes[mParticleTypeSOA[i]]->mExtension.get();
+
+			f32 lenSq = vel.x * vel.x + vel.y * vel.y;
+			f32 half  = mParticleSizeSOA[i] * 0.5f * 1.414f;
+
+			if (lenSq > 1.0f) {
+				// the droplet is moving: spin the quad to face along it
+				f32 s = (1.0f / MsSqrtf(lenSq)) * half;
+
+				vtx[0].set(pos.x + vel.x * s + vel.x * unk5D18,
+				           pos.y + vel.y * s + vel.y * unk5D18, pos.z);
+				vtx[1].set(pos.x + vel.y * s, pos.y - vel.x * s, pos.z);
+				vtx[2].set(pos.x - vel.x * s - vel.x * unk5D18,
+				           pos.y - vel.y * s - vel.y * unk5D18, pos.z);
+				vtx[3].set(pos.x - vel.y * s, pos.y + vel.x * s, pos.z);
+			} else {
+				// barely moving: an axis-aligned quad is as good as any
+				vtx[0].set(pos.x - half, pos.y + half, pos.z);
+				vtx[1].set(pos.x + half, pos.y + half, pos.z);
+				vtx[2].set(pos.x + half, pos.y - half, pos.z);
+				vtx[3].set(pos.x - half, pos.y - half, pos.z);
+			}
+
+			unk5D30->request(&vtx[0]);
+		}
+	}
+}
 
 void TModelWaterManager::calcVMMtxGround(MtxPtr param_1, f32 param_2,
                                          const JGeometry::TVec3<f32>& param_3,
@@ -980,9 +1067,11 @@ void TModelWaterManager::drawSilhouette(MtxPtr param_1)
 		}
 	}
 
+	// TODO: the second silhouette shape tests flag 3 (wall) here, not 2 like
+	// the first loop - read off the target's `cmpwi r0, 3`.
 	SMS_SettingDrawShape(unk5D58, 0);
 	for (int i = 0; i < mParticleCount; ++i) {
-		if ((mParticleFlagSOA[i] & 0xf) == 2) {
+		if ((mParticleFlagSOA[i] & 0xf) == 3) {
 			GXLoadPosMtxImm(unk2D14[i], GX_PNMTX0);
 			SMS_DrawShape(unk5D58, 0);
 		}
@@ -996,8 +1085,10 @@ void TModelWaterManager::drawSilhouette(MtxPtr param_1)
 	GXSetCullMode(GX_CULL_FRONT);
 	GXSetChanMatColor(
 	    GX_COLOR0A0,
+	    // Note the grouping: the target computes (unk48 * 1/256) first and only
+	    // then converts unk5D5D, so the alpha is the int times that product.
 	    (GXColor) { 0xff, 0xff, 0xff,
-	                (u8)(unk5D5D * gpSilhouetteManager->unk48 * 0.00390625f) });
+	                (u8)(unk5D5D * (gpSilhouetteManager->unk48 * 0.00390625f)) });
 	GXSetBlendMode(GX_BM_BLEND, GX_BL_DSTALPHA, GX_BL_ZERO, GX_LO_NOOP);
 	if (unk5D60 & 0x20)
 		SMS_DrawCube(unk5D70, unk5D7C);
@@ -1215,18 +1306,14 @@ void TModelWaterManager::drawMirror(MtxPtr param_1)
 	// .sdata2 which marioEU.o does not contain.
 	f32 fVar3 = 1.0f / pTVar4->getNormal().y;
 
+	// Only the first four of the eight ring slots get written, and the cos
+	// angle trails the sin angle by 0x2000 (a quarter of a quadrant), which
+	// turns the ring into a diamond. Both are what marioEU.o does.
 	for (int i = 0; i < 4; ++i) {
-		local_bc[i][0].x = SMS_GetMarioPos().x + JMASSin(i * 0x4000) * 1000.0f;
-		local_bc[i][0].z = SMS_GetMarioPos().z + JMASCos(i * 0x4000) * 1000.0f;
+		local_bc[i][0].x = JMASSin(i * 0x4000) * 1000.0f + SMS_GetMarioPos().x;
+		local_bc[i][0].z
+		    = JMASCos(i * 0x4000 + 0x2000) * 1000.0f + SMS_GetMarioPos().z;
 		local_bc[i][0].y
-		    = fVar3
-		          * -(fVar1 + pTVar4->getNormal().x * local_bc[0][0].x
-		              + pTVar4->getNormal().z * local_bc[0][0].z)
-		      + 4.0f;
-
-		local_bc[i][1].x = JMASSin(i * 0x4000) * 1000.0f + SMS_GetMarioPos().x;
-		local_bc[i][1].z = JMASSin(i * 0x4000) * 1000.0f + SMS_GetMarioPos().z;
-		local_bc[i][1].y
 		    = fVar3
 		          * -(fVar1 + pTVar4->getNormal().x * local_bc[0][0].x
 		              + pTVar4->getNormal().z * local_bc[0][0].z)
@@ -1698,6 +1785,16 @@ static u8 tmp_data[4300] __attribute__((aligned(32))) = {
 static void* sphere_glist_p;
 static void* sphere_pos_t;
 
+// TODO: 85.7%, and the residue is a stack-layout problem, not a logic one.
+// Ours is 0x120, the target's 0x138 (target has 36 bytes of leading slack,
+// we have 8) and the target keeps one more callee-saved FP register out of
+// the frame. On top of that marioEU.o materialises the volume position twice:
+// it fills +0x30 from the .rodata pool entry and then word-copies +0x30 to
+// +0xDC (6 instructions we do not emit). That extra copy also shifts the
+// following GXBegin vertex block ~19 instructions earlier in our stream.
+// Reproducing the second Vec needs an inlined value-returning helper (the
+// "T x = f()" return temp); inventing a pointless second local would be a
+// fakematch, so it is left alone.
 void TModelWaterManager::drawShineShadowVolume(MtxPtr param_1)
 {
 
@@ -1783,7 +1880,7 @@ void TModelWaterManager::drawShineShadowVolume(MtxPtr param_1)
 		int r31    = unk5E44;
 		local_28.a = f32(0xff - unk5E45) / unk5E44 + 0.5f;
 		GXSetTevColor(GX_TEVREG0, local_28);
-		GXSetZMode(GX_TRUE, GX_GREATER, GX_TRUE);
+		GXSetZMode(GX_TRUE, GX_GREATER, GX_FALSE);
 		GXClearVtxDesc();
 		GXSetVtxDesc(GX_VA_POS, GX_INDEX16);
 		GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_CLR_RGBA, GX_RGBA4, 15);

@@ -12,6 +12,7 @@ public:
 	    , PARAM_INIT(mSLElecRange, 200.0f)
 	    , PARAM_INIT(mSLMtxRotSpeed, 0.05f)
 	{
+		TParams::load(mPrmPath);
 	}
 
 public:
@@ -30,7 +31,7 @@ public:
 	virtual void bind();
 	virtual f32 getGravityY() const;
 	virtual const char** getBasNameTable() const;
-	virtual bool isCollidMove(THitActor*);
+	virtual bool isCollidMove(THitActor*) { return false; }
 	virtual bool isHitValid(u32);
 	virtual void attackToMario();
 	virtual void setWalkAnm();
@@ -40,6 +41,11 @@ public:
 
 	void calcDirection();
 	void emitEffects();
+	// UNUSED in the map at 0x1EC; inlined at both call sites. The first
+	// argument is the per-step distance cap (3.0f from WalkOnFence, 0.0f
+	// from Turn) and the second the normalise scale.
+	void creepToCurPathNode(f32 maxStep, f32 scale);
+	bool isDeadByWall();
 
 public:
 	/* 0x194 */ const TBGCheckData* unk194;
@@ -53,14 +59,20 @@ public:
 	/* 0x208 */ TSpineEnemyParams* unk208;
 	/* 0x20C */ bool unk20C;
 	/* 0x210 */ TAmiHit* mAmiHit;
-	/* 0x214 */ char unk214[0x428 - 0x214];
-	/* 0x428 */ JGeometry::TVec3<f32> unk428;
+	// Nothing past 0x214: the largest offset any code touches on `this` in
+	// build/GMSP01/asm/Enemy/amiNoko.s is 0x210, and MarNameRefGen_Enemy's
+	// "AmiNoko" branch does `li r3, 0x214` for `new TAmiNoko`. (There used
+	// to be a fabricated `char unk214[0x428 - 0x214]` + `unk428` here, which
+	// made the class 0x434 and was never referenced by anything.)
 };
 
 class TAmiHit : public THitActor {
 public:
 	TAmiHit(const char* name) : THitActor(name) { }
 
+	// Defined in-class so MWCC gives __dt__7TAmiHitFv the weak linkage the
+	// map records (a .cpp definition comes out global).
+	virtual ~TAmiHit() { }
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor*, u32);
 
@@ -79,6 +91,7 @@ public:
 
 class TLiveActor;
 
+DECLARE_NERVE(TNerveAmiNokoAttack, TLiveActor);
 DECLARE_NERVE(TNerveAmiNokoDie, TLiveActor);
 DECLARE_NERVE(TNerveAmiNokoFreeze, TLiveActor);
 DECLARE_NERVE(TNerveAmiNokoWalkOnFence, TLiveActor);

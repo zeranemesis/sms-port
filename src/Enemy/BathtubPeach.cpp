@@ -14,6 +14,12 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// forces the two unreferenced (Vec) compound literals in the target's .rodata
+// (0xC zeros then 0xC ones) so that every string after them lands at 0x148+
+// as in the target (fixes load()'s r27 offsets and the .rodata pool shift)
+static void dummy(Vec* v) { *v = (Vec) { 0.0f, 0.0f, 0.0f }; }
+static void dummy2(Vec* v) { *v = (Vec) { 1.0f, 1.0f, 1.0f }; }
+
 static const char* bathtubpeach_bastable[] = {
 	nullptr,
 	nullptr,

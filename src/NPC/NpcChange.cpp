@@ -65,6 +65,9 @@ bool TBaseNPC::isNerveMaybeDontCalcAnim1() const
 	return result;
 }
 
+// The ROM keeps this out of line: changeNerveProc_ emits a single `bl`
+// (marioEU.MAP 8020B138). We inline it, costing changeNerveProc_ 15 points.
+#pragma dont_inline on
 bool TBaseNPC::isNerveCanGoToTalk() const
 {
 	bool result                         = false;
@@ -85,6 +88,7 @@ bool TBaseNPC::isNerveCanGoToTalk() const
 	}
 	return result;
 }
+#pragma dont_inline off
 
 bool TBaseNPC::isNerveCanGoToWet() const
 {

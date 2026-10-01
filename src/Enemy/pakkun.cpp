@@ -611,7 +611,7 @@ void TPakkunSeed::rebirth()
 		return;
 	}
 
-	if (!mGroundPlane->isWaterSurface()) {
+	if (!mGroundPlane->isWaterSurfaceRanged()) {
 		TPakkun* owner = unk16C;
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_PAKKUN_SEED_SINK, &mPosition,
 		                                0, nullptr, 0, 4);

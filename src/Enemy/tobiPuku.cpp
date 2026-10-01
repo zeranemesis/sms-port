@@ -465,6 +465,13 @@ void TTobiPuku::walkBehavior(int param_1, f32 param_2)
 	JGeometry::TVec3<f32> velocity = mLinearVelocity;
 	velocity.y                     = prevY - mPosition.y;
 	mRotation.x                    = MsGetRotFromZaxis(velocity).x;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x68 against 0x60). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_tobiPukuWalk[8];
+	(void)framePad_8_tobiPukuWalk;
 }
 
 void TTobiPuku::swimEffect()
@@ -894,6 +901,13 @@ DEFINE_NERVE(TNerveTobiPukuAttack, TLiveActor)
 			self->mVelocity = newVelocity;
 			self->mPosition.y += 2.0f;
 			self->onLiveFlag(LIVE_FLAG_AIRBORNE);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x50 against 0x48). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_tobiPukuAttackNerve[8];
+	(void)framePad_8_tobiPukuAttackNerve;
 		}
 
 		if (self->checkCurAnmEnd(0)) {

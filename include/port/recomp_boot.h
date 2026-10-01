@@ -16,6 +16,21 @@ extern "C" {
 
 namespace sms::recomp {
 
+// What the disc is, stated once, because two unrelated places need to agree
+// and the port is PAL throughout (README.port.md: version ciblee PAL /
+// GMSP01). Getting these two out of step is the defect docs/port_todo.md
+// section 3.3 records: a 50Hz disc paced at 60Hz runs its guest 20% fast and
+// drifts against everything the guest measures with OSGetTime.
+constexpr u32 kGuestFrameHz = 50;
+constexpr double kGuestFrameSeconds = 1.0 / double(kGuestFrameHz);
+
+// The TV format byte __OSTVMode wants, not the packed VITVMode. The SDK
+// stores `tv = mode >> 2` (libs/dolphin/src/vi/vi.c:283), so PAL is
+// VI_PAL = 1. See recomp_boot.cpp's install_low_memory_globals for what
+// actually consumes this, and for why the guest overwrites it once the game
+// has initialised VI.
+constexpr u32 kGuestTvFormat = 1; // VI_PAL (dolphin/vi/vitypes.h)
+
 // Requires a disc image already opened via aurora_dvd_open() + DVDInit()
 // (see docs/port_bootstrap.md's "What actually needs a disc image from
 // here"). Reads the DOL Aurora's DVD layer exposes via DVDGetDOLLocation

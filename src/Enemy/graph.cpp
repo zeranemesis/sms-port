@@ -825,6 +825,13 @@ void TGraphGroup::initGraphGroup()
 
 		unk8[i]->initGoalIndex(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
 		unk8[i]->attachToGround();
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0xc0 against 0xb8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_graphInitGroup[8];
+	(void)framePad_8_graphInitGroup;
 	}
 }
 

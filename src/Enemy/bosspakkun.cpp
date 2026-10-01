@@ -1111,8 +1111,11 @@ const char** TBossPakkun::getBasNameTable() const
 
 void TBossPakkun::setGroundCollision()
 {
-	const TNerveBase<TLiveActor>* dieNerve = &TNerveBPDie::theNerve();
-	if (!mSpine->isNerve(dieNerve) && mMapCollisionManager != nullptr) {
+	// The ROM tests two nerves, each short-circuiting to the same end label,
+	// then the collision manager. The TumbleOut check was missing here.
+	if (!mSpine->isNerve(&TNerveBPDie::theNerve())
+	    && !mSpine->isNerve(&TNerveBPTumbleOut::theNerve())
+	    && mMapCollisionManager != nullptr) {
 		TPosition3f collisionMtx;
 		collisionMtx.set(getModel()->getAnmMtx(2));
 		if (mMapCollisionManager->unk8 != nullptr)

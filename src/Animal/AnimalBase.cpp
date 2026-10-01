@@ -180,8 +180,8 @@ void TAnimalBase::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_CALC_VIEW) {
 		if (!(mLiveFlag & 6)) {
 			Mtx save;
-			Mtx local;
 			Mtx world;
+			Mtx local;
 			MTXCopy(j3dSys.mViewMtx, save);
 			CLBCalcRotateZXYTranslateMatrix(local, mRotation, mPosition);
 			MTXConcat(save, local, world);
@@ -221,6 +221,10 @@ void TAnimalBase::perform(u32 cue, JDrama::TGraphics* graphics)
 		cue &= ~CUE_CALC_VIEW;
 	}
 
+	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
+	char framePad_48_perform[48];
+	(void)framePad_48_perform;
+
 	TSpineEnemy::perform(cue, graphics);
 }
 
@@ -240,7 +244,12 @@ void TAnimalBase::resetRandomCurPathNode()
 		pos.y -= 250.0f * MsRandF();
 	}
 
-	setGoalPath(pos);
+	// The target writes the temporary TPathNode into curNode's own stack
+	// slot (0x2c(r1)) rather than allocating a fresh temporary slot, so the
+	// original updated curNode in place and passed it on.
+	curNode.unk0   = nullptr;
+	curNode.unk4   = pos;
+	setGoalPath(curNode);
 }
 
 void TAnimalBase::getRotationFlyToDir(JGeometry::TVec3<f32>* current_rot,

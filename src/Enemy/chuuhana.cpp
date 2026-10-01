@@ -20,6 +20,7 @@
 #include <Map/MapData.hpp>
 #include <Map/MapMirror.hpp>
 #include <Player/MarioAccess.hpp>
+#include <dolphin/mtx.h>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -28,6 +29,15 @@
 
 // NOTE: this TU is -inline deferred, so the out-of-line functions below are
 // defined in the *reverse* order of mario.MAP's .text layout.
+
+// fabricated: fills the 24 bytes of .rodata (12 zero bytes then 1.0f, 1.0f,
+// 1.0f) that the original emits between the InfectiousStrings literals and the
+// tyuhana_bastable BAS paths.
+static void dummy(Vec* v)
+{
+	*v = (Vec) { 0.0f, 0.0f, 0.0f };
+	*v = (Vec) { 1.0f, 1.0f, 1.0f };
+}
 
 static TChuuHana* gpCurChuuHana;
 
@@ -286,9 +296,70 @@ void TChuuHana::setBckAnm(int index)
 	TSmallEnemy::setBckAnm(index);
 }
 
-void TChuuHana::behaveToWater(THitActor* actor)
+void TChuuHana::behaveToWater(THitActor*)
 {
-	// TODO: not yet reconstructed
+	// Sprinting into the chuuhana launches it away from Mario. Rolling chuuhana
+	// keep rolling, chuuhana that are standing on something or busy get shoved
+	// off in the direction of Mario, and a balancing chuuhana is launched at
+	// Mario instead.
+	unk165 = true;
+	unk224 = 0;
+	((TChuuHanaManager*)mManager)->unk68++;
+
+	if (mSpine->getCurrentNerve() == &TNerveChuuHanaRoll::theNerve()) {
+		JGeometry::TVec3<f32> dir(mPosition.x - gpMarioPos->x, 0.0f,
+		                          mPosition.z - gpMarioPos->z);
+		MsVECNormalize(&dir, &dir);
+		dir.scale(unk1B4->mSLGetWaterPow.get(), dir);
+
+		JGeometry::TVec3<f32> vel = mVelocity;
+		vel = dir + vel;
+		vel.y     = 0.0f;
+		mVelocity = vel;
+
+		mLiveFlag |= LIVE_FLAG_AIRBORNE;
+		mPosition.y += 10.0f;
+	} else if (mSpine->getCurrentNerve() == &TNerveChuuHanaWalkOnPanel::theNerve()
+	           || mSpine->getCurrentNerve() == &TNerveChuuHanaAttack::theNerve()
+	           || mSpine->getCurrentNerve() == &TNerveChuuHanaWait::theNerve()
+	           || (mNewSw
+	               && mSpine->getCurrentNerve()
+	                      == &TNerveChuuHanaStick::theNerve())) {
+		unk165 = true;
+		if (mAttackVersion)
+			*unk21C = 1;
+
+		JGeometry::TVec3<f32> dir(mPosition.x - gpMarioPos->x, 0.0f,
+		                          mPosition.z - gpMarioPos->z);
+		MsVECNormalize(&dir, &dir);
+		dir.scale(unk1B4->mSLGetWaterPow2.get(), dir);
+
+		if (!isAirborne()) {
+			if (mCompareHeight)
+				mPosition.y += 2.0f;
+			else
+				mPosition.y += 1.0f;
+		}
+
+		mVelocity = dir;
+		mLiveFlag |= LIVE_FLAG_AIRBORNE;
+
+		if (mSpine->getCurrentNerve() != &TNerveChuuHanaStick::theNerve())
+			mSpine->pushNerve(&TNerveChuuHanaStick::theNerve());
+
+		mSprayedByWaterCooldown = 0;
+	} else if (!mNewSw
+	           && mSpine->getCurrentNerve()
+	                  == &TNerveChuuHanaKeepBalance::theNerve()) {
+		JGeometry::TVec3<f32> dir(mPosition.x - gpMarioPos->x, 10.0f,
+		                          mPosition.z - gpMarioPos->z);
+		MsVECNormalize(&dir, &dir);
+		dir.scale(2.0f * unk1B4->mSLGetWaterPow.get(), dir);
+		mVelocity = dir;
+
+		mLiveFlag |= LIVE_FLAG_AIRBORNE;
+		mPosition.y += 20.0f;
+	}
 }
 
 void TChuuHana::attackToMario()
@@ -304,8 +375,40 @@ void TChuuHana::moveObject()
 
 bool TChuuHana::isCollidMove(THitActor* actor)
 {
-	// TODO: not yet reconstructed
-	return false;
+	// Get shoved into a random direction. Only other enemies can shove us.
+	u32 actorType = actor->getActorType();
+	bool canShove = actorType - ACTOR_TYPE_ENEMY <= 0x16 ? true : false;
+	if (canShove) {
+		bool rolling = mSpine->getCurrentNerve() == &TNerveChuuHanaRoll::theNerve()
+		                   ? true
+		                   : false;
+		if (rolling) {
+			if (mSpine->getCurrentNerve() != &TNerveChuuHanaWalkOnPanel::theNerve())
+				goto done;
+
+			mSpine->pushNerve(&TNerveChuuHanaRoll::theNerve());
+			goto done;
+		}
+
+		if (unk1B2 != 0)
+			goto done;
+
+		if (mSpine->getCurrentNerve() == &TNerveChuuHanaAttack::theNerve())
+			goto done;
+
+		if (((TLiveActor*)actor)->getInstanceIndex() <= mInstanceIndex)
+			goto done;
+
+		// one chance in four to actually react
+		if (TMsRange<s32>(0, 100).rand() % 4 != 0)
+			goto done;
+
+		setSafeGoal();
+		unk1B2 = 1;
+	}
+
+done:
+	return !(mSpine->getCurrentNerve() == &TNerveChuuHanaObject::theNerve());
 }
 
 void TChuuHana::isRolling()
@@ -407,9 +510,24 @@ void TChuuHana::kill()
 	TSmallEnemy::kill();
 }
 
+// TODO: the flag bit this function asks for is unnamed; MapData.hpp only
+// defines BG_CHECK_FLAG_ILLEGAL (0x10). The binary tests bit 27 of
+// TBGCheckData::mFlags, which is a u16, so the test is always false. Passing
+// 0x10 reproduces that instruction exactly: when the operand is narrowed to
+// its declared 16 bits, MWCC encodes the mask as bit 31 - log2(flag).
+#define PLANE_FLAG_UNK27 0x10
+
 void TChuuHana::forceKill()
 {
-	// TODO: not yet reconstructed
+	if (mGroundPlane->checkFlag(PLANE_FLAG_UNK27)
+	    || !(mGroundPlane->isDeathPlane() || mGroundPlane->isPool()
+	         || mGroundPlane->isWaterSurface())) {
+		if (gpMap->isInArea(mPosition.x, mPosition.z)
+		    && !mGroundPlane->checkFlag(PLANE_FLAG_UNK27))
+			return;
+	}
+
+	kill();
 }
 
 f32 TChuuHana::getGravityY() const
@@ -504,7 +622,67 @@ void TChuuHana::rollStart()
 
 void TChuuHana::checkStretchType()
 {
-	// TODO: not yet reconstructed
+	// unk1A8 is the current stretch amount. Once it passes the threshold for
+	// the instance's size the chuuhana reacts: balancing ones flip over, and
+	// the rest switch to the force-jumped nerve.
+	if (mSpine->getCurrentNerve() == &TNerveChuuHanaKeepBalance::theNerve()) {
+		f32 limit = unk1B4->mSLReverseHeightS.get();
+		if (mInstanceIndex > 0)
+			limit = unk1B4->mSLReverseHeightM.get();
+		if (mInstanceIndex > 2)
+			limit = unk1B4->mSLReverseHeightL.get();
+
+		if (unk1A8 > limit) {
+			unk1B1 = 1;
+			unk214 = 1;
+			mSpine->pushNerve(&TNerveChuuHanaFall2::theNerve());
+			mSpine->pushNerve(&TNerveChuuHanaJumpPrepare::theNerve());
+		}
+		return;
+	}
+
+	((TChuuHanaManager*)mManager)->unk6C++;
+
+	f32 limit = unk1B4->mSLStretchHeightS.get();
+	if (mInstanceIndex > 0)
+		limit = unk1B4->mSLStretchHeightM.get();
+	if (mInstanceIndex > 2)
+		limit = unk1B4->mSLStretchHeightL.get();
+
+	if (unk1A8 > limit) {
+		unk1B1 = 0;
+		unk214 = 0;
+		setBckAnm(8);
+		mSpine->pushNerve(&TNerveChuuHanaForceJumped::theNerve());
+		return;
+	}
+
+	limit = unk1B4->mSLMediumStretchHeightS.get();
+	if (mInstanceIndex > 0)
+		limit = unk1B4->mSLMediumStretchHeightM.get();
+	if (mInstanceIndex > 2)
+		limit = unk1B4->mSLMediumStretchHeightL.get();
+
+	if (unk1A8 > limit) {
+		unk1B1 = 0;
+		unk214 = 0;
+		setBckAnm(9);
+		mSpine->pushNerve(&TNerveChuuHanaForceJumped::theNerve());
+		return;
+	}
+
+	limit = unk1B4->mSLSmallStretchHeightS.get();
+	if (mInstanceIndex > 0)
+		limit = unk1B4->mSLSmallStretchHeightM.get();
+	if (mInstanceIndex > 2)
+		limit = unk1B4->mSLSmallStretchHeightL.get();
+
+	if (unk1A8 > limit) {
+		unk1B1 = 0;
+		unk214 = 0;
+		setBckAnm(10);
+		mSpine->pushNerve(&TNerveChuuHanaForceJumped::theNerve());
+	}
 }
 
 void TChuuHana::entryCollision()
@@ -526,13 +704,73 @@ const char** TChuuHana::getBasNameTable() const { return tyuhana_bastable; }
 
 DEFINE_NERVE(TNerveChuuHanaWalkOnPanel, TLiveActor)
 {
-	// TODO: not yet reconstructed
+	TChuuHana* self = (TChuuHana*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		self->setWalkAnm();
+		*self->unk21C = 0;
+	}
+
+	if (self->unk218 == nullptr) {
+		if (self->mGroundPlane->mActor != nullptr) {
+			self->unk1F8 = self->mGroundPlane->mActor->mPosition;
+			self->unk218 = (TLiveActor*)self->mGroundPlane->mActor;
+		}
+	} else {
+		self->walkBehavior(2, 1.0f);
+	}
+
+	self->unk1A4 += 1;
+	if (self->unk1A4 > 20) {
+		self->unk1A4 = 0;
+		if (self->willFall(TChuuHana::mCheckOnPanelTime))
+			self->unk1A4 = -100;
+
+		if (!self->isAirborne() && self->mGroundPlane->mActor == nullptr
+		    && self->mPosition.y + 200.0f < self->unk1F8.y)
+			spine->pushNerve(&TNerveChuuHanaFall2::theNerve());
+	}
+
+	if (self->isReachedToGoalXZ())
+		self->setGoal();
+
+	if (*self->unk21C != 0) {
+		spine->pushNerve(&TNerveChuuHanaAttack::theNerve());
+		return TRUE;
+	}
+
 	return FALSE;
 }
 
 DEFINE_NERVE(TNerveChuuHanaForceJumped, TLiveActor)
 {
-	// TODO: not yet reconstructed
+	TChuuHana* self = (TChuuHana*)spine->getBody();
+
+	if (spine->getTime() == 0)
+		self->setSafeGoal();
+
+	if (self->unk214 != 0) {
+		if (self->getCurAnmFrameNo(0) > 80.0f) {
+			if (self->mGroundPlane->mActor != nullptr)
+				const_cast<TLiveActor*>(self->mGroundPlane->mActor)
+				    ->receiveMessage(self, 3);
+			self->unk214 = 0;
+		}
+	}
+
+	if (self->checkCurAnmEnd(0)) {
+		if (self->unk1B1 != 0) {
+			spine->pushNerve(&TNerveChuuHanaRoll::theNerve());
+		} else {
+			// back to the default (walk on panel) nerve, and queue it again
+			// so the flower keeps circling the flower bed.
+			spine->reset();
+			spine->setDefaultNext();
+			spine->pushAfterCurrent(spine->getDefault());
+		}
+		return TRUE;
+	}
+
 	return FALSE;
 }
 

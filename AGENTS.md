@@ -466,3 +466,43 @@ Before submitting a PR with matching work, make sure to check the following:
 - Validate that all weak symbols are actually marked as inline
   * In case of methods, they should be defined in-line in the header rather than in the cpp file and the inline keyword should not be used
 - Validate that all virtual functions in each class are properly marked as virtual (even if they are overriden) and are sorted in the order they appear inside of the virtual table
+
+---
+
+## Editing rules (learned the hard way - read this before touching a source file)
+
+**Never round-trip a source file through PowerShell Get-Content / Set-Content /
+Out-File.** These files are UTF-8 and contain Japanese string literals. Two separate
+failures keep happening:
+
+1. Set-Content -Encoding UTF8 writes a **BOM**. sjiswrap then rejects the file with a
+   misleading error pointing at line 1:
+   #       1: &#65279;#include <Enemy/popo.hpp> / #   Error: ^  declaration syntax error
+2. Get-Content | Set-Content under a Shift-JIS code page **lossily transcodes** the
+   Japanese literals. Nothing reports it: the file still compiles, but every string
+   offset in .rodata shifts and previously-matching functions silently drop.
+
+**Use the edit tool for all source edits.** If you have already broken encoding:
+
+- python tools\fix-source-encoding.py lists every file under src/ and include/ that
+  has a BOM or is not valid UTF-8; add --fix to strip BOMs. It refuses to touch a file
+  that is not valid UTF-8, because that one needs a human to decide what the bytes are.
+- Note that a whole-file Set-Content also strips the indentation of your edits, so it
+  makes the diff unreviewable even when the encoding survives.
+
+**Do not commit, git add, or git stash.** Many agents share one working tree; a commit
+destroys everyone's diff bookkeeping. Report what you changed instead.
+
+**Build only your own object.** A plain 
+inja races every other agent in the tree:
+
+inja build/GMSP01/src/<Path>/<Unit>.o. Run the full 
+inja only when you are asked,
+and expect to pick up other agents' half-finished files.
+
+**One owner per file.** If two agents are assigned the same .cpp, the second one to
+notice must stand down rather than race. Re-read a file immediately before editing it -
+it may have changed under you.
+
+See docs/AGENT_MATCHING_TIPS.md for the MWCC idioms (lwinm MB field, xoris,
+? true : false, TVec3 word copy, function-pointer mangling, #pragma dont_inline).

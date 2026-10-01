@@ -26,6 +26,15 @@ void CPolarSubCamera::calcInHouseNoSub_()
 
 void CPolarSubCamera::calcInHouseNo_(bool param_1)
 {
+	// TODO: two known differences from the ROM (both unresolved):
+	//  - the scaleAdd loop below is unrolled x9 here but only x3 in the ROM
+	//    (ROM: `li r0,3 / mtctr` with 3 copies per iteration).
+	//  - our frame is 0x1f8 vs the ROM's 0x1c0, and the ROM's out_euler
+	//    slot (r4 = 0x8c(r1)) is only 8 bytes and sits *below* local_12C,
+	//    whereas ours is 54 bytes (S16Vec[9]) above it. The 3 unused ROM
+	//    slots at 0x64..0x87 plus the smaller euler slot account for the
+	//    frame difference; we also save r26..r31 where the ROM only saves
+	//    r24..r28.
 	bool b = true;
 	if (!param_1 && unk13C == unk124 && unk160 == unk148)
 		b = false;
@@ -77,6 +86,11 @@ void CPolarSubCamera::calcInHouseNo_(bool param_1)
 
 bool CPolarSubCamera::isNeedGroundCheck_()
 {
+	// TODO: the whole tail is instruction-for-instruction identical to the
+	// ROM; only f1/f2 are swapped (ROM keeps mDistMax/JMASSin(maxAngle) in
+	// f1 and mDistMin/JMASSin(minAngle) in f3, we keep them the other way
+	// round). Swapping the declaration order of a/b or hoisting distY does
+	// not fix it (both were tried, both are worse).
 	bool result = true;
 	if (mMode == CAMERA_MODE_REPRODUCE_DEMO
 	    || (isLButtonCameraSpecifyMode(mMode) && !isNowInbetween() ? true
@@ -140,6 +154,10 @@ static bool should_clip_fabricated(const TBGCheckData* data)
 
 bool CPolarSubCamera::execWallCheck_(Vec* param_1)
 {
+	// TODO: instruction sequence matches the ROM exactly; only register
+	// numbering differs (wall in r6 vs r5, the 0.0f constant in f3 vs f2,
+	// and the dot-product temporaries f1/f2/f3 vs f3/f4/f5). Swapping the
+	// declaration order of posArg/posCam was tried and is slightly worse.
 	bool moved = false;
 	f32 radius = mSaveEx->mSLWallCheckRadius.get();
 	if (radius > 0.0f) {

@@ -47,6 +47,21 @@ TLensFlare::TLensFlare(const char* name)
 	unk14 = new J3DModel(unk10, 0, 1);
 }
 
+// TODO: the ROM calls three weak header inlines out of line here and therefore
+// also emits an out-of-line copy of each in this TU (JMASCos__Fs, JMASSin__Fs,
+// JGeometry::TVec3<f32>::set(const Vec&) -- all 0x1C bytes, all `scope:weak`):
+//   * 2x  bl set(const Vec&)   -- 0x8002D4E4 / 0x8002D4F4
+//   * 1x  bl set(const Vec&)   -- 0x8002D5F8 (finalPos.set(sunWorldPos))
+//   * 1x  bl JMASCos / JMASSin -- 0x8002D510 / 0x8002D520 (inside the
+//                                 cameralib 8-arg CLBCalcNearNinePos inline)
+// MWCC 1.2.5 expands all three here no matter how deep they sit: a chain of
+// trivial forwarding `inline`s is folded away, and adding more inlined code
+// earlier in the function does not change the decision. Reproducing it needs
+// a change in libs/JSystem (JMath.hpp / JGVec3.hpp), not a game-side spelling.
+// The `bl set` is what keeps `finalPos` in memory in the ROM; because we
+// inline it, `finalPos` gets scalarised away, `lx/ly/lz` get a stack home, and
+// the grid lerp is contracted into `fmadds` instead of `fmuls`+`fadds`. That
+// single `bl` is most of what is left of the 21% deficit in this function.
 void TLensFlare::perform(u32 cue, JDrama::TGraphics*)
 {
 	if (gpSunMgr->isThing())
@@ -56,11 +71,11 @@ void TLensFlare::perform(u32 cue, JDrama::TGraphics*)
 	if (gpCameraMario->isMarioIndoor()) {
 		sunInBounds = false;
 	} else {
-		sunInBounds = gpSunModel->isInBounds(unk40);
+		sunInBounds = sunPosInBounds(gpSunModel->unkF8[0], unk40);
 	}
 
 	if (cue & CUE_MOVE) {
-		if (!gpSunModel->isInBounds(unk44)) {
+		if (!sunPosInBounds(gpSunModel->unkF8[0], unk44)) {
 			unk28 = 0.0f;
 		} else {
 			f32 hiddenCount = gpSunModel->calcHiddenRatio();

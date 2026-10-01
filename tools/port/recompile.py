@@ -15,6 +15,7 @@ Usage :
         --map orig/GMSP01/files/marioEU.MAP --out generated
 """
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -75,7 +76,15 @@ def main() -> None:
                          help="dossier de sortie pour le C genere (defaut: generated/)")
     parser.add_argument("--jobs", type=int, default=None,
                          help="nombre de fichiers C paralleles (defaut: dolrecomp choisit)")
+    parser.add_argument("--chunk-instructions", type=int, default=None,
+                         metavar="N",
+                         help="instructions par fichier .c genere (128..4096, "
+                              "defaut 4096 = 219 fichiers ; 128 = 6978 fichiers)")
     args = parser.parse_args()
+
+    if args.chunk_instructions is not None and not 128 <= args.chunk_instructions <= 4096:
+        sys.exit(f"--chunk-instructions doit etre entre 128 et 4096 "
+                 f"(recu {args.chunk_instructions})")
 
     if not args.dol.is_file():
         sys.exit(f"DOL introuvable : {args.dol}")
@@ -103,8 +112,21 @@ def main() -> None:
         command.append(f"-j{args.jobs}")
     command += ["--map", str(args.map), str(args.dol), str(staging)]
 
+    # Le nombre de fichiers .c produits ne se regle PAS par
+    # `--partition-instructions` : ce drapeau n'est lu que dans le chemin LLVM
+    # (`build_llvm_ranges`, src/app/pipeline.c) et le port utilise le backend C.
+    # Verifie : 64, 256 et le defaut donnent tous 219 fichiers, et `diff -r`
+    # ne signale aucune difference entre les sorties. Le backend C lit la
+    # variable d'environnement DOLRECOMP_C_CHUNK_INSTRUCTIONS
+    # (`c_chunk_instructions`, src/app/pipeline.c), plage 128..4096.
+    env = os.environ.copy()
+    if args.chunk_instructions is not None:
+        env["DOLRECOMP_C_CHUNK_INSTRUCTIONS"] = str(args.chunk_instructions)
+
     print("Lancement :", " ".join(command))
-    subprocess.run(command, check=True)
+    if args.chunk_instructions is not None:
+        print(f"           DOLRECOMP_C_CHUNK_INSTRUCTIONS={args.chunk_instructions}")
+    subprocess.run(command, check=True, env=env)
 
     produced = staging / "generated"
     if not produced.is_dir():

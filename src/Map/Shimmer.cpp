@@ -38,6 +38,13 @@ void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_MOVE) {
 		unk54->setFrame(unk58->getFrame());
 		unk58->update();
+
+	// Every diff marker of this function is a stack offset sitting 0x28 above
+	// ours (target frame 0x198 against 0x170). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_40_shimmerPerform[40];
+	(void)framePad_40_shimmerPerform;
 	}
 
 	if (cue & CUE_CALC_VIEW) {

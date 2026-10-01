@@ -140,6 +140,13 @@ void TMapObjBase::throwObjToFrontFromPoint(TMapObjBase* object,
 		object->mVelocity.set(mtx[0][2] * speed, mtx[1][2] * speed + y_speed,
 		                      mtx[2][2] * speed);
 		object->offLiveFlag(LIVE_FLAG_UNK10);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x88 against 0x80). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_throwObjToFront[8];
+	(void)framePad_8_throwObjToFront;
 	}
 }
 
@@ -206,6 +213,13 @@ void TMapObjBase::joinToGroup(const char* param_1, THitActor* param_2)
 	static_cast<JDrama::TViewObjPtrListT<THitActor>*>(
 	    JDrama::TNameRefGen::search(param_1))
 	    ->push_back(param_2);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x68 against 0x60). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_mapObjJoinToGroup[8];
+	(void)framePad_8_mapObjJoinToGroup;
 }
 
 TMapCollisionWarp*

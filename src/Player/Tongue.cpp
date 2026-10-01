@@ -152,14 +152,6 @@ THitActor* TYoshiTongue::findTarget(bool allowExtra, bool checkForward)
 	f32 bestDist    = 10000.0f;
 
 	for (s32 i = 0; i < mColCount; ++i) {
-		s32 type = mCollisions[i]->mActorType;
-		if (type == 0x10000024 || type == 0x4000000A) {
-			mState = STATE_RETRACTING;
-			return nullptr;
-		}
-	}
-
-	for (s32 i = 0; i < mColCount; ++i) {
 		THitActor* actor = mCollisions[i];
 		s32 type         = actor->mActorType;
 		int ok           = 0;
@@ -186,8 +178,18 @@ THitActor* TYoshiTongue::findTarget(bool allowExtra, bool checkForward)
 				ok = 1;
 			if (type == 0x4000005A)
 				ok = 1;
-			if (type & ACTOR_TYPE_ENEMY ? true : false)
-				ok = 1;
+			// The `? true : false` spelling is what makes the ROM emit the
+			// li 1 / b / li 0 / clrlwi. bool materialisation here.
+			if (type & ACTOR_TYPE_ENEMY ? true : false) {
+				switch (type) {
+				case 0x10000005:
+				case 0x10000024:
+				case 0x4000000A:
+					break;
+				default:
+					ok = 1;
+				}
+			}
 		}
 
 		if (ok != 1)
@@ -197,10 +199,16 @@ THitActor* TYoshiTongue::findTarget(bool allowExtra, bool checkForward)
 		targetPos.y += 0.5f * actor->mDamageHeight;
 		JGeometry::TVec3<f32> delta = targetPos - mTipPos;
 
-		if (delta.isZero())
+		// TODO: the ROM's polarity here looks inverted (as written it rejects
+		// every actor that is NOT sitting exactly on the tongue tip, so
+		// findTarget can never return anything). The instruction stream is
+		// the ground truth, so the `!(x <= eps)` spelling is kept; the plain
+		// `if (lenSq > eps)` form does not compile to the same code.
+		f32 lenSq = delta.squared();
+		if (!(lenSq <= JGeometry::TUtil<f32>::epsilon()))
 			continue;
 
-		f32 dist = delta.length();
+		f32 dist = JGeometry::TUtil<f32>::sqrt(lenSq);
 		delta.normalize();
 
 		if (checkForward && !(delta.dot(mHeadDir) > 0.5f))
@@ -298,10 +306,11 @@ void TYoshiTongue::movement()
 			JGeometry::TVec3<f32> tpos = target->mPosition;
 			tpos.y += 0.5f * target->mDamageHeight;
 			JGeometry::TVec3<f32> step = (tpos - mTipPos) * mExtendAmount;
-			mTipPos += step;
+			mTipPos = mTipPos + step;
 			mInitialVelocity = step;
 
-			JGeometry::TVec3<f32> rem = tpos - mTipPos;
+			JGeometry::TVec3<f32> rem = tpos;
+			rem.sub(mTipPos);
 			if (rem.length() < 200.0f
 			    && target->receiveMessage(this, HIT_MESSAGE_TAKE) == true) {
 				mHeldObject = (TTakeActor*)target;
@@ -317,17 +326,15 @@ void TYoshiTongue::movement()
 	}
 
 	case STATE_GRABBED:
-		mTipPos += mInitialVelocity;
 		mProgress += 1;
 		if (mProgress > 10)
 			mState = STATE_RETRACTING;
 		break;
 
 	case STATE_RETRACTING: {
-		JGeometry::TVec3<f32> diff = (mTipPos - mHeadPos) * mRetractAmount;
+		JGeometry::TVec3<f32> step = (mTipPos - mHeadPos) * mRetractAmount;
 
-		mTipPos = mHeadPos;
-		mTipPos += diff;
+		mTipPos = mHeadPos + step;
 		break;
 	}
 
@@ -366,7 +373,7 @@ void TYoshiTongue::calcAnim(MtxPtr mtx)
 	mHeadDir.z = mtx[2][0];
 
 	switch (mState) {
-	case STATE_EXTENDING: {
+	case STATE_IDLE: {
 		J3DModelData* modelData = mModel->getModelData();
 		for (u16 i = 0; i < modelData->getShapeNum(); ++i)
 			modelData->getShapeNodePointer(i)->onFlag(J3DShpFlag_Visible);
@@ -389,6 +396,8 @@ void TYoshiTongue::calcAnim(MtxPtr mtx)
 		tip.y += 50.0f;
 		SMS_MakeJointsToArc(mModel, mHeadPos, mHeadDir, tip);
 
+		Mtx modelMtx;
+
 		u16 jointNum = mModel->getModelData()->getJointNum();
 		MtxPtr a     = mModel->getAnmMtx(jointNum - 2);
 		MtxPtr b     = mModel->getAnmMtx(jointNum - 1);
@@ -403,23 +412,20 @@ void TYoshiTongue::calcAnim(MtxPtr mtx)
 		JGeometry::TVec3<f32> tmp;
 		tmp.cross(up, dir);
 
-		Mtx modelMtx;
 		modelMtx[0][0] = tmp.x;
-		modelMtx[0][1] = tmp.y;
-		modelMtx[0][2] = tmp.z;
+		modelMtx[0][1] = up.x;
+		modelMtx[0][2] = dir.x;
 		modelMtx[0][3] = tip.x;
 
-		modelMtx[1][0] = up.x;
+		modelMtx[1][0] = tmp.y;
 		modelMtx[1][1] = up.y;
-		modelMtx[1][2] = up.z;
+		modelMtx[1][2] = dir.y;
 		modelMtx[1][3] = tip.y;
 
-		modelMtx[2][0] = dir.x;
-		modelMtx[2][1] = dir.y;
+		modelMtx[2][0] = tmp.z;
+		modelMtx[2][1] = up.z;
 		modelMtx[2][2] = dir.z;
 		modelMtx[2][3] = tip.z;
-
-		char kek[0x40];
 
 		mTipModel->setBaseTRMtx(modelMtx);
 		mTipModel->calc();

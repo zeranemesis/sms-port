@@ -11,11 +11,57 @@ const JGeometry::TVec3<f32> CLBConstUpVec(0.0f, 1.0f, 0.0f);
 static const f32 SHORTANGLE_TO_DEGREES = 0.005493164f; // 360/65536
 static const f32 DEGREES_TO_RADIANS    = 0.017453294f; // pi/180
 
-// TODO: These are very fake
-static void normalizeInner1(JGeometry::TVec3<f32>& vec) { vec.normalize(); }
-static void normalizeInner2(JGeometry::TVec3<f32>& vec)
+// TODO: These are very fake. The extra indirection exists only to push the
+// inline expansion of setLength() inside normalize() one pass deeper, so that
+// the first call site stops at a real `bl setLength` while the second one
+// still expands it -- that is what the ROM does.
+static inline void normalizeInner1(JGeometry::TVec3<f32>& vec)
+{
+	vec.normalize();
+}
+
+static inline void normalizeInner2(JGeometry::TVec3<f32>& vec)
 {
 	normalizeInner1(vec);
+}
+
+// TODO: also fabricated; pushes MsSqrtf()'s expansion one pass deeper so that
+// the xzDistance computation keeps a real `bl MsSqrtf` while the near-plane
+// diagonal below expands it, matching the ROM.
+static inline f32 sqrtInner(f32 x)
+{
+	return MsSqrtf(x);
+}
+
+static inline f32 sqrtInner2(f32 x)
+{
+	return sqrtInner(x);
+}
+
+static inline void RotateVecByPitchYaw(JGeometry::TVec3<f32>* vec, s16 pitch,
+                                       s16 yaw)
+{
+	f32 sinPitch = JMASSin(pitch);
+	f32 cosPitch = JMASCos(pitch);
+	f32 sinYaw = JMASSin(yaw);
+	f32 cosYaw = JMASCos(yaw);
+
+	f32 y = vec->y;
+	vec->y = y * cosPitch - vec->z * sinPitch;
+	vec->z = y * sinPitch + vec->z * cosPitch;
+
+	f32 x = vec->x;
+	vec->x = x * cosYaw + vec->z * sinYaw;
+	vec->z = -x * sinYaw + vec->z * cosYaw;
+}
+
+static inline void MultVec33(JGeometry::TRotation3<TMtx33f>& mtx,
+                             JGeometry::TVec3<f32>* vec)
+{
+	JGeometry::TVec3<f32> v = *vec;
+	vec->x = mtx.at(0, 0) * v.x + mtx.at(1, 0) * v.y + mtx.at(2, 0) * v.z;
+	vec->y = mtx.at(0, 1) * v.x + mtx.at(1, 1) * v.y + mtx.at(2, 1) * v.z;
+	vec->z = mtx.at(0, 2) * v.x + mtx.at(1, 2) * v.y + mtx.at(2, 2) * v.z;
 }
 
 static inline void RotateAboutAxis(const JGeometry::TVec3<f32>& param_axis,
@@ -25,7 +71,8 @@ static inline void RotateAboutAxis(const JGeometry::TVec3<f32>& param_axis,
 
 	mtxT.identity();
 	mtxT.setRotate(param_axis, angle);
-	mtxT.mult33(*vec);
+
+	MultVec33(mtxT, vec);
 }
 
 void CLBCalc2DFPos(JGeometry::TVec2<f32>* out_ndc_pos, const f32 (*proj_mtx)[4],
@@ -140,6 +187,11 @@ void CLBRevisionLookatByAngleX(s16 vAngleMin, s16 vAngleMax, const Vec& origin,
 	CLBPolarToCross(origin, inOut, radius, vAngle, hAngle);
 }
 
+// TODO: 92.6%. Instruction stream matches; only the frame is off -- ours is
+// 32 bytes (0x228) smaller than the ROM's 0x248, plus a small regswap in the
+// inlined RotVecByPitchYaw-equivalent. The four `RotateAboutAxis` inline sites
+// and the four by-value `operator-`/`operator+` temporaries all line up, so the
+// missing bytes are unnamed.
 void CLBRotatePosAndUp(s16 sAngle1, s16 sAngle2,
                        const JGeometry::TVec3<f32>& axis1,
                        const JGeometry::TVec3<f32>& axis2,
@@ -156,9 +208,9 @@ void CLBRotatePosAndUp(s16 sAngle1, s16 sAngle2,
 	*param_6 = offset + v1;
 	RotateAboutAxis(axis1, -angle1, param_7);
 
-	JGeometry::TVec3<f32> v2 = *param_6 - offset;
-	RotateAboutAxis(axis2, -angle2, &v2);
-	*param_6 = offset + v2;
+	v1 = *param_6 - offset;
+	RotateAboutAxis(axis2, -angle2, &v1);
+	*param_6 = offset + v1;
 	RotateAboutAxis(axis2, -angle2, param_7);
 }
 
@@ -320,19 +372,42 @@ void CLBCalcScaleTranslateMatrix(MtxPtr mtx, const Vec& scale,
 	mtx[2][3] = translate.z;
 }
 
+// TODO: UNUSED in the original binary (never called). Reconstructed from the
+// map signature/size only; the body is a guess.
+void CLBCalcNearClipAngle(JGeometry::TVec3<f32>* out_pos, S16Vec* out_euler,
+                          const JGeometry::TVec3<f32>& origin,
+                          const JGeometry::TVec3<f32>& lookat, s16 roll,
+                          f32 near_dist)
+{
+	JGeometry::TVec3<f32> dir;
+
+	dir.sub(lookat, origin);
+	dir.normalize();
+
+	out_pos->scaleAdd(near_dist, origin, dir);
+
+	f32 xzDistance = MsSqrtf((origin.x - lookat.x) * (origin.x - lookat.x)
+	                         + (origin.z - lookat.z) * (origin.z - lookat.z));
+
+	out_euler->x = -matan(xzDistance, origin.y - lookat.y);
+	out_euler->y = matan(origin.z - lookat.z, origin.x - lookat.x);
+	out_euler->z = roll;
+}
+
 void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
                         const JGeometry::TVec3<f32>& origin,
                         const JGeometry::TVec3<f32>& lookat, s16 roll,
                         f32 near_dist, const JGeometry::TVec2<f32>& near_dims)
 {
-	// TODO: This needs matching work, but it's mathematically correct
+	// TODO: 76.8%. The instruction stream is now the ROM's; what is left is
+	// (a) a 64-byte-short stack frame (0x1b0 vs the ROM's 0x1f0) and the
+	// stack-offset noise that follows from it, and
+	// (b) a register-allocation difference in the corner-vector block, where
+	// the ROM re-materialises `local_74 * fVar7` component-by-component into
+	// local_90 while we fold it into fmadds.
 
 	JGeometry::TVec3<f32> fVar16;
 	JGeometry::TVec3<f32> fVar19;
-
-	JGeometry::TRotation3<TMtx33f> local_118;
-
-	JGeometry::TRotation3<TMtx33f> local_e4;
 
 	JGeometry::TVec3<f32> local_a8;
 	JGeometry::TVec3<f32> local_90;
@@ -346,8 +421,8 @@ void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
 	// Center point
 	out_grid[4].scaleAdd(near_dist, origin, local_a8);
 
-	f32 xzDistance = MsSqrtf(((origin.x - lookat.x) * (origin.x - lookat.x)
-	                          + (origin.z - lookat.z) * (origin.z - lookat.z)));
+	f32 xzDistance = sqrtInner2((origin.x - lookat.x) * (origin.x - lookat.x)
+	                           + (origin.z - lookat.z) * (origin.z - lookat.z));
 	out_euler->x   = -matan(xzDistance, origin.y - lookat.y);
 	out_euler->y   = matan(origin.z - lookat.z, origin.x - lookat.x);
 	out_euler->z   = roll;
@@ -359,55 +434,24 @@ void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
 	local_80.sub(lookat, origin);
 	normalizeInner1(local_80);
 
-	fVar16.z = out_euler->z * SHORTANGLE_TO_DEGREES * DEGREES_TO_RADIANS;
+	f32 rollAngle = out_euler->z * SHORTANGLE_TO_DEGREES * DEGREES_TO_RADIANS;
 
 	// Basically transform the up/right vectors from cam space into world space.
-	// TODO: Definitely inlines...
+	RotateVecByPitchYaw(&local_68, out_euler->x, out_euler->y);
 
-	{
-		f32 sinX = JMASSin(out_euler->x);
-		f32 cosX = JMASCos(out_euler->x);
-		f32 sinY = JMASSin(out_euler->y);
-		f32 cosY = JMASCos(out_euler->y);
+	RotateAboutAxis(local_80, rollAngle, &local_68);
 
-		// This transformation appears to be the following:
-		// [ cosY, 0, sinY]   [1,   0,     0 ]
-		// [   0,  1,   0 ] * [0, cosX, -sinX]
-		// [-sinY, 0, cosY]   [0, sinX,  cosX]
-		local_68.set(local_68.x * cosY
-		                 + (local_68.y * sinX + local_68.z * cosX) * sinY,
-		             local_68.y * cosX - local_68.z * sinX,
-		             -local_68.x * sinY
-		                 + (local_68.y * sinX + local_68.z * cosX) * cosY);
+	RotateVecByPitchYaw(&local_74, out_euler->x, out_euler->y);
 
-		local_e4.identity33();
-		local_e4.setRotate(local_80, fVar16.z);
-
-		local_e4.mult33(local_68);
-	}
-
-	{
-		f32 sinX = JMASSin(out_euler->x);
-		f32 cosX = JMASCos(out_euler->x);
-		f32 sinY = JMASSin(out_euler->y);
-		f32 cosY = JMASCos(out_euler->y);
-
-		local_74.set(local_74.x * cosY
-		                 + (local_74.y * sinX + local_74.z * cosX) * sinY,
-		             local_74.y * cosX - local_74.z * sinX,
-		             -local_74.x * sinY
-		                 + (local_74.y * sinX + local_74.z * cosX) * cosY);
-
-		local_118.identity33();
-		local_118.setRotate(local_80, fVar16.z);
-
-		local_118.mult33(local_74);
-	}
+	RotateAboutAxis(local_80, rollAngle, &local_74);
 
 	f32 fVar3 = near_dims.y * 0.5f;
 	f32 fVar5 = near_dims.x * 0.5f;
 	f32 fVar6 = -fVar3;
 	f32 fVar7 = -fVar5;
+
+	fVar16.scale(fVar5, local_74);
+	fVar19.scale(fVar3, local_68);
 
 	out_grid[1].scaleAdd(fVar3, out_grid[4], local_68);
 	out_grid[7].scaleAdd(fVar6, out_grid[4], local_68);
@@ -416,24 +460,47 @@ void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
 
 	// Anything below here could be part of CLBCalcNearFourPos?
 
-	fVar16.scale(fVar5, local_74);
-	fVar19.scale(fVar3, local_68);
-
 	f32 halfPlaneDiagonal = MsSqrtf(fVar3 * fVar3 + fVar5 * fVar5);
 
-	local_90.scaleAdd(fVar7, fVar19, local_74);
+	local_90.scale(fVar7, local_74);
+	local_90 += fVar19;
 	MsVECNormalize(&local_90, &local_90);
 
 	out_grid[0].scaleAdd(halfPlaneDiagonal, out_grid[4], local_90);
 	local_90.negate();
 	out_grid[8].scaleAdd(halfPlaneDiagonal, out_grid[4], local_90);
 
-	local_90.x = (f32)(fVar16.x + fVar19.x);
-	local_90.y = (f32)(fVar16.y + fVar19.y);
-	local_90.z = (f32)(fVar16.z + fVar19.z);
+	local_90.x = fVar16.x;
+	local_90.y = fVar16.y;
+	local_90.z = fVar16.z;
+	local_90 += fVar19;
 	MsVECNormalize(&local_90, &local_90);
 
 	out_grid[2].scaleAdd(halfPlaneDiagonal, out_grid[4], local_90);
 	local_90.negate();
 	out_grid[6].scaleAdd(halfPlaneDiagonal, out_grid[4], local_90);
+}
+
+// TODO: UNUSED in the original binary (never called). Reconstructed from the
+// map signature/size only; the body is a guess and its compiled size does not
+// match the map's 0x104.
+void CLBCalcNearFourPos(JGeometry::TVec3<f32>* out_grid,
+                        JGeometry::TVec3<f32>* out_up, S16Vec* out_euler,
+                        const JGeometry::TVec3<f32>& origin,
+                        const JGeometry::TVec3<f32>& lookat, s16 roll,
+                        f32 near_dist, const JGeometry::TVec2<f32>& near_dims)
+{
+	JGeometry::TVec3<f32> up;
+
+	up.set(0.0f, 1.0f, 0.0f);
+	*out_up = up;
+
+	f32 halfHeight = near_dims.y * 0.5f;
+	f32 halfWidth  = near_dims.x * 0.5f;
+
+	out_grid[1].scaleAdd(halfHeight, out_grid[0], up);
+	out_grid[2].scaleAdd(halfWidth, out_grid[0], up);
+	out_grid[3].scaleAdd(-halfHeight, out_grid[0], up);
+
+	CLBCalcNearClipAngle(out_grid, out_euler, origin, lookat, roll, near_dist);
 }

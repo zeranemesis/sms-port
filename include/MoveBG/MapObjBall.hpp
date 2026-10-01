@@ -8,7 +8,7 @@ class TWaterEmitInfo;
 class TMapObjBall : public TMapObjGeneral {
 public:
 	TMapObjBall(const char* name = "ボール");
-	virtual ~TMapObjBall();
+	virtual ~TMapObjBall() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	virtual void control();
@@ -51,13 +51,13 @@ public:
 	/* 0x188 */ f32 unk188;
 	/* 0x18C */ f32 unk18C;
 	/* 0x190 */ f32 unk190;
-	/* 0x194 */ u32 unk194;
+	/* 0x194 */ int unk194;
 };
 
 class TResetFruit : public TMapObjBall {
 public:
 	TResetFruit(const char* name = "無限フルーツ");
-	virtual ~TResetFruit();
+	virtual ~TResetFruit() { }
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
@@ -66,7 +66,7 @@ public:
 	virtual void initMapObj();
 	virtual void touchActor(THitActor*);
 	virtual u32 touchWater(THitActor*);
-	virtual u32 getLivingTime() const;
+	virtual u32 getLivingTime() const { return mFruitLivingTime; }
 	virtual void appearing();
 	virtual void breaking();
 	virtual void waitingToAppear();
@@ -98,7 +98,7 @@ public:
 class TRandomFruit : public TResetFruit {
 public:
 	TRandomFruit(const char* name = "ランダムフルーツ");
-	virtual ~TRandomFruit();
+	virtual ~TRandomFruit() { }
 	virtual void initMapObj();
 
 	/* 0x1A8 */ u8 unk1A8[0x20];
@@ -122,7 +122,7 @@ public:
 
 	virtual void loadAfter();
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void control() { }
+	virtual void control();
 	virtual void kill();
 	virtual void initMapObj();
 	virtual void touchActor(THitActor*);

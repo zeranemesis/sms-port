@@ -2437,3 +2437,575 @@ which decode is wrong.
 
 This is a clamp, not a recovery: the report is an error line, it names the id
 and the site, and it states that the decode that produced the id is wrong.
+## 2026-09-30: render-to-texture, the PAL clock, and a PE that reports
+
+Three changes towards the first playable level, plus the measurement they rest
+on. All of them are in files the parallel session is not editing;
+`recomp_gx_fifo.cpp` in particular was left alone throughout, which is why the
+copy path is its own module.
+
+### Making the port measurable first
+
+`docs/port_todo.md` section 1.0 asks for one thing before anything else: to
+know whether the world is on screen during real gameplay. Three conclusions
+have already been drawn from the wrong layer here, and the reason is that a
+THP video, an in-engine cutscene and the game look alike.
+
+**The unresolved-host-call log.** Deduplicating to one line per distinct
+address was not enough: 16,050 lines, 2.9MB, at boot, burying the boot messages
+that matter. The dedup was also the wrong *shape*. `dispatch()` returning false
+is not a failure - it is how dr_cpu is told to run the guest's own body for
+that address, so an unbridged function keeps working. A bridge is only needed
+for a call that must reach hardware Aurora owns. `recomp_host.cpp` now logs the
+first twenty distinct addresses individually (a pattern in those is real
+information) and then one rolling line per second of guest time with the call
+count, the distinct count and a cap.
+
+**The copy report.** The instrumentation that last produced
+`onscreen=9627 offscreen=0 ... viewport=(4,4 1024x1024)` is not in the tree, so
+the number that motivated fixing render-to-texture could not be re-taken.
+`src/port/recomp_gx_copy.cpp` emits one line per second of guest time with the
+`GXSetTexCopySrc` / `GXSetTexCopyDst` / `GXCopyTex` counts, the last source
+rectangle and destination size, the viewport and the scissor - the scissor
+decoded exactly as `GXSetScissor` encodes it. When nothing asks for a copy, it
+says so explicitly, because silence is indistinguishable from a bridge that
+was never reached.
+
+**Layer attribution.** `dolphinjet_play_session.ps1` already records, per
+capture, the ISO timestamp and the log's byte length at that instant.
+`tools/port/layer_captures.py` joins that index against the log and prints, per
+capture, which of the three layers produced it, what the copy report said, and
+where the guest's pc was. It says in its own output that a `moteur 3D` verdict
+proves the geometry path and neither the world nor the game - the HUD and the
+player's hand still have to be looked at.
+
+### `GXCopyTex`
+
+`GXCopyTex` was never bridged, so `g_gxState.copyTextures` stayed empty, so any
+surface the game renders into a texture and samples afterwards sampled nothing.
+A bound-but-never-resolved texture looks exactly like a correct shader sampling
+black.
+
+The obvious bridge is wrong, and in a way that would have looked like it worked.
+Aurora has `GXCopyTex(dest, clear)` and it reads `g_gxState.texCopySrc`,
+`texCopyDstWidth/Height` and `texCopyFmt` - and Aurora's FIFO processor decodes
+**no** copy-related BP register, so those four fields are only ever set by
+Aurora's own `GXSetTexCopySrc` / `GXSetTexCopyDst`, which the recompiled guest
+never calls. Calling `::GXCopyTex` directly would resolve from the previous
+frame's rectangle into the previous frame's dimensions.
+
+The real state is in the guest's shadow struct, and every offset it needs is
+written down in `libs/dolphin/src/gx/__gx.h`: `cpTexSrc` 0x1F0, `cpTexSize`
+0x1F4, `cmode0` 0x1D0, `zmode` 0x1D8. `gx` is a pointer global at 0x80404628
+pointing at `gxData` at 0x803fae40 (both off `marioEU.MAP`), read at run time
+and bounds-checked rather than hardcoded. Two things this settles that are not
+obvious:
+
+- **Nothing reaches the FIFO before the copy.** `GXSetTexCopySrc` only writes
+  `gx->cpTexSrc`; the `GX_WRITE_BP_REG` calls are inside `GXCopyTex` itself
+  (`GXFrameBuf.c:486`). So reading Aurora's `bpRegCache` would give the
+  *previous* copy's rectangle, one frame stale.
+- **The destination size is not in any BP register at all.**
+  `GXSetTexCopyDst` keeps only a tile count in `cpTexStride`, which is not the
+  size. The size is in the guest `GXTexObj` the call was handed, at the same
+  offsets `emit_guest_texture_metadata` already reads.
+
+The destination is also the *key*: Aurora stores `copyTextures[dest]` and looks
+it up later with `GXTexObj_::data`, which the port sets to
+`cpu->ram + imageOffset`. Handing `GXCopyTex` the guest `GXTexObj` address
+would resolve a texture nothing ever looks up.
+
+`host_call_gx_copy_tex` returns **false**, so the recompiled body still runs and
+keeps `gx->bpSent` and the guest's shadow state in step - the same reasoning as
+`host_call_gx_load_tex_obj`. The four observers beside it also return false: the
+guest bodies are what maintain `gxData`.
+
+`decode_copy_plan()` is inline in `include/port/recomp_gx_copy.h` and depends on
+nothing, so `--recomp-gx-copy-self-test` can check the decode with no disc, no
+generated code and no graphics stack. One result worth recording: the `clear`
+argument is *not* in its signature, because the guest's clearing path
+(`GXFrameBuf.c:453-465`) rewrites `zmode` bits 0-3 and `cmode0`'s blend and
+logiop enables - and none of those five bits is a write mask. Depth update is
+`zmode` **bit 4**, not a `cmode0` bit; reading it as one is exactly the kind of
+plausible-but-wrong copy this module exists to avoid.
+
+**Verified:** compiled and run here with MSVC against the real header, 10/10 -
+the decode matches the SDK's own `SET_REG_FIELD` packing, the blend and logicop
+enables are not read as colour/alpha masks, and the three offsets used agree
+with the MAP and `__gx.h`. **Not verified:** that a resolved texture is ever
+bound and sampled. That needs a real frame, and it is what the copy report of a
+run is for.
+
+### PAL, and what `__OSTVMode` actually is
+
+`docs/port_todo.md` section 3.3 records `__OSTVMode` left at zero as a PAL disc
+declaring itself NTSC, paired with a 1/60 frame period, and says the two must
+change together. Both now do, and reading the SDK first changed the shape of
+the fix:
+
+- The value is the **format byte**, not the packed `VITVMode`. The SDK stores
+  `tv = mode >> 2` (`vi.c:283`), so PAL is `VI_PAL` = 1, not
+  `VI_TVMODE_PAL_INT` = 4. Writing 4 would be an out-of-range TV format rather
+  than merely a wrong one.
+- It is **not only IPL-provided**. `__VIInit` overwrites it with the format
+  derived from the mode the game itself chose (`vi.c:281-283`), so on a
+  region-aware disc the guest ends up correct on its own. `VIConfigure`
+  (`vi.c:704-722`) reads it as `tvInBootrom` and defers to the game's choice
+  unless that choice is NTSC or MPAL.
+
+So the half that self-corrects is the global, and the half that does not is the
+host's frame period: the host paces the guest and the host raises its VI retrace
+interrupts, so 60Hz on a 50Hz disc delivers a sixth more retraces per second
+than a real PAL console, and everything the guest times against `OSGetTime` runs
+fast. `kGuestFrameHz` and `kGuestTvFormat` now live together in
+`include/port/recomp_boot.h` so the two cannot drift apart again.
+
+### The pixel engine reporting a finish
+
+`docs/port_todo.md` section 3.1: the port bridges `GXSetDrawDone` away and
+forces the `DrawDone` flag, so it never cycles, `GXSetDrawDoneCallback` /
+`TokenCB` never fire, and a genuinely late GP is invisible.
+
+`__GXPEInit` (`GXMisc.c:263-270`) is the whole contract, and it is readable off
+the tree: interrupt `0x12` is `GXTokenInterruptHandler`, `0x13` is
+`GXFinishInterruptHandler`, and their PI cause bits are 0x200 and 0x400
+(`OSInterrupt.c:368-371`). `__peReg` is `OSPhysicalToUncached(0xC001000)`
+(`GXInit.c:79`), and `__peReg[5]` - the register both handlers set bits in - is
+the halfword at byte offset 0x0A.
+
+`recomp_interrupt.cpp` now registers the PE block, sets the finish status bit
+and raises PE_FINISH once per presented guest frame (a retrace happens after
+the GP drains, so that is when "the GPU is done" is true), and the guest's
+`GXFinishInterruptHandler` write brings the cause back down. That write *raises*
+the bit rather than clearing it - the opposite of the VI's clear-on-read - so
+the clear hangs off a write that sets the bit, not off a clearing one.
+
+**PE_TOKEN is deliberately never raised.** Its handler exists to pass a
+draw-sync token to `TokenCB`, and the token is produced when a `GXSetDrawSync`
+write reaches the GPU - a point inside the FIFO flush path in
+`recomp_gx_fifo.cpp`, which the parallel session owns. Raising it from the frame
+boundary would deliver a callback with a token nobody wrote. The token register
+itself is shadowed, so a guest write lands and reads back.
+
+`extract` / `insert` moved from the .cpp into the header, inline, because the
+big-endian lane arithmetic is the easy thing to get subtly wrong. It was wrong
+here once: a first draft shifted the status bit by the wrong lane amount, putting
+it in `__peReg[4]` instead of `__peReg[5]`, where nothing acknowledges it - the
+finish would never clear and would re-fire every frame.
+`--recomp-pe-lane-self-test` checks the round trip and the acknowledge, and
+includes the wrong-lane case explicitly as the thing it guards.
+
+**Verified:** compiled and run here with MSVC against the real header, 9/9,
+including that the shift-by-16 write is invisible at `__peReg[5]`. **Not
+verified:** delivery. Nothing in this checkout can run the port, so whether the
+guest's handler actually runs and `GXWaitDrawDone` actually returns is the
+first thing a real run has to say.
+
+### What this does not settle
+
+- Whether the world appears. The copy report is the measurement that decides it.
+- The horizontal resolution loss and the 35% of draws with no texture bound
+  (`port_todo.md` 2.1, 2.2). Untouched.
+- The `GXSetTevAlphaOp` workaround, which is wider than it should be - but that
+  lives in `recomp_gx_fifo.cpp`, with the parallel session.
+- The audio load question, and the `tools/port` PS1 harness's evidence level:
+  everything here is SCRIPTED, which shows the game survives plausible input,
+  not that it is playable.
+
+### Running it
+
+```bash
+# build as usual, then, in order:
+dolphinjet.exe --recomp-gx-copy-self-test
+dolphinjet.exe --recomp-pe-lane-self-test
+
+# a scripted session, then attribute the captures:
+powershell -File tools/port/dolphinjet_play_session.ps1 -Exe <path>\dolphinjet.exe -OutDir session
+python tools/port/layer_captures.py session
+```
+
+The self-tests need nothing but the built binary. The port itself still needs
+`tools/port/recompile.py` to have run against a real GMSP01 dump.
+## 2026-09-30 (later): the port builds here, and the build was never set up
+
+The section above says the port cannot be compiled in this checkout, because
+the Aurora dependency chain could not be fetched. **That was wrong, and it was
+wrong in a way worth correcting rather than repeating.** cmake 4.4.3, Ninja and
+network access are all present, Visual Studio 2022 Build Tools are installed,
+and `cmake -S . -B build-msvc -G Ninja` configures the whole stack - Aurora,
+RmlUi, Tracy, DolRecomp - in about 140 seconds. The only reason it appeared not
+to work is the finding below.
+
+### The eight local Aurora patches were never applied
+
+`CMakeLists.txt` says it plainly: the pinned `extern/aurora` submodule carries
+three (now eight) uncommitted local patches, and "CI must apply them at
+checkout". They were not applied in this working tree. The submodule was clean,
+so nothing was half-done - the step was simply skipped.
+
+This is not a cosmetic prerequisite. **Committed, working port code already
+depends on it**: `recomp_gx_fifo.cpp` references `aurora::gx::fifo::g_guestMemoryResolver`
+and `aurora::gx::fifo::process_stream`, and both come from
+`aurora-fifo-stream.patch`. Without it, the pre-existing port does not compile,
+which is indistinguishable from "the port has never been built" and reads as an
+environment limitation rather than a missing step.
+
+`git apply --check` says seven of the eight apply cleanly.
+
+### `aurora-render-fixes.patch` cannot apply whole - and that is not a merge conflict
+
+It fails at `lib/gx/gx.cpp:445`, which `aurora-gx-diagnostics.patch` has already
+touched. Skipping it then breaks the build differently, and the second failure
+is the interesting one:
+
+```
+lib/gx/gx.cpp(476): error C2039: 'tlutObjId' is not a member of 'aurora::gfx::TextureBind'
+```
+
+because the two files are **two halves of one change**: `aurora-gx-diagnostics.patch`
+carries the *consumer* side (the `resolve_sampled_textures` logic that reads
+`tlutObjId` / `tlutDataVersion` / `copyRevision` off a `TextureBind`), and
+`aurora-render-fixes.patch` carries the *producer* side (the three fields on
+`TextureBind` itself, in `lib/gfx/texture.hpp`). Applying the diagnostics patch
+without the fields it reads cannot link.
+
+Meanwhile the `gx.cpp` hunk of `render-fixes` is already upstream in Aurora
+5143394 - the vendored `resolve_sampled_textures` already has the
+`copyTextures.find(obj.data)` lookup - so that hunk is redundant and is the only
+reason the patch cannot apply cleanly.
+
+The resolution is to apply the patch minus that one file:
+
+```bash
+cd extern/aurora
+for p in ../../patches/aurora-*.patch; do git apply "$p"; done
+git apply --include='lib/gfx/texture.hpp' \
+          --include='lib/gfx/tex_copy_conv.cpp' \
+          ../../patches/aurora-render-fixes.patch
+```
+
+**The first loop fails on the last patch and that is expected.** Worth fixing
+properly by regenerating `aurora-render-fixes.patch` with the `gx.cpp` hunk
+dropped, so `for p in ...; do git apply "$p"; done` is safe for the next
+person and for CI. Left alone here: it is a submodule patch, and re-cutting
+someone else's patch is their call, not mine.
+
+Note the submodule is now **dirty** (18 changed files, all patch application).
+Nothing here should commit it.
+
+### A self-test that was wrong in the shipped copy
+
+With the patches applied and `recomp_gx_fifo.cpp` excluded from the build just
+long enough to link a test binary, both new self-tests run on a real
+`dolphinjet.exe`:
+
+```
+dolphinjet.exe --recomp-gx-copy-self-test   -> exit 0
+dolphinjet.exe --recomp-pe-lane-self-test   -> exit 0
+```
+
+The first run **failed**, and it was the in-tree test that was wrong, not the
+decoder: the assertion for "a copy must not gain a depth write" had its
+condition inverted, so it fired on the correct behaviour. The standalone
+harness written earlier in the same session had the right polarity, which is
+exactly why the two versions were worth keeping side by side. Fixed.
+
+The seven pre-existing self-tests: `hostcall`, `dolphin-sdk`, `mmio` and `pad`
+pass; `decrementer`, `locked-cache` and `fpu-context` fail with "requires
+generated game code" or silently, because without a `generated/` dump
+`DOLPHINJET_HAVE_RECOMPILED_GAME` is undefined and those live in the stubbed
+`recomp_boot.cpp`. That is the pre-existing behaviour of a dump-less build, not
+a regression - but it is worth stating rather than assuming, since three red
+self-tests in a row is the kind of thing that gets reported as a regression.
+
+### `recomp_gx_fifo.cpp` does not compile, and it is not this session's file
+
+With the Aurora patches in place, the port's **only** remaining build failure is
+the parallel session's uncommitted bridges in `recomp_gx_fifo.cpp`:
+
+- `GXChannel`, `GXTevStage`, `GXCompareFunc`, `GXMatrixID` are not in scope at
+  all (C2061) - missing includes.
+- `GXSetVtxAttrFmt` is called with `(vtxfmt, attr, comptype, size, frac)` but
+  Aurora's signature is `(GXVtxFmt, GXAttr, GXCompCnt, GXCompType, u8)` -
+  arguments 3 and 4 transposed.
+
+Left untouched, deliberately: it belongs to another session, and the fix is
+three includes and one argument order. The test binary above was produced by
+temporarily removing that one file from `files.cmake` and its self-test flag
+from `entry.cpp`, then restoring both - verified byte-identical by checksum
+afterwards. It is worth the other session knowing that the port's build is
+otherwise clean, because until now the Aurora-patch problem was masking this
+one completely.
+## 2026-09-30 (later still): the recompilation runs, and the boot path is typechecked
+
+The section above ended with "the port needs a real `generated/`". The DOL and
+the MAP are both in the tree, so that turned out to be a step away rather than a
+wall.
+
+### The recompilation pipeline still works
+
+`tools/port/recompile.py` on `orig/GMSP01/sys/main.dol` +
+`orig/GMSP01/files/marioEU.MAP`:
+
+```
+decoding text[1]: 890680 instructions at 0x80005600
+  890680 decoded, 890608 known, 72 embedded data, 0 unknown
+  writing 218 chunks with 1 job
+```
+
+**890,680 instructions, 0 unknown** - identical to what
+`docs/recompilation.md` records, which is the point: the recipe is reproducible,
+not a one-off. 219 `.c` files, 226MB, 8,324,371 lines, all of it compiling:
+**219/219 chunk objects, Aurora at 99 objects, `dr_cpu.lib` built.** A chunk is
+about 5s of MSVC on 14 cores, so the whole game is minutes, not hours.
+
+It also warns, correctly, that the DOL patches executable memory at runtime
+(`generated/generated_smc.txt` lists the sites) and that generated code "may
+need additional patches". Nothing here has acted on that yet.
+
+### The five symbols this work needs do exist
+
+The copy bridge could have named a symbol DolRecomp never emits. It does emit
+them - and the addresses match `marioEU.MAP` exactly:
+
+| symbol | `generated_symbols.h` | MAP |
+|---|---|---|
+| `GXSetTexCopySrc` | 0x803565A8 | 0x803565a8 |
+| `GXSetTexCopyDst` | 0x803566AC | 0x803566ac |
+| `GXCopyTex` | 0x8035707C | 0x8035707c |
+| `GXSetViewport` | 0x8035B2E8 | 0x8035b2e8 |
+| `GXSetScissor` | 0x8035B358 | 0x8035b358 |
+
+`generated/` is 25,499 `DOLRECOMP_SYMBOL_` defines wide and is gitignored, so
+nothing here is committable by accident either.
+
+### The boot path had never been compiled, and now has been
+
+`DOLPHINJET_HAVE_RECOMPILED_GAME` is defined only when `generated/` is
+non-empty. Without a dump it is undefined, and `src/port/recomp_boot.cpp`
+compiles to a stub - which means **the whole body, including the copy-bridge
+registration added earlier in this document, had never been through a
+compiler.** A green build was saying nothing about it.
+
+Recompiling just that translation unit with the macro defined and the real
+`generated/` on the include path:
+
+```
+recomp_boot.cpp(800) : warning C4715: ... deliver_pending_interrupts ... 
+TYPECHECK OK
+```
+
+One pre-existing warning, in a function this work did not touch (a lambda with
+a path that does not return on every branch). No errors. The registration is
+typechecked against the real `DOLRECOMP_SYMBOL_*` values, which is the last
+thing the earlier sections had left unverified.
+
+### The build step that was missing, now a script
+
+`tools/port/apply_aurora_patches.py` applies the eight local patches, handles
+the `render-fixes` partial explicitly, and is idempotent. It distinguishes
+"already applied" from "no longer applies" with `git apply --reverse --check`,
+which is the only way to tell them apart - `--check` fails for both, and
+conflating them reports all eight as pending on a submodule that is already
+complete. `--check` alone is a dry run and exits 1 if anything is missing.
+
+Both bugs in it were found by running it, not by reading it: the polarity of
+the message suffix, and `', '.join(None)` on the whole-patch path.
+
+### One build failure left, and it is not this session's
+
+With Aurora patched, the recompiled game compiling and `recomp_boot.cpp`
+typechecked, **`src/port/recomp_gx_fifo.cpp` is the only file in the tree that
+does not compile**, and it is the parallel session's uncommitted work:
+
+- `GXChannel`, `GXTevStage`, `GXCompareFunc`, `GXMatrixID` are not in scope
+  (C2061) - missing includes.
+- `GXSetVtxAttrFmt` is called `(vtxfmt, attr, comptype, size, frac)` where
+  Aurora's signature is `(GXVtxFmt, GXAttr, GXCompCnt, GXCompType, u8)` -
+  arguments 3 and 4 transposed.
+
+Three includes and one argument order. It has been left alone: it belongs to
+another session, and the only reason this is stated here rather than fixed is
+that the file is not this session's to change. Everything either side of it is
+verified.
+
+## 2026-09-30 (evening): the binary links and runs, but with no disc image
+
+Authorised to touch `src/port/recomp_gx_fifo.cpp`, the file above was repaired
+and **`dolphinjet.exe` now links**. What that bought, measured:
+
+- **Build**: `219/219` chunks, Aurora, `game_recompiled.lib`, exe linked.
+- **Self-tests**: `10/10` pass, including the three that previously refused
+  (`decrementer`, `locked-cache`, `fpu-context`) because they needed generated
+  game code that did not exist yet.
+- **Session**: `tools/port/dolphinjet_play_session.ps1` ran 100 s of scripted
+  input, **no crash**, 4 timestamped captures.
+
+**None of this is the game running.** The log says, and the captures prove:
+
+```
+sms::main: No disc image configured (Settings -> Prelaunch) - menu only
+sms::main: heartbeat: frames=7421 (+62) steps=0 (+0) begun=true running=false
+                   pc=0x00000000 lr=0x00000000 downcount=0
+```
+
+`steps=0`, `pc=0`, `running=false`: the guest CPU never executed one
+instruction. The four PNGs are byte-identical (same md5). The ~1450 draw
+passes/second in the log are Aurora drawing its **menu**, not the game.
+`layer_captures.py` correctly refuses to attribute a layer and prints
+`indeterminee` with `pc=0x00000000`, which is the right answer.
+
+So, per §1.0 above, this session is **SCRIPTED and NOT gameplay**. The three
+layers are not even in play yet.
+
+**Why the game cannot start.** `backend.discPath` is empty, and it must point
+at a real disc image: `aurora_dvd_open` hands the file to `nod_disc_open_stream`,
+which wants ISO/GCM/RVZ/WBFS - not a directory of extracted files. There is no
+Super Mario Sunshine image on this machine, and `orig/GMSP01/` cannot become one:
+it holds exactly two files (`sys/main.dol`, `files/marioEU.MAP`), the minimum
+needed to recompile, not the ~thousands plus the FST and the 0x440-byte header a
+GameCube disc is made of. Other GameCube images exist on this machine (Mario
+Party 4/5, Mario Kart DD) but not GMSP01.
+
+**What this unlocks.** Every remaining unknown is now measurable instead of
+theoretical: the `GXCopyTex` RTT report, the PE lane, the 50 Hz cadence, all
+have a running binary to be measured on. The one thing missing is data, not
+code.
+
+## 2026-09-30 (last of the day): the game boots, runs, and blocks in the thread scheduler
+
+The missing disc image was not missing. It was sitting in a sibling checkout,
+under a different project:
+
+    C:\Users\BEAVSN\Documents\sms-decomp\orig\GMSP01\
+        Super-Mario-Sunshine-Europe-En-Fr-De-Es-It.rvz     (1 063 742 100 o)
+
+`config.json` in `SDL_GetPrefPath("dolphinjet","DolphinJet")` (a flat object of
+`"<domain>.<key>"` pairs, not nested) with `backend.discPath` pointing at it is
+all that was ever required. **Lesson: search the whole machine for the data
+before concluding it is unavailable.**
+
+A 150 s scripted session then ran with no crash and five captures, and this time
+the boot is real:
+
+```
+sms::recomp::boot: low memory: busClock=162000000 coreClock=486000000
+                   memSize=0x1800000 tvFormat=1 (50Hz)
+sms::recomp::boot: boot info: disc GMSP01 magic=DISEASE,
+                   FST 0x1415 bytes from disc 0x405900
+sms::recomp::boot: boot: loaded 4094112 byte DOL, entry=0x8000522c msr=0x00002000
+sms::main: heartbeat: frames=4464 steps=4463 begun=true running=true
+                 pc=0x80340a70 step_game 98% of wall time
+sms::recomp::boot: interrupt: dispatched after 268801 frames
+                 (dispatched=12186 masked=256458 not-takeable=157)
+```
+
+`steps` tracks `frames` one-for-one, `step_game` is 98 % of wall time, and
+12 186 interrupts were dispatched. **The guest CPU is executing the game.**
+
+### It reaches real content, and it is the THP video layer
+
+The layer attribution (never a guess, always the log) puts the first two
+captures on the 3D engine and the last three on the THP video. The log shows
+the decoder working:
+
+```
+aurora::gx: THP texture map=0: 32x32 fmt=14 texObjId=0x40882b80 -> handle VALID
+aurora::gx: THP texture map=1: 64x64 fmt=0  texObjId=0x40882360 -> handle VALID
+aurora::gx: THP texture map=2: 8x8   fmt=0  texObjId=0x40882360 -> handle VALID
+aurora::gx: THP uniforms: colorRegs[0] = (150, 150, 180, 161) x255
+```
+
+And the pixels agree. Distinct colours per capture, measured, not eyeballed:
+
+| capture | couche | couleurs distinctes | pixels non noirs | teinte dominante |
+|---|---|---|---|---|
+| `play_000` | moteur 3D | 172 | 4,9 % | `#f3f3f3` (texte d'interface) |
+| `play_001` | moteur 3D | 172 | 4,9 % | idem |
+| `play_002` | **vidéo THP** | 9 143 | 81,8 % | `#fbfafc` |
+| `play_003` | **vidéo THP** | 28 407 | 81,8 % | `#f6f5f7` |
+| `play_004` | **vidéo THP** | 60 994 | 80,4 % | `#fdd5d3` (chair) |
+
+172 colours is a UI: black with white text. Then the count explodes by two
+orders of magnitude and pale skin tones appear - which is what a decoded THP of
+Mario's face is, and what a black screen is not. **This is the third layer of
+§1.0, rendered from the real disc.** It is still not gameplay, and per that
+section it is labelled THP video, full stop.
+
+### Where it blocks: `SelectThread` spins on a flag nobody sets
+
+`pc` never moves past `0x80340a70`. That is `SelectThread` +0x138, and it is a
+bare spin-wait:
+
+```asm
+80340a68:  bl   0x8033c07c    ; OSSetCurrentContext
+80340a6c:  bl   0x8033da40    ; OSEnableInterrupts
+80340a70:  lwz  r0,-23176(r13);   <- the sampled pc
+80340a74:  cmplwi r0,0
+80340a78:  beq  0x80340a70    ;   spin while zero
+80340a7c:  bl   0x8033da2c    ; OSDisableInterrupts
+80340a80:  lwz  r0,-23176(r13)
+80340a84:  cmplwi r0,0
+80340a88:  beq  0x80340a6c
+```
+
+A global at `r13-23176` (`_SDA_BASE_` - `0x5A78`) is polled with interrupts
+enabled. Six `stw ..., -23176(r13)` sites exist and all write `r1`, so the flag
+is never set to something the loop would accept on this path.
+
+The scheduler is not dead - `__OSDispatchInterrupt` (`0x8033df04`) is reached
+and 12 186 interrupts go through. What is missing is the **completion of the
+work those interrupts should have done**, and the DVD probe says where to look
+first:
+
+```
+sms::recomp::probe: dvd: executing=0x00000000 fatalError=0 currCommand=1
+```
+
+`currCommand=1` (a read) is pending with `executing=0`: a DVD command was
+issued, and no completion interrupt ever moved it. A read that never completes
+is exactly the kind of thing that leaves a thread waiting forever, and the game
+spends its first 150 s in the opening video before it needs anything else.
+
+**This is now a specific, bounded next step - a DVD read that never completes -
+rather than "the port does not run".**
+
+### The repair itself
+
+The estimate above ("three includes and one argument order") was wrong, and
+understated it. Compiling the single object gave the real list: **16 errors**,
+and the cause was not includes at all - the file used **Dolphin SDK type
+names** (`GXChannel`, `GXTevStage`, `GXCompareFunc`, `GXMatrixID`) where Aurora
+has its own (`GXChannelID`, `GXTevStageID`, `GXCompare`, none - it takes `u32`).
+Two other classes of defect sat underneath:
+
+- **five calls had lost their closing parenthesis**, which is why the first pass
+  reported syntax errors that looked like missing types: `GXSetChanCtrl`,
+  `GXSetTevOrder`, `GXSetTevOp`, `GXSetBlendMode`, `GXSetAlphaCompare`,
+  `GXSetCurrentMtx`, `GXSetCullMode`.
+- **`GXSetVtxAttrFmt` arguments 3 and 4 are transposed**, exactly as predicted,
+  but for a stronger reason than a signature difference: Aurora's is
+  `(vtxfmt, attr, cnt, type, frac)` (`GXGeometry.cpp:189`).
+
+And one change is **semantic, not mechanical**, so it is called out here.
+`host_call_gx_set_tev_color` passed `r4` and `r5` as value arguments. The guest
+function says otherwise - disassembled at `0x80359730`:
+
+```
+80359730:  lbz r0,3(r4)      ; et lbz 0(r4), lbz 1(r4), lbz 2(r4)
+80359738:  lbz r5,0(r4)
+80359748:  lbz r10,2(r4)
+8035974c:  lbz r6,1(r4)
+```
+
+`r3` is the colour-register id, `r4` is a **pointer** to four colour bytes -
+which is how the PPC EABI passes a 4-byte struct by value. Aurora wants the
+colour by value, so the bridge now dereferences `r4`, with a bounds check
+against `cpu->ram_size` in the idiom already used elsewhere in the file. Passing
+`r4` and `r5` as values would have read a struct pointer as an enum and then
+read past it into whatever the caller left in `r5`.
+
+The original file was preserved at
+`.agent-tmp/recomp_gx_fifo.cpp.orig` (md5 `292ae176ffe4a2d254b652f07f212a98`)
+for the duration of the work; the CRLF endings and ASCII-only encoding of the
+file are preserved (1188 CRLF, 0 bare LF).

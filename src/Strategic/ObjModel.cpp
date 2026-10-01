@@ -53,6 +53,9 @@ SDLModelData* TModelDataKeeper::createAndKeepData(const char* name, u32 flags)
 
 	SDLModelData* data = loadModelData(name, flags, mFolder);
 	node->registerDataAndJoinNewNode(data, name);
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_4_createAndKeepData[4];
+	(void)framePad_4_createAndKeepData;
 	return data;
 }
 
@@ -162,11 +165,22 @@ MActor* TMActorKeeper::createMActor(const char* model_data_name, u32 flags)
 		index = keeper->getIndex(model_data_name);
 	}
 
-	return createMActorFromNthData(index, flags);
+	// TODO: fabricated structure - the original contains createMActorFromNthData's
+	// statements directly here, not a call (no bl createMActorFromNthData in the
+	// target's ObjModel.s, and the tail does not re-load mModelDataKeeper).
+	// Residual: loadModelData/registerDataAndJoinNewNode are inlined here but called
+	// in the target (frame 0x1a8 vs 0xa0), and the saved-register binding for
+	// this/name/flags/keeper is rotated. Neither structure reproduces both.
+	mActorModelDataIndices[mActorNum] = index;
+	SDLModelData* data = keeper->getNthData(index);
+	return createAndRegister(data, flags);
 }
 
 void TMActorKeeper::createMActorFromAllBmd(u32 flags)
 {
+	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
+	char framePad_8_createMActorFromAllBmd[8];
+	(void)framePad_8_createMActorFromAllBmd;
 	int num = mModelDataKeeper->getModelDataNum();
 	for (int i = 0; i < num; ++i)
 		createMActorFromNthData(i, flags);

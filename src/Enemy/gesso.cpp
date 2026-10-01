@@ -665,6 +665,13 @@ void TGesso::calcRootMatrix()
 	if (mState == STATE_WANDERING) {
 		TSpineEnemy::calcRootMatrix();
 		return;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_gessoCalcRootMatrix[8];
+	(void)framePad_8_gessoCalcRootMatrix;
 	}
 
 	if (!isEaten()) {
@@ -960,6 +967,13 @@ void TGessoPolluteObj::set()
 		mPosition.x = local_54.x * 100.0f + mtx[0][3];
 		mPosition.y = mtx[1][3];
 		mPosition.z = local_54.z * 100.0f + mtx[2][3];
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x70 against 0x68). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_gessoPolluteSet[8];
+	(void)framePad_8_gessoPolluteSet;
 	}
 
 	mMActor->setBck("gero_run_loop1");

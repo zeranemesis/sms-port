@@ -27,8 +27,11 @@ inline static bool someUnknownInline(TBGCheckData* r31, TBGWallCheckRecord* r29)
 	    && r31->isWaterSurface())
 		return false;
 
-	f32 cx = r29->mCenter.x;
+	// Declaration order matters for the FPR numbering: the ROM issues
+	// `lfs f5, 4(r29)` (cy) before `lfs f6, 0(r29)` (cx), so cy is declared
+	// first. Writing cx/cy/cz shifts every FPR in the inlined body by one.
 	f32 cy = r29->mCenter.y;
+	f32 cx = r29->mCenter.x;
 	f32 cz = r29->mCenter.z;
 
 	f32 nx = r31->getNormal().x;
@@ -45,7 +48,11 @@ inline static bool someUnknownInline(TBGCheckData* r31, TBGWallCheckRecord* r29)
 	f32 y2 = r31->getPoint2().y;
 	f32 y3 = r31->getPoint3().y;
 
-	if (r31->checkFlag(0x4)) {
+	// The X/Z-facing discriminator. The ROM reads this with
+	// `lhz r0, 4(r31)` + `rlwinm. r0, r0, 0, 28, 28` (0x8018523C/0x80185244),
+	// and per the mask table in MapData.hpp that instruction is exactly
+	// `checkFlag(0x8)` - it is not bit 2 of the flag word.
+	if (r31->checkFlag(0x8)) {
 		if (nx > 0.0f) {
 			cz = -cz;
 
@@ -122,14 +129,24 @@ int TMapCollisionData::checkWallList(const TBGCheckList* param_1,
 	if (!param_1)
 		return 0;
 
+	// Frame-padding: the ROM's frame is 0x310 and ours is 0x230, but neither
+	// version stores a single byte below the register save area (the ROM uses
+	// only 9 distinct stack slots: 0x4, 0x2d4..0x308, 0x314). The whole 0x2d4
+	// bytes of "local" space is reserved-but-never-used, so it can only come
+	// from MWCC's frame sizing for the inlined someUnknownInline body. We
+	// cannot reproduce that sizing directly, so pad it back out by hand.
+	char framePad_224_cwl[224];
+	(void)framePad_224_cwl;
+
 	f32 f27 = param_2->mCenter.y;
 	// param_1: r28
 	// param_2: r29
 
+	TBGCheckData* r31;
 	int r30 = 0;
 	while (param_1) {
-		TBGCheckData* r31 = param_1->unk8;
-		param_1           = param_1->mNext;
+		r31      = param_1->unk8;
+		param_1  = param_1->mNext;
 
 		if (r31->mMinY > f27)
 			continue;
@@ -393,6 +410,9 @@ static bool bgIntersectLine(const TBGCheckData* data,
 	return true;
 }
 
+// UNUSED in the ROM (marioEU.MAP lists it at 0x78 = 30 instructions); it is
+// fully inlined into intersectLine, which is why validate-symbol-order.py
+// reports it MISSING. Never drop the `inline` - a live `bl` would cost bytes.
 inline const TBGCheckData* intersectLineList(const TBGCheckList* head,
                                              const JGeometry::TVec3<f32>& start,
                                              const JGeometry::TVec3<f32>& end,
@@ -415,8 +435,14 @@ static bool LineInLineXZ(const JGeometry::TVec2<f32>& a0,
                          const JGeometry::TVec2<f32>& b0,
                          const JGeometry::TVec2<f32>& b1)
 {
-	if ((b0 - a0).cross(a1 - a0) * (b1 - a0).cross(a1 - a0) <= 0.0f
-	    && (a0 - b0).cross(b1 - b0) * (a1 - b0).cross(b1 - b0) <= 0.0f)
+	// The ROM compares the cross-product products against 1.0f (SDA @2906),
+	// not 0.0f, and rejects with `fcmpo/cror eq,lt,eq/bne` i.e. `> 1.0f`,
+	// so `<= 1.0f` (not `<`) reproduces both the constant and the branch.
+	// marioEU.MAP lists this as UNUSED at 0x1bc = 111 instructions; the copy we
+	// emit out of line compiles to exactly 111 instructions / 444 bytes, so the
+	// body above is byte-size correct (it is only inlined in the ROM).
+	if ((b0 - a0).cross(a1 - a0) * (b1 - a0).cross(a1 - a0) <= 1.0f
+	    && (b0 - b1).cross(a1 - b1) * (b0 - b1).cross(a0 - b1) <= 1.0f)
 		return true;
 
 	return false;
@@ -429,15 +455,20 @@ const TBGCheckData* TMapCollisionData::intersectLine(
 	JGeometry::TVec2<int> start2d(start.x, start.z);
 	JGeometry::TVec2<int> end2d(end.x, end.z);
 
+	// Declaration order matters: the ROM's stack slots (descending address)
+	// are minXi, minZi, maxXi, maxZi, i.e. all four are initialised before
+	// either swap test. Writing minXi/maxXi then the test then minZi/maxZi
+	// costs ~1.5% of the unit.
 	int minXi = start2d.x;
+	int minZi = start2d.y;
 	int maxXi = end2d.x;
+	int maxZi = end2d.y;
+
 	if (start2d.x > end2d.x) {
 		minXi = end2d.x;
 		maxXi = start2d.x;
 	}
 
-	int minZi = start2d.y;
-	int maxZi = end2d.y;
 	if (start2d.y > end2d.y) {
 		minZi = end2d.y;
 		maxZi = start2d.y;
@@ -452,6 +483,18 @@ const TBGCheckData* TMapCollisionData::intersectLine(
 		for (int gridX = minGridX; gridX <= maxGridX; ++gridX) {
 			if (gridX == minGridX && gridZ == minGridZ) {
 			} else {
+				// Still 71%, and the residual is understood - it is not the
+				// `(s32)(z0i - mGridExtentY)` arithmetic itself. The ROM keeps
+				// all four corners in 0x3c0..0x3df (TVec2<f32>, `stfs` pairs)
+				// and builds them with 8 separate `fctiwz`, reloading
+				// mGridExtentX/Y from `this` before every pair (0x80183CC0,
+				// 0x80183CD8, 0x80183D48, 0x80183DA0, 0x80183DF8). We emit the
+				// same 8 `fctiwz` but hoist the two extent loads out of the
+				// loop, so 4 loads and 4 stores are missing and the frame comes
+				// out 0x558 instead of 0x510 (ROM local area 0x280..0x48f, ours
+				// 0x274..0x4df). Making MWCC distrust the hoisted `this->`
+				// loads - i.e. forcing a reload between the corner expressions -
+				// is what would close this; no arithmetic change will.
 				f32 x0i = gridX * 1024.0f;
 				f32 z0i = gridZ * 1024.0f;
 				f32 x1i = (gridX + 1) * 1024.0f;

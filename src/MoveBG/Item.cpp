@@ -96,6 +96,9 @@ void TItem::calcRootMatrix()
 
 void TItem::calc()
 {
+	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
+	char framePad_32_calc[32];
+	(void)framePad_32_calc;
 	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isState(STATE_HOLDING)) {
 		MtxPtr src = gpItemManager->unk40;
 
@@ -121,8 +124,14 @@ void TItem::calc()
 		mtx[2][3] = mPosition.z;
 	}
 
-	if (isState(STATE_HOLDING) && checkMapObjFlag(MAP_OBJ_FLAG_UNK100))
-		TMapObjGeneral::calcRootMatrix();
+	if (isState(STATE_HOLDING) && checkMapObjFlag(MAP_OBJ_FLAG_UNK100)) {
+		// TItemNozzle holds the item through the holder's taking matrix, so
+		// the box flavours must go through the virtual override.
+		if (isActorType(0x20000022) || isActorType(0x2000002A))
+			calcRootMatrix();
+		else
+			TMapObjGeneral::calcRootMatrix();
+	}
 }
 
 void TItem::appearing()

@@ -500,7 +500,11 @@ THideObjInfo::THideObjInfo(const char* name)
 void TMapObjSwitch::control()
 {
 	TMapObjBase::control();
-	if (isStateTimerEngaged())
+	// The target materialises the test into a bool (`li r0, 1 / b / li r0, 0 /
+	// clrlwi. r0, r0, 24 / beq`) instead of branching straight off the compare,
+	// and re-reads 0x104 for the argument, so the test has to be a bool
+	// expression and must not share its read with the argument.
+	if (mStateTimer > 0 ? true : false)
 		SMSGetMSound()->playTimer(mStateTimer);
 }
 
@@ -594,6 +598,11 @@ BOOL TRedCoinSwitch::receiveMessage(THitActor*, u32 message)
 void TRedCoinSwitch::control()
 {
 	TMapObjBase::control();
+	// The target frame is 0x20 and it only ever touches 0x4, 0x1c and 0x24, so
+	// 0x18 bytes of it are unreferenced; ours is 0x18 and the saved r31 sits 8
+	// bytes too low.
+	char framePad_8_redCoinControl[8];
+	(void)framePad_8_redCoinControl;
 	switch (mState) {
 	case 1:
 		break;

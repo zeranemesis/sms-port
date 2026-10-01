@@ -70,14 +70,13 @@ void TEnemyAttachment::bind()
 	JGeometry::TVec3<f32> local_1C = mPosition;
 	local_1C += mLinearVelocity;
 	local_1C += mVelocity;
-	setBehavior();
+	recoverScale();
 	mVelocity.y -= getNowGravity();
 	if (mVelocity.y < mVelocityMinY)
 		mVelocity.y = mVelocityMinY;
 	if (!unk168) {
-		const TBGCheckData* local_18;
 		mGroundHeight = gpMap->checkGround(local_1C.x, local_1C.y + mHeadHeight,
-		                                   local_1C.z, &local_18);
+		                                   local_1C.z, &mGroundPlane);
 		mGroundHeight += 1.0f;
 	}
 
@@ -86,16 +85,13 @@ void TEnemyAttachment::bind()
 	else
 		onLiveFlag(LIVE_FLAG_AIRBORNE);
 
-	JGeometry::TVec3<f32> p = local_1C;
-	p.y += mHeadHeight;
-	TBGWallCheckRecord local_48(p, mBodyRadius * 2.0f, 1, 0);
+	TBGWallCheckRecord local_48(local_1C.x, local_1C.y + mHeadHeight, local_1C.z,
+	                           mBodyRadius * 2.0f, 1, 0);
 	if (gpMap->isTouchedWallsAndMoveXZ(&local_48))
 		behaveToHitWall(local_48.mResultWalls[0]);
 
-	mPosition                      = local_1C;
-	JGeometry::TVec3<f32> local_68 = local_1C;
-	local_68 -= mPosition;
-	mLinearVelocity = local_68;
+	mPosition = local_1C;
+	mLinearVelocity = local_1C - mPosition;
 
 	setBehavior();
 	forceKill();
@@ -167,7 +163,7 @@ void TEnemyAttachment::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (unk150 == 0) {
 		if (cue & CUE_CALC_ANIM)
-			kill();
+			behaveToHost();
 		return;
 	}
 

@@ -54,7 +54,7 @@ class TWaterEmitInfo;
 class TPopoManager : public TSmallEnemyManager {
 public:
 	TPopoManager(const char* name = "ポポマネージャー");
-	virtual ~TPopoManager();
+	virtual ~TPopoManager() { }
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -93,7 +93,7 @@ public:
 class TPopoCollision : public THitActor {
 public:
 	TPopoCollision(const char* name = "ポポコリジョン");
-	virtual ~TPopoCollision();
+	virtual ~TPopoCollision() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 
@@ -113,7 +113,7 @@ public:
 class TPopo : public TWalkerEnemy {
 public:
 	TPopo(const char* name = "ポポ");
-	virtual ~TPopo();
+	virtual ~TPopo() { }
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -139,8 +139,7 @@ public:
 	void possessedIn();
 	void explosion();
 	void flyBehavior();
-	void checkTrigger();
-
+	bool checkTrigger();
 	TPopoSaveLoadParams* getSaveParam2() const
 	{
 		return (TPopoSaveLoadParams*)getSaveParam();
@@ -175,10 +174,19 @@ public:
 	/* 0x1A8 */ JGeometry::TVec3<f32> unk1A8;
 	/* 0x1B4 */ bool unk1B4;
 	/* 0x1B8 */ f32 unk1B8;
-	/* 0x1BC */ f32 unk1BC[4];
+	/* 0x1BC */ u8 unk1BC;
+	/* 0x1C0 */ JGeometry::TVec3<f32> unk1C0;
 	/* 0x1CC */ u8 unk1CC;
 	/* 0x1CD */ bool unk1CD;
-	/* 0x1CE */ u8 unk1CE[0x6E];
+	// The 0x1D0 area holds two full 3x4 matrices: the first is the nozzle
+	// joint transform saved by PopoPossessedCallback, the second is the
+	// centre joint transform handed to the water-jet emitter. The three
+	// floats after them are the lengths of that joint's basis vectors,
+	// stored rotated by one.
+	/* 0x1CE */ u8 unk1CE[2];
+	/* 0x1D0 */ Mtx unk1D0;
+	/* 0x200 */ Mtx unk200;
+	/* 0x230 */ JGeometry::TVec3<f32> unk230;
 	/* 0x23C */ TPopoCollision* unk23C;
 };
 

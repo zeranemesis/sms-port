@@ -184,6 +184,10 @@ void TRailMapObj::initMapObj()
 	mMActor->setLightType(LIGHT_TYPE_MAPOBJECT);
 }
 
+// The ROM keeps this out of line: TWoodBlock::load is its only caller and it
+// emits a single `bl` (marioEU.MAP 801E7780). Inlining it drags a 256-byte
+// buffer into the caller, giving TWoodBlock::load a 0x160 frame instead of 0x60.
+#pragma dont_inline on
 void TRailMapObj::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TActor::load(stream);
@@ -197,6 +201,7 @@ void TRailMapObj::load(JSUMemoryInputStream& stream)
 	initMapObj();
 	makeObjAppeared();
 }
+#pragma dont_inline off
 
 void TRailMapObj::setGroundCollision()
 {

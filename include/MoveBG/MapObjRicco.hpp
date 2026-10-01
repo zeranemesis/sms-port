@@ -18,15 +18,30 @@ public:
 	void load(JSUMemoryInputStream&);
 	TCraneRotY(const char* name = "Ｙ軸回転クレーン")
 	    : TMapObjBase(name)
+	    , unk138(0.0f)
+	    , unk13C(0.0f)
+	    , unk140(0.0f)
+	    , unk144(0.0f)
+	    , unk148(0)
 	{
 	}
 
 public:
+	enum {
+		STATE_ROTATE_UP   = 0x0,
+		STATE_WAIT_UP     = 0x1,
+		STATE_ROTATE_DOWN = 0x2,
+		STATE_WAIT_DOWN   = 0x3,
+	};
+
+public:
 	/* 0x138 */ f32 unk138;
-	/* 0x13C */ u32 unk13C;
-	/* 0x140 */ u32 unk140;
+	/* 0x13C */ f32 unk13C;
+	/* 0x140 */ f32 unk140;
 	/* 0x144 */ f32 unk144;
 	/* 0x148 */ u32 unk148;
+
+	static u32 mWaitTime;
 };
 
 class TCraneUpDown : public TMapObjBase {
@@ -36,8 +51,27 @@ public:
 	void initMapObj();
 	TCraneUpDown(const char* name = "上下クレーン")
 	    : TMapObjBase(name)
+	    , unk138(0)
+	    , unk13C(0)
 	{
 	}
+
+public:
+	enum {
+		STATE_ROTATE_UP   = 0x0,
+		STATE_WAIT_UP     = 0x1,
+		STATE_ROTATE_DOWN = 0x2,
+		STATE_WAIT_DOWN   = 0x3,
+	};
+
+public:
+	/* 0x138 */ TMapObjBase* unk138;
+	/* 0x13C */ u32 unk13C;
+	/* 0x140 */ f32 unk140;
+	/* 0x144 */ f32 unk144;
+
+	static f32 mRotSpeed;
+	static u32 mWaitTime;
 };
 
 class TCraneCargo : public TLeanBlock {
@@ -57,6 +91,19 @@ public:
 	void calc();
 	void loadAfter();
 	TRiccoWatermill(const char* name = "リコ水車");
+
+public:
+	// TODO: the meaning of each state is inferred from control()/touchWater();
+	// nothing in the binary names them. 0/1 and 5 run the "mill spins, partner
+	// rises" block, 2/3/4 skip it and run the switch below instead.
+	enum {
+		STATE_ROTATE   = 0x0,
+		STATE_RISE     = 0x1,
+		STATE_TOP_WAIT = 0x2,
+		STATE_TOP      = 0x3,
+		STATE_BOTTOM   = 0x4,
+		STATE_STOPPED  = 0x5,
+	};
 
 public:
 	/* 0x138 */ f32 unk138;
@@ -116,6 +163,19 @@ public:
 	    : TMapObjBase(name)
 	{
 	}
+
+	// TODO: unk138/unk13C are the two tank-switch map objects found by name in
+	// loadAfter(); their real type is unknown, they are only used to
+	// back-reference the launcher and to receive the switch animation.
+	// fireObj() indexes this pair with unk140 (slwi r0, r0, 2 / add r3, r31, r0 /
+	// lwz r30, 0x138(r3)), so it is really a two-element array and the two
+	// separate fields below are its elements.
+	/* 0x138 */ TMapObjBase* unk138[2];
+	/* 0x140 */ u32 unk140;
+
+	static f32 mObjSpeedXZ;
+	static f32 mObjSpeedY;
+	static u32 mFruitLiveTime;
 };
 
 #endif

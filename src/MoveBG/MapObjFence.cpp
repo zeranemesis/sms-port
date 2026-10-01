@@ -216,21 +216,26 @@ void TRevolvingFenceInner::controlWall()
 
 void TRevolvingFenceInner::controlGroundRoof()
 {
+	// TODO: still 96.6%. The ROM's switch tree splits at 4
+	// (cmpwi 4 / beq / bge / cmpwi 3 / bge / b / cmpwi 6 / beq / bge) while ours
+	// splits at 5 and emits a `cmpwi r0, 7` upper-bound test. Both encode the
+	// same mapping ({4,6}->1, {3,5}->2); only the decision-tree shape differs.
+	// Listing the {4,6} group first is what got us here from 95.1%.
 	switch (mState) {
-	case 3:
-	case 5:
+	case 4:
+	case 6:
 		if (getMActor()->curAnmEndsNext()) {
-			mState = 2;
+			mState = 1;
 			getMActor()->setFrameRate(0.0f, 0);
 			getMActor()->getFrameCtrl(0)->setFrame(0.0f);
 			getMActor()->calc();
 			onMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		}
 		break;
-	case 4:
-	case 6:
+	case 3:
+	case 5:
 		if (getMActor()->curAnmEndsNext()) {
-			mState = 1;
+			mState = 2;
 			getMActor()->setFrameRate(0.0f, 0);
 			getMActor()->getFrameCtrl(0)->setFrame(0.0f);
 			getMActor()->calc();

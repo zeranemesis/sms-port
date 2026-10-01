@@ -1,3 +1,4 @@
+#include "Enemy/bosstelesa.hpp"
 #include "Map/MapStaticObject.hpp"
 #include "Map/MapWireManager.hpp"
 #include "MoveBG/Item.hpp"
@@ -224,7 +225,7 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 		return new TMapObjTree;
 
 	if (strcmp(name, "PalmNatume") == 0)
-		return new TMapObjTree("地形オブジェ基底");
+		return new TMapObjTree;
 
 	if (strcmp(name, "FruitTree") == 0)
 		return new TMapObjBase;
@@ -367,6 +368,9 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 	if (strcmp(name, "WaterMelon") == 0)
 		return new TBigWatermelon;
 
+	if (strcmp(name, "WatermelonStatic") == 0)
+		return new TWatermelonStatic;
+
 	if (strcmp(name, "ShiningStone") == 0)
 		return new TShiningStone;
 
@@ -469,9 +473,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 	if (strcmp(name, "ItemSlotDrum") == 0)
 		return new TItemSlotDrum;
 
-	// TODO:
-	// if ( strcmp(name, "TelesaSlot") == 0 )
-	// 	return new TTelesaSlot("btelesaSlot");
+	if (strcmp(name, "TelesaSlot") == 0)
+		return new TTelesaSlot("btelesaSlot");
 
 	if (strcmp(name, "CasinoPanelGate") == 0)
 		return new TCasinoPanelGate;
@@ -624,7 +627,7 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 		return new TCoinBlue;
 
 	if (strcmp(name, "HideObj") == 0)
-		return new THideObjBase;
+		return new THideObj;
 
 	if (strcmp(name, "WaterHitHideObj") == 0)
 		return new TWaterHitHideObj;

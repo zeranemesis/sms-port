@@ -32,6 +32,15 @@ static const char* MtxCalcTypeName[] = {
 const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
 const char cDirtyTexName[]  = "H_ma_rak_dummy";
 
+// Unused here, but the ROM carries all three in cameragc.o's .sdata right before
+// cStartCamName (0x80403988/8C/90), and their literals sit between cDirtyTexName
+// and 開始カメラ in .rodata. Without them every later string offset is wrong.
+const char* cCameraBckNameShineGetInside
+    = "/common/camera/camera_demo_shine_get_inside";
+const char* cCameraBckNameShineGetOutside
+    = "/common/camera/camera_demo_shine_get_outside";
+const char* cCameraBckNameGate = "/common/camera/camera_demo_gate_in";
+
 CPolarSubCamera* gpCamera;
 
 const char* cStartCamName          = "開始カメラ";
@@ -102,6 +111,11 @@ CPolarSubCamera::CPolarSubCamera(const char* name)
 	if (SMS_isMultiPlayerMap())
 		createMultiPlayer(4);
 	int stage = gpMarDirector->getCurrentStage();
+	// TODO: the ROM keeps the `stage == 0 || stage == 1` test unfolded
+	// (cmplwi 0 / beq / cmplwi 1 / bne). Every spelling tried here either folds
+	// it to `stage <= 1` (plain `if`, nested `if`) or turns the switch into a
+	// `cmpwi / bge` cascade (case 0 sharing a body with case 1, or two distinct
+	// bodies). Left as the plain switch.
 	if (gpMarDirector->getCurrentMap() == 58 && (stage == 0 || stage == 1)) {
 		unk64 |= CAMERA_FLAG_JET_COASTER_SCENE;
 		unk2B8 = new TCameraJetCoaster;
@@ -166,6 +180,12 @@ void CPolarSubCamera::loadAfter()
 	TCameraMapTool* tool2 = (TCameraMapTool*)gpCamMapToolTable->searchF(
 	    JDrama::TNameRef::calcKeyCode(acStack_54), acStack_54);
 	if (tool2) {
+		// Keep MsClamp here. Its upper-bound-first order is what the ROM has:
+		// the out-of-line MsClamp<f>__Ffff in this very object is
+		// `fcmpo cr0,f1,f3; ble L; fmr f1,f3; blr; L: fcmpo cr0,f1,f2;
+		// bgelr; fmr f1,f2; blr`, and the ROM *inlines* this very call with
+		// byte-identical code. Rewriting it as a lower-bound-first two-`if`
+		// emits `fcmpo cr0,f0,f1; bge` instead and costs this function 0.4 %.
 		mCurrentTarget.unk28 = MsClamp(tool2->mPosition.y, unk268, unk26C);
 		mCurrentTarget.mYaw  = CLBDegToShortAngle(tool2->getYaw()) - 0x8000;
 	} else {
@@ -222,13 +242,16 @@ void CPolarSubCamera::loadAfter()
 	mCurrentTarget.unk18.set(mPosition);
 	mCurrentTarget.mTarget.set(mTarget);
 
-	TCameraOption* option = gpCameraOption;
+	// The ROM only writes gpCameraOption inside the option-map branch (the
+	// `stw r30, gpCameraOption` sits between the `beq` after SMS_isOptionMap and
+	// the join label), so there is no read of it beforehand.
 	if (SMS_isOptionMap()) {
-		mCurrentTarget.mPosition = mPosition;
-		mCurrentTarget.mTarget   = mTarget;
-		option = new TCameraOption(mPosition, &mCurrentTarget.mTarget);
+		// `.set()`, not `operator=`: the ROM copies these two component-wise
+		// (lfs/stfs) inside the option-map branch.
+		mCurrentTarget.mPosition.set(mPosition);
+		mCurrentTarget.mTarget.set(mTarget);
+		gpCameraOption = new TCameraOption(mPosition, &mCurrentTarget.mTarget);
 	}
-	gpCameraOption = option;
 
 	unk256 = mCurrentTarget.mPitch;
 	unk258 = mCurrentTarget.mYaw;
@@ -434,10 +457,18 @@ void CPolarSubCamera::calcSlopeAngleX_(s16* param_1)
 				MsVECNormalize(&diff, &norm);
 				norm *= fwdDist;
 
+				// The ROM's local layout is diff, norm, p3, p2, sample from high
+				// to low, so these three are declared in that order. NOTE: this
+				// buys 0 bytes -- it only permutes which of them gets which
+				// offset inside the block; the block itself sits 0x3c lower than
+				// the ROM's because of ~80 bytes of never-referenced named
+				// locals that the ROM has and we do not.
+				JGeometry::TVec3<f32> p3;
+				JGeometry::TVec3<f32> p2;
 				JGeometry::TVec3<f32> sample = SMS_GetMarioPos();
 				sample += norm;
-				JGeometry::TVec3<f32> p2 = sample;
-				JGeometry::TVec3<f32> p3 = p2;
+				p2 = sample;
+				p3 = p2;
 
 				const TBGCheckData* ground;
 				f32 height
@@ -487,8 +518,8 @@ void CPolarSubCamera::calcPosAndAt_()
 	s16 yawDelta  = 0;
 	f32 distDelta = 0.0f;
 	s16 yawSpeed  = CLBLinearInbetween<s16>(
-        mCurrentParams->mYAngleManualSpeedXMin,
-        mCurrentParams->mYAngleManualSpeedXMax, mCurrentTarget.unk28);
+        mCurrentParams->mHoldOffsetAngleXMin,
+        mCurrentParams->mHoldOffsetAngleXMax, mCurrentTarget.unk28);
 	f32 distSpeed = CLBLinearInbetween<f32>(mCurrentParams->mHoldAddDistXZMin,
 	                                        mCurrentParams->mHoldAddDistXZMax,
 	                                        mCurrentTarget.unk28);
@@ -542,7 +573,7 @@ void CPolarSubCamera::calcPosAndAt_()
 		bool hasInput = false;
 		if (unk120 != nullptr) {
 			bool nonZero = true;
-			if (unk120->mCompSPos[6] == 0.0f && unk120->mCompSPos[7] == 0.0f)
+			if (unk120->getSubStickY() == 0.0f && unk120->getSubStickX() == 0.0f)
 				nonZero = false;
 			if (nonZero)
 				hasInput = true;
@@ -658,7 +689,7 @@ void CPolarSubCamera::calcPosAndAt_()
 							f32 cushDist = cushion * nDist;
 							if (cushDist > cushion * dist) {
 								unk64 |= CAMERA_FLAG_UNK100;
-								mCurrentTarget.mPosition = newPos;
+								mCurrentTarget.unk18 = newPos;
 							} else {
 								f32 minDist
 								    = cushion
@@ -690,32 +721,32 @@ void CPolarSubCamera::calcPosAndAt_()
 										useMid = true;
 								}
 								if (useMid) {
-									mCurrentTarget.mPosition.set(base);
+									mCurrentTarget.unk18.set(base);
 								} else {
 									CLBPolarToCross(saveAt,
-									                mCurrentTarget.mPosition,
+									                mCurrentTarget.unk18,
 									                nDist, nVA, yAngle);
 								}
-								mCurrentTarget.mPosition.y = newPos.y;
+								mCurrentTarget.unk18.y = newPos.y;
 							}
 						} else {
-							mCurrentTarget.mPosition = newPos;
+							mCurrentTarget.unk18 = newPos;
 						}
 
 						f32 sY = JMASSin(yAngle);
 						f32 cY = JMASCos(yAngle);
 
 						if (fabricatedInline3()) {
-							f32 dx = gpMarioPos->x - mCurrentTarget.mPosition.x;
-							f32 dz = gpMarioPos->z - mCurrentTarget.mPosition.z;
+							f32 dx = gpMarioPos->x - mCurrentTarget.unk18.x;
+							f32 dz = gpMarioPos->z - mCurrentTarget.unk18.z;
 							f32 d  = MsSqrtf(dx * dx + dz * dz);
 							f32 minD = mSaveEx->mSLMinCushionXZ.get();
 							f32 mD2
 							    = minD < dist * cushion ? dist * cushion : minD;
 							if (d < mD2) {
 								f32 add = mD2 - d;
-								mCurrentTarget.mPosition.x += sY * add;
-								mCurrentTarget.mPosition.z += cY * add;
+								mCurrentTarget.unk18.x += sY * add;
+								mCurrentTarget.unk18.z += cY * add;
 							}
 						}
 
@@ -724,10 +755,10 @@ void CPolarSubCamera::calcPosAndAt_()
 						case CAMERA_MODE_MARE_UNDER_GROUND:
 							break;
 						default:
-							mCurrentTarget.mPosition.x = -(
-							    unk2AC->unk4 * sY - mCurrentTarget.mPosition.x);
-							mCurrentTarget.mPosition.z = -(
-							    unk2AC->unk4 * cY - mCurrentTarget.mPosition.z);
+							mCurrentTarget.unk18.x = -(
+							    unk2AC->unk4 * sY - mCurrentTarget.unk18.x);
+							mCurrentTarget.unk18.z = -(
+							    unk2AC->unk4 * cY - mCurrentTarget.unk18.z);
 							break;
 						}
 
@@ -743,17 +774,17 @@ void CPolarSubCamera::calcPosAndAt_()
 						}
 					}
 				}
-				mPosition.x = mCurrentTarget.mPosition.x;
-				mPosition.z = mCurrentTarget.mPosition.z;
+				mCurrentTarget.mPosition.x = mCurrentTarget.unk18.x;
+				mCurrentTarget.mPosition.z = mCurrentTarget.unk18.z;
 				execHeightPan_();
-				finalAt.y = mCurrentTarget.unk18.y;
+				finalAt.y = mCurrentTarget.mTarget.y;
 				Vec posCpy;
-				posCpy = mPosition;
+				posCpy = mCurrentTarget.mPosition;
 				if (isNeedWallCheck_() && execWallCheck_(&posCpy)) {
-					CLBCrossToPolar(mCurrentTarget.mTarget, mPosition,
+					CLBCrossToPolar(mCurrentTarget.mTarget, mCurrentTarget.mPosition,
 					                &mCurrentTarget.mPitch,
 					                &mCurrentTarget.mYaw);
-					mCurrentTarget.unk28 = mCurrentTarget.unk30;
+					mCurrentTarget.unk28 = mPreviousTarget.unk28;
 				}
 				if (isNeedRoofCheck_()) {
 					Vec roofCheck = posCpy;
@@ -792,8 +823,8 @@ void CPolarSubCamera::calcPosAndAt_()
 			}
 			if (unk64 & CAMERA_FLAG_UNK4) {
 				chaseXZ = 1.0f;
-			} else if (unk120->mCompSPos[6] != 0.0f
-			           || unk120->mCompSPos[7] != 0.0f) {
+			} else if (unk120->getSubStickY() != 0.0f
+			           || unk120->getSubStickX() != 0.0f) {
 				f32 v = gpCameraMario->mFrameMoveDistHorizontal;
 				if (v > 20.0f)
 					v = 20.0f;
@@ -802,7 +833,7 @@ void CPolarSubCamera::calcPosAndAt_()
 				    mCurrentParams->mPosChaseRateXZ_C,
 				    CLBCalcRatio<f32>(20.0f, 0.0f, v));
 			}
-			if (unk120->mCompSPos[6] != 0.0f) {
+			if (unk120->getSubStickY() != 0.0f) {
 				f32 v = gpCameraMario->mFrameMoveDistVertical;
 				if (v > 20.0f)
 					v = 20.0f;

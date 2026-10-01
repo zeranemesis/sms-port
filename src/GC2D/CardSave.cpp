@@ -349,77 +349,47 @@ void TCardSave::setMessage(J2DTextBox* text_box, s32 param_2, u32 param_3)
 void TCardSave::setMessageC(J2DTextBox* text_box, long message_id,
                             u32 length)
 {
-	JSUMemoryInputStream input(SMSGetMessageData(unk2E4, (u16)message_id),
-	                           length);
+	JSUMemoryInputStream input(SMSGetMessageData(unk2E4, message_id & 0xffff), length);
 	JSUMemoryOutputStream output(text_box->getStringPtr(), length);
 	char buffer[0x100];
-
-	while (input.getPosition() != input.getLength()) {
-		u8 character;
-		input.read(&character, 1);
-
-		if (character == '\n') {
-			output.write(&character, 1);
-			continue;
-		}
-		if (character == '\0') {
-			output.write(&character, 1);
-			break;
-		}
-		if (character == 0x1A) {
-			u8 sequence_length;
-			input.read(&sequence_length, 1);
-			input.skip(sequence_length - 2);
-			continue;
-		}
-
-		u8 color[3];
-		bool colored = true;
+	while (input.getAvailable() != 0 && output.getAvailable() != 0) {
+		u8 character = input.read8b();
+		JUtility::TColor color;
 		switch (character) {
-		case '#':
-			color[0] = 0xFF;
-			color[1] = 0xA0;
-			color[2] = 0x64;
+		case 0x1A:
+			input.skip(input.read8b() - 2);
 			break;
-		case '$':
-			color[0] = 0x6E;
-			color[1] = 0xE6;
-			color[2] = 0xFF;
+		case 0:
+			output << character;
+			return;
+		case 10:
+			output << character;
 			break;
-		case '%':
-			color[0] = 0xFF;
-			color[1] = 0xFF;
-			color[2] = 0x00;
-			break;
-		case '+':
-		case '<':
-		case '>':
-		case 0xA5:
-			color[0] = 0xDC;
-			color[1] = 0xDC;
-			color[2] = 0xDC;
-			break;
-		case '@':
-			color[0] = 0x64;
-			color[1] = 0xFF;
-			color[2] = 0x64;
-			break;
-		default:
-			colored = false;
+		default: {
+			bool colored = true;
+			switch (character) {
+			case '@': color.r = 100; color.g = 255; color.b = 100; color.a = 255; break;
+			case '#': color.r = 255; color.g = 160; color.b = 100; color.a = 255; break;
+			case '%': color.r = 255; color.g = 255; color.b = 0; color.a = 255; break;
+			case '+':
+			case '<':
+			case '>':
+			case 0xA5: color.r = 220; color.g = 220; color.b = 220; color.a = 255; break;
+			case '$': color.r = 110; color.g = 230; color.b = 255; color.a = 255; break;
+			default: colored = false; break;
+			}
+			if (colored) {
+				snprintf(buffer, 0xFF, "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]",
+				         color.r, color.g, color.b);
+				output.write(buffer, 29);
+			}
+			output << character;
+			if (colored) {
+				snprintf(buffer, 0xFF, "\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]");
+				output.write(buffer, 24);
+			}
 			break;
 		}
-
-		if (colored) {
-			snprintf(buffer, 0xFF,
-			         "\033GM[0]\033CC[%02x%02x%02x]\033SH[3]\033CD[4]",
-			         color[0], color[1], color[2]);
-			output.write(buffer, 29);
-		}
-		output.write(&character, 1);
-		if (colored) {
-			snprintf(buffer, 0xFF,
-			         "\033GM[0]\033CC\033FX\033FY\033SH\033CU[4]");
-			output.write(buffer, 24);
 		}
 	}
 }
@@ -862,9 +832,8 @@ s8 TCardSave::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 			if (!unk18) {
 				JUTRect bounds = selectedPane->getPane()->getGlobalBounds();
 				JGeometry::TVec3<f32> pos;
-				pos.x = bounds.x1 + bounds.getWidth() * 0.5f;
-				pos.y = bounds.y1 + bounds.getHeight() * 0.5f;
-				pos.z = 0.0f;
+				pos.set(bounds.x1 + 0.5f * bounds.getWidth(),
+				        bounds.y1 + 0.5f * bounds.getHeight(), 0.0f);
 				gpEmitterManager4D2->createEmitter(pos, 0x1FA, nullptr,
 				                                   nullptr);
 
@@ -1843,13 +1812,17 @@ void TCardSave::execMovement_()
 					unk2E0++;
 				}
 			} else {
-				if (unk178->isVisible()) {
-					unk178->hide();
-					unk160->setCenteredSize(20, 0, 0, unk164.getWidth(),
-					                        unk164.getHeight());
-					unk10 = 3;
-				}
 				drawMessage(PROGRESS_UNK12);
+				if (unk2E0 > 0x12C) {
+					if (unk178->isVisible()) {
+						unk178->hide();
+						unk160->setCenteredSize(20, 0, 0, unk164.getWidth(),
+						                        unk164.getHeight());
+						unk10 = 3;
+					}
+				} else {
+					++unk2E0;
+				}
 			}
 		} else {
 			drawMessage(PROGRESS_UNK0);

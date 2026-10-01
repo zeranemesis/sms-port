@@ -48,6 +48,19 @@ static void loadBookmark()
 	TFlagManager::getInstance()->load(stream);
 }
 
+#if defined(VERSION_GMSP01)
+u32 TCardLoad::cMessageID[] = {
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00010010, 0x00010014, 0x00010015,
+	0x00010005, 0x00010006, 0x00010007, 0x0001001A, 0x00010023, 0x00010019,
+	0x00010013, 0x00010011, 0x00010002, 0x0001000B, 0x00010012, 0x00010021,
+	0x00010017, 0x0001001E, 0xFFFFFFFF, 0x00010009, 0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0x00010008, 0xFFFFFFFF, 0x0001001F, 0x00010004,
+	0x00010003, 0x0001000C, 0x00010022, 0x00010018, 0x00010001, 0xFFFFFFFF,
+	0x0001000A, 0x0001000A, 0x00010016, 0x00010020, 0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0001000F, 0xFFFFFFFF, 0x0001001D,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0001000E,
+};
+#else
 u32 TCardLoad::cMessageID[] = {
 	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000E,    0x10012,    0x10013,
 	0x10004,    0x10005,    0x10006,    0x10018,    0x1001F,    0x10017,
@@ -59,6 +72,7 @@ u32 TCardLoad::cMessageID[] = {
 	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000D,    0xFFFFFFFF, 0x10019,
 	0x0,        0x0,        0x0,        0x0,        0x0,
 };
+#endif
 
 const char* TCardLoad::cToOptionFileName = "select_options.bti";
 const char* TCardLoad::cBMarkNewFileName = "select_new.bti";
@@ -161,19 +175,7 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	}
 
 	setupTitleScreen();
-	const char* directories[5] = {
-		"/option/timg/", "/option/timg/ge/", "/option/timg/fr/",
-		"/option/timg/sp/", "/option/timg/it/",
-	};
-	const char* directory = directories[language];
-	for (int i = 0; i < unk7D4; ++i) {
-		char buffer[0xFF];
-		snprintf(buffer, 0xFF, "%stitle_start_%02d.bti", directory, i + 1);
-		JUTTexture* texture = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
-		J2DPicture* picture = (J2DPicture*)unk34->search(
-		    's_00' + (i + 1) % 10 + (((i + 1) / 10) << 8));
-		picture->changeTexture(texture->getTexInfo(), 0);
-	}
+	changeTitleTexture(language);
 
 	unk208 = unk34->search('ROOT');
 
@@ -346,10 +348,121 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
 }
 
+void TCardLoad::resetScoreScreenObjects()
+{
+	int shineAreas[] = { 2, 3, 4, 5, 6, 8, 7 };
+
+	for (int i = 0; i < 7; ++i) {
+		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
+
+		for (int j = 0; j < 3; ++j)
+			unk584[i].unk4[j]
+			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
+
+		for (int j = 0; j < 8; ++j) {
+			J2DPane* pane = unk2C->search('sh0a' + i * 0x100 + j);
+			unk584[i].unk10[j] = pane;
+
+			if (!SMS_isGetShine(shineAreas[i], j, false))
+				pane->hide();
+		}
+
+		for (int j = 0; j < 2; ++j) {
+			J2DPane* pane = unk2C->search('sh0i' + i * 0x100 + j);
+			unk584[i].unk30[j] = pane;
+			pane->hide();
+		}
+
+		unk584[i].unk38 = unk2C->search('sh0k' + i);
+		unk584[i].unk38->hide();
+	}
+
+	for (int i = 0; i < 3; ++i) {
+		unk728[i] = unk2C->search('\0t_1' + i);
+		unk728[i]->hide();
+	}
+
+	unk740 = unk2C->search('\0t_p');
+	unk744 = unk2C->search('s_tl');
+	unk748 = (J2DPicture*)unk2C->search('\0n_a');
+	unk74C = (J2DPicture*)unk2C->search('\0n_b');
+	unk750 = (J2DPicture*)unk2C->search('\0n_c');
+}
+
+void TCardLoad::changeTitleTexture(int language)
+{
+	const char* directories[5] = {
+		"/option/timg/", "/option/timg/ge/", "/option/timg/fr/",
+		"/option/timg/sp/", "/option/timg/it/",
+	};
+	const char* directory = directories[language];
+	for (int i = 0; i < unk7D4; ++i) {
+		char buffer[0xFF];
+		snprintf(buffer, 0xFF, "%stitle_start_%02d.bti", directory, i + 1);
+		JUTTexture* texture = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
+		J2DPicture* picture = (J2DPicture*)unk34->search(
+		    's_00' + (i + 1) % 10 + (((i + 1) / 10) << 8));
+		picture->changeTexture(texture->getTexInfo(), 0);
+	}
+
+}
+
+void TCardLoad::loadLangTexture()
+{
+	loadTextureFile(unk800, cToOptionFileName);
+	for (int row = 0; row < 4; ++row)
+		loadTextureFile(unk814[row], cBMarkMenuFileName[row]);
+	loadTextureFile(unk864, cBMarkNewFileName);
+	loadTextureFile(unk878, cWindowYesFileName);
+	loadTextureFile(unk88C, cWindowNoFileName);
+	for (int row = 0; row < 9; ++row)
+		loadTextureFile(unk8A0[row], cScoreStageFileName[row]);
+	loadTextureFile(unk954, cScoreTotalFileName);
+}
+
+void TCardLoad::loadTextureFile(JUTTexture** textures, const char* fileName)
+{
+	static const char* directories[5] = { "", "ge/", "fr/", "sp/", "it/" };
+	for (int lang = 0; lang < 5; ++lang) {
+		char path[0x100];
+		snprintf(path, 0xFF, "/option/timg/%s%s", directories[lang], fileName);
+		textures[lang] = new JUTTexture((const ResTIMG*)JKRGetResource(path));
+	}
+}
+
+void TCardLoad::replaceTexture(u32 tag, JUTTexture* texture, J2DScreen* screen)
+{
+	J2DPicture* picture = (J2DPicture*)screen->search(tag);
+	picture->changeTexture(texture->getTexInfo(), 0);
+}
+
+void TCardLoad::changeLanguage(int lang)
+{
+	unkA0 = unk7D8[lang];
+	unk2C = unk7EC[lang];
+	resetScoreScreenObjects();
+	replaceTexture('\0s_1', unk800[lang], unk28);
+	replaceTexture('s_6a', unk878[lang], unk28);
+	replaceTexture('s_7a', unk88C[lang], unk28);
+	replaceTexture('s_6b', unk878[lang], unk28);
+	replaceTexture('s_7b', unk88C[lang], unk28);
+	for (int i = 0; i < 3; ++i) {
+		replaceTexture('s_0a' + i, unk864[lang], unk28);
+		for (int row = 0; row < 4; ++row)
+			replaceTexture('s_2a' + row * 0x100 + i, unk814[row][lang], unk28);
+	}
+	for (int i = 0; i < 9; ++i)
+		replaceTexture('st_0' + i, unk8A0[i][lang], unk2C);
+	replaceTexture('s_tl', unk954[lang], unk2C);
+}
+
 void TCardLoad::setupTitleScreen()
 {
 	switch (TFlagManager::getInstance()->getFlag(0xA0001)) {
 	case 0:
+	default:
+		unk7D4 = 11;
+		break;
 	case 1:
 		unk7D4 = 11;
 		break;
@@ -362,12 +475,10 @@ void TCardLoad::setupTitleScreen()
 	case 4:
 		unk7D4 = 10;
 		break;
-	default:
-		unk7D4 = 11;
-		break;
 	}
 
-	for (int i = 0; i < unk7D4; ++i) {
+	const int titleLetterCount = unk7D4;
+	for (int i = 0; i < titleLetterCount; ++i) {
 		unk20C[i] = 25 * i + 150;
 		unk222[i] = 4;
 	}
@@ -516,149 +627,6 @@ void TCardLoad::setupScoreScreen()
 	unk744->setAlpha(0);
 	unk740->setAlpha(0);
 }
-
-static JUTTexture* loadLocalizedTexture(const char* directory,
-	                                    const char* fileName)
-{
-	char path[0x100];
-	snprintf(path, 0xFF, "/option/timg/%s%s", directory, fileName);
-	return new JUTTexture(
-	    (const ResTIMG*)JKRFileLoader::getGlbResource(path));
-}
-
-void TCardLoad::loadLangTexture()
-{
-	static const char* directories[5] = { "", "ge/", "fr/", "sp/", "it/" };
-
-	for (int lang = 0; lang < 5; ++lang)
-		unk800[lang] = loadLocalizedTexture(directories[lang],
-		                                    cToOptionFileName);
-
-	for (int row = 0; row < 4; ++row)
-		for (int lang = 0; lang < 5; ++lang)
-			unk814[row][lang]
-			    = loadLocalizedTexture(directories[lang],
-			                           cBMarkMenuFileName[row]);
-
-	for (int lang = 0; lang < 5; ++lang) {
-		unk864[lang]
-		    = loadLocalizedTexture(directories[lang], cBMarkNewFileName);
-		unk878[lang]
-		    = loadLocalizedTexture(directories[lang], cWindowYesFileName);
-		unk88C[lang]
-		    = loadLocalizedTexture(directories[lang], cWindowNoFileName);
-	}
-
-	for (int row = 0; row < 9; ++row)
-		for (int lang = 0; lang < 5; ++lang)
-			unk8A0[row][lang]
-			    = loadLocalizedTexture(directories[lang],
-			                           cScoreStageFileName[row]);
-
-	for (int lang = 0; lang < 5; ++lang)
-		unk954[lang]
-		    = loadLocalizedTexture(directories[lang], cScoreTotalFileName);
-}
-
-void TCardLoad::changeLanguage(int lang)
-{
-	unkA0 = unk7D8[lang];
-	unk2C = unk7EC[lang];
-	resetScoreScreenObjects();
-
-	((J2DPicture*)unk28->search('s__1'))
-	    ->changeTexture(unk800[lang]->getTexInfo(), 0);
-	((J2DPicture*)unk28->search('s_6a'))
-	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
-	((J2DPicture*)unk28->search('s_7a'))
-	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
-	((J2DPicture*)unk28->search('s_6b'))
-	    ->changeTexture(unk878[lang]->getTexInfo(), 0);
-	((J2DPicture*)unk28->search('s_7b'))
-	    ->changeTexture(unk88C[lang]->getTexInfo(), 0);
-
-	for (int i = 0; i < 3; ++i)
-		((J2DPicture*)unk28->search('s_0a' + i))
-		    ->changeTexture(unk864[lang]->getTexInfo(), 0);
-
-	for (int i = 0; i < 3; ++i)
-		for (int row = 0; row < 4; ++row)
-			((J2DPicture*)unk28->search('s_2a' + row * 0x100 + i))
-			    ->changeTexture(unk814[row][lang]->getTexInfo(), 0);
-
-	for (int i = 0; i < 9; ++i)
-		((J2DPicture*)unk2C->search('st_0' + i))
-		    ->changeTexture(unk8A0[i][lang]->getTexInfo(), 0);
-
-	((J2DPicture*)unk2C->search('s_tl'))
-	    ->changeTexture(unk954[lang]->getTexInfo(), 0);
-}
-
-void TCardLoad::resetScoreScreenObjects()
-{
-	int shineAreas[] = { 2, 3, 4, 5, 6, 8, 7 };
-
-	for (int i = 0; i < 7; ++i) {
-		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
-
-		for (int j = 0; j < 3; ++j)
-			unk584[i].unk4[j]
-			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
-
-		for (int j = 0; j < 8; ++j) {
-			J2DPane* pane = unk2C->search('sh0a' + i * 0x100 + j);
-			unk584[i].unk10[j] = pane;
-
-			if (!SMS_isGetShine(shineAreas[i], j, false))
-				pane->hide();
-		}
-
-		for (int j = 0; j < 2; ++j) {
-			J2DPane* pane = unk2C->search('sh0i' + i * 0x100 + j);
-			unk584[i].unk30[j] = pane;
-			pane->hide();
-		}
-
-		unk584[i].unk38 = unk2C->search('sh0k' + i);
-		unk584[i].unk38->hide();
-	}
-
-	for (int i = 0; i < 3; ++i) {
-		unk728[i] = unk2C->search('\0t_1' + i);
-		unk728[i]->hide();
-	}
-
-	unk740 = unk2C->search('\0t_p');
-	unk744 = unk2C->search('s_tl');
-	unk748 = (J2DPicture*)unk2C->search('\0n_a');
-	unk74C = (J2DPicture*)unk2C->search('\0n_b');
-	unk750 = (J2DPicture*)unk2C->search('\0n_c');
-}
-
-#pragma dont_inline on
-void TCardLoad::resizeBox(J2DWindow* window, J2DTextBox* text,
-                          J2DTextBox* shadow)
-{
-	const char* textString = text->getStringPtr();
-	JUTRect originalBounds = window->mBounds;
-	J2DPrint printer((JUTFont*)gpSystemFont, 0);
-	J2DPrint::TSize textSize;
-	printer.getSize(textSize, textString);
-
-	JUTRect contentsBounds = JUTRect(window->getContentsBounds());
-	const s32 frameWidth = originalBounds.getWidth() - contentsBounds.getWidth();
-	const s32 frameHeight = originalBounds.getHeight() - contentsBounds.getHeight();
-	window->resize(textSize.unk0 + frameWidth + 10.0f,
-	               textSize.unk4 + frameHeight + 10.0f);
-
-	JUTRect resizedBounds = window->getBounds();
-	const s32 moveX = (originalBounds.x2 - resizedBounds.x2) / 2;
-	const s32 moveY = (originalBounds.y2 - resizedBounds.y2) / 2;
-	text->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
-	shadow->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
-	window->add(moveX, moveY);
-}
-#pragma dont_inline off
 
 void TCardLoad::loadAfter()
 {
@@ -1170,6 +1138,32 @@ void TCardLoad::setMessage(J2DTextBox* text_box, s32 param_2, int param_3)
 	        param_2);
 }
 
+#pragma dont_inline on
+void TCardLoad::resizeBox(J2DWindow* window, J2DTextBox* text,
+                          J2DTextBox* shadow)
+{
+	const char* textString = text->getStringPtr();
+	const JUTRect& windowBounds = window->getBounds();
+	JUTRect originalBounds = windowBounds;
+	J2DPrint printer((JUTFont*)gpSystemFont, 0);
+	J2DPrint::TSize textSize;
+	printer.getSize(textSize, textString);
+
+	JUTRect contentsBounds = JUTRect(window->getContentsBounds());
+	const s32 frameWidth = originalBounds.getWidth() - contentsBounds.getWidth();
+	const s32 frameHeight = originalBounds.getHeight() - contentsBounds.getHeight();
+	window->resize(textSize.unk0 + frameWidth + 10.0f,
+	               textSize.unk4 + frameHeight + 10.0f);
+
+	JUTRect resizedBounds = windowBounds;
+	const s32 moveX = (originalBounds.x2 - resizedBounds.x2) / 2;
+	const s32 moveY = (originalBounds.y2 - resizedBounds.y2) / 2;
+	text->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
+	shadow->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
+	window->add(moveX, moveY);
+}
+#pragma dont_inline off
+
 s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 {
 	s8 result = -1;
@@ -1414,8 +1408,8 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 		}
 
 		if (unkC4 == 4) {
-			unk4D8[unkB7]->setCenteredSize(20, unk4E0[unkB7].getWidth() * 0.5f,
-			                               unk4E0[unkB7].getHeight() * 0.5f,
+			unk4D8[unkB7]->setCenteredSize(40, unk4E0[unkB7].getWidth() * 1.5f,
+			                               unk4E0[unkB7].getHeight() * 1.5f,
 			                               unk4E0[unkB7].getWidth(),
 			                               unk4E0[unkB7].getHeight());
 			JUTRect bounds = unk4D8[unkB7]->getPane()->mGlobalBounds;
@@ -1816,9 +1810,9 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 		unk4C8->hide();
 		unk4CC[0]->hide();
 		unk4CC[1]->hide();
-		unk4CC[3]->hide();
+		unk4CC[2]->hide();
 
-		unk4AC->setCenteredSize(20, unk46C.getWidth(), unk46C.getHeight(), 0,
+		unk4AC->setCenteredSize(20, unk4B0.getWidth(), unk4B0.getHeight(), 0,
 		                        0);
 		unk10 = 1;
 		break;
@@ -2119,9 +2113,11 @@ s8 TCardLoad::selectFunction()
 			for (int i = 0; i < 4; ++i) {
 				unk378[unkB0][i]->getPane()->show();
 
-				unk378[unkB0][i]->updateCenteredSize(
+				unk378[unkB0][i]->setCenteredSize(
 				    1, unk3A8[unkB0][i].getWidth(),
-				    unk3A8[unkB0][i].getHeight());
+				    unk3A8[unkB0][i].getHeight(),
+				    unk378[unkB0][i]->mOffsetInterpolator.getCurrentX(),
+				    unk378[unkB0][i]->mOffsetInterpolator.getCurrentY());
 
 				unk378[unkB0][i]->update();
 				if (unk40[unkB0].unk18 == 0) {
@@ -2137,19 +2133,19 @@ s8 TCardLoad::selectFunction()
 			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->mWhite = 0x00FF00FF;
 			for (int i = 0; i < 3; ++i) {
 				if (unk40[i].unk0 == 1) {
-				J2DTextBox* text = unk2C0[i];
+				J2DTextBox* text = unk51C;
 				const char* message = SMSGetMessageData(unkA0, 0);
 				strncpy(text->getStringPtr(), message, 20);
-				text    = unk2CC[i];
+				text    = unk520;
 				message = SMSGetMessageData(unkA0, 0);
 				strncpy(text->getStringPtr(), message, 20);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else if (unk40[i].unk18 == 0) {
-				J2DTextBox* text = unk2C0[i];
+				J2DTextBox* text = unk51C;
 				const char* message = SMSGetMessageData(unkA0, 0x1B);
 				strncpy(text->getStringPtr(), message, 20);
-				text    = unk2CC[i];
+				text    = unk520;
 				message = SMSGetMessageData(unkA0, 0x1B);
 				strncpy(text->getStringPtr(), message, 20);
 					unk2CC[i]->show();
@@ -2218,8 +2214,8 @@ s8 TCardLoad::selectFunction()
 
 				JUTRect rect
 				    = unk378[unkB0][unkB6]->getPane()->getGlobalBounds();
-				JGeometry::TVec3<f32> pos(rect.x1 + rect.getWidth() / 2.0f,
-				                          rect.y1 + rect.getHeight() / 2.0f,
+				JGeometry::TVec3<f32> pos(0.5f * rect.getWidth() + rect.x1,
+				                          0.5f * rect.getHeight() + rect.y1,
 				                          0.0f);
 				gpEmitterManager4D2->createEmitter(pos, 0x1FA, nullptr,
 				                                   nullptr);
@@ -2228,7 +2224,7 @@ s8 TCardLoad::selectFunction()
 				unkAC->setEmitterScale(JGeometry::TVec3<f32>(0.9f, 1.0f, 0.1f));
 			} else if (unkC4 == 44) {
 				unk378[unkB0][unkB6]->setCenteredSize(
-				    20, unk3A8[unkB0][unkB6].getWidth(),
+				    40, unk3A8[unkB0][unkB6].getWidth(),
 				    unk3A8[unkB0][unkB6].getHeight(),
 				    unk3A8[unkB0][unkB6].getWidth() * 1.5f,
 				    unk3A8[unkB0][unkB6].getHeight() * 1.5f);
@@ -2273,8 +2269,8 @@ s8 TCardLoad::selectFunction()
 				unk2CC[i]->hide();
 				unk2D8[i]->hide();
 				unk2FC[i]->hide();
-				unk2A4[i]->setCenteredSize(30, 0, 0, rect.getWidth(),
-				                           rect.getHeight());
+				unk2A4[i]->setCenteredSize(30, 0, 0, unk2B0.getWidth(),
+				                           unk2B0.getHeight());
 			}
 		}
 	} break;
@@ -2287,7 +2283,7 @@ s8 TCardLoad::selectFunction()
 		if (done) {
 			unk33C[unkB0]->getPane()->hide();
 			for (int i = 0; i < 3; ++i)
-				if (unkB0 == i && unkB6 != -1 && unkB6 != 1)
+				if (i == unkB0 && unkB6 != -1 && unkB6 != 1)
 					unk2A4[i]->getPane()->hide();
 			unk10 = 5;
 		}
@@ -2382,7 +2378,8 @@ void TCardLoad::changeScene()
 	case PROGRESS_UNKC:
 	case PROGRESS_UNKD:
 	case PROGRESS_UNK10:
-	case PROGRESS_UNK2D: {
+	case PROGRESS_UNK2D:
+	case PROGRESS_UNK35: {
 		int rc = gpCardManager->getLastStatus();
 		if (rc != CARD_RESULT_NOCARD) {
 			waitForStart(PROGRESS_UNK1A);
@@ -2399,12 +2396,12 @@ void TCardLoad::changeScene()
 	case PROGRESS_UNK7: {
 		int rc = gpCardManager->getLastStatus();
 		if (rc == CARD_RESULT_READY) {
-			waitForChoice(PROGRESS_UNK8, PROGRESS_UNK4, 1);
+			waitForChoice(PROGRESS_UNK8, PROGRESS_UNK35, 1);
 			gpCardManager->probe();
 		} else if (rc != CARD_RESULT_BUSY) {
 			if (unk10 < 3)
 				unk10 = 3;
-			if (waitForChoice(PROGRESS_UNK8, PROGRESS_UNK4, 1) != -1)
+			if (waitForChoice(PROGRESS_UNK8, PROGRESS_UNK35, 1) != -1)
 				unk1C = changeMode(rc);
 		}
 	} break;
@@ -2412,7 +2409,7 @@ void TCardLoad::changeScene()
 	case PROGRESS_UNK8: {
 		int rc = gpCardManager->getLastStatus();
 		if (rc == CARD_RESULT_READY) {
-			s8 choice = waitForChoice(PROGRESS_UNK9, PROGRESS_UNK4, 1);
+			s8 choice = waitForChoice(PROGRESS_UNK9, PROGRESS_UNK35, 1);
 			if (choice == 0)
 				gpCardManager->format();
 			if (choice == -1)
@@ -2420,7 +2417,7 @@ void TCardLoad::changeScene()
 		} else if (rc != CARD_RESULT_BUSY) {
 			if (unk10 < 3)
 				unk10 = 3;
-			if (waitForChoice(PROGRESS_UNK9, PROGRESS_UNK4, 1) != -1)
+			if (waitForChoice(PROGRESS_UNK9, PROGRESS_UNK35, 1) != -1)
 				unk1C = changeMode(rc);
 		}
 	} break;
@@ -2430,7 +2427,7 @@ void TCardLoad::changeScene()
 		if (rc != CARD_RESULT_BUSY) {
 			if (rc == CARD_RESULT_READY) {
 				if (unk10 == 2)
-					unk10 = 4;
+					unk10 = 3;
 				drawMessage(PROGRESS_UNKA);
 				gpCardManager->probe();
 				if (unk10 == 5)
@@ -2448,9 +2445,13 @@ void TCardLoad::changeScene()
 	} break;
 
 	case PROGRESS_UNKA:
-	case PROGRESS_UNKB:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
 			gpCardManager->getBookmarkInfos(unk40);
+		break;
+
+	case PROGRESS_UNKB:
+		if (waitForAnyKey(PROGRESS_UNK2) != -1)
+			unk1C = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNK1A: {
@@ -2482,7 +2483,7 @@ void TCardLoad::changeScene()
 		if (rc != CARD_RESULT_BUSY) {
 			if (rc == CARD_RESULT_READY) {
 				if (unk10 == 2)
-					unk10 = 4;
+					unk10 = 3;
 				drawMessage(PROGRESS_UNK11);
 				gpCardManager->probe();
 				if (unk10 == 5)
@@ -2490,7 +2491,7 @@ void TCardLoad::changeScene()
 					                                   nullptr, 0);
 			} else {
 				if (unk10 == 2)
-					unk10 = 4;
+					unk10 = 3;
 				drawMessage(PROGRESS_UNK12);
 			}
 		} else {
@@ -2500,6 +2501,10 @@ void TCardLoad::changeScene()
 	} break;
 
 	case PROGRESS_UNK11:
+		if (waitForAnyKey(PROGRESS_UNK2) != -1)
+			gpCardManager->getBookmarkInfos(unk40);
+		break;
+
 	case PROGRESS_UNK12:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
 			unk1C = changeMode(gpCardManager->getLastStatus());
@@ -2529,8 +2534,12 @@ void TCardLoad::changeScene()
 				unkB2 = choice;
 
 				TCardBookmarkInfo* bm = &unk40[unkB2];
-				if (bm->unk0 == 1)
+				if (bm->unk0 == 1) {
 					unk1C = PROGRESS_UNK22;
+				} else if (bm->unk18 == 0) {
+					gpCardManager->readBlock(unkB1);
+					unk1C = PROGRESS_UNK24;
+				}
 			}
 			if (unk1C == PROGRESS_UNK2)
 				gpCardManager->getBookmarkInfos(unk40);
@@ -2622,7 +2631,7 @@ void TCardLoad::changeScene()
 			if (rc == CARD_RESULT_READY) {
 				if (unk10 == 2)
 					unk10 = 3;
-				drawMessage(PROGRESS_UNK20);
+				drawMessageBM(PROGRESS_UNK20);
 				gpCardManager->probe();
 				if (unk10 == 5)
 					SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_DECIDE, 0,
@@ -2630,7 +2639,7 @@ void TCardLoad::changeScene()
 			} else {
 				if (unk10 == 2)
 					unk10 = 3;
-				drawMessage(PROGRESS_UNK21);
+				drawMessageBM(PROGRESS_UNK21);
 			}
 		} else {
 			drawMessageBM(PROGRESS_UNK0);
@@ -2638,9 +2647,13 @@ void TCardLoad::changeScene()
 	} break;
 
 	case PROGRESS_UNK20:
-	case PROGRESS_UNK21:
 		if (waitForAnyKey(PROGRESS_UNK2) != -1)
 			gpCardManager->getBookmarkInfos(unk40);
+		break;
+
+	case PROGRESS_UNK21:
+		if (waitForAnyKey(PROGRESS_UNK2) != -1)
+			unk1C = changeMode(gpCardManager->getLastStatus());
 		break;
 
 	case PROGRESS_UNK1D: {
@@ -2735,12 +2748,22 @@ void TCardLoad::changeScene()
 		}
 	} break;
 
-	case PROGRESS_UNK26:
 	case PROGRESS_UNK27: {
 		int rc = gpCardManager->probe();
 		if (rc == CARD_RESULT_READY) {
 			if (waitForAnyKeyBM(PROGRESS_UNK2) != -1)
 				gpCardManager->getBookmarkInfos(unk40);
+		} else if (rc != CARD_RESULT_BUSY) {
+			if (waitForAnyKeyBM(PROGRESS_UNK0) != -1)
+				unk1C = changeMode(rc);
+		}
+	} break;
+
+	case PROGRESS_UNK26: {
+		int rc = gpCardManager->getLastStatus();
+		if (rc == CARD_RESULT_READY) {
+			if (waitForAnyKeyBM(PROGRESS_UNK0) != -1)
+				unk1C = changeMode(rc);
 		} else if (rc != CARD_RESULT_BUSY) {
 			if (waitForAnyKeyBM(PROGRESS_UNK0) != -1)
 				unk1C = changeMode(rc);
@@ -2805,9 +2828,8 @@ void TCardLoad::changeScene()
 			drawMessage(PROGRESS_UNK0);
 		}
 	} break;
-	case 0x33:
-	case 0x34:
-	case 0x35:
+	case PROGRESS_UNK33:
+	case PROGRESS_UNK34:
 		break;
 	}
 
@@ -2815,6 +2837,7 @@ void TCardLoad::changeScene()
 		unk24 = 0;
 		unk20 = unk1C;
 		unk10 = 0;
+		unkB4 = 0;
 		switch (prevUnk1C) {
 		case PROGRESS_UNK1C:
 			unk284->offCollision();
@@ -2827,6 +2850,7 @@ void TCardLoad::changeScene()
 		case PROGRESS_UNKD:
 		case PROGRESS_UNK10:
 		case PROGRESS_UNK2D:
+		case PROGRESS_UNK35:
 			unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 			unk275 = 0;
 			break;
@@ -2847,6 +2871,7 @@ void TCardLoad::changeScene()
 		case PROGRESS_UNKD:
 		case PROGRESS_UNK10:
 		case PROGRESS_UNK2D:
+		case PROGRESS_UNK35:
 			unk275 = 1;
 			unk38->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 			break;

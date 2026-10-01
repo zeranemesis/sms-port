@@ -129,6 +129,15 @@ public:
 
 class TStayPakkun : public TPakkun {
 public:
+	// marioEU.MAP has no __ct__11TStayPakkun, and MarNameRefGen_Enemy builds it
+	// by calling __ct__7TPakkunFPCc("固定パックン") and patching
+	// __vt__11TStayPakkun (0x1B0 bytes, same as TPakkun's, so no new slot) --
+	// so the constructor was inline.
+	TStayPakkun(const char* name = "固定パックン")
+	    : TPakkun(name)
+	{
+	}
+
 	virtual void load(JSUMemoryInputStream&);
 	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();

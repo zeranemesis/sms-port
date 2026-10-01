@@ -192,10 +192,14 @@ public:
 class TBathtubGripParts : public TLiveActor {
 public:
 	TBathtubGripParts(const char* name, int, TBathtubGrip*);
-	// Defined out of line in MapObjCorona.cpp. The map records the symbol
-	// itself as *weak* (i.e. a header inline) but also emits the base class'
-	// vtable here, and only an out-of-line definition makes MWCC emit it --
-	// an inline body drops __vt__17TBathtubGripParts and the @32@ thunk.
+	// Defined out of line in MapObjCorona.cpp: an in-class body links *weak*
+	// (which is what the map's symbol closure records) but MWCC then puts
+	// __vt__17TBathtubGripParts in a virtual-table group and never emits it
+	// -- the class is never constructed in this TU -- so the 0xFC-byte
+	// vtable and the @32@ thunk both vanish.  Out of line they are all three
+	// present and the destructor itself matches 100%; the only cost is that
+	// __dt__17TBathtubGripPartsFv links global where the map says weak, which
+	// is a build-time binding and leaves the linked bytes identical.
 	virtual ~TBathtubGripParts();
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);

@@ -41,6 +41,29 @@ extern "C" {
 
 namespace sms::recomp::interrupt {
 
+// The shared sub-word read/write the PI, VI and PE shadows need. Those blocks
+// are accessed as halfwords by the SDK (`u16* __VIRegs`, `u16* __peReg`) and as
+// words by others, so the containing big-endian word is the unit that is
+// stored and the access picks bytes out of it.
+//
+// Inline here rather than in the .cpp because the lane arithmetic is the easy
+// thing to get subtly wrong - a status bit that lands in a neighbouring
+// register reads back as "nothing happened" - and the only way that gets caught
+// before a run is if it can be tested. run_pe_lane_self_test() does exactly
+// that.
+inline u32 extract(u32 word, u32 addr, u8 size)
+{
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    return (word >> shift) & ((size == 4) ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1));
+}
+
+inline void insert(u32 &word, u32 addr, u64 value, u8 size)
+{
+    const u32 shift = (4 - size - (addr & 3u)) * 8;
+    const u32 mask = (size == 4 ? 0xFFFFFFFFu : ((1u << (size * 8)) - 1)) << shift;
+    word = (word & ~mask) | ((static_cast<u32>(value) << shift) & mask);
+}
+
 // Registers the PI and VI MMIO ranges. Call once per CPUState after
 // cpu_init(), alongside install_host_calls().
 void install();
@@ -52,6 +75,15 @@ void install();
 constexpr u32 kCauseVi = 0x00000100u;
 constexpr u32 kCauseDsp = 0x00000040u;
 constexpr u32 kCauseDi = 0x00000004u;
+
+// The pixel engine's two. Read off __OSDispatchInterrupt's own cause chain
+// (src/dolphin/os/OSInterrupt.c:368 and :371), which maps 0x400 to
+// OS_INTERRUPTMASK_PI_PE_FINISH and 0x200 to OS_INTERRUPTMASK_PI_PE_TOKEN -
+// the two handlers __GXPEInit installs at interrupt 0x13 and 0x12
+// (src/dolphin/src/gx/GXMisc.c:263-270). kCausePeFinish is the one that matters
+// for play: it is what wakes GXWaitDrawDone.
+constexpr u32 kCausePeFinish = 0x00000400u;
+constexpr u32 kCausePeToken = 0x00000200u;
 
 // Raises or drops PI cause bits. Devices own their own status registers, so
 // acknowledging is always two steps: the device clears its own bit, then drops
@@ -69,6 +101,22 @@ void clear(u32 causeBits);
 // the guest is next interruptible.
 void raise_vi_retrace(CPUState *cpu);
 
+// Flags a pixel-engine finish as pending, the way the hardware does when the
+// GP drains: sets the finish status bit in the PE block's control register,
+// which is what GXFinishInterruptHandler reads, and raises the PI cause bit,
+// which is what __OSDispatchInterrupt reads to decide a finish happened.
+//
+// Raised once per presented guest frame, alongside raise_vi_retrace: a
+// retrace happens after the GP has finished the frame, so that is the point
+// where "the GPU is done" is a true statement. Raising it any earlier would
+// report a finish for work Aurora has not submitted yet.
+//
+// The guest clears it by writing the status bit back (GXFinishInterruptHandler
+// sets __peReg[5] bit 3, GXMisc.c:239), and that write is what drops the cause
+// again - so a frame whose finish is never acknowledged keeps reporting, which
+// is the honest outcome for a host that is genuinely behind.
+void raise_pe_finish();
+
 // Installs the DEC SPR callbacks and begins tracking the GameCube
 // decrementer.  The SDK's OSAlarm code programs DEC through mtspr 22; unlike
 // PI devices this is a CPU exception, so expiry enters the guest's registered
@@ -84,6 +132,17 @@ bool advance_decrementer(CPUState *cpu, u64 elapsedTicks);
 // Exercises DEC's SPR wiring, countdown and exception handoff without
 // requiring a disc image or a running Aurora window.
 bool run_decrementer_self_test();
+
+// Checks that a pixel-engine finish survives the trip through the block's own
+// halfword addressing, and that the guest's acknowledge brings the PI cause
+// back down.
+//
+// This exists because the alternative is a status bit that quietly lands in a
+// neighbouring register: it reads back as "nothing happened", the cause never
+// clears, and the symptom is an interrupt that re-fires every frame. It needs
+// no disc image, no generated code and no Aurora - dr_cpu has none of those
+// either.
+bool run_pe_lane_self_test();
 
 // True when PI reports a cause that PI's own mask lets through. Mirrors
 // __OSDispatchInterrupt's own opening test (`intsr == 0 ||

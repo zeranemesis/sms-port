@@ -313,6 +313,13 @@ static void evCheckMonteClear(TSpcTypedInterp<TEventWatcher>* interp,
 		b = false;
 
 	interp->push(b);
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_evCheckMonteClear[8];
+	(void)framePad_8_evCheckMonteClear;
 }
 
 void TNpcEvent::initNpcBuiltin(TSpcTypedBinary<TEventWatcher>* param_1)

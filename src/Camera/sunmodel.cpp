@@ -146,6 +146,19 @@ void TSunModel::calcOtherFPosFromCenterAndRadius_(
 	param_1[7].y = param_2.y + fVar1;
 }
 
+// TODO(fabricated): the ROM calls the cameralib `CLBScreenFPosToSPos` inline
+// out of line here (hence the weak out-of-line copy this TU emits), which only
+// happens when the call sits one inline level below the emitted function. A
+// plain direct call at that level IS expanded by MWCC 1.2.5, so this trivial
+// forwarding layer exists only to supply the missing level. There is no
+// UNUSED symbol in the map for sunmodel.cpp, so the real original helper (if
+// there was one) is unrecoverable -- promote this back if it is ever found.
+static inline void toScreenPos(JGeometry::TVec2<s16>* out,
+                               const JGeometry::TVec2<f32>& in)
+{
+	CLBScreenFPosToSPos(out, in);
+}
+
 // TODO: mark as inline or even move to the header maybe?
 void TSunModel::calcDispRatioAndScreenPos_()
 {
@@ -172,7 +185,7 @@ void TSunModel::calcDispRatioAndScreenPos_()
 	it1 = unkB4;
 	it2 = unkF8;
 	for (i = 0; i < 17; ++i) {
-		CLBScreenFPosToSPos(it1, *it2);
+		toScreenPos(it1, *it2);
 		++it1;
 		++it2;
 	}
@@ -184,7 +197,7 @@ void TSunModel::perform(u32 cue, JDrama::TGraphics*)
 	if (gpCameraMario->isMarioIndoor()) {
 		sunInBounds = false;
 	} else {
-		sunInBounds = isInBounds(unk1A8);
+		sunInBounds = sunPosInBounds(unkF8[0], unk1A8);
 	}
 
 	if (cue & CUE_MOVE) {
@@ -231,6 +244,15 @@ void TSunModel::perform(u32 cue, JDrama::TGraphics*)
 		MsVECNormalize(&dir, &dir);
 
 		JGeometry::TVec3<f32> camPos;
+		// TODO: the ROM calls the weak header inline
+		// JGeometry::TVec3<f32>::set(const Vec&) OUT OF LINE here (0x8002EE50),
+		// so `camPos` really lives in memory and is re-read by the inlined
+		// scaleAdd. MWCC 1.2.5 expands it at every depth we can reach from
+		// game-side source (forwarders get folded, extra inlined code does not
+		// change the decision), so `camPos` gets scalarised into f3/f0/f1 here
+		// and the whole block reorders. This is the same blocker as the three
+		// missing 0x1C-byte weak symbols in Camera/lensflare; it needs a
+		// libs/JSystem/JGVec3.hpp change.
 		camPos.set(gpCamera->getUnk124());
 		unk198.scaleAdd(250000.0f, camPos, dir);
 

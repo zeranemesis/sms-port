@@ -6,7 +6,41 @@
 class TLiveActor;
 class JSUMemoryInputStream;
 
-// fabricated
+/**
+ * @brief Bit layout of TBGCheckData::mFlags (u16 at offset 0x4).
+ *
+ * Decoding the tests. MWCC lowers `mFlags & (1 << k)` on a u16 member to
+ * `lhz rX, 0x4(rN)` + `rlwinm. rX, rX, 0, 31-k, 31-k`; the mask field is
+ * counted from the MSB, so the *value* tested is 1 << (31 - MB). Measured on
+ * this compiler (probe functions built against this very header):
+ *
+ *     value tested   instruction
+ *     0x04           rlwinm. r0, r0, 0, 29, 29
+ *     0x08           rlwinm. r0, r0, 0, 28, 28
+ *     0x10           rlwinm. r0, r0, 0, 27, 27
+ *     0x20           rlwinm. r0, r0, 0, 26, 26
+ *     0x40           rlwinm. r0, r0, 0, 25, 25
+ *
+ * `checkFlag(0x20)` is therefore `rlwinm ...,26,26` - *not* 27,27. Several trees
+ * in this repo used to spell the bosswanwan/chuuhana test as "0x20" after
+ * misreading the 27 in `rlwinm ...,27,27` as a bit number; it is really 0x10.
+ *
+ * Known bits:
+ *  - 0x04 - untested/unset in the ROM.
+ *  - 0x08 - X-facing wall flag. Set by getPlaneType() when
+ *           |mNormal.x| >= 0.707 (`ori r0, r0, 0x8` at 0x8019B98C) and tested
+ *           by the inlined someUnknownInline at 0x80185244. Keep it a literal
+ *           at the call site: `checkFlag(0x8)` already emits the right rlwinm.
+ *  - 0x10 - illegal/sentinel plane (BG_CHECK_FLAG_ILLEGAL). Only ever set on
+ *           TMapCollisionData::mIllegalCheckData (`ori r0, r0, 0x10` at
+ *           0x80185914) and tested by isIllegalData().
+ *
+ * Bits 0x20 and above: an exhaustive scan of mario.dol found **no** site that
+ * tests 0x20 of a u16 at offset 0x4, and **no** site that ever sets it. The
+ * only writes to mFlags in the whole ROM are the constructor (zero), the
+ * getPlaneType() `ori 0x8` / `rlwinm 29,27` pair, and the `ori 0x10` above.
+ * Bit 0x20 is therefore left unnamed on purpose - do not invent a name for it.
+ */
 enum BGCheckFlagBits {
 	BG_CHECK_FLAG_ILLEGAL = 0x10,
 };
@@ -161,6 +195,20 @@ public:
 		    || mBGType == BG_TYPE_SEA_WATER
 		    || mBGType == BG_TYPE_DAMAGING_SEA_WATER || mBGType == BG_TYPE_POOL
 		    || mBGType == BG_TYPE_INDOOR_POOL || mBGType == BG_TYPE_SHADED_POOL)
+			return true;
+		return false;
+	}
+	// Same set as isWaterSurface(), but spelled as one equality, one u16 range
+	// test and one equality. TPakkunSeed::rebirth needs exactly that shape
+	// (`cmplwi r3, 0x100 / beq` then `subi r0, r3, 0x101 / clrlwi r0, r0, 16
+	// / cmplwi r0, 4 / ble` then `cmplwi r3, 0x4104`); every other call site
+	// needs the seven-equality form above, so both spellings have to exist.
+	bool isWaterSurfaceRanged() const
+	{
+		if (mBGType == BG_TYPE_WATER
+		    || (u16)(mBGType - BG_TYPE_DAMAGING_WATER)
+		           <= (u16)(BG_TYPE_INDOOR_POOL - BG_TYPE_DAMAGING_WATER)
+		    || mBGType == BG_TYPE_SHADED_POOL)
 			return true;
 		return false;
 	}

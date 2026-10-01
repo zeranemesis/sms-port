@@ -11,6 +11,7 @@
 #include "port/recomp_card.h"
 #include "port/recomp_dolphin_sdk.h"
 #include "port/recomp_exi.h"
+#include "port/recomp_gx_copy.h"
 #include "port/recomp_gx_fifo.h"
 #include "port/recomp_host.h"
 #include "port/recomp_interrupt.h"
@@ -989,6 +990,7 @@ void install_low_memory_globals(CPUState *cpu)
     constexpr u32 kOSSimulatedMemSize = 0x800000F0u; // __OSSimulatedMemSize
     constexpr u32 kOSBusClock = 0x800000F8u;        // __OSBusClock
     constexpr u32 kOSCoreClock = 0x800000FCu;       // __OSCoreClock
+    constexpr u32 kOSTVMode = 0x800000CCu;          // __OSTVMode
 
     // Whatever this CPUState was actually given, rather than the retail 24MB
     // constant - the two agree today, and if they ever stop agreeing the
@@ -998,12 +1000,30 @@ void install_low_memory_globals(CPUState *cpu)
     mem_write32(cpu, kOSBusClock, kBusClockHz);
     mem_write32(cpu, kOSCoreClock, kCoreClockHz);
 
-    // __OSTVMode (OS_BASE_CACHED | 0x00CC) is deliberately NOT set here. It
-    // is equally IPL-provided and equally zero, which reads as VI_NTSC for
-    // what is a PAL (GMSP01) disc - a real mismatch, but one that changes the
-    // render mode and framebuffer geometry, so it gets its own change and its
-    // own measurement rather than riding along with the clocks.
-    Log.info("low memory: busClock={} coreClock={} memSize={:#x}", kBusClockHz, kCoreClockHz, cpu->ram_size);
+    // __OSTVMode says what the *console* outputs, as opposed to what the game
+    // asked for. Leaving it zero says VI_NTSC on a GMSP01 (PAL) disc, which
+    // is the mismatch docs/port_todo.md section 3.3 records.
+    //
+    // The value is the format byte, not the packed VITVMode: the SDK stores
+    // `tv = mode >> 2` (libs/dolphin/src/vi/vi.c:283), so the correct value
+    // for PAL is VI_PAL (1), not VI_TVMODE_PAL_INT (4). Getting that backwards
+    // would write an out-of-range TV format rather than merely a wrong one.
+    //
+    // And it is not, in fact, only IPL-provided: __VIInit overwrites it with
+    // the format derived from the mode the game itself selected (vi.c:281-283).
+    // So this write only decides what a reader sees before the game initialises
+    // VI - after that the guest owns the value, which on a region-aware disc is
+    // how it ends up correct anyway. VIConfigure (vi.c:704-722) consults it as
+    // `tvInBootrom` and defers to the game's own choice unless that choice is
+    // NTSC or MPAL, where this is the fallback.
+    //
+    // The half of this defect that does *not* self-correct is the host's frame
+    // pace, which is set from the disc in portmain.cpp and has no such
+    // fallback. That is the half worth measuring.
+    mem_write32(cpu, kOSTVMode, kGuestTvFormat);
+
+    Log.info("low memory: busClock={} coreClock={} memSize={:#x} tvFormat={} ({}Hz)",
+        kBusClockHz, kCoreClockHz, cpu->ram_size, kGuestTvFormat, kGuestFrameHz);
 }
 
 // OSBootInfo, and the job this port has been silently skipping: being the
@@ -1285,6 +1305,26 @@ bool boot_game(CPUState *cpu)
     };
     gx_fifo::register_known_gx_calls(kKnownGxCalls, std::size(kKnownGxCalls));
 
+    // Render-to-texture, in its own table rather than the one above so that
+    // the copy path and the FIFO path stay independently editable - the
+    // latter is being worked on in parallel.
+    //
+    // Only GXCopyTex does anything itself. The four others are observers
+    // registered for the per-second copy report, and all five return false so
+    // the recompiled guest body still runs: the guest body is what maintains
+    // gxData, and GXSetTexCopySrc writes the copy rectangle there without
+    // pushing anything to the FIFO until a copy actually happens. See
+    // include/port/recomp_gx_copy.h for why forwarding these to Aurora's own
+    // versions would resolve from the previous frame.
+    static const gx_copy::NamedAddress kKnownGxCopyCalls[] = {
+        { "GXCopyTex", DOLRECOMP_SYMBOL_GXCopyTex },
+        { "GXSetTexCopySrc", DOLRECOMP_SYMBOL_GXSetTexCopySrc },
+        { "GXSetTexCopyDst", DOLRECOMP_SYMBOL_GXSetTexCopyDst },
+        { "GXSetViewport", DOLRECOMP_SYMBOL_GXSetViewport },
+        { "GXSetScissor", DOLRECOMP_SYMBOL_GXSetScissor },
+    };
+    gx_copy::register_known_gx_copy_calls(kKnownGxCopyCalls, std::size(kKnownGxCopyCalls));
+
     // MSR[FP] has to be on before the first guest instruction runs. A
     // zero-initialised CPUState leaves it off, and generated code guards
     // every floating-point instruction with ppc_fp_available_inline(), which
@@ -1317,11 +1357,18 @@ bool step_game(CPUState *cpu, unsigned maxBlocks)
     // One call to step_game is one guest frame, so this is the vertical
     // retrace. It used to be one *host* frame as well, which made the retrace
     // rate the monitor's refresh rate; portmain.cpp now paces these calls from
-    // real elapsed time instead, so the guest sees 60 retraces per real second
-    // whatever the display does. This only raises the hardware line; when the
-    // guest actually takes it is up to MSR[EE] and PI's mask, exactly as on
-    // real hardware.
+    // real elapsed time instead, so the guest sees kGuestFrameHz retraces per
+    // real second whatever the display does. This only raises the hardware
+    // line; when the guest actually takes it is up to MSR[EE] and PI's mask,
+    // exactly as on real hardware.
     interrupt::raise_vi_retrace(cpu);
+
+    // And with it the pixel-engine finish, which on hardware happens as the GP
+    // drains the frame's work - i.e. before the retrace that follows it. This
+    // is what makes the guest's own GXWaitDrawDone able to return and its
+    // GXSetDrawDoneCallback able to run, neither of which could happen while
+    // the DrawDone flag was forced rather than delivered.
+    interrupt::raise_pe_finish();
 
     // The frame's work is run in slices rather than one go, because the host
     // can only deliver an interrupt between slices - so the slice length *is*

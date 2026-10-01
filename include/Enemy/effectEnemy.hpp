@@ -37,6 +37,15 @@ public:
 
 class TEffectEnemyManager : public TSmallEnemyManager {
 public:
+	// marioEU.MAP has no __ct__19TEffectEnemyManager, and MarNameRefGen_Enemy
+	// constructs it by calling __ct__18TSmallEnemyManagerFPCc and patching
+	// __vt__19TEffectEnemyManager (0x58 bytes, i.e. no new slot) afterwards --
+	// so the constructor was inline. Same shape as TKageMarioModokiManager.
+	TEffectEnemyManager(const char* name = "エフェクト敵マネージャー")
+	    : TSmallEnemyManager(name)
+	{
+	}
+
 	virtual void initSetEnemies();
 	virtual TSpineEnemy* createEnemyInstance();
 	virtual void load(JSUMemoryInputStream&);

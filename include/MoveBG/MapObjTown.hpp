@@ -55,6 +55,7 @@ class TMapObjBillboard : public THideObjBase {
 public:
 	TMapObjBillboard(const char* name = "看板")
 	    : THideObjBase(name)
+	    , unk150(0)
 	{
 	}
 
@@ -98,6 +99,7 @@ class TMapObjStartDemo : public TMapObjBase {
 public:
 	TMapObjStartDemo(const char* name = "デモ開始オブジェ")
 	    : TMapObjBase(name)
+	    , unk138(0)
 	{
 	}
 

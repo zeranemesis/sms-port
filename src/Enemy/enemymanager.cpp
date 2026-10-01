@@ -138,6 +138,13 @@ void TEnemyManager::createEnemies(int count)
 
 		enemy->init(this);
 	}
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_createEnemies[8];
+	(void)framePad_8_createEnemies;
 }
 
 void TEnemyManager::clipEnemies(JDrama::TGraphics* graphics)

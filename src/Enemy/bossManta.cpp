@@ -245,6 +245,13 @@ DEFINE_NERVE(TNerveMantaSpawn, TLiveActor)
 		self->mScaling.x *= 0.9f;
 		self->mScaling.y *= 0.9f;
 		self->mScaling.z *= 0.9f;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_mantaSpawnNerve[8];
+	(void)framePad_8_mantaSpawnNerve;
 	}
 
 	if (spine->getTime() == 0) {
@@ -1291,6 +1298,13 @@ void TBossMantaManager::createEnemies(int num)
 		u8 limit = unk38->mSLActiveEnemyNum.get();
 		if (num + getObjNum() > limit)
 			num = limit - getObjNum();
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_mantaCreateEnemies[8];
+	(void)framePad_8_mantaCreateEnemies;
 	}
 
 	if (num >= 0)

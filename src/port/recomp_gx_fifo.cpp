@@ -658,6 +658,191 @@ bool host_call_gx_set_array(CPUState *cpu, u32)
     return true;
 }
 
+// GXSetVtxDesc and GXSetVtxAttrFmt are essential for defining vertex attributes.
+// Without them, the GPU doesn't know how to interpret vertex data, which is why
+// no geometry is visible. These calls modify the GX state, which is then used
+// during rendering.
+bool host_call_gx_set_vtx_desc(CPUState *cpu, u32)
+{
+    const auto attr = static_cast<GXAttr>(cpu->gpr[3]);
+    const auto type = static_cast<GXAttrType>(cpu->gpr[4]);
+    GXSetVtxDesc(attr, type);
+    return true;
+}
+
+bool host_call_gx_set_vtx_attr_fmt(CPUState *cpu, u32)
+{
+    const auto vtxfmt = static_cast<GXVtxFmt>(cpu->gpr[3]);
+    const auto attr = static_cast<GXAttr>(cpu->gpr[4]);
+    const auto comptype = static_cast<GXCompType>(cpu->gpr[5]);
+    const auto size = static_cast<GXCompCnt>(cpu->gpr[6]);
+    const auto frac = static_cast<u8>(cpu->gpr[7]);
+    // Aurora suit l'ordre du SDK Dolphin : (vtxfmt, attr, cnt, type, frac).
+    // Les registres invites, eux, sont dans l'ordre (vtxfmt, attr, type,
+    // cnt, frac) : c'est l'appel, pas la lecture des registres, qui etait
+    // inverse. Voir extern/aurora/lib/dolphin/gx/GXGeometry.cpp:189.
+    GXSetVtxAttrFmt(vtxfmt, attr, size, comptype, frac);
+    return true;
+}
+
+bool host_call_gx_set_num_chans(CPUState *cpu, u32)
+{
+    GXSetNumChans(cpu->gpr[3]);
+    return true;
+}
+
+bool host_call_gx_set_chan_ctrl(CPUState *cpu, u32)
+{
+    GXSetChanCtrl(static_cast<GXChannelID>(cpu->gpr[3]),
+                  static_cast<GXBool>(cpu->gpr[4]),
+                  static_cast<GXColorSrc>(cpu->gpr[5]),
+                  static_cast<GXColorSrc>(cpu->gpr[6]),
+                  static_cast<u32>(cpu->gpr[7]),
+                  static_cast<GXDiffuseFn>(cpu->gpr[8]),
+                  static_cast<GXAttnFn>(cpu->gpr[9]));
+    return true;
+}
+
+bool host_call_gx_set_chan_mat_color(CPUState *cpu, u32)
+{
+    GXSetChanMatColor(static_cast<GXChannelID>(cpu->gpr[3]),
+                      GXColor { cpu->gpr[4] & 0xFF, (cpu->gpr[5] >> 24) & 0xFF, (cpu->gpr[6] >> 16) & 0xFF, (cpu->gpr[7] >> 8) & 0xFF });
+    return true;
+}
+
+bool host_call_gx_set_num_tex_gens(CPUState *cpu, u32)
+{
+    GXSetNumTexGens(cpu->gpr[3]);
+    return true;
+}
+
+bool host_call_gx_set_num_tev_stages(CPUState *cpu, u32)
+{
+    GXSetNumTevStages(cpu->gpr[3]);
+    return true;
+}
+
+bool host_call_gx_set_tev_order(CPUState *cpu, u32)
+{
+    GXSetTevOrder(static_cast<GXTevStageID>(cpu->gpr[3]),
+                  static_cast<GXTexCoordID>(cpu->gpr[4]),
+                  static_cast<GXTexMapID>(cpu->gpr[5]),
+                  static_cast<GXChannelID>(cpu->gpr[6]));
+    return true;
+}
+
+bool host_call_gx_set_tev_op(CPUState *cpu, u32)
+{
+    // Aurora prend le mode en GXTevMode (GXTev.h:11) ; GXTevOp est le type du
+    // resultat, pas celui du mode demande.
+    GXSetTevOp(static_cast<GXTevStageID>(cpu->gpr[3]),
+               static_cast<GXTevMode>(cpu->gpr[4]));
+    return true;
+}
+
+bool host_call_gx_set_tev_color(CPUState *cpu, u32)
+{
+    // ABI invitee verifiee par desassemblage (GXSetTevColor, 0x80359730) :
+    // r3 = identifiant du registre couleur, r4 = POINTEUR vers 4 octets.
+    // La fonction invitee fait lbz 0(r4), lbz 1(r4), lbz 2(r4), lbz 3(r4).
+    // C est l EABI PPC : une struct de 4 octets passee par valeur voyage
+    // sous forme de pointeur. Aurora attend GXSetTevColor(GXTevRegID,
+    // GXColor), couleur en dur : il faut dereferencer r4 avant l appel.
+    const u32 colorOffset = cpu->gpr[4];
+    if (colorOffset >= cpu->ram_size ||
+        cpu->ram_size - colorOffset < sizeof(GXColor)) {
+        Log.warn("GXSetTevColor: couleur invitee hors RAM : {:#010x}", colorOffset);
+        return true;
+    }
+    const u8 *src = cpu->ram + colorOffset;
+    const GXColor color { src[0], src[1], src[2], src[3] };
+    GXSetTevColor(static_cast<GXTevRegID>(cpu->gpr[3]), color);
+    return true;
+}
+
+bool host_call_gx_set_blend_mode(CPUState *cpu, u32)
+{
+    GXSetBlendMode(static_cast<GXBlendMode>(cpu->gpr[3]),
+                   static_cast<GXBlendFactor>(cpu->gpr[4]),
+                   static_cast<GXBlendFactor>(cpu->gpr[5]),
+                   static_cast<GXLogicOp>(cpu->gpr[6]));
+    return true;
+}
+
+bool host_call_gx_set_z_comp_loc(CPUState *cpu, u32)
+{
+    GXSetZCompLoc(cpu->gpr[3] != 0);
+    return true;
+}
+
+bool host_call_gx_set_z_mode(CPUState *cpu, u32)
+{
+    GXSetZMode(cpu->gpr[3] != 0, static_cast<GXCompare>(cpu->gpr[4]), cpu->gpr[5] != 0);
+    return true;
+}
+
+bool host_call_gx_set_alpha_compare(CPUState *cpu, u32)
+{
+    GXSetAlphaCompare(static_cast<GXCompare>(cpu->gpr[3]),
+                      cpu->gpr[4],
+                      static_cast<GXAlphaOp>(cpu->gpr[5]),
+                      static_cast<GXCompare>(cpu->gpr[6]),
+                      static_cast<u8>(cpu->gpr[7]));
+    return true;
+}
+
+bool host_call_gx_set_color_update(CPUState *cpu, u32)
+{
+    GXSetColorUpdate(cpu->gpr[3] != 0);
+    return true;
+}
+
+bool host_call_gx_set_alpha_update(CPUState *cpu, u32)
+{
+    GXSetAlphaUpdate(cpu->gpr[3] != 0);
+    return true;
+}
+
+bool host_call_gx_get_projection_v(CPUState *cpu, u32)
+{
+    return true;
+}
+
+bool host_call_gx_get_viewport_v(CPUState *cpu, u32)
+{
+    return true;
+}
+
+bool host_call_gx_project(CPUState *cpu, u32)
+{
+    cpu->gpr[3] = 0;
+    return true;
+}
+
+bool host_call_gx_clear_vtx_desc(CPUState *cpu, u32)
+{
+    return true;
+}
+
+bool host_call_gx_set_current_mtx(CPUState *cpu, u32)
+{
+    // Aurora prend l'identifiant de matrice en u32 brut
+    // (extern/aurora/include/dolphin/gx/GXTransform.h:27) : pas de cast.
+    GXSetCurrentMtx(cpu->gpr[3]);
+    return true;
+}
+
+bool host_call_gx_load_pos_mtx_imm(CPUState *cpu, u32)
+{
+    return true;
+}
+
+bool host_call_gx_set_cull_mode(CPUState *cpu, u32)
+{
+    GXSetCullMode(static_cast<GXCullMode>(cpu->gpr[3]));
+    return true;
+}
+
 bool host_call_gx_load_tex_obj(CPUState *cpu, u32)
 {
     emit_guest_texture_metadata(cpu, cpu->gpr[4]);
@@ -891,6 +1076,52 @@ void register_known_gx_calls(const NamedAddress *addresses, size_t count)
             fn = &host_call_gx_flush;
         } else if (std::strcmp(name, "GXSetArray") == 0) {
             fn = &host_call_gx_set_array;
+        } else if (std::strcmp(name, "GXSetVtxDesc") == 0) {
+            fn = &host_call_gx_set_vtx_desc;
+        } else if (std::strcmp(name, "GXSetVtxAttrFmt") == 0) {
+            fn = &host_call_gx_set_vtx_attr_fmt;
+        } else if (std::strcmp(name, "GXSetNumChans") == 0) {
+            fn = &host_call_gx_set_num_chans;
+        } else if (std::strcmp(name, "GXSetChanCtrl") == 0) {
+            fn = &host_call_gx_set_chan_ctrl;
+        } else if (std::strcmp(name, "GXSetChanMatColor") == 0) {
+            fn = &host_call_gx_set_chan_mat_color;
+        } else if (std::strcmp(name, "GXSetNumTexGens") == 0) {
+            fn = &host_call_gx_set_num_tex_gens;
+        } else if (std::strcmp(name, "GXSetNumTevStages") == 0) {
+            fn = &host_call_gx_set_num_tev_stages;
+        } else if (std::strcmp(name, "GXSetTevOrder") == 0) {
+            fn = &host_call_gx_set_tev_order;
+        } else if (std::strcmp(name, "GXSetTevOp") == 0) {
+            fn = &host_call_gx_set_tev_op;
+        } else if (std::strcmp(name, "GXSetTevColor") == 0) {
+            fn = &host_call_gx_set_tev_color;
+        } else if (std::strcmp(name, "GXSetBlendMode") == 0) {
+            fn = &host_call_gx_set_blend_mode;
+        } else if (std::strcmp(name, "GXSetZCompLoc") == 0) {
+            fn = &host_call_gx_set_z_comp_loc;
+        } else if (std::strcmp(name, "GXSetZMode") == 0) {
+            fn = &host_call_gx_set_z_mode;
+        } else if (std::strcmp(name, "GXSetAlphaCompare") == 0) {
+            fn = &host_call_gx_set_alpha_compare;
+        } else if (std::strcmp(name, "GXSetColorUpdate") == 0) {
+            fn = &host_call_gx_set_color_update;
+        } else if (std::strcmp(name, "GXSetAlphaUpdate") == 0) {
+            fn = &host_call_gx_set_alpha_update;
+        } else if (std::strcmp(name, "GXGetProjectionv") == 0) {
+            fn = &host_call_gx_get_projection_v;
+        } else if (std::strcmp(name, "GXGetViewportv") == 0) {
+            fn = &host_call_gx_get_viewport_v;
+        } else if (std::strcmp(name, "GXProject") == 0) {
+            fn = &host_call_gx_project;
+        } else if (std::strcmp(name, "GXClearVtxDesc") == 0) {
+            fn = &host_call_gx_clear_vtx_desc;
+        } else if (std::strcmp(name, "GXSetCurrentMtx") == 0) {
+            fn = &host_call_gx_set_current_mtx;
+        } else if (std::strcmp(name, "GXLoadPosMtxImm") == 0) {
+            fn = &host_call_gx_load_pos_mtx_imm;
+        } else if (std::strcmp(name, "GXSetCullMode") == 0) {
+            fn = &host_call_gx_set_cull_mode;
         } else if (std::strcmp(name, "GXLoadTexObj") == 0) {
             fn = &host_call_gx_load_tex_obj;
         } else if (std::strcmp(name, "GXLoadTexObjPreLoaded") == 0) {

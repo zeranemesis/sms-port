@@ -13,7 +13,7 @@ public:
 	{
 	}
 
-	virtual MtxPtr getTakingMtx();
+	virtual MtxPtr getTakingMtx() { return nullptr; }
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	virtual void loadAfter();

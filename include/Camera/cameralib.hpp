@@ -338,24 +338,34 @@ void CLBRotatePosAndUp(s16, s16, const JGeometry::TVec3<f32>&,
 inline void CLBScreenFPosToSPos(JGeometry::TVec2<s16>* out,
                                 const JGeometry::TVec2<f32>& in)
 {
-	// can't include Resolution.hpp because of troubles with MapDraw.cpp
-	extern s16 SMSGetGameRenderHeight();
-	extern s16 SMSGetGameRenderWidth();
+	// The declarations must return u16, not s16: the ROM zero-extends the
+	// result (`clrlwi r3, r3, 16`) before the `- 1`, and `extsh` for a signed
+	// return is what a wrong prototype produces. (The real prototypes live in
+	// include/System/Resolution.hpp, which cannot be included here.)
+	extern u16 SMSGetGameRenderHeight();
+	extern u16 SMSGetGameRenderWidth();
+	// Tiny size mismatch: every instruction of the out-of-line copy matches,
+	// but the ROM frame is 0x30 and ours is 0x28 -- the target reserves two more
+	// dead 4-byte locals below the two int->double words at 0x18/0x1c. Tried and
+	// rejected: named f32/u16/s16 intermediates (no frame change or wrong
+	// instructions). Needs 2 more stack objects of some kind.
 
 	f32 x = in.x;
 	// TODO: definitely more inlines but I couldn't get it to work out...
 	if (x < -1.0f || 1.0f < x)
 		out->x = -1;
-	else
-		out->x = CLBRoundf<s16>((1.0f + x)
-		                        * (0.5f * (f32)(SMSGetGameRenderWidth() - 1)));
+	else {
+		s32 w = SMSGetGameRenderWidth() - 1;
+		out->x = CLBRoundf<s16>((1.0f + x) * (0.5f * (f32)w));
+	}
 
 	f32 y = in.y;
 	if (y < -1.0f || 1.0f < y)
 		out->y = -1;
-	else
-		out->y = CLBRoundf<s16>(
-		    (y - 1.0f) * (-0.5f * (f32)(SMSGetGameRenderHeight() - 1)));
+	else {
+		s32 h = SMSGetGameRenderHeight() - 1;
+		out->y = CLBRoundf<s16>((y - 1.0f) * (-0.5f * (f32)h));
+	}
 }
 
 #endif

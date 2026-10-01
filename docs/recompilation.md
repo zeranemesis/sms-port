@@ -92,11 +92,95 @@ dolrecomp.exe --gamecube --cpu gekko --backend llvm --runtime moderngekko \
 16 958 chunks objets LLVM, **50 879 fichiers, 4,0 Go**. Même avertissement de code
 auto-modifiant qu'avec le backend C.
 
-## Point ouvert : code auto-modifiant
+## Code auto-modifiant : l'avertissement est un faux positif (vérifié)
 
 L'outil avertit que le DOL modifie de la mémoire exécutable à l'exécution et liste
-les instructions concernées dans `generated_smc.txt`. Ces sites demanderont des
-correctifs ciblés. L'avertissement apparaît avec les deux backends.
+les instructions concernées dans `generated_smc.txt`. L'avertissement apparaît
+avec les deux backends. **Ce point n'est plus ouvert : les 148 sites ont été
+désassemblés et la cause est identifiée. Aucun correctif ciblé n'est nécessaire.**
+
+### Ce que le fichier contient réellement
+
+`generated/generated_smc.txt` liste des **plages**, pas des instructions.
+`smc_note` (`extern/dolrecomp/src/analysis/smc.c`) fusionne deux notes distantes
+de 4 octets ou moins, si bien que l'intérieur d'une plage contient des adresses
+qui n'ont jamais été signalées. Les bornes des 135 plages totalisent 259
+**octets** ; seuls les 148 bouts de plages sont garantis notés. Compter les
+octets revient à inventer 111 instructions.
+
+Désassemblés avec `powerpc-eabi-objdump` (`-b binary -m powerpc:common`), les
+148 adresses notées se répartissent en :
+
+| classe | nb | détail |
+| --- | --- | --- |
+| magasins (`st*`) | 144 | `stw`, `stb`, `sth`, `stfs` |
+| opérations de cache (`icbi`) | 4 | `0x800034A0`, `0x8000547C`, `0x80337BBC`, `0x8033B8F4` |
+| autre | **0** | — |
+
+Zéro instruction hors de ces deux classes. C'est exactement ce que fait
+`analyze_smc_section`, qui ne signale qu'un `icbi` ou un magasin
+(`smc_inst_targets_code`) : le tri est complet, il ne manque rien.
+
+Le cas le plus net est `0x8033B8F4`, dans `ICInvalidateRange` : les octets sont
+`7c 00 1f ac`, soit `icbi 0,r3`, au milieu d'une boucle d'invalidation de cache
+(`addi r3,r3,32` / `bdnz`) suivie de `hwsync`. Ce n'est pas un magasin, et ce
+n'est pas du code auto-modifiant.
+
+### La cause : un balayage linéaire qui ne s'arrête jamais
+
+`analyze_smc_section` parcourt les instructions **dans l'ordre mémoire** et tient
+un état de « registres connus », propagé par `update_known_regs`. Ce balayage ne
+s'arrête ni sur une branche, ni sur un `blr`, ni sur une frontière de fonction.
+Un registre posé par une fonction reste donc « connu » dans les fonctions
+suivantes tant que rien ne l'efface.
+
+Rejouer cette propagation donne la cause exacte. Le site le plus productif est
+`0x80349CBC`, dans `PADSetSpec` :
+
+```asm
+80349cbc:  3c 80 80 35   lis     r4,-32715     ; r4 = 0x80350000
+80349cc0:  38 04 9f b8   addi    r0,r4,-24648   ; r0 = 0x80349FB8  (pointeur de fonction)
+80349cc4:  90 0d 8c a8   stw     r0,-29528(r13) ; écrit dans une table de callbacks
+80349ccc:  4e 80 00 20   blr                   ; fin de PADSetSpec
+80349cd0:  38 60 00 00   li      r3,0          ; début de SPEC0_MakeStatus
+80349cd4:  b0 64 00 00   sth     r3,0(r4)      ; <- signalé à tort
+```
+
+`PADSetSpec` se termine à `0x80349CCC` (symbole : taille `0x60` à partir de
+`0x80349C70`) et `SPEC0_MakeStatus` commence à `0x80349CD0`. Le `blr` n'efface
+rien : `r4` vaut toujours `0x80350000` — une adresse **de code** — quand la
+fonction suivante écrit `sth r3,0(r4)`. Or `r4` est ici le **pointeur fourni par
+l'appelant**, un paramètre que le balayage est incapable de connaître.
+
+C'est le mécanisme général, et il est chiffré :
+
+- 79 des 144 magasins signalés remontent à ce seul `lis r4,-32715` ;
+- 50 adresses effectives distinctes seulement, dont 17 Points vers `0x80350000`,
+  qui est le début de la zone `CARDCheck`/`DoMount` du SDK ;
+- 21 instructions source au total, toutes des `lis`/`addi` servant à fabriquer un
+  **pointeur de fonction** (`0x80350000` + un déplacement) stocké ensuite dans
+  une table de callbacks — le schéma `PADSetSpec`, `PADControlMotor`, `SPEC*_MakeStatus` ;
+- distance médiane entre le magasin et l'instruction qui a posé le registre :
+  **93 instructions**, maximum 443. Rien ne traîne sur des millions
+  d'instructions ; la fuite est strictement locale, ce qui exclut un défaut
+  d'effacement global au profit d'un défaut de **frontière de fonction**.
+
+Aucun de ces magasins n'écrit du code. Le port n'a donc **rien à corriger** pour
+le code auto-modifiant, et ce point n'est plus un « point ouvert ».
+
+### Reproduire
+
+`tools/port/triage_smc.py` rattache les plages à `config/GMSP01/symbols.txt`.
+Pour la preuve par désassemblage, il faut tenir compte de deux pièges que ce
+fichier de sortie ne montre pas :
+
+- les sections texte d'un DOL ne sont **pas** contiguës en adresse virtuelle
+  (ici la section 0 finit à `0x80005540` et la section 1 commence à `0x80005600`,
+  soit 0xC0 de bourre) : concatener les sections décale le décodage ;
+- l'en-tête DOL place le magic à `0x100`, pas à `0`, et les adresses virtuelles
+  à `0x48` — les offsets de sections sont à `0x00`, pas à `0x1C`.
+
+Voir `tools/port/dol_text.py` et `tools/port/smc_audit.py`.
 
 ## Ce que « traduit » ne veut pas dire — et ce que fournit ModernGekko
 

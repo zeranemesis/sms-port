@@ -17,8 +17,8 @@ public:
 	TFerrisWheel(const char* name = "観覧車");
 
 public:
-	/* 0x138 */ u32 unk138;
-	/* 0x13C */ u32 unk13C;
+	/* 0x138 */ int unk138;
+	/* 0x13C */ TMapObjBase** unk13C;
 	/* 0x140 */ f32 unk140;
 };
 
@@ -84,13 +84,17 @@ public:
 	/* 0x68 */ s32 unk68;
 	/* 0x6C */ f32 unk6C;
 	/* 0x70 */ f32 unk70;
-	/* 0x74 */ MtxPtr unk74;
+	// The ROM does `lwz r3, 0x74(r31)` and immediately calls the
+	// TMapObjBase member concatOnlyRotFromRight, so unk74 is a TMapObjBase*
+	// rather than a bare MtxPtr. 0x8C is loaded as a float source only.
+	/* 0x74 */ TMapObjBase* unk74;
 	/* 0x78 */ u32 unk78;
 	/* 0x7C */ u32 unk7C;
-	/* 0x80 */ u32 unk80;
-	/* 0x84 */ u32 unk84;
-	/* 0x88 */ u32 unk88;
-	/* 0x8C */ u32 unk8C;
+	/* 0x80 */ TLiveActor* unk80;
+	/* 0x84 */ TMapObjBase* unk84;
+	/* 0x88 */ TLiveActor* unk88;
+	/* 0x8C */ MtxPtr unk8C;
+	/* 0x48 */ u16 unk48;
 };
 
 class TShellCup : public TMapObjBase {
@@ -188,6 +192,7 @@ public:
 	u32 touchWater(THitActor*) { return 1; }
 	void loadAfter();
 	void initMapObj();
+	void calc();
 	void moveObject();
 	void calcRootMatrix();
 	void bind();
@@ -196,6 +201,11 @@ public:
 	    : TMapObjBase(name)
 	{
 	}
+
+public:
+	/* 0x138 */ u8 unk138;
+	/* 0x13C */ JGeometry::TVec3<f32> unk13C;
+	/* 0x148 */ u32 unk148;
 };
 
 class TPinnaCoaster : public TMapObjBase {
@@ -205,11 +215,11 @@ public:
 	TPinnaCoaster(const char* name = "コースター");
 
 public:
-	/* 0x138 */ int unk138;
-	/* 0x13C */ char unk13C[4]; // TODO: padding or unknown field
-	/* 0x148 */ f32 unk148;
-	/* 0x144 */ f32 unk144;
+	/* 0x138 */ MActor* unk138;
+	/* 0x13C */ u32 unk13C; // padding / unknown
 	/* 0x140 */ f32 unk140;
+	/* 0x144 */ f32 unk144;
+	/* 0x148 */ f32 unk148;
 };
 
 class TMerryPole : public TMapObjBase {

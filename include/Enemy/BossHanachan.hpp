@@ -208,9 +208,15 @@ public:
 public:
 	/* 0x114 */ int mBodyIndex;
 	/* 0x118 */ TFootHitActor* mFootHitActor[2];
-	/* 0x120 */ JGeometry::TVec3<f32> unk120;
-	/* 0x12C */ JGeometry::TVec3<f32> unk12C;
-	/* 0x138 */ JGeometry::TVec3<f32> unk138;
+	// The 0x124/0x130 pair are swapped with a three-word copy each other
+	// in TBossHanachan::perform, and 0x124 then receives a three-word copy
+	// of mPosition, so they are TVec3<f32>s and not part of a bigger one
+	// starting at 0x120. 0x120 is only ever touched as a bare scalar.
+	/* 0x120 */ f32 unk120;
+	/* 0x124 */ JGeometry::TVec3<f32> unk124;
+	/* 0x130 */ JGeometry::TVec3<f32> unk130;
+	/* 0x13C */ f32 unk13C;
+	/* 0x140 */ f32 unk140;
 	/* 0x144 */ f32 unk144;
 	/* 0x148 */ f32 unk148;
 	// indexed by foot in TBossHanachan::emitParticle_, so this is an array:
@@ -261,7 +267,9 @@ public:
 	void setAnmTimerWhenSnort();
 	void setAnmTimerWhenGetUp();
 	void setTumbleAnm(EnumBossHanachanStopMotionBlendOnOff);
-	void setTumbleBckRate_(TBossHanachanPartsBase*);
+	// The target build never emits an out-of-line copy of this (marioEU.MAP
+	// lists the symbol as UNUSED), so it is declared inline here.
+	inline void setTumbleBckRate_(TBossHanachanPartsBase*);
 	void setHeadAndBodyAnm(EnumBossHanachanAnmKind,
 	                       EnumBossHanachanStopMotionBlendOnOff);
 

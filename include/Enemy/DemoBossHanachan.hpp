@@ -31,8 +31,10 @@ public:
 
 class TDemoBossHanachanManager : public TEnemyManager {
 public:
-	TDemoBossHanachanManager(); // TODO: constructor not in mario.MAP for this
-	                            // TU
+	// There is no __ct__24TDemoBossHanachanManagerF* in mario.MAP, so the
+	// original constructor was inline; System/MarNameRefGen_BossEnemy.cpp
+	// expands it: TEnemyManager(name), the vtable patch, then the save params.
+	TDemoBossHanachanManager(const char* name = "?");
 	virtual void clipEnemies(JDrama::TGraphics*);
 
 public:
@@ -47,5 +49,13 @@ public:
 	/* 0x8  */ TParamRT<f32> mSLViewClipFar;
 	/* 0x1C */ TParamRT<f32> mSLViewClipRadius;
 };
+
+// Defined out of class so that TDemoBossHanachanSaveParams is already complete
+// here -- the body newses one up.
+inline TDemoBossHanachanManager::TDemoBossHanachanManager(const char* name)
+    : TEnemyManager(name)
+{
+	mSaveParams = new TDemoBossHanachanSaveParams("/enemy/sleepBossHanachan.prm");
+}
 
 #endif // ENEMY_DEMOBOSSHANACHAN_HPP

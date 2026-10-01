@@ -9,6 +9,7 @@ class J2DPane;
 class J2DPicture;
 class J2DWindow;
 class J2DTextBox;
+class J2DScreen;
 class J2DSetScreen;
 class JPABaseEmitter;
 class TCardLoad;
@@ -30,10 +31,13 @@ public:
 
 	void changePattern(J2DPicture*, s16, u32);
 	void setupTitleScreen();
+	void changeTitleTexture(int);
 	void setupScoreScreen();
 	void resetScoreScreenObjects();
 	void resizeBox(J2DWindow*, J2DTextBox*, J2DTextBox*);
 	void loadLangTexture();
+	void loadTextureFile(JUTTexture**, const char*);
+	void replaceTexture(u32, JUTTexture*, J2DScreen*);
 	void changeLanguage(int);
 	void loadAfter();
 	bool titleDraw();

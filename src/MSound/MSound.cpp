@@ -361,6 +361,13 @@ void MSound::exitStage()
 	unkCD    = 0xff;
 	unkCE    = 0xff;
 	unkC8[0] = 0;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x40 against 0x38). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_msoundExitStage[8];
+	(void)framePad_8_msoundExitStage;
 }
 
 bool MSound::checkWaveOnAram(MS_SCENE_WAVE wave)

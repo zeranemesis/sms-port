@@ -12,6 +12,18 @@ class TMapStaticObj;
 extern const char* cSunVolumeName    = "/scene/sun";
 extern const char* cSunsetVolumeName = "/scene/sunset";
 
+// TODO: fabricated name. The ROM keeps the address of the sun's screen
+// position live across the four comparisons (`lfsu`/`addi` + `0x4(rX)` in
+// TLensFlare::perform), i.e. the point is passed by reference, so this is a
+// free function taking the point rather than a TSunModel member.
+inline bool sunPosInBounds(const JGeometry::TVec2<f32>& pos, f32 bounds)
+{
+	return -bounds <= pos.x && pos.x <= bounds && -bounds <= pos.y
+	               && pos.y <= bounds
+	           ? true
+	           : false;
+}
+
 class TSunModel : public JDrama::TActor {
 public:
 	TSunModel(bool, const char*);
@@ -24,9 +36,11 @@ public:
 	// fabricated
 	f32 calcHiddenRatio()
 	{
-		int hiddenCount = 0;
-		for (int i = 0; i < 17; ++i) {
-			if (unkB4[i].x != -1 && unkB4[i].y != -1 && unk180[i] == 0)
+		JGeometry::TVec2<s16>* pos = unkB4;
+		bool* hidden               = unk180;
+		int hiddenCount            = 0;
+		for (int i = 0; i < 17; ++i, ++pos, ++hidden) {
+			if (pos->x != -1 && pos->y != -1 && !*hidden)
 				++hiddenCount;
 		}
 		return hiddenCount * (1.0f / 17.0f);
@@ -35,14 +49,6 @@ public:
 	u8 getUnk191() { return unk191; }
 	f32 getUnk194() { return unk194; }
 
-	// TODO: incorrect! Maybe a cameralib inline or even TVec3?
-	bool isInBounds(f32 bounds)
-	{
-		return -bounds <= unkF8[0].x && unkF8[0].x <= bounds
-		               && -bounds <= unkF8[0].y && unkF8[0].y <= bounds
-		           ? true
-		           : false;
-	}
 	f32 getUnkAC() { return unkAC; }
 
 private:

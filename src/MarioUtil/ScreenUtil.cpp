@@ -64,10 +64,10 @@ void TAfterEffect::setBlurDefaultValue()
 void TAfterEffect::calcDashBlurValue()
 {
 	if (unk50 > 0.0f) {
-		unk28 = unk5C * unk50 * 0.5f;
-		unk2C = -unk60 * unk50 * 0.5f;
-		unk30 = unk64 * unk50 + 1.0f;
-		unk34 = unk64 * unk50 + 1.0f;
+		unk28 = mBlurDirection.x * unk50 * 0.5f;
+		unk2C = -mBlurDirection.y * unk50 * 0.5f;
+		unk30 = mBlurDirection.z * unk50 + 1.0f;
+		unk34 = mBlurDirection.z * unk50 + 1.0f;
 		unk50 = unk50 - unk54;
 		unk58 = unk59;
 		unk14 |= 4;

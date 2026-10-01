@@ -6,6 +6,7 @@
 
 class MActor;
 class TMActorKeeper;
+class TMapObjBase;
 
 // ============= params =============
 
@@ -20,10 +21,10 @@ public:
 	f32 getMarchSpeed() const { return mMarchSpeed.get(); }
 	f32 getTurnSpeed() const { return mTurnSpeed.get(); }
 	f32 getWaterPowerY() const { return mWaterPowerY.get(); }
-	s32 getShootSpeed() const { return mShootSpeed.get(); }
+	f32 getShootSpeed() const { return mShootSpeed.get(); }
 	s32 getShootInterval() const { return mShootInterval.get(); }
 	f32 getSearchRange() const { return mSearchRange.get(); }
-	f32 getHabatakiTimer() const { return mHabatakiTimer.get(); }
+	s32 getHabatakiTimer() const { return mHabatakiTimer.get(); }
 	f32 getAirFric() const { return mAirFric.get(); }
 	f32 getUpperVelocityY() const { return mUpperVelocityY.get(); }
 	f32 getDropSpeed() const { return mDropSpeed.get(); }
@@ -32,10 +33,10 @@ public:
 	/* 0x2D4 */ TParamRT<f32> mMarchSpeed;
 	/* 0x2E8 */ TParamRT<f32> mTurnSpeed;
 	/* 0x2FC */ TParamRT<f32> mWaterPowerY;
-	/* 0x310 */ TParamRT<s32> mShootSpeed;
+	/* 0x310 */ TParamRT<f32> mShootSpeed;
 	/* 0x324 */ TParamRT<s32> mShootInterval;
 	/* 0x338 */ TParamRT<f32> mSearchRange;
-	/* 0x34C */ TParamRT<f32> mHabatakiTimer;
+	/* 0x34C */ TParamRT<s32> mHabatakiTimer;
 	/* 0x360 */ TParamRT<f32> mAirFric;
 	/* 0x374 */ TParamRT<f32> mUpperVelocityY;
 	/* 0x388 */ TParamRT<f32> mDropSpeed;
@@ -52,23 +53,42 @@ public:
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void createModelData();
+
+	// fabricated
+	TKukkuParams* getParams() const { return (TKukkuParams*)unk38; }
+
+public:
+	// TODO: name/semantics unknown. marioEU.MAP gives no member list, and no
+	// code in Kukku.cpp (nor anywhere else) ever touches +0x60 -- the only
+	// hard evidence is the size: MarNameRefGen_Enemy's "KukkuManager" branch
+	// does `li r3, 0x64` for `new TKukkuManager`, one word past the
+	// 0x60-byte TSmallEnemyManager. Needed so sizeof() matches.
+	/* 0x60 */ s32 unk60;
 };
 
 // ============= ball =============
 
 // TODO: base class inferred from the destructor, which delegates straight to
-// ~THitActor with no intermediate class; field layout is a rough guess from
-// TKukkuBall::init/perform m2c drafts.
+// ~THitActor with no intermediate class; the field layout was recovered from
+// TKukkuBall's constructor / init / perform.
 class TKukkuBall : public THitActor {
 public:
-	TKukkuBall(MActor* mactor = 0);
+	TKukkuBall(MActor* mactor = 0)
+	    : THitActor("クック玉")
+	{
+		mMActor = mactor;
+		unk6C   = 1;
+		unk7C   = 0;
+	}
 
 	virtual void init();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
 public:
-	/* 0x64 */ u32 unk64;
-	/* 0x68 */ MActor* unk68;
+	/* 0x68 */ MActor* mMActor;
+	/* 0x6C */ u32 unk6C;
+	/* 0x70 */ JGeometry::TVec3<f32> unk70;
+	/* 0x7C */ u32 unk7C;
 };
 
 // ============= coin drop helper =============
@@ -109,6 +129,8 @@ public:
 	void dropCoins();
 	void calcMomentum(f32);
 	void updateRotation();
+	void initCollision();
+	void initParticle();
 
 	// fabricated
 	TKukkuManager* getManager() { return (TKukkuManager*)mManager; }
@@ -118,12 +140,12 @@ public:
 	// TODO: verify against the size of TKukku's compiled fields; only the
 	// offsets actually touched in dropCoins/init/control/reset were recovered
 	// from m2c drafts, the exact types are guesses.
-	/* 0x194 */ TMActorKeeper* mBallKeeper[3];
-	/* 0x1A0 */ void* unk1A0;
+	/* 0x194 */ TKukkuBall* mBall[3];
+	/* 0x1A0 */ TMapObjBase* mMushroom; // 1-up mushroom carried by the chicken
 	/* 0x1A4 */ s32 unk1A4;
-	/* 0x1A8 */ s32 unk1A8;
+	/* 0x1A8 */ s32 mCenterJointIndex;
 	/* 0x1AC */ s32 unk1AC;
-	/* 0x1B0 */ s32 unk1B0;
+	/* 0x1B0 */ s32 mDropCount;
 };
 
 // ============= nerves =============

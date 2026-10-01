@@ -100,7 +100,7 @@ void TLensGlow::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (gpCameraMario->isMarioIndoor()) {
 		inBounds = false;
 	} else {
-		inBounds = gpSunModel->isInBounds(unk94);
+		inBounds = sunPosInBounds(gpSunModel->unkF8[0], unk94);
 	}
 
 	if (cue & CUE_MOVE) {

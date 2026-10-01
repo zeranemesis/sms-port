@@ -126,7 +126,8 @@ void TMario::emitGetEffect()
 
 void TMario::emitGetWaterEffect()
 {
-	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_B, &unk160,
+	const JGeometry::TVec3<f32>* position = &unk160;
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_B, position,
 	                                            0, nullptr);
 }
 
@@ -394,21 +395,22 @@ struct TWarpInCallBack
 void TWarpInCallBack::execute(JPABaseEmitter* emitter,
                               JPABaseParticle* particle)
 {
-	// TODO: awful vector maths :(
 	JGeometry::TVec3<f32>* vel = (JGeometry::TVec3<f32>*)emitter->getUserWork();
 
 	f32 timer = (f32)gpMarioOriginal->mStatusTimer;
-	f32 tmp   = gpMarioOriginal->unk468;
 
-	f32 factor = ((((intptr_t)particle >> 2) & 0x3F) / 16.0f + 1.0f);
-
-	JGeometry::TVec3<f32> v = *vel;
-
-	v = v * tmp;
-	v = v * timer;
-	v = v * factor;
-
-	particle->unk14 += v;
+	f32 factor = (((intptr_t)particle >> 2) & 0x3F) / 16.0f;
+	factor += 1.0f;
+	f32 x = particle->unk14.x;
+	f32 y = particle->unk14.y;
+	f32 z = particle->unk14.z;
+	JGeometry::TVec3<f32> scaled = *vel * gpMarioOriginal->unk468;
+	JGeometry::TVec3<f32> timed = scaled * timer;
+	JGeometry::TVec3<f32> v = timed * factor;
+	x += v.x;
+	y += v.y;
+	z += v.z;
+	particle->unk14.set(x, y, z);
 }
 
 TWarpInCallBack warpInCallBack;

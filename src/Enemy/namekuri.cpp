@@ -433,6 +433,13 @@ void TNameKuri::moveObject()
 	        || mSpine->getCurrentNerve() == &TNerveWalkerEscape::theNerve())
 	    && mPosition.y - mGroundHeight > unk1A4->mSLLandHeight.get()) {
 		mSpine->pushNerve(&TNerveNameKuriLand::theNerve());
+
+	// Every diff marker of this function is a stack offset sitting 0x10 above
+	// ours (target frame 0x68 against 0x58). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_16_namekuriMoveObject[16];
+	(void)framePad_16_namekuriMoveObject;
 	}
 
 	if (!isAirborne() && isBckAnm(7))

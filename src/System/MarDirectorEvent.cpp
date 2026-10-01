@@ -15,11 +15,15 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-const char* cCameraBckNameShineGetInside
-    = "/common/camera/camera_demo_shine_get_inside";
-const char* cCameraBckNameShineGetOutside
-    = "/common/camera/camera_demo_shine_get_outside";
-const char* cCameraBckNameGate = "/common/camera/camera_demo_gate_in";
+// These three are DEFINED in src/Camera/cameragc.cpp, not here.
+// config/GMSP01/symbols.txt has exactly one definition of each, inside
+// cameragc.o's .sdata (0x80403988 / 0x8040398C / 0x80403990), so the
+// original defines them in cameragc.cpp. Defining them here as well was an
+// ODR duplicate waiting for the first link. Local `extern` matches the
+// convention already used in src/Camera/CameraDemo.cpp:18.
+extern const char* cCameraBckNameShineGetInside;
+extern const char* cCameraBckNameShineGetOutside;
+extern const char* cCameraBckNameGate;
 
 void TMarDirector::entryNPC(TBaseNPC* npc) { unk88.push_back(npc); }
 

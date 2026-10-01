@@ -37,6 +37,20 @@ public:
 	virtual void moveTrans(const JGeometry::TVec3<f32>&) { }
 	virtual void moveMtx(MtxPtr) { }
 	virtual void setUp() { offFlag(FLAG_NEEDS_SETUP); }
+	// MEASURED AND REVERTED, 2026-09-30 - do not "fix" this without new
+	// evidence.  The 24-byte `.rodata` block these two compound literals
+	// produce (12 zero bytes then three `1.0f`, identified in
+	// `System/MarNameRefGen_MapObj` and `Enemy/bosstelesa`) was tried as
+	// named stack locals instead, on the theory that a virtual function most
+	// TUs never call should not push 24 bytes into every includer's
+	// `.rodata`.  Measured:
+	//
+	//   Map/MapCollisionEntry  target 0x68   with literals 0x62   as locals 0x4A
+	//   Enemy/bosstelesa       target 0xb00  with literals 0xbc2  as locals 0xbaa
+	//
+	// The owning unit gets 30 bytes *worse* (it genuinely needs those 24
+	// bytes), and `bosstelesa` is still ~170 bytes over target either way -
+	// so the blob was never its problem.  Reverted.
 	virtual void setUpTrans(const JGeometry::TVec3<f32>& param_1)
 	{
 		MsMtxSetTRS(unk20, param_1, (Vec) { 0.0f, 0.0f, 0.0f },

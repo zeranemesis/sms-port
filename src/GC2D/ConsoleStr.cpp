@@ -47,6 +47,13 @@ f32 TConsoleStr::getWipeCloseTime() { return 30.0f / SMSGetVSyncTimesPerSec(); }
 
 void TConsoleStr::load(JSUMemoryInputStream& stream)
 {
+	// The ROM seeds the three counts with the out-of-range default and then
+	// only overwrites what differs per case, so there is no `default:` label
+	// and cases 2/3 touch one and two fields respectively.
+	mGoPaneCount     = 11;
+	mShinePaneCount  = 11;
+	mMissPaneCount   = 12;
+
 	switch (TFlagManager::getInstance()->getFlag(0xA00001)) {
 	case 0:
 		mGoPaneCount = 3;
@@ -65,18 +72,12 @@ void TConsoleStr::load(JSUMemoryInputStream& stream)
 		break;
 	case 3:
 		mGoPaneCount = 10;
-		mShinePaneCount = 11;
-		mMissPaneCount = 10;
+		mMissPaneCount = 8;
 		break;
 	case 4:
 		mGoPaneCount = 4;
 		mShinePaneCount = 10;
 		mMissPaneCount = 7;
-		break;
-	default:
-		mGoPaneCount = 11;
-		mShinePaneCount = 11;
-		mMissPaneCount = 12;
 		break;
 	}
 
@@ -87,17 +88,19 @@ void TConsoleStr::load(JSUMemoryInputStream& stream)
 	unk50 = new J2DSetScreen("scenario_demo_1.blo", arch);
 	unk50->setCullBack(GX_CULL_BACK);
 
+	// The pane banks run past ten entries, so the two trailing digits of the
+	// four-character texture name are built as a decimal pair.
 	for (s32 i = 0; i < mGoPaneCount; ++i) {
-		unk28[i] = new TBoundPane(unk4C, 'go00' + i);
+		unk28[i] = new TBoundPane(unk4C, 'go00' + (i / 10) * 0x100 + i % 10);
 		unk28[i]->unk0->hide();
 	}
 
 	for (s32 i = 0; i < mShinePaneCount; ++i) {
-		unk244[i] = new TBoundPane(unk4C, 'sg00' + i);
+		unk244[i] = new TBoundPane(unk4C, 'sg00' + (i / 10) * 0x100 + i % 10);
 	}
 
 	for (s32 i = 0; i < mMissPaneCount; ++i) {
-		unk268[i] = new TBoundPane(unk4C, 'ms00' + i);
+		unk268[i] = new TBoundPane(unk4C, 'ms00' + (i / 10) * 0x100 + i % 10);
 		mMissBaseRotation[i] = (s32)unk268[i]->getPane()->getRotation();
 	}
 
@@ -115,18 +118,18 @@ void TConsoleStr::load(JSUMemoryInputStream& stream)
 		unk2A0[i]->setFont(gpSystemFont);
 	}
 
-	unk298 = new TExPane(unk50, 'wp_l');
-	unk29C = new TExPane(unk50, 'wp_r');
+	unk298[0] = new TExPane(unk50, 'wp_l');
+	unk298[1] = new TExPane(unk50, 'wp_r');
 
 	u32 uVar1     = SMS_getShineStage(gpMarDirector->mMap);
 	u32 uVar9     = TFlagManager::getInstance()->getFlag(0x40003);
-	void* pvVar10 = JKRGetResource("/common/2d/stagename.bmg");
+	void* pvVar10 = JKRGetResource("/cmn2d/stagename.bmg");
 	unk2A0[0]->setString(SMSGetMessageData(pvVar10, uVar1));
 
 	if (gpMarDirector->mMap != 15) {
-		void* pvVar10 = JKRGetResource("/common/2d/scenarioname.bmg");
+		void* pvVar10 = JKRGetResource("/cmn2d/scenarioname.bmg");
 
-		s16 uVar2 = SMS_getShineID(uVar1, uVar9, false);
+		s16 uVar2 = SMS_getShineID(uVar1, (u8)uVar9, false);
 
 		const void* puVar15;
 		if (pvVar10 == nullptr || uVar2 == -1)
@@ -147,6 +150,10 @@ void TConsoleStr::loadAfter()
 
 void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	// TODO: 89.3%. Everything matches except the GO-banner drawing loop, where
+	// the ROM re-evaluates the `u32 -> f32` conversion of the alpha inside the
+	// `if` (two double temporaries at 0x258/0x260) while we hoist it out, and
+	// our frame is 0x240 against the ROM's 0x2C0.
 	if (cue & CUE_MOVE) {
 		if (gpMarDirector->mState != 5) {
 			bool bVar6 = false;
@@ -178,12 +185,10 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 				bVar6 = processReady(unk18 * 2.0f);
 				if (unk18 >= 60.0f) {
 					if (unk18 == 60.0f) {
-						unk28[0]->getPane()->hide();
-						unk28[1]->getPane()->hide();
-						unk28[2]->getPane()->hide();
-						unk28[0]->getPane()->setAlpha(0xff);
-						unk28[1]->getPane()->setAlpha(0xff);
-						unk28[2]->getPane()->setAlpha(0xff);
+						for (s32 i = 0; i < mGoPaneCount; ++i) {
+							unk28[i]->getPane()->hide();
+							unk28[i]->getPane()->setAlpha(0xff);
+						}
 					}
 					bVar6 &= processGo(unk18 - 60.0f);
 				}
@@ -216,12 +221,12 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 			} else if (unk2BC == 5) {
 				bool uVar13 = true;
 				for (int i = 0; i < 2; ++i)
-					uVar13 &= unk290[i]->update();
+					uVar13 &= unk298[i]->update();
 				if (uVar13) {
 					unk2BC = 6;
 					bVar6  = true;
-					unk298->getPane()->hide();
-					unk29C->getPane()->hide();
+					unk298[0]->getPane()->hide();
+					unk298[1]->getPane()->hide();
 				}
 			} else if (unk2BC == 3) {
 				unk18 += 1.0f;
@@ -241,19 +246,21 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 
 		if (!unk2A9 && gpMarDirector->mState != 4) {
-			if (unk2AC[0])
-				;
-
-			// TODO: uknown stuff
+			// The emitter list is stopped as soon as the state machine leaves
+			// its update phase; the ROM reads/ORs the emitter's mStatus word.
+			for (s32 i = 0; i < mGoPaneCount; ++i) {
+				if (unk2AC[i])
+					((JPABaseEmitter*)unk2AC[i])->setStatus(1);
+			}
 
 			unk2A9 = true;
 		}
 
 		if (unk2A9 && gpMarDirector->mState != 4) {
-			if (unk2AC[0])
-				;
-
-			// TODO: uknown stuff
+			for (s32 i = 0; i < mGoPaneCount; ++i) {
+				if (unk2AC[i])
+					((JPABaseEmitter*)unk2AC[i])->clearStatus(1);
+			}
 
 			unk2A9 = false;
 		}
@@ -266,7 +273,7 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 		local_1a0.setup2D();
 
 		if (unk2B8 == 1 && unk18 > 60.0f) {
-			for (int i = 0; i < 3; ++i) {
+			for (int i = 0; i < mGoPaneCount; ++i) {
 				TBoundPane* pane = unk28[i];
 
 				int local_b0[3] = { 4, 10, 20 };
@@ -276,16 +283,17 @@ void TConsoleStr::perform(u32 cue, JDrama::TGraphics* graphics)
 
 				for (int j = 0; j < 3; ++j) {
 					int iVar9 = local_b0[j];
-					// TODO: unk34 is wrong
-					if (unk34[3 * i + j].x != 0) {
-						unk28[i]->getPane()->setAlpha(uVar13 * 0.7f);
 
-						JUTRect local_90(
-						    unk28[i]->unk14.x1, unk28[i]->unk14.y1,
-						    unk28[i]->unk14.x2, unk28[i]->unk14.y2);
-						((J2DPicture*)unk28[i]->getPane())
-						    ->draw(unk34[iVar9 + 12 * i].x,
-						           unk34[iVar9 + 12 * i].y, local_90.getWidth(),
+					if (unk34[iVar9 + 22 * i].x != 0) {
+						pane->getPane()->setAlpha(uVar13 * 0.7f);
+
+						pane->getPane()->resize(iVar9 * 3 - local_a0.getWidth(),
+						                        iVar9 * 3 - local_a0.getHeight());
+
+						JUTRect local_90 = pane->getPane()->getBounds();
+						((J2DPicture*)pane->getPane())
+						    ->draw(unk34[iVar9 + 22 * i].x,
+						           unk34[iVar9 + 22 * i].y, local_90.getWidth(),
 						           local_90.getHeight(), false, false, false);
 					}
 				}
@@ -402,6 +410,8 @@ bool TConsoleStr::processReady(int param_1)
 			unk27C[i]->setCenteredSize(
 			    0x1E, local_d8.getWidth(), local_d8.getHeight(),
 			    local_d8.getWidth() + 80, local_d8.getHeight() + 80);
+			unk27C[i]->getPane()->show();
+			unk27C[i]->getPane()->setAlpha(0);
 		} else if (param_1 < i * 10 + 30) {
 			unk27C[i]->update();
 			u16 alpha = unk27C[i]->getPane()->getAlpha();
@@ -466,94 +476,88 @@ bool TConsoleStr::processGo(float param_1)
 				}
 			}
 		}
-	}
-
-	if (param_1 >= 90.0f) {
-		if (param_1 >= 95.0f) {
-			if (param_1 == 95.0f) {
-				for (int i = 0; i < mGoPaneCount; ++i) {
-					if (i % 3 == 0) {
-						unk28[i]->setPanePosition(
-						    0x50, JUTPoint(0, 0), JUTPoint(-170, -180),
-						    JUTPoint(-340, -360));
-					} else if (i % 3 == 1) {
-						unk28[i]->setPanePosition(
-						    0x50, JUTPoint(0, 0), JUTPoint(0, -220),
-						    JUTPoint(0, -440));
-					} else {
-						unk28[i]->setPanePosition(
-						    0x50, JUTPoint(0, 0), JUTPoint(160, -180),
-						    JUTPoint(320, -360));
-					}
-				}
-
-				for (int i = 0; i < mGoPaneCount; ++i) {
-					JUTRect globalBounds = unk28[i]->getPane()->getGlobalBounds();
-					for (int j = 0; j < 16; ++j) {
-						unk34[i * 22 + j].set(globalBounds.x1, globalBounds.y1);
-					}
-
-					JUTRect emitterBounds = unk28[i]->getPane()->getBounds();
-					JGeometry::TVec3<f32> emitterPosition(
-					    emitterBounds.x1 + emitterBounds.getWidth() * 0.5f,
-					    emitterBounds.y1 + emitterBounds.getHeight() * 0.5f, 0.0f);
-					gpEmitterManager4D2->createEmitter(emitterPosition, 0x1FD, nullptr,
-					                                   nullptr);
-					unk2AC[i] = gpEmitterManager4D2->unkC8[0][0];
-				}
-			} else if (param_1 < 175.0f) {
-				for (s32 i = 0; i < mGoPaneCount; ++i) {
-					J2DPane* pane = unk28[i]->getPane();
-					s32 alpha = pane->getAlpha() - 4;
-					if (alpha < 0)
-						alpha = 0;
-
-					JUTRect globalBounds = pane->getGlobalBounds();
-					pane->setAlpha(alpha);
-					pane->resize(globalBounds.getWidth() + 2,
-					             globalBounds.getHeight() + 2);
-
-					if (unk2AC[i]) {
-						JUTRect emitterBounds = pane->getBounds();
-						JGeometry::TVec3<f32> emitterPosition(
-						    emitterBounds.x1 + emitterBounds.getWidth() * 0.5f,
-						    emitterBounds.y1 + emitterBounds.getHeight() * 0.5f,
-						    0.0f);
-						((JPABaseEmitter*)unk2AC[i])->setGlobalTranslation(
-						    emitterPosition);
-					}
-
-					if (unk28[i]->update() && unk2AC[i]) {
-						((JPABaseEmitter*)unk2AC[i])->setStatus(1);
-						unk2AC[i] = nullptr;
-					}
-
-					if ((s32)param_1 % 2 == 0) {
-						for (int j = 15; j > 10; --j)
-							unk34[i * 22 + j] = unk34[i * 22 + j - 1];
-						unk34[i * 22].set(globalBounds.x1, globalBounds.y1);
-					}
-				}
-			} else if (param_1 >= 175.0f) {
-				if (param_1 == 175.0f) {
-					for (s32 i = 0; i < mGoPaneCount; ++i) {
-						JUTRect bounds = unk28[i]->getPane()->getBounds();
-						unk28[i]->getPane()->resize(bounds.getWidth() - 0x50,
-						                            bounds.getHeight() - 0x50);
-					}
+	} else if (param_1 >= 95.0f) {
+		if (param_1 == 95.0f) {
+			for (int i = 0; i < mGoPaneCount; ++i) {
+				if (i % 3 == 0) {
+					unk28[i]->setPanePosition(
+					    0x50, JUTPoint(0, 0), JUTPoint(-170, -180),
+					    JUTPoint(-340, -360));
+				} else if (i % 3 == 1) {
+					unk28[i]->setPanePosition(
+					    0x50, JUTPoint(0, 0), JUTPoint(0, -220),
+					    JUTPoint(0, -440));
 				} else {
-					for (s32 i = 0; i < mGoPaneCount; ++i) {
-						J2DPane* pane = unk28[i]->getPane();
-						pane->hide();
-
-						if (unk2AC[i]) {
-							((JPABaseEmitter*)unk2AC[i])->setStatus(1);
-							unk2AC[i] = nullptr;
-						}
-					}
-					result = true;
+					unk28[i]->setPanePosition(
+					    0x50, JUTPoint(0, 0), JUTPoint(160, -180),
+					    JUTPoint(320, -360));
 				}
 			}
+
+			for (int i = 0; i < mGoPaneCount; ++i) {
+				for (int j = 0; j < 16; ++j) {
+					JUTRect globalBounds =
+					    unk28[i]->getPane()->getGlobalBounds();
+					unk34[i * 22 + j].set(globalBounds.x1, globalBounds.y1);
+				}
+
+				JUTRect emitterBounds = unk28[i]->getPane()->getBounds();
+				JGeometry::TVec3<f32> emitterPosition(
+				    emitterBounds.x1 + emitterBounds.getWidth() * 0.5f,
+				    emitterBounds.y1 + emitterBounds.getHeight() * 0.5f, 0.0f);
+				gpEmitterManager4D2->createEmitter(emitterPosition, 0x1FD, nullptr,
+				                               nullptr);
+				unk2AC[i] = gpEmitterManager4D2->unkC8[0][0];
+			}
+		} else if (param_1 < 175.0f) {
+			for (s32 i = 0; i < mGoPaneCount; ++i) {
+				// The pane pointer is re-read at every use: the ROM reloads it
+				// after the out-of-line JUTRect::copy call.
+				s32 alpha = unk28[i]->getPane()->getAlpha() - 4;
+				if (alpha < 0)
+					alpha = 0;
+
+				JUTRect globalBounds = unk28[i]->getPane()->getGlobalBounds();
+				unk28[i]->getPane()->setAlpha(alpha);
+				unk28[i]->getPane()->resize(globalBounds.getWidth() + 2,
+				                            globalBounds.getHeight() + 2);
+
+				if (unk2AC[i]) {
+					JGeometry::TVec3<f32> emitterPosition(
+					    globalBounds.x1 + globalBounds.getWidth() * 0.5f,
+					    globalBounds.y1 + globalBounds.getHeight() * 0.5f, 0.0f);
+					((JPABaseEmitter*)unk2AC[i])->setGlobalTranslation(
+					    emitterPosition);
+				}
+
+				if (unk28[i]->update() && unk2AC[i]) {
+					((JPABaseEmitter*)unk2AC[i])->setStatus(1);
+					unk2AC[i] = nullptr;
+				}
+
+				if ((s32)param_1 % 2 == 0) {
+					for (int j = 15; j > 0; --j)
+						unk34[i * 22 + j] = unk34[i * 22 + j - 1];
+					unk34[i * 22].set(globalBounds.x1, globalBounds.y1);
+				}
+			}
+		} else if (param_1 == 175.0f) {
+			for (s32 i = 0; i < mGoPaneCount; ++i) {
+				JUTRect bounds = unk28[i]->getPane()->getBounds();
+				unk28[i]->getPane()->resize(bounds.getWidth() - 0x50,
+				                            bounds.getHeight() - 0x50);
+			}
+		} else {
+			for (s32 i = 0; i < mGoPaneCount; ++i) {
+				J2DPane* pane = unk28[i]->getPane();
+				pane->hide();
+
+				if (unk2AC[i]) {
+					((JPABaseEmitter*)unk2AC[i])->setStatus(1);
+					unk2AC[i] = nullptr;
+				}
+			}
+			result = true;
 		}
 	}
 
@@ -627,6 +631,9 @@ bool TConsoleStr::processShineGet(int param_1)
 
 bool TConsoleStr::processMiss(int param_1)
 {
+	// TODO: 88.5%. The instruction stream matches, but our frame is 0x198
+	// against the ROM's 0x1B0 and the ROM keeps one more JUTPoint argument in
+	// a stack temporary in the `i*10+60` branch (r7 = lwz 0x11c(r1)).
 	bool result = true;
 
 	for (s32 i = 0; i < mMissPaneCount; ++i) {
@@ -646,6 +653,7 @@ bool TConsoleStr::processMiss(int param_1)
 		}
 
 		if (param_1 == i * 10 + 60) {
+			unk268[i]->getPane()->mRotation = (f32)mMissBaseRotation[i];
 			unk268[i]->setPanePosition(0x28, JUTPoint(0, 30), JUTPoint(0, -80),
 			                           JUTPoint(0, -80));
 		}
@@ -719,7 +727,17 @@ bool TConsoleStr::processScenario(int)
 
 void TConsoleStr::startCloseWipe(bool param_1)
 {
-	// TODO: all of this is wrong
+	// The two branches each own one JUTRect local: the first is filled by
+	// JUTRect's copy constructor (`bl copy__7JUTRectFRC7JUTRect`) and the
+	// second by the implicit word-wise operator=, which is why the ROM
+	// stores the four fields inline the second time.
+	//
+	// TODO: 85.5%. The instruction stream is otherwise identical; our frame is
+	// 0x170 against the ROM's 0x1E0. NOTE: a `char framePad_N[...]` here does
+	// NOT help - measured at 112 and 212 bytes, both leave the score at 85.5%.
+	// MWCC grows the frame *below* the named locals, whereas the ROM's deficit
+	// is the 100-byte gap *between* the frame bottom and the locals, so a pad
+	// cannot place it.
 
 	if (param_1) {
 		unk290[0]->getPane()->show();
@@ -727,37 +745,45 @@ void TConsoleStr::startCloseWipe(bool param_1)
 		unk2A0[0]->hide();
 		unk2A0[1]->hide();
 
-		JUTRect local_74 = unk290[0]->getPane()->getBounds();
-		unk290[0]->setPaneSize(0x2D, local_74.getWidth(), 0,
-		                       local_74.getHeight(), 0);
+		JUTRect rect = unk290[0]->getPane()->getBounds();
+		unk290[0]->setPaneSize(0x2D, rect.x1 - rect.x2, -224,
+		                       rect.x1 - rect.x2, 0);
 		unk290[0]->setPaneAlpha(0x2D, 0xFF, 0);
 
-		unk290[1]->setPaneOffset(0x2D, 0, 224 - local_74.y1, 0,
+		rect = unk290[1]->getPane()->getBounds();
+		// TODO: the ROM keeps `465 - getInitialBounds().y1` un-reassociated and
+		// re-evaluates it for the height below (`subfic 0x1d1` + `addi 0xe0`)
+		// rather than folding to `241 - y1`.
+		unk290[1]->setPaneOffset(0x2D, 0, 224 - rect.y1, 0,
 		                         465 - unk290[1]->getInitialBounds().y1);
-		unk290[1]->setPaneSize(0x2D, local_74.getWidth(), 0,
-		                       local_74.getHeight(), 0);
-		unk290[1]->setPaneAlpha(0x2D, 0xFF,
-		                        unk290[1]->getPane()->getAlpha());
+		unk290[1]->setPaneSize(0x2D, rect.x1 - rect.x2,
+		                       465 - unk290[1]->getInitialBounds().y1 - 224,
+		                       rect.x1 - rect.x2, 0);
+		unk290[1]->setPaneAlpha(0x2D, 0xFF, 0);
 
 		unk2BC = 8;
 		unk2B8 = 4;
 		unk2A8 = 1;
-	} else if (unk2BC == 1) {
-		unk2BC           = 2;
-		JUTRect local_88 = unk290[0]->getPane()->getBounds();
-		unk290[0]->setPaneSize(0x2D, local_88.getWidth(), 0,
-		                       local_88.getWidth(), local_88.getHeight());
-		unk290[0]->setPaneAlpha(0x2D, 0xFF,
-		                        unk290[0]->getPane()->getAlpha());
-
-		unk290[1]->setPaneOffset(0x2D, 0, 224 - local_88.y1, 0,
-		                         465 - unk290[1]->getInitialBounds().y1);
-		unk290[1]->setPaneSize(0x2D, local_88.getWidth(), 0,
-		                       local_88.getHeight(), 0);
-		unk290[1]->setPaneAlpha(0x2D, 0xFF,
-		                        unk290[1]->getPane()->getAlpha());
-	} else {
+	} else if (unk2BC != 1) {
+		// The ROM lays this branch out as `beq <body>` with this two-instruction
+		// tail falling through, i.e. the guard is spelled inverted.
 		unk2A8 = 1;
+	} else {
+		unk2BC    = 2;
+		JUTRect rect = unk290[0]->getPane()->getBounds();
+		unk290[0]->setPaneSize(0x2D, rect.x1 - rect.x2, -224,
+		                       rect.x1 - rect.x2, rect.y1 - rect.y2);
+		unk290[0]->setPaneAlpha(0x2D, 0xFF, unk290[0]->getPane()->getAlpha());
+
+		rect = unk290[1]->getPane()->getBounds();
+		unk290[1]->setPaneOffset(0x2D, 0, 224 - rect.y1, 0, 0);
+		// TODO: the ROM computes this height as a *runtime* `224 - 464`
+		// (subfic against a register holding 224) instead of folding it to the
+		// constant -240.0f, so the original source must have reached the two
+		// operands through something that stops MWCC folding them.
+		unk290[1]->setPaneSize(0x2D, rect.x1 - rect.x2, 224 - 464,
+		                       rect.x1 - rect.x2, rect.y1 - rect.y2);
+		unk290[1]->setPaneAlpha(0x2D, 0xFF, unk290[1]->getPane()->getAlpha());
 	}
 }
 
@@ -766,17 +792,17 @@ void TConsoleStr::startOpenWipe()
 	unk2A8 = 0;
 	unk2BC = 5;
 	unk290[0]->getPane()->hide();
-	unk298->getPane()->show();
+	unk298[0]->getPane()->show();
 	unk290[1]->getPane()->hide();
-	unk29C->getPane()->show();
+	unk298[1]->getPane()->show();
 
 	// TODO: TExPane::setPaneAlpha is wrong
 
-	JUTRect local_3c = unk298->getPane()->getBounds();
-	unk298->setPaneOffset(0x1E, -local_3c.getWidth(), 0, 0, 0);
-	unk298->setPaneAlpha(30, 100, 255);
+	JUTRect local_3c = unk298[0]->getPane()->getBounds();
+	unk298[0]->setPaneOffset(0x1E, -local_3c.getWidth(), 0, 0, 0);
+	unk298[0]->setPaneAlpha(30, 100, 255);
 
-	local_3c = unk29C->getPane()->getBounds();
-	unk29C->setPaneOffset(0x1E, local_3c.getWidth(), 0, 0, 0);
-	unk29C->setPaneAlpha(30, 100, 255);
+	local_3c = unk298[1]->getPane()->getBounds();
+	unk298[1]->setPaneOffset(0x1E, local_3c.getWidth(), 0, 0, 0);
+	unk298[1]->setPaneAlpha(30, 100, 255);
 }

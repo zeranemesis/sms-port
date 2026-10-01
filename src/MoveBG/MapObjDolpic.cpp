@@ -261,6 +261,13 @@ void TBellDolpic::ring(const JGeometry::TVec3<f32>& pos)
 
 	f32 tmp = (f32)rand() * 0.000030517578f;
 	unk158  = (int)(tmp * 14400.0f) + 0x5460;
+
+	// Every diff marker of this function is a stack offset sitting 0x8 above
+	// ours (target frame 0x48 against 0x40). Declared last on purpose: mwcc
+	// gives the low addresses to the last-declared local, so this is what
+	// pushes the other locals and the saved registers up to the target.
+	char framePad_8_bellDolpicRing[8];
+	(void)framePad_8_bellDolpicRing;
 }
 
 void TBellDolpic::touchPlayer(THitActor* actor) { ring(actor->mPosition); }

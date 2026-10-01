@@ -8,6 +8,7 @@
 #include <System/ArrayWrapper.hpp>
 
 class J2DPane;
+class J2DPicture;
 class J2DTextBox;
 class J2DScreen;
 class J2DOrthoGraph;
@@ -24,27 +25,21 @@ class TOptionLanguageUnit;
  */
 class TArrowControl {
 public:
-	TArrowControl(J2DPane* pane)
-	    : mPane(pane)
-	    , unk14(true)
-	    , mPhase(0)
-	{
-		mBounds = mPane->getBounds();
-	}
+	TArrowControl(J2DScreen* screen, J2DPicture* picture);
 
-	void loadLanguageTextures();
 	int replaceTexture(u32 tag, JUTTexture* texture);
+	void changeTexture(int language);
 	void update();
 	void updateAlpha();
 	void updateScale();
 	int calcMoveX(int phase) const;
 
 public:
-	/* 0x0 */ J2DPane* mPane;
-	/* 0x4 */ JUTRect mBounds;
-	/* 0x14 */ bool unk14;
-	/* 0x18 */ int mPhase;
-	/* 0x1C */ u32 unk1C;
+	/* 0x0 */ J2DScreen* mScreen;
+	/* 0x4 */ J2DPicture* mPicture;
+	/* 0x8 */ JUTRect mBounds;
+	/* 0x18 */ bool unk18;
+	/* 0x1C */ int mPhase;
 	/* 0x20 */ JUTTexture* mLanguageTextures[5];
 };
 
@@ -60,6 +55,7 @@ public:
 	void startAnm();
 	void stopAnm();
 	void update();
+	void resize(int content_width);
 
 public:
 	/* 0x0 */ J2DPane* mPane;
@@ -139,27 +135,27 @@ public:
 
 	TOptionRumbleUnit(J2DScreen* screen);
 
-	void update();
+	int replaceTexture(u32 tag, JUTTexture* texture);
+	void changeTexture(int language);
 	void checkRumble();
+	void update();
 	void toggle();
 	void adjust();
 	void adjustView();
-	void show();
 	void hide();
+	void show();
 	void deactivate(bool force);
 	void activate();
 	void setValue(RumbleType value);
-	void changeTexture(int language);
-	RumbleType getValue() const
-	{
-		return (RumbleType)mSelectionText->getNumber();
-	}
 	void setState(State state);
 	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
 
+	RumbleType getValue() const { return (RumbleType)getNumber(); }
+	s32 getNumber() const { return mSelectionText->getNumber(); }
+
 	TPatternAnmControl* getCurrentGamepadAnm() const
 	{
-		return mGamepadIcon[mSelectionText->getNumber()];
+		return mGamepadIcon[getNumber()];
 	}
 
 public:
@@ -193,25 +189,26 @@ public:
 	void initMonoAnm();
 	void initSteleoAnm();
 	void initSurroundAnm();
+	int replaceTexture(u32 tag, JUTTexture* texture);
+	void changeTexture(int language);
 	void update();
 	void updatePatternAnm();
 	void foreachPatternAnm(ArrayWrapper<TPatternAnmControl*>& ary,
 	                       void (TPatternAnmControl::*ptmf)());
 	void toggle();
-	void adjust();
 	void show();
 	void hide();
+	void adjust();
 	void deactivate(bool force);
 	void activate();
 	void setValue(int value);
 	int getValue() const;
-	void changeTexture(int language);
 	void stopSound();
 	static SoundType flagToType(int flag);
 	static int typeToFlag(SoundType type);
 	void setState(State state);
-	void adjustView();
 	void adjustSound();
+	void adjustView();
 	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
 
 	struct FabricatedSoundSettings {
@@ -252,13 +249,19 @@ public:
 	};
 
 	TOptionSubtitleUnit(J2DScreen* screen);
-	void update();
-	void setState(State state);
-	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
+	int replaceTexture(u32 tag, JUTTexture* texture);
 	void changeTexture(int language);
+	void toggle();
+	void adjust();
+	void show();
+	void hide();
+	void deactivate(bool force);
+	void activate();
+	void setValue(int value);
+	void setState(State state);
+	void update();
+	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
 	int getValue() const { return mSelectionText->getNumber(); }
-	void setValue(int value) { mSelectionText->setNumber(value); }
-	void toggle() { mSelectionText->toggle(); }
 
 public:
 	/* 0x00 */ J2DScreen* mScreen;
@@ -280,14 +283,19 @@ public:
 	};
 
 	TOptionLanguageUnit(J2DScreen* screen);
+	int replaceTexture(u32 tag, JUTTexture* texture);
+	void changeTexture(int language);
+	void toggle();
+	void adjust();
+	void show();
+	void hide();
+	void deactivate(bool force);
+	void activate();
+	void setValue(int value);
 	void update();
 	void setState(State state);
 	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
-	void changeTexture(int language);
-	int replaceTexture(u32 tag, JUTTexture* texture);
 	int getValue() const { return mSelectionText->getNumber(); }
-	void setValue(int value) { mSelectionText->setNumber(value); }
-	void toggle() { mSelectionText->toggle(); }
 
 public:
 	/* 0x00 */ J2DScreen* mScreen;
@@ -311,16 +319,17 @@ public:
 
 	void load();
 	void loadSetting();
-	void movementCommon();
 	void draw(J2DOrthoGraph* graph);
 	bool movementCard2Option();
 	bool movementOption();
 	bool movementOption2Card();
 	void setType(TOptionControl::SelectType type, bool initial_options_entry);
-	void toggleCurType();
-	void checkInput();
+	void changeTexture(int language);
 	void changeTopMessage(int language);
+	void movementCommon();
+	void toggleCurType();
 	void writeValue();
+	void checkInput();
 	bool isChangedSetting() const;
 	void resetChangedSetting();
 

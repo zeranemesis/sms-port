@@ -584,8 +584,7 @@ void TCannon::calcRootMatrix()
 	if (mHolder != nullptr) {
 		MtxPtr mtx = mHolder->getTakingMtx();
 		if (mSpine->getCurrentNerve() == &TNerveCannonObject::theNerve()) {
-			J3DModel* model = getModel();
-			MTXCopy(mtx, model->getBaseTRMtx());
+			MTXCopy(mtx, getModel()->getBaseTRMtx());
 			mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		} else {
 			if (gpMarDirector->isDemoModeNow())
@@ -689,7 +688,7 @@ void TCannon::bombShoot()
 
 		if (unk21C) {
 			unk1A4->mVelocity.set(dir.x, dir.y, dir.z);
-			unk1A4->offLiveFlag(LIVE_FLAG_UNK20);
+			unk1A4->offLiveFlag(LIVE_FLAG_UNK10);
 		} else {
 			unk1A4->mVelocity = dir;
 			unk1A4->onLiveFlag(LIVE_FLAG_AIRBORNE);
