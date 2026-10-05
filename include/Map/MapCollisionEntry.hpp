@@ -12,21 +12,7 @@ class TBGCheckData;
 
 class TMapCollisionBase {
 public:
-	TMapCollisionBase()
-	    : mCheckDatas(nullptr)
-	    , mKind(0)
-	    , mCheckDataNum(0)
-	    , mVertexNum(0)
-	    , mVertices(nullptr)
-	    , mCollisionGroupNum(0)
-	    , mCollisionGroups(nullptr)
-	    , mFlags(0)
-	{
-		MTXIdentity(unk20);
-		mPrevTranslation.x = 0.0f;
-		mPrevTranslation.y = 0.0f;
-		mPrevTranslation.z = 0.0f;
-	}
+	TMapCollisionBase();
 
 	virtual void init(const char*, u16, const TLiveActor*);
 	virtual void moveSRT(const JGeometry::TVec3<f32>&,
@@ -37,20 +23,6 @@ public:
 	virtual void moveTrans(const JGeometry::TVec3<f32>&) { }
 	virtual void moveMtx(MtxPtr) { }
 	virtual void setUp() { offFlag(FLAG_NEEDS_SETUP); }
-	// MEASURED AND REVERTED, 2026-09-30 - do not "fix" this without new
-	// evidence.  The 24-byte `.rodata` block these two compound literals
-	// produce (12 zero bytes then three `1.0f`, identified in
-	// `System/MarNameRefGen_MapObj` and `Enemy/bosstelesa`) was tried as
-	// named stack locals instead, on the theory that a virtual function most
-	// TUs never call should not push 24 bytes into every includer's
-	// `.rodata`.  Measured:
-	//
-	//   Map/MapCollisionEntry  target 0x68   with literals 0x62   as locals 0x4A
-	//   Enemy/bosstelesa       target 0xb00  with literals 0xbc2  as locals 0xbaa
-	//
-	// The owning unit gets 30 bytes *worse* (it genuinely needs those 24
-	// bytes), and `bosstelesa` is still ~170 bytes over target either way -
-	// so the blob was never its problem.  Reverted.
 	virtual void setUpTrans(const JGeometry::TVec3<f32>& param_1)
 	{
 		MsMtxSetTRS(unk20, param_1, (Vec) { 0.0f, 0.0f, 0.0f },
@@ -91,6 +63,10 @@ public:
 	void offFlag(u16 flag) { mFlags &= ~flag; }
 	s32 getUnk8() const { return mKind; }
 	u32 getUnkC() const { return mCheckDataNum; }
+	// fabricated name. Needed by TMapCollisionMove::init, which only matches
+	// when the check-data array is reached through an accessor; see the
+	// comment on that function.
+	TBGCheckData* getCheckDatas() { return mCheckDatas; }
 	void setUpMtx(MtxPtr mtx)
 	{
 		setMtx(mtx);
@@ -125,10 +101,10 @@ public:
 		/* 0x0 */ u16 mBGType;
 		/* 0x2 */ s16 mTriangleNum;
 		/* 0x4 */ u16 mFlags;
-		/* 0x8 */ s16* mIndices;
-		/* 0xC */ u8* unkC;
-		/* 0x10 */ u8* unk10;
-		/* 0x14 */ s16* mAdditionalDatas;
+		/* 0x8 */ PTR32(s16) mIndices;
+		/* 0xC */ PTR32(u8) unkC;
+		/* 0x10 */ PTR32(u8) unk10;
+		/* 0x14 */ PTR32(s16) mAdditionalDatas;
 	};
 
 	/* 0x18 */ u32 mCollisionGroupNum;

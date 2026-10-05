@@ -12,7 +12,7 @@ template <typename T, typename Allocator = TAllocator<T> > class TVector {
 	void DestroyElement_(T* pFirst, T* pLast)
 	{
 		// clang-format off
-		JGADGET_ASSERT((pBegin_<=pFirst)&&(pFirst<pEnd_));
+		JGADGET_ASSERT((pBegin_<=pFirst)&&(pFirst<=pEnd_));
 		JGADGET_ASSERT((pBegin_<=pLast)&&(pLast<=pEnd_));
 		// clang-format on
 
@@ -148,6 +148,63 @@ public:
 		return pBegin_ + offset;
 	}
 
+	// TODO: the only emitted instantiation of this overload,
+	// TVector<TDrawSyncManager::TDrawSyncTokenRange>::insert (System.a
+	// DrawSyncManager.cpp, 0x3a8), is instruction-exact with a frame of 0x120
+	// against retail's 0x100 and r29/r30 swapped between `this` and
+	// `how_many`. Every referenced slot sits exactly 0x20 higher than
+	// retail's, so the whole excess is unreferenced low region: 32 bytes of
+	// inline-expansion temporaries retail does not reserve.
+	//
+	// Diagnosed (header round 15) as a **depth surcharge**, not a wrong body:
+	// spelling InsertRaw's body directly inside insert -- which puts the four
+	// std::uninitialized_copy expansions, std::copy_backward and the two
+	// DestroyElement_ expansions at depth 1 instead of depth 2 -- gives
+	// retail's 0x100 exactly (8 bytes per copy/fill expansion). That is not a
+	// usable fix: InsertRaw is a real function (UNUSED 0x38c here, emitted and
+	// called from the four MarNameRefGen instantiations), so insert must call
+	// it, and duplicating the body would drop the UNUSED symbol.
+	//
+	// Rejected, each measured with a full `ninja changes_all`:
+	//   - dropping `O dummy = d_first;` from std::uninitialized_copy (MSL
+	//     <memory>): insert 0x120 -> 0x110 with identical instructions, but it
+	//     regresses five exact functions -- InsertRaw for TStageEventInfo,
+	//     TScenarioArchiveName, TStagePositionInfo and void*, plus
+	//     TVector_pointer_void::reserve -- and unlinks std-vector, so retail
+	//     has the dummy.
+	//   - flattening std::copy_backward's `__copy_backward<T>` struct level
+	//     (MSL <algorithm>): insert 0x110 -> 0x108, and
+	//     TVector<TCameraMapTool>::InsertRaw 60.22 -> 99.96, but
+	//     TVector<TStageEventInfo>::InsertRaw 100 -> 41.97 (its
+	//     __as__15TStageEventInfo stops being emitted, which is what proves
+	//     __copy_backward assigns rather than copy-constructs), the other
+	//     three InsertRaw drop below 100 and std-vector unlinks. Net
+	//     matched_code -0.10.
+	//   - `iterator it = pIt;` without the explicit conversion in InsertRaw:
+	//     239 instructions instead of 234.
+	//   - TDestroyed_deallocate_ with a member-initialiser list, GetSize_extend_
+	//     without the `newCap` local, `DestroyElement_(pBegin_, pEnd_)` for
+	//     DestroyElement_all_(), `new (d_first)` without `&*`, and
+	//     TAllocator::deallocate calling ::operator delete directly (this last
+	//     one moves the standalone InsertRaw 0xd8 -> 0xc0 but not insert): all
+	//     +0 on insert's frame.
+	//
+	// Header round 26 re-measured the whole ladder and found no single 32-byte
+	// object to remove: the excess is additive over the MSL helpers, and the
+	// two levers that exist only reach -0x18 between them (dummy -0x10,
+	// __copy_backward -0x8), both with the regressions above. `dealloc` is
+	// worth 0x18 of insert's frame on its own but its destructor is four real
+	// instructions, so it is retail's. Also +0 on insert (measured here):
+	// InsertRaw defined out of class with `inline`, a split-declared
+	// `iterator it; it = InsertRaw(...)`, dropping `I dummy` from
+	// std::uninitialized_fill_n (it folds away entirely), and `if (it !=
+	// pEnd_) fill; else WARN;`. Wrong direction: `if (it == end())` is +8
+	// (the accessor lever works here, so the residue is a shortage, not a
+	// misplacement), `std::uninitialized_fill` costs an instruction and
+	// `iterator it = pIt` five. The second residue is a callee-saved swap:
+	// retail ranks `this` (r30) above the `how_many` parameter (r29), we do
+	// the reverse -- the known-open ranking class, and no declaration order
+	// inside insert changes it.
 	void insert(iterator where, size_t how_many, const T& what)
 	{
 		if (!how_many)
@@ -293,7 +350,6 @@ public:
 			ResizeNotLarger(new_size);
 			return end();
 		}
-		return end();
 	}
 	// fabricated but present in TP as Resize_notLarger_
 	void ResizeNotLarger(size_t u)
@@ -330,6 +386,53 @@ public:
 
 	size_t size() const { return Base::size(); }
 
+	// UPDATE (rs4): MSoundMainSide gets the `bl` with no header change, by
+	// reaching the cube through two TU-local levels (getSoundCube -> getCube)
+	// inside calcParamRatioInCube; bosseel's site is still open. Old notes:
+	// TODO: the ROM `bl`s JGadget::TVector<void*>::begin() (weak 0x8, `lwz
+	// r3,4(r3)`, emitted only from bosseel.cpp and MSoundMainSide.cpp) at
+	// exactly two places: TBossEel::perform's inlined
+	// calcAndSetCollisionCubeBite_ -- which reads element **[1]**, `lwz
+	// r3,4(r3)` after the call, while every other eel site reads [0] -- and
+	// MSStageCubeFade::calcParamRatioInCube, also reached one inline deep,
+	// with a variable index (`slwi r0,rN,2; lwzx`). Every shallower site folds
+	// the chain to a single `lwz 0x10`. So the call needs one or two more
+	// inline levels than `getChildren() -> TVector_pointer<T>::begin() ->
+	// TVector<void*>::begin()` gives, and adding them here is a shared-header
+	// change. Measured (each line is a full `ninja changes_all`):
+	//
+	//   begin()/end() facades here:         MSoundMainSide gains retail's
+	//     `addi 0xc` but no `bl`; TCubeManagerBase ctor -0.5. No `bl`.
+	//   + a probe level inside
+	//     TVector_pointer<T>::begin():      the `bl` appears -- so six levels
+	//     are needed from the emitted caller, and no plausible member supplies
+	//     the sixth.
+	//   TVector<T>::operator[] as
+	//     `begin()[u]` (+ the two deep
+	//     sites respelled `getChildren()[i]`):
+	//                                       no `bl`, but a +4 inline temporary
+	//     everywhere operator[] is used: MarNameRefGen 48.85 -> 57.60 (four
+	//     TNameRefAryT::load exact), DrawSyncManager 19.27 -> 21.77,
+	//     CubeManagerBase 29.12 -> 34.04 (isInCube exact), total matched_code
+	//     47.39 -> 47.43 -- against TMapObjWave::updateHeightAndAlpha 100 ->
+	//     99.96 (its named locals shift +4 inside an unchanged 0x70 frame; a
+	//     `*getChildren().begin()[i]` respelling there gives 0x68 instead, 8
+	//     short) and TApplication::mountStageArchive 87.27 -> 87.17 (the
+	//     target's `lwzx` becomes `add`+`lwz`).
+	//   operator[] facade here forwarding
+	//     to `Base::operator[](i)`:         isInCube exact, but the same
+	//     MapObjWave and mountStageArchive drops; total matched_code -0.02.
+	//   operator[] facade here forwarding
+	//     to `Base::begin()[i]`:            mountStageArchive 87.27 -> 94.05,
+	//     isInAreaCube 82.04 -> 82.45, but CPolarSubCamera::controlByCameraCode_
+	//     99.88 -> 98.10 (the target's `add`+`lwz 0` becomes `lwzx`), and none
+	//     of `&(*unk14)[i]`, `*(begin() + i)`, `begin()[i]` or
+	//     `&getChildren()[i]` recovers it.
+	//
+	// Nothing measured produces the `bl` without a regression, so the header
+	// is left alone. The `[1]` index in calcAndSetCollisionCubeBite_ is a real
+	// finding and holds independently of the inlining question.
+
 	iterator insert(iterator where, const value_type& what);
 	void insert(iterator, size_t, const value_type&);
 
@@ -346,14 +449,25 @@ public:
 	value_type* ResizeRaw(size_t);
 };
 
+// The template argument is the **pointer** type, not the pointee: the map
+// spells the destructor `__dt__Q27JGadget35TVector_pointer<P15TStageEnemyInfo>Fv`
+// (likewise `<P16TCubeGeneralInfo>`, `<P8TBaseNPC>` and the
+// `<P55TNameRefAryT<...>>` of MarNameRefGen), so `value_type` is T and
+// `iterator` is T*. TNameRefPtrAryT<T, U> keeps the pointee as its own
+// argument (`TNameRefPtrAryT<15TStageEnemyInfo,...>`) and derives from
+// `TVector_pointer<T*>`.
 template <class T> class TVector_pointer : public TVector_pointer_void {
 	typedef TVector_pointer_void Base;
-	typedef T* value_type;
 
 public:
-	typedef T** iterator;
+	typedef T value_type;
+	typedef T* iterator;
 
-	TVector_pointer() { }
+	TVector_pointer(const JGadget::TAllocator<void*>& allocator
+	                = JGadget::TAllocator<void*>())
+	    : TVector_pointer_void(allocator)
+	{
+	}
 
 	~TVector_pointer() { }
 
@@ -361,10 +475,13 @@ public:
 	iterator end() { return iterator(Base::end()); }
 	size_t size() const { return Base::size(); }
 
-	T& operator[](size_t i) { return *static_cast<T*>(Base::operator[](i)); }
-	const T& operator[](size_t i) const
+	value_type operator[](size_t i)
 	{
-		return *static_cast<T*>(Base::operator[](i));
+		return static_cast<value_type>(Base::operator[](i));
+	}
+	value_type operator[](size_t i) const
+	{
+		return static_cast<value_type>(Base::operator[](i));
 	}
 
 	void push_back(const value_type& value) { Base::push_back(value); }

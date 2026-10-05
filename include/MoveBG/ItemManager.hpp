@@ -10,6 +10,15 @@ class TItemManager;
 
 extern TItemManager* gpItemManager;
 
+// Fabricated: the item manager bound to a named local before it is returned,
+// +8 of low region per expansion over a raw gpItemManager read. Formerly
+// parked TU-locally in three units.
+inline TItemManager* SMSGetItemManagerBound()
+{
+	TItemManager* manager = gpItemManager;
+	return manager;
+}
+
 class TItemManager : public TMapObjBaseManager {
 public:
 	TItemManager(const char* name = "アイテムマネージャー");

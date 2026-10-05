@@ -16,7 +16,8 @@ JPAEmitterManager::JPAEmitterManager(JPAResourceManager* param_1, s32 param_2,
 		param_5 = JKRHeap::getCurrentHeap();
 
 	u32 bytesForParticles
-	    = ALIGN_NEXT(param_2 * sizeof(JPAParticle), 0x20) + 0x80;
+	    = ALIGN_NEXT(param_2 * sizeof(JPAParticle), 0x20)
+	      + ALIGN_NEXT(sizeof(JKRSolidHeap), 0x10);
 	unkC = JKRCreateSolidHeap(bytesForParticles, param_5, false);
 	if (unkC) {
 		for (int i = 0; i < param_2; ++i) {
@@ -27,7 +28,8 @@ JPAEmitterManager::JPAEmitterManager(JPAResourceManager* param_1, s32 param_2,
 	}
 
 	u32 bytesForEmitters
-	    = ALIGN_NEXT(param_3 * sizeof(JPABaseEmitter), 0x20) + 0x80;
+	    = ALIGN_NEXT(param_3 * sizeof(JPABaseEmitter), 0x20)
+	      + ALIGN_NEXT(sizeof(JKRSolidHeap), 0x10);
 	unk20 = JKRCreateSolidHeap(bytesForEmitters, param_5, false);
 	if (unk20) {
 		for (int i = 0; i < param_3; ++i) {
@@ -37,7 +39,8 @@ JPAEmitterManager::JPAEmitterManager(JPAResourceManager* param_1, s32 param_2,
 	}
 
 	u32 bytesForFields
-	    = ALIGN_NEXT(param_4 * sizeof(JPABaseField), 0x20) + 0x80;
+	    = ALIGN_NEXT(param_4 * sizeof(JPABaseField), 0x20)
+	      + ALIGN_NEXT(sizeof(JKRSolidHeap), 0x10);
 	unk34 = JKRCreateSolidHeap(bytesForFields, param_5, false);
 	if (unk34) {
 		for (int i = 0; i < param_4; ++i) {
@@ -57,24 +60,12 @@ JPAEmitterManager::JPAEmitterManager(JPAResourceManager* param_1, s32 param_2,
 
 	unkC4 = 0;
 
-	for (int i = 0; i < 2; ++i) {
-		unkC8[i][0]  = 0;
-		unkC8[i][1]  = 0;
-		unkC8[i][2]  = 0;
-		unkC8[i][3]  = 0;
-		unkC8[i][4]  = 0;
-		unkC8[i][5]  = 0;
-		unkC8[i][6]  = 0;
-		unkC8[i][7]  = 0;
-		unkC8[i][8]  = 0;
-		unkC8[i][9]  = 0;
-		unkC8[i][10] = 0;
-		unkC8[i][11] = 0;
-		unkC8[i][12] = 0;
-		unkC8[i][13] = 0;
-		unkC8[i][14] = 0;
-		unkC8[i][15] = 0;
-	}
+	// One flat 32-entry loop, which MWCC unrolls by 16 into retail's
+	// two-iteration body; a 2 x 16 nested spelling allocates the first four
+	// address temporaries differently. The member is probably a flat
+	// `JPABaseEmitter* [32]` (header TODO: its users only read [0][0]).
+	for (int i = 0; i < 32; ++i)
+		(&unkC8[0][0])[i] = 0;
 }
 
 u32 JPAEmitterManager::getEmitterNumber()
@@ -217,6 +208,33 @@ JPABaseEmitter* JPAEmitterManager::createVolumeEmitter(JPADataBlock* block,
 	return emitter;
 }
 
+// Binding level worth +16 of low region, landing
+// JPAEmitterManager::createEmitterBase's frame at 0xc8 (batch 124).
+static inline JPADataBlock*
+JPAEmitterManagerGetBaseEmitterBlock(JPADataBlockLinkInfo* p)
+{
+	JPADataBlock* baseEmitterBlock = p->getBaseEmitterBlock();
+	return baseEmitterBlock;
+}
+
+// Binding level (with the one above) landing createEmitterBase's frame at
+// 0xc8 (batch 124).
+static inline u8 JPAEmitterManagerGetFieldNum(JPADataBlockLinkInfo* p)
+{
+	u8 fieldNum = p->getFieldNum();
+	return fieldNum;
+}
+
+// A direct-return level over the link-info lookup: it ranks `linkInfo` below
+// the `&unkA4[param_3]` base temp (retail's r29/r30), where the same read
+// spelled inline in the caller ranks it above. A named-result or
+// reference-out-parameter form of the same level costs 8/0x10 of frame.
+static inline JPADataBlockLinkInfo*
+JPAEmitterManagerGetLinkInfo(JPAEmitterData* p)
+{
+	return p->getLinkInfo()[0];
+}
+
 JPABaseEmitter* JPAEmitterManager::createEmitterBase(
     s32 param_1, u8 param_2, u8 param_3,
     JPACallBackBase<JPABaseEmitter*>* param_4,
@@ -232,8 +250,10 @@ JPABaseEmitter* JPAEmitterManager::createEmitterBase(
 		if (!emitterData)
 			return nullptr;
 
-		JPADataBlockLinkInfo* linkInfo = emitterData->getLinkInfo()[0];
-		JPADataBlock* block            = linkInfo->getBaseEmitterBlock();
+		JPADataBlockLinkInfo* linkInfo
+		    = JPAEmitterManagerGetLinkInfo(emitterData);
+		JPADataBlock* block
+		    = JPAEmitterManagerGetBaseEmitterBlock(linkInfo);
 
 		JPABaseEmitter* emitter = createVolumeEmitter(block, param_2);
 
@@ -246,7 +266,7 @@ JPABaseEmitter* JPAEmitterManager::createEmitterBase(
 
 			emitter->setFieldList(&unk28);
 
-			int count             = linkInfo->getFieldNum();
+			int count             = JPAEmitterManagerGetFieldNum(linkInfo);
 			JPADataBlock** blocks = linkInfo->getField();
 			for (int i = 0; i < count; ++i) {
 				JPADataBlock* block = blocks[i];

@@ -33,7 +33,7 @@ void DSPBuf::updateDSP()
 	Kernel::probeFinish(3);
 }
 
-s16* DSPBuf::mixDSP(s32 param) { process(DSPBUF_EVENTS_UNK2); }
+s16* DSPBuf::mixDSP(s32 param) { return process(DSPBUF_EVENTS_UNK2); }
 
 void DSPBuf::finishDSPFrame() { process(DSPBUF_EVENTS_UNK1); }
 
@@ -66,8 +66,9 @@ s16* DSPBuf::process(DSPBUF_EVENTS event)
 			write_buffer = nextWriteBuf;
 			AudioThread::setDSPSyncCount(Kernel::getSubFrames());
 			Kernel::probeStart(7, "DSP-MAIN");
-			DsyncFrame2(Kernel::getSubFrames(), u32(dsp_buf[write_buffer]),
-			            u32(&dsp_buf[write_buffer][frameSamples]));
+			DsyncFrame2(Kernel::getSubFrames(),
+			            uintptr_t(dsp_buf[write_buffer]),
+			            uintptr_t(&dsp_buf[write_buffer][frameSamples]));
 			dspstatus = 1;
 			updateDSP();
 		}

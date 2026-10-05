@@ -23,10 +23,12 @@ public:
 	void checkSubTitleOn();
 	void show();
 	void hide();
-	const TMessageLoader::EntryInfo* getCurEntry() const;
+	const JMSMesgEntry* getCurEntry() const;
 	void setCurMessage();
 	void makeBmgName(char*, int, const char*);
 	void draw(JDrama::TGraphics*);
+
+	J2DSetScreen* getScreen() const { return unk14; }
 
 public:
 	/* 0x10 */ const TTHPRender* unk10;

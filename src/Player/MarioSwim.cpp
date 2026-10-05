@@ -8,7 +8,15 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-void TMario::isSwimWaiting() { }
+// UNUSED (0x1c in the map): a status predicate. No live caller inlines it
+// (MarioSwim is instruction-exact throughout without it), so only the map
+// size constrains the body.
+bool TMario::isSwimWaiting()
+{
+	if (getStatus() == MARIO_STATUS_SWIM_WAIT)
+		return true;
+	return false;
+}
 
 void TMario::doSwimming()
 {
@@ -34,7 +42,7 @@ void TMario::doSwimming()
 		rotMaxF = (f32)mSwimParams.mSwimmingRotSpMax.get();
 	}
 
-	s16 rotSp    = mForwardVel / 32.0f * (rotMaxF - rotMinF) + rotMinF;
+	s16 rotSp    = mForwardVel * (rotMaxF - rotMinF) * 0.03125f + rotMinF;
 	s16 diff     = mIntendedYaw - mFaceAngle.y;
 	mFaceAngle.y = mIntendedYaw - IConverge(diff, 0, rotSp, rotSp);
 
@@ -43,14 +51,14 @@ void TMario::doSwimming()
 	mVel.y -= mSwimParams.mGravity.get();
 
 	f32 depthRatio
-	    = (mFloorPosition.z - mPosition.y) / mSwimParams.mFloatHeight.get();
+	    = (mFloorPosition.z - getPosition().y) / mSwimParams.mFloatHeight.get();
 	if (depthRatio < 0.0f)
 		depthRatio = 0.0f;
 	if (depthRatio > 1.0f)
 		depthRatio = 1.0f;
 
 	if (mAnimationId == ANIM_SWIM_WAIT || mAnimationId == ANIM_SWIM_START
-	    || mStatus == MARIO_STATUS_SWIM_WAIT)
+	    || getStatus() == MARIO_STATUS_SWIM_WAIT)
 		depthRatio *= mSwimParams.mWaitBouyancy.get();
 	else
 		depthRatio *= mSwimParams.mMoveBouyancy.get();
@@ -80,8 +88,8 @@ void TMario::doSwimming()
 
 	if (mFloorPosition.z > mFloorPosition.y + 400.0f
 	    && mPosition.y < mFloorPosition.y + 100.0f
-	    && mStatus != MARIO_STATUS_SWIM_WAIT) {
-		mFootprintPos   = mPosition;
+	    && getStatus() != MARIO_STATUS_SWIM_WAIT) {
+		mFootprintPos   = getPosition();
 		mFootprintPos.y = mFloorPosition.y;
 		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_M_SEASMOKE,
 		                                            &mFootprintPos, 1, this);
@@ -93,9 +101,6 @@ void TMario::doSwimming()
 
 BOOL TMario::checkSwimJump()
 {
-
-	
-	
 	if (mInput & 0x2) {
 		if (checkFlag(MARIO_FLAG_FLUDD_EMITTING) && !isUnderWater()) {
 			mPosition.y = 1.0f + mFloorPosition.z;
@@ -105,21 +110,21 @@ BOOL TMario::checkSwimJump()
 
 		if (mFloorPosition.z - mSwimParams.mCanJumpDepth.get() < mPosition.y) {
 			bool doJump = false;
-			if (mIntendedMag == 0.0f)
+			if (getIntendedMag() == 0.0f)
 				doJump = true;
 			if (mWallPlane != nullptr)
 				doJump = true;
 			s16 diff = mModelFaceAngle - mIntendedYaw;
 			if (diff < -0x5555 || diff > 0x5555)
 				doJump = true;
-			if (doJump == 1U) {
+			if (doJump == true) {
 				inOutWaterEffect(mFloorPosition.z);
 				changePlayerStatus(MARIO_STATUS_JUMP, 0, false);
 				return 1;
 			}
 		}
 
-		if (mIntendedMag == 0.0f)
+		if (getIntendedMag() == 0.0f)
 			return changePlayerStatus(MARIO_STATUS_SWIM_UP, 0, false);
 		return changePlayerStatus(MARIO_STATUS_SWIM_PADDLE_START, 0, false);
 	}
@@ -128,7 +133,8 @@ BOOL TMario::checkSwimJump()
 
 BOOL TMario::checkSwimToHangFence()
 {
-	if (mIntendedMag > 0.0f && mWallPlane != nullptr && mWallPlane->isFence()) {
+	if (getIntendedMag() > 0.0f && mWallPlane != nullptr
+	    && mWallPlane->isFence()) {
 		s16 wallAng
 		    = matan(mWallPlane->getNormal().z, mWallPlane->getNormal().x);
 		s16 diff = mFaceAngle.y - wallAng;
@@ -209,21 +215,19 @@ BOOL TMario::swimPaddleStart()
 
 BOOL TMario::swimPaddle()
 {
-
-	
-	
 	f32 anmRate = 0.5f;
 	if (checkFlag(MARIO_FLAG_FLUDD_EMITTING))
 		anmRate = 5.0f;
 	setAnimation(ANIM_PADDLE_SWIM, anmRate);
 
 	if (checkFlag(MARIO_FLAG_FLUDD_EMITTING)) {
-		setPlayerVelocity(mDeParams.mDashMax.get());
+		f32 dashMax = mDeParams.mDashMax.get();
+		setPlayerVelocity(dashMax);
 		startSoundActor(MSD_SE_PO_SPREAD);
 		startSoundActor(MSD_SE_MA_SURF_WATER);
 	}
 
-	if (mIntendedMag == 0.0f)
+	if (getIntendedMag() == 0.0f)
 		changePlayerStatus(MARIO_STATUS_SWIM_PADDLE_END, 0, false);
 
 	doSwimming();
@@ -338,9 +342,6 @@ BOOL TMario::swimPDown()
 
 BOOL TMario::swimMain()
 {
-
-	
-	
 	if (checkFlag(MARIO_FLAG_GAME_OVER))
 		changePlayerStatus(MARIO_STATUS_SWIM_P_DOWN, 0, false);
 
@@ -349,18 +350,19 @@ BOOL TMario::swimMain()
 
 	int result = checkSwimToHangFence();
 
-	f32 limit = mFloorPosition.z - mSwimParams.mFloatHeight.get();
-	if (mPosition.y >= limit)
+	f32 floatHeight = mSwimParams.mFloatHeight.get();
+	f32 limit       = mFloorPosition.z - floatHeight;
+	if (getPosition().y >= limit)
 		mPosition.y = limit;
 
 	unk2A8.y = mFloorPosition.z;
 
 	if (checkFlag(MARIO_FLAG_FLUDD_EMITTING))
-		if (mStatus != MARIO_STATUS_SWIM_PADDLE_START
-		    && mStatus != MARIO_STATUS_SWIM_PADDLE)
+		if (getStatus() != MARIO_STATUS_SWIM_PADDLE_START
+		    && getStatus() != MARIO_STATUS_SWIM_PADDLE)
 			return changePlayerStatus(MARIO_STATUS_SWIM_PADDLE_START, 0, false);
 
-	switch (mStatus) {
+	switch (getStatus()) {
 	case MARIO_STATUS_SWIM_START:
 		return swimStart();
 

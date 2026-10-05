@@ -9,6 +9,7 @@
 class TMario;
 class TEggYoshi;
 class TYoshiTongue;
+class TBGCheckData;
 class J3DModel;
 class MAnmSound;
 class JAIAnimeSound;
@@ -32,15 +33,18 @@ public:
 	bool appearFromEgg(const JGeometry::TVec3<f32>&, f32, TEggYoshi*);
 	void calcAnim();
 	void changeAnimation(int id);
+	void appear();
 	bool disappear();
 	void doEat(u32 fruitID);
 	void doSearch();
 	void entry();
-	void getEmitPosDir(JGeometry::TVec3<f32>*, JGeometry::TVec3<f32>*) const;
+	int getEmitPosDir(JGeometry::TVec3<f32>*, JGeometry::TVec3<f32>*) const;
 	J3DFrameCtrl* getFrameCtrl() const;
 	MtxPtr getMtxPtrFootL() const;
 	MtxPtr getMtxPtrFootR() const;
 	void getOff(bool knockedOff);
+	f32 checkGroundYoshi(const JGeometry::TVec3<f32>&, f32*,
+	                     const TBGCheckData**);
 	void init(TMario*);
 	void initInLoadAfter();
 	void kill();
@@ -54,8 +58,10 @@ public:
 	void thinkHoldOut();
 	void thinkEat();
 	void thinkUpper();
+	BOOL thinkJumpEnd(u16, u16*);
 	void viewCalc();
 	void emitTongue();
+	void startVoice(u32);
 
 	// fabricated
 	MtxPtr getTongueMtx() const
@@ -139,10 +145,21 @@ public:
 	/* 0x120 */ MAnmSound* mTongueAnmSound;
 };
 
-// Keep this out of callers whose original code makes a direct call.
+// The two-return `if` form, not `mState == STATE_MOUNTED ? TRUE : FALSE`.
+// Both compile to the same seven instructions (0x1c, the map's size), but MWCC
+// refuses to expand a two-return body on the right of a short-circuit `&&`
+// while it always expands the ternary one, which is why retail `bl`s this from
+// TMario::onYoshi and from sixteen more sites in MarioMove.o. Measured in a
+// scratch TU with the game flags: the same two bodies behind
+// `return mA != 0 && mA->f();` give a call for the `if` form and an expansion
+// for the ternary, and the calling function comes out byte-identical to
+// TMario::onYoshi at 0x48. (The ten `(void)0;` that used to sit here were
+// inert: statement count does not gate depth 1.)
 inline BOOL TYoshi::onYoshi()
 {
-	return mState == STATE_MOUNTED ? TRUE : FALSE;
+	if (mState == STATE_MOUNTED)
+		return TRUE;
+	return FALSE;
 }
 
 #endif

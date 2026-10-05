@@ -59,25 +59,23 @@ void TMapModel::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TMapModel::initUnderpass()
 {
-
-	
-	
-	s32 nameIdx = mModelData->getJointName()->getIndex("underpass");
+	s32 nameIdx = getModelData()->getJointName()->getIndex("underpass");
 	if (nameIdx < 0)
 		return;
 
-	J3DJoint* underpass = mModelData->getJointNodePointer(nameIdx);
+	J3DJoint* underpass = getModelData()->getJointNodePointer(nameIdx);
 
 	int i = 0;
-	while (i < mChildrenNum && mChildren[i]->getJoint() != underpass)
+	while (i < getChildrenNum() && getChild(i)->getJoint() != underpass)
 		++i;
 
-	mUnderpass         = mChildren[i];
+	mUnderpass         = getChild(i);
 	mUnderpassMaterial = underpass->getMesh();
-	mUnderpassMaterial->change();
-	mUnderpassMaterial->setSomeFlag();
+	getUnderpassMaterial()->change();
+	getUnderpassMaterial()->setSomeFlag();
 
-	J3DTexCoord* texCoord = mUnderpassMaterial->getTexCoord(0);
+	J3DTexCoord* texCoord
+	    = getUnderpassMaterial()->getTexCoord(0);
 	texCoord->setTexGenType(GX_TG_MTX2x4);
 	texCoord->setTexGenSrc(GX_TG_POS);
 	texCoord->setTexGenMtx(GX_TEXMTX0);

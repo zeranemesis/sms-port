@@ -5,10 +5,16 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
+static inline const TLiveActor* MapDataActor(const TBGCheckData* data)
+{
+	const TLiveActor* actor = data->getActor();
+	return actor;
+}
+
 f32 TBGCheckData::getActiveJumpPower() const
 {
-	// TODO: inlines...
-	if (getActor() != nullptr && getActor()->isActorType(0x40000039))
+	if (MapDataActor(this) != nullptr
+	    && getActor()->isActorType(0x40000039))
 		return TMapObjTree::mBananaTreeJumpPower;
 
 	return mData;
@@ -26,9 +32,9 @@ u32 TBGCheckData::getPlaneType()
 		return 1;
 
 	if (mNormal.x < -0.707f || 0.707f < mNormal.x)
-		mFlags |= 0x8;
+		mFlags |= BG_CHECK_FLAG_X_FACING;
 	else
-		mFlags &= ~0x8;
+		mFlags &= ~BG_CHECK_FLAG_X_FACING;
 
 	return 2;
 }

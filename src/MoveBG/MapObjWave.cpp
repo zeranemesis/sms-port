@@ -1,55 +1,28 @@
 #include <MoveBG/MapObjWave.hpp>
-#include <System/MarDirector.hpp>
-#include <math.h>
+#include <Camera/CubeManagerBase.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <Player/MarioAccess.hpp>
+#include <System/MarDirector.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/JUtility/JUTColor.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
-#include <Camera/CubeManagerBase.hpp>
-#include <Player/MarioAccess.hpp>
-#include <dolphin/gx.h>
-#include <JSystem/JGeometry/JGMatrix33.hpp>
-#include <MarioUtil/RandomUtil.hpp>
-#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
-#include <stdlib.h>
+#include <math.h>
 
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
-// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
-// (see the same block in src/Enemy/effectObj.cpp).
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-// This unit is reverse_fn_order: with -inline deferred MWCC emits functions in
-// the reverse of their source order, so the source runs backwards relative to
-// the addresses in the map. Check with:
-//   python tools/validate-symbol-order.py -u mario/MoveBG/MapObjWave
-// The linker's .text layout for this TU is, in address order:
-//   __ct__, load, perform, movement, updateTime, updateHeightAndAlpha, draw,
-//   getAlpha, noWave, getHeight, getWaveHeight, getStaticTexPos0,
-//   getStaticTexPos1, getMoveTexPos0, getMoveTexPos1, initDraw, __sinit
-// so this file defines them in exactly the reverse of that.
+/// Alpha values outside [sAlphaCompSmall, sAlphaCompLarge] are drawn; the
+/// band in between is punched out, which is what gives the sea its foam edge.
+static u8 sAlphaCompLarge = 85;
+static u8 sAlphaCompSmall = 35;
 
-// Alpha-compare thresholds for the wave quads, used by initDraw(). These are
-// mutable statics: retail loads them at run time rather than folding the
-// literals into the call.
-static u8 sAlphaCompLarge = 0x55;
-static u8 sAlphaCompSmall = 0x23;
-
-// The flat water tint the wave quads are drawn with; its alpha channel is
-// replaced per-vertex by the distance fade computed in draw(). TColor's
-// default constructor stores 0xffffffff, which is why retail runs it from
-// __sinit_MapObjWave_cpp rather than leaving it zeroed in .bss.
 static JUtility::TColor sColor;
 
-// 0.700 is the background type of the riverbed collider under the wave.
-static inline bool isUnk700(const TBGCheckData* data)
-{
-	if (data->mBGType == 0x700)
-		return true;
-	else
-		return false;
-}
+TMapObjWave* gpMapObjWave;
 
 void TMapObjWave::initDraw()
 {
@@ -74,34 +47,30 @@ void TMapObjWave::initDraw()
 	              GX_AF_NONE);
 
 	GXSetNumTexGens(2);
-	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, 0x3c, GX_FALSE,
-	                  0x7d);
-	GXSetTexCoordGen2(GX_TEXCOORD1, GX_TG_MTX2x4, GX_TG_TEX1, 0x3c, GX_FALSE,
-	                  0x7d);
+	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
+	GXSetTexCoordGen2(GX_TEXCOORD1, GX_TG_MTX2x4, GX_TG_TEX1, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
 
-	JUTTexture texture(reinterpret_cast<const ResTIMG*>(unk94));
+	JUTTexture texture(mTexture);
 	texture.load(GX_TEXMAP0);
 
-	// The register colours are passed by value, so each is copied through the
-	// stack first. The retail indices are 1, 2 and 3, i.e. the colours go
-	// into the three first-named registers.
-	GXSetTevColorS10(static_cast<GXTevRegID>(1), mTevColor0);
-	GXSetTevColorS10(static_cast<GXTevRegID>(2), mTevColor1);
-	GXSetTevColorS10(static_cast<GXTevRegID>(3), mTevColor2);
+	GXSetTevColorS10(GX_TEVREG0, mTevColor0);
+	GXSetTevColorS10(GX_TEVREG1, mTevColor1);
+	GXSetTevColorS10(GX_TEVREG2, mTevColor2);
 
 	GXSetNumTevStages(2);
 
-	// Stage 0: the distance fade written by draw() as vertex alpha.
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR0A0);
 	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_ZERO, GX_CC_ZERO,
 	                GX_CC_ZERO);
 	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 	                GX_TRUE, GX_TEVPREV);
-	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_RASA, GX_CA_ZERO);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_TEXA, GX_CA_RASA,
+	                GX_CA_ZERO);
 	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 	                GX_TRUE, GX_TEVPREV);
 
-	// Stage 1: add the scrolling texture on top.
 	GXSetTevOrder(GX_TEVSTAGE1, GX_TEXCOORD1, GX_TEXMAP0, GX_COLOR0A0);
 	GXSetTevColorIn(GX_TEVSTAGE1, GX_CC_RASC, GX_CC_ZERO, GX_CC_ZERO,
 	                GX_CC_ZERO);
@@ -112,239 +81,226 @@ void TMapObjWave::initDraw()
 	GXSetTevAlphaOp(GX_TEVSTAGE1, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_2,
 	                GX_TRUE, GX_TEVPREV);
 
-	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_NOOP);
-	GXSetAlphaCompare(GX_GEQUAL, sAlphaCompLarge, GX_AOP_AND, GX_LEQUAL,
+	// The destination factor is 2, which is GX_BL_SRCCLR and GX_BL_DSTCLR
+	// alike; the two spell the same byte, so which name the original used is
+	// not recoverable.
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_SRCCLR, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_GEQUAL, sAlphaCompLarge, GX_AOP_OR, GX_LEQUAL,
 	                  sAlphaCompSmall);
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
 	GXSetCullMode(GX_CULL_NONE);
 }
 
-// The four texture-coordinate helpers. The static pair share a scale, the
-// moving pair share another (and the x half of the moving pair is squashed to
-// 0.8 so the two layers scroll at slightly different rates).
-f32 TMapObjWave::getMoveTexPos1(f32 z) const
+f32 TMapObjWave::getMoveTexPos1(f32 v) const
 {
-	f32 scaled = z * mWaveTexScale2;
-	return mTexPos1 + scaled;
+	return mTexPos1 + getStaticTexPos1(v);
 }
 
-f32 TMapObjWave::getMoveTexPos0(f32 x) const
+f32 TMapObjWave::getMoveTexPos0(f32 v) const
 {
-	return x * mWaveTexScale2 * 0.8f;
+	return mTexPos0 + getStaticTexPos0(v);
 }
 
-f32 TMapObjWave::getStaticTexPos1(f32 z) const
-{
-	return z * mWaveTexScale;
-}
+f32 TMapObjWave::getStaticTexPos1(f32 v) const { return v * mTexScale1; }
 
-f32 TMapObjWave::getStaticTexPos0(f32 x) const
-{
-	return x * mWaveTexScale;
-}
+f32 TMapObjWave::getStaticTexPos0(f32 v) const { return v * mTexScale0; }
 
-// 0.15915507f is 1/2pi: it turns a world distance into a fraction of a
-// wavelength before the phase is added.
 f32 TMapObjWave::getWaveHeight(f32 x, f32 z) const
 {
-	if (!unk94)
+	if (mTexture == nullptr)
 		return 0.0f;
 
-	f32 waveX = mAmplitude0 * sinf(mAngleSpeed0 * (0.15915507f * x) + mAngle0);
-	f32 waveZ = mAmplitude1 * sinf(mAngleSpeed1 * (0.15915507f * z) + mAngle1);
-
-	return waveX + waveZ;
+	// 6.28318f is the unit's own rounded 2*pi; updateTime() wraps the phases
+	// against the same literal. Both products have to stay in their own local
+	// or MWCC contracts the second one into an fmadds.
+	f32 heightX = mWaveHeightX
+	              * sinf(mWaveFreqX * (x * (1.0f / 6.28318f)) + mWavePhaseX);
+	f32 heightZ = mWaveHeightZ
+	              * sinf(mWaveFreqZ * (z * (1.0f / 6.28318f)) + mWavePhaseZ);
+	return heightX + heightZ;
 }
 
 f32 TMapObjWave::getHeight(f32 x, f32 y, f32 z) const
 {
-	const TBGCheckData* data;
-	f32 result = gpMap->checkGroundExactY(x, 50.0f + y, z, &data);
+	const TBGCheckData* ground;
+	f32 groundY = gpMap->checkGroundExactY(x, y + 50.0f, z, &ground);
 
-	// The inner `else result = result;` is a no-op that keeps the ground
-	// height: over a non-sea water surface the wave surface is still the
-	// collision height. It is written out because retail emits an extra
-	// unconditional branch for the empty else block ahead of the "not water"
-	// arm, and dropping the else costs that instruction.
-	if (data->isWaterSurface()) {
-		if (data->isSea())
-			result = getWaveHeight(x, z);
+	if (ground->isWaterSurface()) {
+		if (ground->isSea())
+			return getWaveHeight(x, z);
 		else
-			result = result;
+			return groundY;
 	} else {
-		result = y;
+		return y;
 	}
-
-	return result;
 }
 
 void TMapObjWave::noWave()
 {
-	unk34       = 0.0f;
-	unk38       = 0.0f;
-	unk2C       = 0.0f;
-	unk30       = 0.0f;
-	mAmplitude0 = 0.0f;
-	mAmplitude1 = 0.0f;
+	mWaveHeightMinX = 0.0f;
+	mWaveHeightMinZ = 0.0f;
+	mWaveHeightMaxX = 0.0f;
+	mWaveHeightMaxZ = 0.0f;
+	mWaveHeightX    = 0.0f;
+	mWaveHeightZ    = 0.0f;
 }
 
-// Per-vertex alpha of the wave surface: full strength along the centre line,
-// fading linearly to zero at the edge of the wave span. Both coordinates are
-// measured from Mario, so the result is the darker of the two edges.
-s32 TMapObjWave::getAlpha(f32 x, f32 z) const
+int TMapObjWave::getAlpha(f32 x, f32 z) const
 {
 	if (fabsf(x) > fabsf(z))
-		return mAlpha * (1.0f - mInvHalfWaveSpan * fabsf(x));
-	return mAlpha * (1.0f - mInvHalfWaveSpan * fabsf(z));
+		return mAlpha * (1.0f - fabsf(x) * mInvHalfSize);
+	else
+		return mAlpha * (1.0f - fabsf(z) * mInvHalfSize);
 }
 
 void TMapObjWave::draw()
 {
-	// The surface is a triangle strip of (mWaveCount x mWaveCount) quads,
-	// centred on Mario: `z` walks the rows, `x` the columns.
-	for (f32 zOffset = -mHalfWaveSpan;
-	     zOffset <= mHalfWaveSpan - mWaveHeight; zOffset += mWaveHeight) {
-		f32 z0 = zOffset + gpMarioPos->z;
-		f32 z1 = z0 + mWaveHeight;
-		
-		
-		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, mWaveCount * 2);
+	for (f32 z = -mHalfSize; z <= mHalfSize - mGridSize; z += mGridSize) {
+		f32 z0 = z + SMS_GetMarioZ();
+		f32 z1 = z0 + mGridSize;
 
-		for (f32 xOffset = -mHalfWaveSpan;
-		     xOffset <= mHalfWaveSpan - mWaveHeight; xOffset += mWaveHeight) {
-			f32 worldX = xOffset + gpMarioPos->x;
-			s32 alpha0 = getAlpha(xOffset, zOffset);
-			s32 alpha1 = getAlpha(xOffset, zOffset + mWaveHeight);
+		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, mDivideNum * 2);
+		for (f32 x = -mHalfSize; x <= mHalfSize - mGridSize; x += mGridSize) {
+			f32 x0     = x + SMS_GetMarioX();
+			int alpha0 = getAlpha(x, z);
+			int alpha1 = getAlpha(x, z + mGridSize);
 
-			GXPosition3f32(worldX, getWaveHeight(worldX, z0), z0);
+			GXPosition3f32(x0, getWaveHeight(x0, z0), z0);
 			GXColor4u8(sColor.r, sColor.g, sColor.b, alpha0);
-			GXTexCoord2f32(getStaticTexPos0(worldX) + mTexPos0,
-			               getStaticTexPos1(z0));
-			GXTexCoord2f32(getMoveTexPos0(worldX), getMoveTexPos1(z0));
+			GXTexCoord2f32(getMoveTexPos0(x0), getStaticTexPos0(z0));
+			GXTexCoord2f32(0.8f * getStaticTexPos1(x0), getMoveTexPos1(z0));
 
-			GXPosition3f32(worldX, getWaveHeight(worldX, z1), z1);
+			GXPosition3f32(x0, getWaveHeight(x0, z1), z1);
 			GXColor4u8(sColor.r, sColor.g, sColor.b, alpha1);
-			GXTexCoord2f32(getStaticTexPos0(worldX) + mTexPos0,
-			               getStaticTexPos1(z1));
-			GXTexCoord2f32(getMoveTexPos0(worldX), getMoveTexPos1(z1));
+			GXTexCoord2f32(getMoveTexPos0(x0), getStaticTexPos0(z1));
+			GXTexCoord2f32(0.8f * getStaticTexPos1(x0), getMoveTexPos1(z1));
 		}
+		GXEnd();
 	}
 }
 
-#pragma dont_inline on
 void TMapObjWave::updateHeightAndAlpha()
 {
-	// Two ground probes: one at Mario's exact position (used to see whether he
-	// is over water at all), and one at y = 10 which is what the shallow-water
-	// height ramp is measured against.
 	const TBGCheckData* ground;
-	const TBGCheckData* ground2;
-	
-	
 	gpMap->checkGround(SMS_GetMarioPos(), &ground);
-	gpMap->checkGroundExactY(SMS_GetMarioPos().x, 10.0f, SMS_GetMarioPos().z,
-	                         &ground2);
+
+	const TBGCheckData* surface;
+	gpMap->checkGroundExactY(gpMarioPos->x, 10.0f, gpMarioPos->z, &surface);
 
 	if (SMS_CheckMarioFlag(MARIO_FLAG_IN_SHALLOW_WATER)
-	    || ground2->isWaterSurface() || ground->isWaterSurface()) {
-		f32 height = gpMap->checkGroundIgnoreWaterSurface(
-		    SMS_GetMarioPos().x, 0.0f, SMS_GetMarioPos().z, &ground2);
+	    || surface->isWaterSurface() || ground->isWaterSurface()) {
+		f32 floorY = gpMap->checkGroundIgnoreWaterSurface(
+		    gpMarioPos->x, 0.0f, gpMarioPos->z, &surface);
 
-		// Amplitude ramps from the "at the surface" pair (unk2C/unk30) towards
-		// the deep-water pair (unk34/unk38) over unk4C units of depth.
-		f32 height2 = unk4C + height;
-		if (height2 < 0.0f || isUnk700(ground2)) {
-			mAmplitude0 = unk2C;
-			mAmplitude1 = unk30;
+		f32 heightDepth = mHeightFadeDepth + floorY;
+		if (heightDepth < 0.0f || surface->isSeaFloor()) {
+			mWaveHeightX = mWaveHeightMaxX;
+			mWaveHeightZ = mWaveHeightMaxZ;
 		} else {
-			f32 ratio = 1.0f - height2 / unk4C;
-			mAmplitude0 = ratio * (unk2C - unk34) + unk34;
-			mAmplitude1 = ratio * (unk30 - unk38) + unk38;
+			f32 rate = 1.0f - heightDepth / mHeightFadeDepth;
+			mWaveHeightX
+			    = rate * (mWaveHeightMaxX - mWaveHeightMinX) + mWaveHeightMinX;
+			mWaveHeightZ
+			    = rate * (mWaveHeightMaxZ - mWaveHeightMinZ) + mWaveHeightMinZ;
 		}
 
-		// Same ramp for the vertex alpha, over unk50 units.
-		f32 height3 = unk50 + height;
-		if (height3 < 0.0f || isUnk700(ground2)) {
+		f32 alphaDepth = mAlphaFadeDepth + floorY;
+		if (alphaDepth < 0.0f || surface->isSeaFloor()) {
 			mAlpha = mAlphaMax;
 		} else {
-			mAlpha = (1.0f - height3 / unk50) * (mAlphaMax - mAlphaMin)
-			         + mAlphaMin;
+			f32 rate = 1.0f - alphaDepth / mAlphaFadeDepth;
+			mAlpha   = rate * (mAlphaMax - mAlphaMin) + mAlphaMin;
 		}
 	} else {
-		mAmplitude0 = unk34;
-		mAmplitude1 = unk38;
-		mAlpha      = mAlphaMin;
+		mWaveHeightX = mWaveHeightMinX;
+		mWaveHeightZ = mWaveHeightMinZ;
+		mAlpha       = mAlphaMin;
 	}
 
-	// One corner of Delfino Plaza has a hard-coded flat patch.
-	if (gpMarDirector->mMap == 4 && -4950.0f < SMS_GetMarioPos().x
-	    && -4340.0f > SMS_GetMarioPos().x && 7660.0f < SMS_GetMarioPos().z
-	    && 8040.0f > SMS_GetMarioPos().z) {
-		mAmplitude0 = unk34;
-		mAmplitude1 = unk38;
-		mAlpha      = mAlphaMin;
+	// The Sirena Beach hotel lobby sits inside the sea area; kill the waves
+	// so the mesh does not poke through the floor.
+	u8 map = SMSGetMarDirector()->getCurrentMap();
+	if (map == 4) {
+		if (-4950.0f < SMS_GetMarioX() && -4340.0f > SMS_GetMarioX()
+		    && 7660.0f < SMS_GetMarioZ() && 8040.0f > SMS_GetMarioZ()) {
+			mWaveHeightX = mWaveHeightMinX;
+			mWaveHeightZ = mWaveHeightMinZ;
+			mAlpha       = mAlphaMin;
+		}
 	}
 
-	// Standing in a current cube slowly lifts the wave, both to get Mario's
-	// attention and so he can see he is in moving water.
 	int cubeNo = gpCubeStream->getInCubeNo(SMS_GetMarioPos());
 	if (cubeNo != -1) {
-		if (mAlphaAcc < ((TCubeStreamInfo&)(*gpCubeStream->unk14)[cubeNo]).unk3C)
-			mAlphaAcc += mAlphaStep;
-	} else if (mAlphaAcc > 0.0f) {
-		mAlphaAcc -= mAlphaStep;
+		TCubeStreamInfo* info
+		    = (TCubeStreamInfo*)gpCubeStream->unk14->getChildren()[cubeNo];
+		if (mCubeWaveHeight < info->unk3C)
+			mCubeWaveHeight += mCubeWaveHeightRate;
 	} else {
-		mAlphaAcc = 0.0f;
+		if (mCubeWaveHeight > 0.0f)
+			mCubeWaveHeight -= mCubeWaveHeightRate;
+		else
+			mCubeWaveHeight = 0.0f;
 	}
 
-	if (mAlphaAcc > 0.0f) {
-		mAmplitude0 = unk2C + mAlphaAcc;
-		mAmplitude1 = unk30 + mAlphaAcc;
+	if (mCubeWaveHeight > 0.0f) {
+		mWaveHeightX = mWaveHeightMaxX + mCubeWaveHeight;
+		mWaveHeightZ = mWaveHeightMaxZ + mCubeWaveHeight;
 	}
 }
-#pragma dont_inline off
 
-#pragma dont_inline on
 void TMapObjWave::updateTime()
 {
-	mAngle0 += mAngleSpeed0;
-	if (mAngle0 > 6.2831802f)
-		mAngle0 -= 6.2831802f;
+	mWavePhaseX += mWaveFreqX;
+	if (mWavePhaseX > 6.28318f)
+		mWavePhaseX -= 6.28318f;
 
-	mAngle1 += mAngleSpeed1;
-	if (mAngle1 > 6.2831802f)
-		mAngle1 -= 6.2831802f;
+	mWavePhaseZ += mWaveFreqZ;
+	if (mWavePhaseZ > 6.28318f)
+		mWavePhaseZ -= 6.28318f;
 
-	mTexPos0 += mTexSpeed;
+	mTexPos0 += mTexScrollSpeed;
 	if (mTexPos0 > 1.0f)
 		mTexPos0 -= 1.0f;
 
-	mTexPos1 += mTexSpeed;
+	mTexPos1 += mTexScrollSpeed;
 	if (mTexPos1 > 1.0f)
 		mTexPos1 -= 1.0f;
 }
-#pragma dont_inline off
 
+/**
+ * @brief The CUE_MOVE half of perform().
+ *
+ * @details UNUSED in the map because perform() is its only caller and it is
+ * inlined there. The indirection is load-bearing rather than cosmetic: with
+ * this body written straight into perform(), updateTime() reaches inline
+ * depth 1 and gets expanded, which the ROM does not do. Behind movement() it
+ * sits at depth 2 and stays a call, exactly as in the ROM. The out-of-line
+ * copy does inline updateTime(), which is why it compiles to the map's 0xd8.
+ */
 void TMapObjWave::movement()
 {
 	updateTime();
-	if (gpMarDirector->mMap == 4 || gpMarDirector->mMap == 6)
+	if (SMSGetMarDirector()->getCurrentMap() == 4
+	    || SMSGetMarDirector()->getCurrentMap() == 6)
 		updateHeightAndAlpha();
 }
 
+// The frame's last 8 bytes are a lever pair: `getTexture()` and the named
+// `move` bool are each +0 on their own (the two SMSGetMarDirector()
+// ->getCurrentMap() uses in movement() have already saturated the map-read
+// ladder at 0x38) and +8 together, which is retail's 0x40. A named bool for
+// the CUE_DRAW block instead of the CUE_MOVE one is the same 0x40, and the
+// two bools together add nothing more, so which block retail named is not
+// decidable from the asm. Earlier trial table: docs/catalog/frame-gaps.md,
+// "The two closure cases".
 void TMapObjWave::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	
-	
-
-	if (!unk94)
+	if (getTexture() == nullptr)
 		return;
 
-	if (cue & CUE_MOVE) {
-		updateTime();
-		if (gpMarDirector->mMap == 4 || gpMarDirector->mMap == 6)
-			updateHeightAndAlpha();
-	}
+	bool move = (cue & CUE_MOVE) != 0;
+	if (move)
+		movement();
 
 	if (cue & CUE_DRAW) {
 		initDraw();
@@ -356,124 +312,117 @@ void TMapObjWave::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TNameRef::load(stream);
 
-	
-	
+	mAreaSize = 5200.0f;
+	mGridSize = 200.0f;
 
-	mWaveSpan        = 5200.0f;
-	mWaveHeight      = 200.0f;
-	mHalfWaveSpan    = mWaveSpan * 0.5f;
-	mInvHalfWaveSpan = 1.0f / mHalfWaveSpan;
-	mWaveCount       = mWaveSpan / mWaveHeight;
-	unk94            = (u32)JKRFileLoader::getGlbResource("/scene/map/map/wave.bti");
-	mTexSpeed        = 0.0015f;
-	mWaveTexScale    = 0.0012f;
-	mWaveTexScale2   = 0.0015f;
-	unk4C            = 400.0f;
-	unk50            = 150.0f;
-	mAngleSpeed0     = 0.02f;
-	mAngleSpeed1     = 0.03f;
+	mHalfSize    = mAreaSize / 2.0f;
+	mInvHalfSize = 1.0f / mHalfSize;
+	mDivideNum   = mAreaSize / mGridSize;
 
-	switch (gpMarDirector->mMap) {
+	mTexture = (const ResTIMG*)JKRGetResource("/scene/map/map/wave.bti");
+
+	mTexScrollSpeed = 0.0015f;
+	mTexScale0      = 0.0012f;
+	mTexScale1      = 0.0015f;
+
+	mHeightFadeDepth = 400.0f;
+	mAlphaFadeDepth  = 150.0f;
+
+	mWaveFreqX = 0.02f;
+	mWaveFreqZ = 0.03f;
+
+	switch (SMSGetMarDirector()->getCurrentMap()) {
 	case 3:
 	case 30:
-		unk2C = 25.0f;
-		unk30 = 20.0f;
-		unk34 = 0.0f;
-		unk38 = 0.0f;
-		// Case 3/30 sets the amplitudes as well as the ramps; the write
-		// after the switch then stores the same pair a second time.
-		mAmplitude0 = unk2C;
-		mAmplitude1 = unk30;
+		mWaveHeightMaxX = 25.0f;
+		mWaveHeightMaxZ = 20.0f;
+		mWaveHeightMinX = 0.0f;
+		mWaveHeightMinZ = 0.0f;
+		mWaveHeightX    = mWaveHeightMaxX;
+		mWaveHeightZ    = mWaveHeightMaxZ;
 		break;
 	case 4:
-		unk2C = 40.0f;
-		unk30 = 30.0f;
-		unk34 = 5.0f;
-		unk38 = 0.0f;
+		mWaveHeightMaxX = 40.0f;
+		mWaveHeightMaxZ = 30.0f;
+		mWaveHeightMinX = 5.0f;
+		mWaveHeightMinZ = 0.0f;
 		break;
 	case 13:
-		unk2C = 30.0f;
-		unk30 = 25.0f;
-		unk34 = 5.0f;
-		unk38 = 0.0f;
+		mWaveHeightMaxX = 30.0f;
+		mWaveHeightMaxZ = 25.0f;
+		mWaveHeightMinX = 5.0f;
+		mWaveHeightMinZ = 0.0f;
 		break;
 	case 9:
 	case 52:
-		unk2C = 10.0f;
-		unk30 = 15.0f;
-		unk34 = 0.0f;
-		unk38 = 0.0f;
+		mWaveHeightMaxX = 10.0f;
+		mWaveHeightMaxZ = 15.0f;
+		mWaveHeightMinX = 0.0f;
+		mWaveHeightMinZ = 0.0f;
 		break;
 	default:
-		unk2C = 30.0f;
-		unk30 = 25.0f;
-		unk34 = 0.0f;
-		unk38 = 0.0f;
+		mWaveHeightMaxX = 30.0f;
+		mWaveHeightMaxZ = 25.0f;
+		mWaveHeightMinX = 0.0f;
+		mWaveHeightMinZ = 0.0f;
 		break;
 	}
 
-	mAmplitude0 = unk2C;
-	mAmplitude1 = unk30;
+	mWaveHeightX = mWaveHeightMaxX;
+	mWaveHeightZ = mWaveHeightMaxZ;
 }
-
-TMapObjWave* gpMapObjWave;
 
 TMapObjWave::TMapObjWave(const char* name)
     : JDrama::TViewObj(name)
+    , mAreaSize(0.0f)
+    , mHalfSize(0.0f)
+    , mInvHalfSize(0.0f)
+    , mDivideNum(0)
+    , mWaveFreqX(0.0f)
+    , mWaveFreqZ(0.0f)
+    , mWaveHeightMaxX(0.0f)
+    , mWaveHeightMaxZ(0.0f)
+    , mWaveHeightMinX(0.0f)
+    , mWaveHeightMinZ(0.0f)
+    , mWaveHeightX(0.0f)
+    , mWaveHeightZ(0.0f)
+    , mCubeWaveHeight(0.0f)
+    , mCubeWaveHeightRate(0.1f)
+    , mHeightFadeDepth(0.0f)
+    , mAlphaFadeDepth(0.0f)
+    , mAlpha(255.0f)
+    , mAlphaMax(255.0f)
+    , mAlphaMin(0.0f)
+    , mTexScrollSpeed(0.0f)
+    , mWavePhaseX(360.0f * MsRandF())
+    , mWavePhaseZ(360.0f * MsRandF())
+    , mTexPos0(MsRandF())
+    , mTexPos1(MsRandF())
+    , mTexScale0(0.0f)
+    , mTexScale1(0.0f)
 {
-	mWaveSpan     = 0.0f;
-	mHalfWaveSpan = 0.0f;
-	mInvHalfWaveSpan = 0.0f;
-	mWaveCount    = 0;
-	mAngleSpeed0  = 0.0f;
-	mAngleSpeed1  = 0.0f;
-	unk2C         = 0.0f;
-	unk30         = 0.0f;
-	unk34         = 0.0f;
-	unk38         = 0.0f;
-	mAmplitude0   = 0.0f;
-	mAmplitude1   = 0.0f;
-	mAlphaAcc     = 0.0f;
-	mAlphaStep    = 0.1f;
-	unk4C         = 0.0f;
-	unk50         = 0.0f;
-	mAlpha        = 255.0f;
-	mAlphaMax     = 255.0f;
-	mAlphaMin     = 0.0f;
-	mTexSpeed     = 0.0f;
+	mTexture = nullptr;
+	unk98    = 0;
 
-	mAngle0 = 360.0f * MsRandF();
-	mAngle1 = 360.0f * MsRandF();
-	mTexPos0 = MsRandF();
-	mTexPos1 = MsRandF();
+	// The vertex colour is a file static, but it is the instance constructor
+	// that fills it in; the sinit only runs JUtility::TColor's own default
+	// constructor (white).
+	sColor.set(200, 200, 255, 0);
 
-	mWaveTexScale  = 0.0f;
-	mWaveTexScale2 = 0.0f;
-	unk94          = 0;
-	unk98H         = 0;
-
-	sColor.r = 0xc8;
-	sColor.g = 0xc8;
-	sColor.b = 0xff;
-	sColor.a = 0;
-
-	// 0xc2, 0xf2, 0xbe for the first Tev color register; the alpha channels
-	// of the second and third hold the near/far fade endpoints.
-	mTevColor0.r = 0xc2;
-	mTevColor0.g = 0xf2;
-	mTevColor0.b = 0xbe;
+	mTevColor0.r = 194;
+	mTevColor0.g = 242;
+	mTevColor0.b = 190;
 	mTevColor0.a = 0;
 
 	mTevColor1.r = 0;
 	mTevColor1.g = 0;
 	mTevColor1.b = 0;
-	mTevColor1.a = 0x48;
+	mTevColor1.a = 72;
 
 	mTevColor2.r = 0;
 	mTevColor2.g = 0;
 	mTevColor2.b = 0;
-	mTevColor2.a = 0x90;
+	mTevColor2.a = 144;
 
 	gpMapObjWave = this;
 }
-

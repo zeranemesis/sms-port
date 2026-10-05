@@ -11,9 +11,9 @@
 #include <Map/MapCollisionData.hpp>
 #include <Player/MarioAccess.hpp>
 
-// rogue includes needed for matching sinit & bss
-#include <MSound/MSSetSound.hpp>
-#include <MSound/MSoundBGM.hpp>
+// rogue include: retail's data carries the mtx calc type names. Retail has
+// no static initializer, so the MSound headers, whose JALList<T>::smList
+// members need one, are not included here.
 #include <M3DUtil/InfectiousStrings.hpp>
 
 static const char* kumokun_bastable[] = {
@@ -68,7 +68,7 @@ public:
 		tmp.set(*param_2);
 		f32 dist = wall->mNormal.dot(tmp) - wall->mDist;
 		if (param_3 - dist > 0.0f) {
-			param_2->scaleAdd(param_3 - dist, tmp, wall->mNormal);
+			param_2->scaleAdd(param_3 - dist, wall->mNormal, tmp);
 			return true;
 		}
 		return false;
@@ -95,14 +95,14 @@ bool TWallAtGraph::init(const TGraphWeb* param_1,
 
 	for (int i = 0; i < sz; ++i) {
 		JGeometry::TVec3<f32> diff
-		    = param_1->indexToPoint(i + 1 - ((i + 1) / sz) * sz);
+		    = param_1->indexToPoint((i + 1) % sz);
 		diff -= param_1->indexToPoint(i);
 
 		JGeometry::TVec3<f32> local_54 = param_2;
 		local_54 -= param_1->indexToPoint(i);
 
 		JGeometry::TVec3<f32> local_70;
-		local_70.cross(param_3, diff);
+		local_70.cross2(param_3, diff);
 		local_70.normalize();
 		if (local_70.dot(local_54) < 0.0f)
 			local_70.negate();
@@ -173,55 +173,49 @@ void TKumokun::initCollision()
 	initAttachPlane();
 }
 
+// TODO: frame 0x10 short, every instruction right. Retail's roof/floor
+// pointers sit below the record (the UNUSED plane checks inlined); it has
+// 0xc more between the two normal results and 0x18 more below floor.
 void TKumokun::initAttachPlane()
 {
-	TBGWallCheckRecord record(mPosition.x, mPosition.y, mPosition.z, 100.0f, 1,
-	                          0);
-
-	const TBGCheckData* wall = gpMap->isTouchedWallsAndMoveXZ(&record)
-	                               ? record.mResultWalls[0]
-	                               : nullptr;
+	JGeometry::TVec3<f32> pos;
+	pos.set(mPosition);
+	const TBGCheckData* wall = checkWallPlane(&pos, mHeadHeight, 100.0f);
 	if (wall) {
 		unk198 = wall;
 		JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
-		unk19C.setRotate(getPlaneNormal(), up, 0.0f);
+		unk19C.setRotate(up, getPlaneNormal(), 1.0f);
 		return;
 	}
 
-	f32 headHeight = mHeadHeight;
-	JGeometry::TVec3<f32> pos;
 	pos.set(mPosition);
-	const TBGCheckData* roof = nullptr;
-	f32 dVar6                = gpMap->checkRoof(pos.x, pos.y, pos.z, &roof);
-	f32 fVar8                = dVar6 - 1.0f - pos.y;
-	if (!(0.0f <= fVar8 && fVar8 < headHeight))
-		roof = nullptr;
-
+	const TBGCheckData* roof = checkRoofPlane(&pos, mHeadHeight);
 	if (roof) {
 		unk198 = roof;
 		unk19C.setEulerZ(JGeometry::TUtil<f32>::PI());
 		return;
 	}
 
-	JGeometry::TVec3<f32> pos2;
-	pos2.set(mPosition);
-	pos2.y += mHeadHeight;
-	const TBGCheckData* floor = nullptr;
-	f32 dVar62 = gpMap->checkGround(pos2.x, pos2.y, pos2.z, &floor);
-	dVar62 += 1.0f;
-	if (!(pos.y <= dVar62 + 0.05f))
-		floor = nullptr;
-
+	pos.set(mPosition);
+	const TBGCheckData* floor = checkFloorPlane(&pos, mHeadHeight, 0.0f);
 	if (floor) {
 		unk198 = floor;
 
 		JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
-		unk19C.setRotate(getPlaneNormal(), up, 0.0f);
+		unk19C.setRotate(up, getPlaneNormal(), 1.0f);
 	}
 }
 
 void TKumokun::reset() { }
 
+// TODO: frame 0x190 vs retail 0x188; every instruction is right. Retail's
+// named block is local_168, local_15C, local_150, floor (declared after
+// them), then the branch vectors; the mVelocity copy (0x104) and local_f8
+// (0xf8) are parse-time temporaries below it: `local_168 +=
+// JGeometry::TVec3<f32>(mVelocity);` with floor moved and `local_15C +=
+// local_110 - local_11C;` lands the frame and every upper slot, but under
+// the header's by-value-parameter operator- the copy out of the difference
+// (retail 0x94 -> 0xf8) disappears (+6 lines): the open `a - b` class.
 void TKumokun::bind()
 {
 	if (checkLiveFlag(LIVE_FLAG_UNK10))
@@ -232,31 +226,30 @@ void TKumokun::bind()
 		return;
 	}
 
+	const TBGCheckData* floor;
 	JGeometry::TVec3<f32> local_168 = mLinearVelocity;
 	JGeometry::TVec3<f32> local_104 = mVelocity;
 	local_168 += local_104;
 
 	bool bVar7;
 
-	JGeometry::TVec3<f32> local_150;
 	JGeometry::TVec3<f32> local_15C;
+	JGeometry::TVec3<f32> local_150;
 
 	if (isOnFloor()) {
 		JGeometry::TVec3<f32> local_140 = local_168;
-		local_140.normalize();
+		local_140.setLength(50.0f);
 
 		local_140 += mPosition;
 
-		const TBGCheckData* floor;
 		bVar7 = checkOnMovingFloor(&local_150, &floor, local_140, local_168);
 		bVar7 |= checkOnMovingFloor(&local_15C, &floor, mPosition, local_168);
 	} else if (isOnRoof()) {
 		JGeometry::TVec3<f32> local_134 = local_168;
-		local_134.normalize();
+		local_134.setLength(50.0f);
 
 		local_134 += mPosition;
 
-		const TBGCheckData* floor;
 		bVar7 = checkOnMovingRoof(&local_150, &floor, local_134, local_168);
 		bVar7 |= checkOnMovingRoof(&local_15C, &floor, mPosition, local_168);
 	} else {
@@ -265,7 +258,6 @@ void TKumokun::bind()
 
 		local_128 += mPosition;
 
-		const TBGCheckData* floor;
 		bVar7 = checkOnMovingWall(&local_150, &floor, local_128, local_168);
 		bVar7 |= checkOnMovingWall(&local_15C, &floor, mPosition, local_168);
 	}
@@ -275,12 +267,13 @@ void TKumokun::bind()
 		local_11C += local_15C;
 		local_11C += local_150;
 
-		JGeometry::TVec3<f32> local_110 = local_11C;
+		JGeometry::TVec3<f32> local_110;
+		local_110 = local_11C;
 		bVar7 |= unk1E8->checkWalls(&local_110, mWallRadius);
 
-		JGeometry::TVec3<f32> local_f8 = local_110 - mPosition;
+		JGeometry::TVec3<f32> local_f8 = local_110 - local_11C;
 
-		local_168 += local_f8;
+		local_15C += local_f8;
 	}
 
 	if (bVar7)
@@ -291,6 +284,14 @@ void TKumokun::bind()
 	mLinearVelocity = local_15C + local_150;
 }
 
+// TODO: literal-pool order. The target's .sdata2 runs 100.0f (@4644),
+// -30.0f (@5230), -10.0f (@5927), -100.0f (@6057), 50.0f (@6237),
+// 60.0f (@6421); ours runs -30, -10, 100, -100, 60, 50. So the 100.0f is
+// first requested too late (retail's earliest requester among
+// checkOnMovingRoof/Floor/Wall, initAttachPlane and init asks for it before
+// calcRootMatrix's -30.0f), and the 50.0f/60.0f pair is swapped: retail's
+// bind() asks for 50.0f before init() asks for 60.0f. Both need a code
+// restructure in those functions, not a constant change.
 bool TKumokun::checkOnMovingWall(JGeometry::TVec3<f32>* param_1,
                                  const TBGCheckData** param_2,
                                  const JGeometry::TVec3<f32>& param_3,
@@ -300,10 +301,9 @@ bool TKumokun::checkOnMovingWall(JGeometry::TVec3<f32>* param_1,
 
 	JGeometry::TVec3<f32> normal = getPlaneNormal();
 
-	JGeometry::TVec3<f32> local_30;
-	local_30.scaleAdd(100.0f, normal, param_3);
+	normal.scaleAdd(100.0f, normal, param_3);
 
-	JGeometry::TVec3<f32> local_3C = local_30;
+	JGeometry::TVec3<f32> local_3C = normal;
 	local_3C += param_4;
 
 	f32 yTmp   = local_3C.y;
@@ -316,33 +316,34 @@ bool TKumokun::checkOnMovingWall(JGeometry::TVec3<f32>* param_1,
 		local_3C.y = dVar10;
 	}
 
-	JGeometry::TVec3<f32> local_70 = getPlaneNormal();
-	JGeometry::TVec3<f32> local_48;
-	local_48.scaleAdd(-10.0f, local_3C, local_70);
+	JGeometry::TVec3<f32> local_48 = getPlaneNormal();
+	local_48.scaleAdd(-10.0f, local_48, local_3C);
 
 	const TBGCheckData* wall = checkWallPlane(&local_48, mHeadHeight, 100.0f);
 
-	JGeometry::TVec3<f32> local_3C2;
+	// No wall ahead: fall back to the probe start above param_3.
 	if (!wall) {
 		result = true;
-		local_3C2.set(local_48);
+		local_3C.set(normal);
 	} else {
-		local_3C2.x = local_48.x;
-		local_3C2.z = local_48.z;
+		local_3C.x = local_48.x;
+		local_3C.z = local_48.z;
 	}
-	(void)local_48; // hmmmmm....
 
 	JGeometry::TVec3<f32> offset = getPlaneNormal();
 	offset *= -100.0f;
-	JGeometry::TVec3<f32> vec = local_3C2;
-	vec += offset;
+	local_3C += offset;
 
-	param_1->set(vec);
+	param_1->set(local_3C);
 	*param_1 -= param_3;
 
 	return result;
 }
 
+// The ground probe writes a local; only the wall result goes to param_2.
+// TODO: frame exact (0xc8); checkWallPlane's inline temporaries sit 4 low.
+// Inert or worse: the probe result declared first or before local_80, the
+// wall result stored straight to *param_2.
 bool TKumokun::checkOnMovingFloor(JGeometry::TVec3<f32>* param_1,
                                   const TBGCheckData** param_2,
                                   const JGeometry::TVec3<f32>& param_3,
@@ -350,8 +351,7 @@ bool TKumokun::checkOnMovingFloor(JGeometry::TVec3<f32>* param_1,
 {
 	bool uVar7 = false;
 
-	JGeometry::TVec3<f32> local_1C = param_3;
-	JGeometry::TVec3<f32> local_98 = local_1C;
+	JGeometry::TVec3<f32> local_98 = param_3;
 	JGeometry::TVec3<f32> local_8C = local_98;
 
 	local_8C += param_4;
@@ -360,16 +360,17 @@ bool TKumokun::checkOnMovingFloor(JGeometry::TVec3<f32>* param_1,
 	local_80 *= -10.0f;
 	local_8C += local_80;
 
+	const TBGCheckData* local_7C;
 	f32 yTmp   = local_8C.y;
 	f32 dVar10 = gpMap->checkGround(local_8C.x, yTmp + mHeadHeight, local_8C.z,
-	                                param_2);
+	                                &local_7C);
 	dVar10 += 1.0f;
 	if (yTmp <= dVar10 + 0.05f) {
 		if (30.0f < dVar10 - yTmp) {
 			uVar7 = true;
 			local_8C.set(local_98);
 		} else {
-			local_8C.y = yTmp;
+			local_8C.y = dVar10;
 		}
 	} else {
 		uVar7 = true;
@@ -393,6 +394,10 @@ bool TKumokun::checkOnMovingFloor(JGeometry::TVec3<f32>* param_1,
 	return uVar7;
 }
 
+// TODO: every inline object (getPlaneNormal copies, the wall record and the
+// bindings below it) sits 4 low: retail has one more word created after the
+// wall record. Inert: `*param_1 -= param_3`, `local_A8.sub(local_C0)`,
+// `scale()`, `if (*param_2)`, SMSGetMap(), roof declared first.
 bool TKumokun::checkOnMovingRoof(JGeometry::TVec3<f32>* param_1,
                                  const TBGCheckData** param_2,
                                  const JGeometry::TVec3<f32>& param_3,
@@ -401,7 +406,7 @@ bool TKumokun::checkOnMovingRoof(JGeometry::TVec3<f32>* param_1,
 	bool uVar7 = false;
 
 	JGeometry::TVec3<f32> local_C0 = getPlaneNormal();
-	local_C0 *= -mHeadHeight / 2.0f;
+	local_C0 *= -mHeadHeight * 0.5f;
 
 	JGeometry::TVec3<f32> local_b4 = param_3;
 	local_b4 += local_C0;
@@ -414,13 +419,14 @@ bool TKumokun::checkOnMovingRoof(JGeometry::TVec3<f32>* param_1,
 	local_A8 += local_9C;
 
 	f32 yTmp = local_A8.y;
+	const TBGCheckData* roof;
 	f32 dVar10
-	    = gpMap->checkRoof(local_A8.x, yTmp - mHeadHeight, local_A8.z, param_2);
+	    = gpMap->checkRoof(local_A8.x, yTmp - mHeadHeight, local_A8.z, &roof);
 	dVar10 -= 1.0f;
 	if (yTmp > dVar10 - 0.05f) {
-		local_A8.y = yTmp;
-	} else if (mHeadHeight < dVar10 - yTmp) {
-		local_A8.y = yTmp;
+		local_A8.y = dVar10;
+	} else if (dVar10 - yTmp < mHeadHeight) {
+		local_A8.y = dVar10;
 	} else {
 		uVar7 = true;
 		local_A8.set(local_b4);
@@ -445,12 +451,17 @@ bool TKumokun::checkOnMovingRoof(JGeometry::TVec3<f32>* param_1,
 	return uVar7;
 }
 
+// TODO: registers exact since checkRoofPlane/checkFloorPlane reached their
+// map sizes; slots only: retail's `local_74 - mPosition` temporary sits at
+// 0x14 below the wall record (ours is the parse-time @ temp at 0x5c, above
+// the inlined roof/floor objects), and with getLinearVelocity()'s reference
+// temporary every other object sits a uniform 4 below retail's.
 void TKumokun::bindOnFlying()
 {
 	bool hit = false;
 
 	JGeometry::TVec3<f32> local_74 = mPosition;
-	local_74 += mLinearVelocity;
+	local_74 += getLinearVelocity();
 	local_74 += mVelocity;
 
 	const TBGCheckData* roof = checkRoofPlane(&local_74, mHeadHeight);
@@ -472,7 +483,7 @@ void TKumokun::bindOnFlying()
 	}
 
 	const TBGCheckData* wall
-	    = checkWallPlane(&local_74, mWallRadius, mBodyRadius);
+	    = checkWallPlane(&local_74, mHeadHeight, mBodyRadius);
 
 	if (wall)
 		hit = true;
@@ -494,9 +505,16 @@ void TKumokun::bindOnFlying()
 	mLinearVelocity = local_74 - mPosition;
 }
 
+// Binding level over the accessor, worth +8 of frame in TKumokun::moveObject.
+static inline int KumokunUnk1D0(const TKumokun* p)
+{
+	int v = p->unk1D0;
+	return v;
+}
+
 void TKumokun::moveObject()
 {
-	if (unk1D0 > 0)
+	if (KumokunUnk1D0(this) > 0)
 		unk1D0 -= 1;
 
 	updateAnimation();
@@ -614,14 +632,11 @@ void TKumokun::pushNextAnm(const char* name, bool start)
 
 void TKumokun::changeBck(const char* name)
 {
-
-	
-	
 	mMActor->setBck(name);
 	setCurAnmSound();
 
 	f32 fVar1 = 1.0f;
-	if (mSpine->getLatestNerve() != &TNerveSmallEnemyDie::theNerve()
+	if (getSpine()->getLatestNerve() != &TNerveSmallEnemyDie::theNerve()
 	    && (unk1D4
 	        || mSpine->getLatestNerve() == &TNerveKumokunPreFly::theNerve())) {
 		fVar1 = 2.0f;
@@ -633,9 +648,6 @@ void TKumokun::changeBck(const char* name)
 
 void TKumokun::setDeadAnm()
 {
-
-	
-	
 	switch (unk1EC) {
 	case 0:
 		changeBck("kumo_down1");
@@ -657,17 +669,33 @@ bool TKumokun::checkSerialAnmEnd() const
 	return unk1D8.empty() && checkCurAnmEnd(0);
 }
 
+// The taken check sits two inline levels down: the binder's dead result is
+// then created with the depth-2 expansions, just below the outer isOnRoof()'s
+// plane-normal temporary, which lands TKumokun::calcRootMatrix's slots.
+static inline BOOL TakeActorIsTaken(const TTakeActor* p)
+{
+	BOOL taken = p->isTaken();
+	return taken;
+}
+
+static inline BOOL KumokunIsTaken(const TKumokun* p)
+{
+	return TakeActorIsTaken(p);
+}
+
 void TKumokun::calcRootMatrix()
 {
-	if (isTaken()) {
+	if (KumokunIsTaken(this)) {
 		TSpineEnemy::calcRootMatrix();
 		return;
 	}
 
 	JGeometry::TVec3<f32> offset(0.0f);
 
-	if (isOnWall() || isOnRoof())
-		offset.scale(-30.0f, getPlaneNormal());
+	if (isOnWall() || isOnRoof()) {
+		offset.set(getPlaneNormal());
+		offset.scale(-30.0f);
+	}
 
 	JGeometry::TVec3<f32> pos = mPosition;
 	pos += offset;
@@ -744,31 +772,46 @@ static bool is_antiparallel(const JGeometry::TVec3<f32>& v1,
 	return -eps <= fVar8 && fVar8 <= eps;
 }
 
+// TODO: the frame matches; every slot is 4 below retail's and the inlined
+// setRotate keeps the TQuat4::setRotate header residue (cross in f29/f30/f31
+// ascending) plus a dot product retail builds from cross's unfused 0*v.x and
+// 0*v.y products while ours reloads `to`. A named `forward`, the two-argument
+// setRotate overload and a named forward only in the antiparallel test are
+// inert or worse. The two-argument mul (as decideTargetAtRandom spells it)
+// fixed the quaternion product order; only scheduling from the shift remains.
+// Since the no-locals mul(a, b) header (0e49c384) the frame was 0x10 short;
+// reading the quaternion through getQuat() at both sites fills it again (at
+// the first site only, as decideTargetAtRandom does, it is 8 short). The
+// one-argument local_b4.mul(local_A4) fills the frame but orders the products
+// differently (95.4).
 void TKumokun::decideTargetAtDir(const JGeometry::TVec3<f32>& param_1)
 {
 	JGeometry::TVec3<f32> local_C4 = param_1;
 
-	JGeometry::TQuat4<f32> local_b4 = unk19C;
+	JGeometry::TQuat4<f32> local_b4 = getQuat();
 
 	local_C4.y = 0.0f;
 	local_C4.normalize();
 
-	JGeometry::TVec3<f32> forward(0.0f, 0.0f, 1.0f);
-
 	JGeometry::TQuat4<f32> local_A4;
-	if (is_antiparallel(local_C4, forward)) {
+	if (is_antiparallel(local_C4, JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f))) {
 		local_A4.setEulerY(JGeometry::TUtil<f32>::PI());
 	} else {
-		local_A4.setRotate(forward, local_C4, 1.0f);
+		local_A4.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f), local_C4,
+		                   1.0f);
 	}
 
-	local_b4.mul(local_A4);
+	local_b4.mul(local_b4, local_A4);
 
-	unk1AC = unk19C;
+	unk1AC = getQuat();
 	unk1BC = local_b4;
 	unk1CC = 0.0f;
 }
 
+// TODO: inlined into TNerveKumokunSearch, retail multiplies MsRandF()'s scale
+// into f30 before the axis temporary's set<f> call and adds 0.5f after it (the
+// TAmenbo::decideTarget residue). Inert: a named r; a named axis stops inlining;
+// (0.5f + MsRandF()), M_PI * (...) and MsRandF(0.5f, 1.5f) (97.4).
 void TKumokun::decideTargetAtRandom()
 {
 	JGeometry::TQuat4<f32> q = getQuat();
@@ -789,6 +832,9 @@ void TKumokun::decideTargetAtRandom()
 
 void TKumokun::decideTargetOnGraph() { }
 
+// TODO: frame 0x80 vs 0x60, the header rotate's q/q2 locals. inv.rotateQ
+// (or rotateInPlace) is 100% here but the Wait/Search nerves then `bl`
+// rotateQ and the weak rotate retail keeps vanishes; needs the header fix.
 JGeometry::TVec3<f32>
 TKumokun::rotateGoalDirToLocal(const JGeometry::TVec3<f32>& param_1) const
 {
@@ -799,10 +845,9 @@ TKumokun::rotateGoalDirToLocal(const JGeometry::TVec3<f32>& param_1) const
 	JGeometry::TQuat4<f32> inv = getQuat();
 	inv.conjugate();
 
-	JGeometry::TVec3<f32> result;
-	inv.rotate(diff, result);
+	inv.rotate(diff, diff);
 
-	return result;
+	return diff;
 }
 
 bool TKumokun::doAdjustTarget()
@@ -828,7 +873,7 @@ void TKumokun::prepareFly()
 {
 	JGeometry::TVec3<f32> vel = getPlaneNormal();
 	vel.setLength(getSaveParam2()->mFlySpeed.get());
-	mLinearVelocity = vel;
+	mVelocity = vel;
 
 	resetHitPlaneCounter();
 
@@ -909,7 +954,7 @@ bool TKumokun::isFindOutMario(JGeometry::TVec3<f32>* param_1) const
 	if (!isOnSamePlaneWithMario())
 		return false;
 
-	param_1->set(rotateGoalDirToLocal(SMS_GetMarioPos()));
+	param_1->set(rotateGoalDirToLocal(*gpMarioPos));
 
 	f32 range = getSaveParam2()->mSearchRange.get();
 
@@ -939,11 +984,13 @@ JGeometry::TVec3<f32> TKumokun::getPlaneNormal() const
 const TBGCheckData* TKumokun::checkWallPlane(JGeometry::TVec3<f32>* param_1,
                                              f32 param_2, f32 param_3)
 {
+	const TBGCheckData* wall = nullptr;
 	TBGWallCheckRecord record(param_1->x, param_1->y + param_2, param_1->z,
 	                          param_3, 1, 0);
 
-	const TBGCheckData* wall = nullptr;
-	if (gpMap->isTouchedWallsAndMoveXZ(&record))
+	// Retail tests the hit with `ble`: the result went through an int.
+	int hitNum = gpMap->isTouchedWallsAndMoveXZ(&record);
+	if (hitNum > 0)
 		wall = record.mResultWalls[0];
 
 	param_1->x = record.mCenter.x;
@@ -957,15 +1004,13 @@ const TBGCheckData* TKumokun::checkFloorPlane(JGeometry::TVec3<f32>* param_1,
 {
 	const TBGCheckData* floor = nullptr;
 
-	f32 yTmp2 = param_1->y;
-	f32 fVar7
-	    = gpMap->checkGround(param_1->x, yTmp2 + param_2, param_1->z, &floor);
+	f32 fVar7 = gpMap->checkGround(param_1->x, param_1->y + param_2,
+	                               param_1->z, &floor);
 	fVar7 += 1.0f;
-	if (yTmp2 <= fVar7 + 0.05f) {
+	if (param_1->y <= fVar7 + 0.05f) {
 		param_1->y = fVar7;
 	} else {
 		floor = nullptr;
-		fVar7 = param_1->y;
 	}
 	return floor;
 }
@@ -974,11 +1019,11 @@ const TBGCheckData* TKumokun::checkRoofPlane(JGeometry::TVec3<f32>* param_1,
                                              f32 param_2)
 {
 	const TBGCheckData* roof = nullptr;
-	f32 y                    = param_1->y;
-	f32 dVar6 = gpMap->checkRoof(param_1->x, y, param_1->z, &roof);
-	f32 fVar8 = dVar6 - 1.0f - y;
-	if (0.0f <= fVar8 && fVar8 < param_2)
-		param_1->y = fVar8;
+	f32 roofY = gpMap->checkRoof(param_1->x, param_1->y, param_1->z, &roof)
+	            - 1.0f;
+	f32 dist = roofY - param_1->y;
+	if (0.0f <= dist && dist < param_2)
+		param_1->y = roofY;
 	else
 		roof = nullptr;
 
@@ -1038,7 +1083,7 @@ void TKumokunManager::load(JSUMemoryInputStream& stream)
 
 	params->mSLAttackRadius.set(60);
 	params->mSLAttackHeight.set(50);
-	params->mSLDamageRadius.set(60);
+	params->mSLDamageRadius.set(65);
 	params->mSLDamageHeight.set(70);
 	TSmallEnemyManager::load(stream);
 }
@@ -1124,6 +1169,19 @@ DEFINE_NERVE(TNerveKumokunSearch, TLiveActor)
 	return false;
 }
 
+// TODO: only the saved-GPR colouring differs: retail keeps spine in r31, the
+// pool base in r30 and self in r29; ours puts the pool base first. Inert:
+// !getTime(), naming getBody(), dummy first, merged ifs, a named time local.
+// Since TVec3's copy constructor became `: Vec(other)` retail also keeps the
+// inlined isFindOutMario's direction x/y/z in f28/f27/f31 (ours reloads x and
+// saves one FPR fewer, frame 0x108 vs 0x110). Inert: assigning or
+// copy-constructing the direction in isFindOutMario or rotateGoalDirToLocal;
+// `*param_1 = rotate...` (89.1) and an if/return split (94.7) are worse, and
+// reading the result through `const Vec&` into set(const Vec&) reaches 97.4
+// here but frames 0x138, drops the weak getQuat and costs Search 0.6.
+// Raw *gpMarioPos in isFindOutMario aligns every slot (~76 -> ~52); left: x
+// reloads (f2) instead of taking f28, which costs retail's f27 save (the +8).
+// Inert on that: set(x,y,z), fabsf, dot(*this), if/return, a named dir.
 DEFINE_NERVE(TNerveKumokunWait, TLiveActor)
 {
 	TKumokun* self = (TKumokun*)spine->getBody();
@@ -1148,15 +1206,20 @@ DEFINE_NERVE(TNerveKumokunWait, TLiveActor)
 	return false;
 }
 
+// Binding level worth +16 of low region, landing
+// TNerveKumokunFreeze::execute's frame at 0x50 (batch 121).
+static inline MActor* KumokunGetMActor(const TKumokun* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
 DEFINE_NERVE(TNerveKumokunFreeze, TLiveActor)
 {
-
-	
-	
 	TKumokun* self = (TKumokun*)spine->getBody();
 	if (spine->getTime() == 0) {
 		self->clearAnmStack();
-		if (self->getMActor()->checkCurAnm("kumo_hit_end", ANM_TYPE_BCK)
+		if (KumokunGetMActor(self)->checkCurAnm("kumo_hit_end", ANM_TYPE_BCK)
 		    || self->getMActor()->checkCurAnm("kumo_hit_start", ANM_TYPE_BCK)) {
 			self->changeBck("kumo_hit_loop");
 		} else if (!self->getMActor()->checkCurAnm("kumo_hit_loop",

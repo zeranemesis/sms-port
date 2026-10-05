@@ -5,7 +5,6 @@
 #include <Player/ModelWaterManager.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Camera/CameraShake.hpp>
-#include <Map/MapCollisionManager.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
@@ -28,9 +27,10 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionManager.hpp>
+#include <Map/MapCollisionEntry.hpp>
 
 // NOTE: rodata ordering says this has to go here
-#include <Map/MapCollisionEntry.hpp>
 
 static const char* hinokuri2_bastable[] = {
 	"/scene/hinokuri2/bas/hinokuri2_appear.bas",
@@ -85,9 +85,9 @@ THino2Params::THino2Params(const char* path)
     , PARAM_INIT(mSLHeadHitH, 20.0f)
     , PARAM_INIT(mSLBodyHitR, 175.0f)
     , PARAM_INIT(mSLBodyHitH, 180.0f)
-    , PARAM_INIT(mSLBodyHitR0, 200.0f)
-    , PARAM_INIT(mSLBodyHitH0, 0.5f)
-    , PARAM_INIT(mSLBankProp, 10.0f)
+    , PARAM_INIT(mSLBodyHitR0, 100.0f)
+    , PARAM_INIT(mSLBodyHitH0, 200.0f)
+    , PARAM_INIT(mSLBankProp, 0.5f)
     , PARAM_INIT(mSLBankLimit, 10.0f)
     , PARAM_INIT(mSLJumpQuakeLen, 2000.0f)
     , PARAM_INIT(mSLStampProb, 0.5f)
@@ -102,6 +102,11 @@ THino2Params::THino2Params(const char* path)
     , PARAM_INIT(mSLWalkSpeedRateLv0, 1.2f)
 {
 	TParams::load(mPrmPath);
+}
+
+THinokuri2Manager::THinokuri2Manager(const char* name)
+    : TEnemyManager(name)
+{
 }
 
 void THinokuri2Manager::createModelData()
@@ -137,19 +142,29 @@ THino2MtxCalc::THino2MtxCalc(u16 param_1, u16 param_2, u16 param_3, u16 param_4,
 
 static THinokuri2* gpCurHinokuri;
 
+static inline THinokuri2* Hino2Cur()
+{
+	THinokuri2* cur = gpCurHinokuri;
+	return cur;
+}
+
+static inline J3DJoint* Hino2JointNode(u16 idx)
+{
+	return j3dSys.getModel()->getModelData()->getJointNodePointer(idx);
+}
+
 void THino2MtxCalc::calc(u16 param_1)
 {
 	j3dSys.setCurrentMtxCalc(this);
 
-	if (gpCurHinokuri->mLevel == 2 && (param_1 == 0x13 || param_1 == 0x17)) {
+	if (Hino2Cur()->mLevel == 2 && (param_1 == 0x13 || param_1 == 0x17)) {
+		J3DJoint* joint;
 		J3DTransformInfo info;
 
 		if (mOne[0]) {
 			mOne[0]->getTransform(param_1, &info);
 		} else {
-			J3DJoint* joint
-			    = j3dSys.getModel()->getModelData()->getJointNodePointer(
-			        param_1);
+			joint = Hino2JointNode(param_1);
 
 			info = joint->getTransformInfo();
 		}
@@ -160,31 +175,27 @@ void THino2MtxCalc::calc(u16 param_1)
 
 		calcTransform(param_1, info);
 	} else {
-
 		if (!mOne[0] && !mOne[1]) {
 			J3DTransformInfo info;
-			J3DJoint* joint
-			    = j3dSys.getModel()->getModelData()->getJointNodePointer(
-			        param_1);
 
-			info = joint->getTransformInfo();
+			info = Hino2JointNode(param_1)->getTransformInfo();
 
 			calcTransform(param_1, info);
-		} else if (mTwo[0] == 0.0f || !mOne[1]) {
+		} else if (unk78 == 0.0f || !mOne[1]) {
 			J3DTransformInfo auStack_74;
 			mOne[0]->getTransform(param_1, &auStack_74);
 			calcTransform(param_1, auStack_74);
-		} else if (mTwo[0] == 1.0f || !mOne[0]) {
+		} else if (unk78 == 1.0f || !mOne[0]) {
 			J3DTransformInfo auStack_94;
 			mOne[1]->getTransform(param_1, &auStack_94);
 			calcTransform(param_1, auStack_94);
 		} else {
-			J3DTransformInfo JStack_d4;
 			J3DTransformInfo JStack_b4;
+			J3DTransformInfo JStack_d4;
 			mOne[0]->getTransform(param_1, &JStack_d4);
 			J3DTransformInfo* ptr = &JStack_b4;
 			mOne[1]->getTransform(param_1, ptr);
-			M3UMtxCalcBlendAux(param_1, &JStack_d4, ptr, mTwo[0], false);
+			M3UMtxCalcBlendAux(param_1, &JStack_d4, ptr, unk78, false);
 		}
 	}
 
@@ -297,10 +308,31 @@ void THino2Mask::setMatrix(MtxPtr mtx)
 		MTXCopy(mtx, unk4C);
 }
 
-void THino2Mask::breakMask() { }
+void THino2Mask::breakMask()
+{
+	unk4 = 2;
+	unk8 = 0;
+	unk1C.zero();
+	unk28.zero();
+	unk34.set(0.0f, 0.0f, -5.0f);
+	unk40.set(0.0f, 0.0f, 5.0f);
+}
 
-void THino2Mask::startDamageMotion() { }
+void THino2Mask::startDamageMotion()
+{
+	unk10->setBckFromIndex(0xF);
+}
 
+static inline THino2Params* Hino2Params(THinokuri2* self)
+{
+	THino2Params* params = (THino2Params*)self->getSaveParam();
+	return params;
+}
+
+// TODO: retail keeps calcAnim and the unk4C base in r26, ours in r27; every
+// other instruction and the frame match. Inert or worse: calcAnim as int or
+// BOOL, afStack_88 declared first, no transMtx alias, raw unk4C at either
+// concat.
 void THino2Mask::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (unk4 == 0)
@@ -316,13 +348,14 @@ void THino2Mask::perform(u32 cue, JDrama::TGraphics* graphics)
 		}
 		unk10->perform(cue, graphics);
 	} else {
-		if (cue & CUE_CALC_ANIM) {
+		u32 calcAnim = cue & CUE_CALC_ANIM;
+		if (calcAnim) {
 			if (unk8 > 240) {
 				unk4 = 0;
 				return;
 			}
 
-			f32 gravity = unk0->getSaveParam()->mSLGravityY.get();
+			f32 gravity = Hino2Params(unk0)->mSLGravityY.get();
 
 			unk40.x -= gravity;
 			unk34.x -= gravity;
@@ -333,30 +366,28 @@ void THino2Mask::perform(u32 cue, JDrama::TGraphics* graphics)
 			++unk8;
 		}
 
-		if (cue & CUE_CALC_ANIM) {
+		if (calcAnim) {
 			Mtx afStack_58;
 			Mtx afStack_88;
-			{
-				MTXIdentity(afStack_58);
-				afStack_58[0][3] = unk28.x;
-				afStack_58[1][3] = unk28.y;
-				afStack_58[2][3] = unk28.z;
-				MsMtxSetRotRPH(afStack_88, 0.0f, 360.0f - unk8, 0.0f);
-				MTXConcat(getUnk4C(), afStack_88, afStack_88);
-				MTXConcat(afStack_58, afStack_88, afStack_58);
-				unk14->getModel()->setBaseTRMtx(afStack_58);
-			}
 
-			{
-				MTXIdentity(afStack_58);
-				afStack_58[0][3] = unk1C.x;
-				afStack_58[1][3] = unk1C.y;
-				afStack_58[2][3] = unk1C.z;
-				MsMtxSetRotRPH(afStack_88, 0.0f, unk8, 0.0f);
-				MTXConcat(getUnk4C(), afStack_58, afStack_58);
-				MTXConcat(afStack_58, afStack_88, afStack_58);
-				unk18->getModel()->setBaseTRMtx(afStack_58);
-			}
+			MTXIdentity(afStack_58);
+			afStack_58[0][3] = unk28.x;
+			afStack_58[1][3] = unk28.y;
+			afStack_58[2][3] = unk28.z;
+			MsMtxSetRotRPH(afStack_88, 0.0f, 360.0f - unk8, 0.0f);
+			MTXConcat(getUnk4C(), afStack_58, afStack_58);
+			MTXConcat(afStack_58, afStack_88, afStack_58);
+			MtxPtr transMtx = afStack_58;
+			unk14->getModel()->setBaseTRMtx(transMtx);
+
+			PSMTXIdentity(transMtx);
+			afStack_58[0][3] = unk1C.x;
+			afStack_58[1][3] = unk1C.y;
+			afStack_58[2][3] = unk1C.z;
+			MsMtxSetRotRPH(afStack_88, 0.0f, unk8, 0.0f);
+			MTXConcat(getUnk4C(), transMtx, transMtx);
+			MTXConcat(transMtx, afStack_88, transMtx);
+			unk18->getModel()->setBaseTRMtx(transMtx);
 		}
 
 		if ((cue & CUE_ENTRY) && unk8 > 60 && unk8 % 6 >= 3)
@@ -367,6 +398,16 @@ void THino2Mask::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
+// TODO: retail's frame is 0x10 larger (0x100) with the three matrices packed
+// from 0x5c; ours leaves an 8-byte hole above local_74 and a smaller low
+// region. Every other spelling of the sin/cos pair shrinks the frame further:
+// MsMtxSetRotY (either or both branches), MsSin/MsCos (inert), a named angle,
+// JMASSin(DEG2SHORTANGLE(...)). Naming the joint number or the joint is
+// inert; naming the model is worse (bb19).
+// Every instruction closes (92.4 -> 99.4, frame 0xd8) with MathUtil.hpp's
+// "two-level pointer" (a MsMtxSetRotY copy whose body says `MtxPtr m = mtx;`,
+// called as `(MtxPtr)rot` on an `Mtx rot` in both branches); neither half is
+// landable. Retail then still has 10 more low-region words (0x28).
 static int Hino2HeadCallback(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
@@ -374,37 +415,70 @@ static int Hino2HeadCallback(J3DNode* param_1, int param_2)
 		    ((J3DJoint*)param_1)->getJntNo());
 
 		if (gpCurHinokuri->mLevel == 1) {
-			f32 scale = gpCurHinokuri->unk194;
-
 			Mtx local_44;
+			local_44[0][3] = 0.0f;
+			local_44[1][3] = 0.0f;
+			local_44[2][3] = 0.0f;
+
+			f32 scale      = gpCurHinokuri->unk194;
 			local_44[0][0] = scale;
-			local_44[0][1] = 0.0;
-			local_44[0][2] = 0.0;
-			local_44[0][3] = 0.0;
+			local_44[0][1] = 0.0f;
+			local_44[0][2] = 0.0f;
 
-			local_44[1][0] = 0.0;
+			local_44[1][0] = 0.0f;
 			local_44[1][1] = scale;
-			local_44[1][2] = 0.0;
-			local_44[1][3] = 0.0;
+			local_44[1][2] = 0.0f;
 
-			local_44[2][0] = 0.0;
-			local_44[2][1] = 0.0;
+			local_44[2][0] = 0.0f;
+			local_44[2][1] = 0.0f;
 			local_44[2][2] = scale;
-			local_44[2][3] = 0.0;
+
+			f32 s = JMASin(gpCurHinokuri->unk198);
+			f32 c = JMACos(gpCurHinokuri->unk198);
 
 			Mtx local_74;
-			MsMtxSetRotY(local_74, gpCurHinokuri->unk198);
+			MtxPtr rot     = local_74;
+			local_74[0][0] = c;
+			local_74[0][1] = 0.0f;
+			local_74[0][2] = s;
+			local_74[0][3] = 0.0f;
 
-			MTXConcat(mA, local_74, mA);
+			local_74[1][0] = 0.0f;
+			local_74[1][1] = 1.0f;
+			local_74[1][2] = 0.0f;
+			local_74[1][3] = 0.0f;
+
+			local_74[2][0] = -s;
+			local_74[2][1] = 0.0f;
+			local_74[2][2] = c;
+			local_74[2][3] = 0.0f;
+
+			MTXConcat(mA, rot, mA);
 			MTXConcat(mA, local_44, mA);
-			MTXConcat(J3DSys::mCurrentMtx, local_74, J3DSys::mCurrentMtx);
+			MTXConcat(J3DSys::mCurrentMtx, rot, J3DSys::mCurrentMtx);
 			MTXConcat(J3DSys::mCurrentMtx, local_44, J3DSys::mCurrentMtx);
 		} else {
 			Mtx local_a4;
-			MsMtxSetRotY(local_a4, gpCurHinokuri->unk198);
+			MtxPtr rot     = local_a4;
+			f32 s          = JMASin(gpCurHinokuri->unk198);
+			f32 c          = JMACos(gpCurHinokuri->unk198);
+			local_a4[0][0] = c;
+			local_a4[0][1] = 0.0f;
+			local_a4[0][2] = s;
+			local_a4[0][3] = 0.0f;
 
-			MTXConcat(mA, local_a4, mA);
-			MTXConcat(J3DSys::mCurrentMtx, local_a4, J3DSys::mCurrentMtx);
+			local_a4[1][0] = 0.0f;
+			local_a4[1][1] = 1.0f;
+			local_a4[1][2] = 0.0f;
+			local_a4[1][3] = 0.0f;
+
+			local_a4[2][0] = -s;
+			local_a4[2][1] = 0.0f;
+			local_a4[2][2] = c;
+			local_a4[2][3] = 0.0f;
+
+			MTXConcat(mA, rot, mA);
+			MTXConcat(J3DSys::mCurrentMtx, rot, J3DSys::mCurrentMtx);
 		}
 	}
 
@@ -445,6 +519,11 @@ THinokuri2::THinokuri2(const char* name)
 	unk1A0  = new THino2MtxCalc(5, 6, 9, 12, 13, 16, 15.0f);
 }
 
+// TODO: instruction-identical, frame 0x1d8 against the ROM's 0x1f8 (reading
+// the director through SMSGetMarDirector() took it from 0x1c8). The
+// push_back iterator temporaries keep their strides but sit higher (end()
+// block) as does the copy-ctor block, so 0x20 of temporaries the original
+// expanded is still missing; insert()/add() spellings are far worse.
 void THinokuri2::init(TLiveManager* param_1)
 {
 	mManager = param_1;
@@ -455,14 +534,14 @@ void THinokuri2::init(TLiveManager* param_1)
 	unk124->init(gpConductor->getGraphByName("hinokuri"));
 	mSpine->initWith(&TNerveHino2Appear::theNerve());
 	reset();
-	mGravity = getSaveParam()->mSLGravityY.get();
+	mGravity = ((THino2Params*)getSaveParam())->mSLGravityY.get();
 	initAnmSound();
 	initHitActor(0x8000001, 5, 0, mBodyRadius, mHeadHeight, mBodyRadius,
 	             mHeadHeight);
 	unk150 = new TMBindShadowBody(this, getModel(), 1.0f);
 
 	TIdxGroupObj* enemiesGrp
-	    = static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"));
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
 	enemiesGrp->getChildren().push_back(mHead);
 	enemiesGrp->getChildren().push_back(mBody);
 	enemiesGrp->getChildren().push_back(unk178);
@@ -483,8 +562,8 @@ void THinokuri2::init(TLiveManager* param_1)
 
 	getMActor()->setJointCallback(0x17, &Hino2HeadCallback);
 
-	if (gpMarDirector->mMap == 1) {
-		switch (gpMarDirector->unk7D) {
+	if (SMSGetMarDirector()->mMap == 1) {
+		switch (SMSGetMarDirector()->unk7D) {
 		case 4:
 			setLevel(2);
 			break;
@@ -499,8 +578,8 @@ void THinokuri2::init(TLiveManager* param_1)
 			setLevel(1);
 			break;
 		}
-	} else if (gpMarDirector->mMap == 0) {
-		switch (gpMarDirector->unk7D) {
+	} else if (SMSGetMarDirector()->mMap == 0) {
+		switch (SMSGetMarDirector()->unk7D) {
 		case 7:
 			setLevel(2);
 			break;
@@ -545,13 +624,48 @@ void THinokuri2::kill()
 
 // TODO: figure out which parts of code belong into these inlines
 
-void THinokuri2::emitPolParticle() { }
+void THinokuri2::emitPolParticle()
+{
+	JGeometry::TVec3<f32> pos;
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		pos = getPosition();
+		pos.y += 500.0f;
+	} else {
+		getJointTransByIndex(0x18, &pos);
+	}
+}
 
 void THinokuri2::stopPolParticle() { }
 
-void THinokuri2::updatePolTrans() { }
+void THinokuri2::updatePolTrans()
+{
+	JGeometry::TVec3<f32> pos;
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		pos = getPosition();
+		pos.y += 500.0f;
+	} else {
+		getJointTransByIndex(0x18, &pos);
+	}
+	if (unk164 <= 0)
+		return;
+	// TODO: map size 0x70, we emit 0x78 (8 long).
+}
 
 // TODO: fake & wrong
+static inline THino2Hit* Hino2BindHead(THinokuri2* self)
+{
+	THino2Hit* hit = self->mHead;
+	return hit;
+}
+
+static inline THino2Hit* Hino2BindBody(THinokuri2* self)
+{
+	THino2Hit* hit = self->mBody;
+	return hit;
+}
+
 template <class T> static inline T randy(T l, T r)
 {
 	r -= l;
@@ -562,8 +676,8 @@ template <class T> static inline T randy(T l, T r)
 
 void THinokuri2::resetPolInterval()
 {
-	int l  = getSaveParam()->mSLPolIntervalMin.value;
-	int r  = getSaveParam()->mSLPolIntervalMax.value;
+	int l  = Hino2Params(this)->mSLPolIntervalMin.value;
+	int r  = ((THino2Params*)getSaveParam())->mSLPolIntervalMax.value;
 	unk164 = randy(l, r);
 }
 
@@ -581,10 +695,15 @@ void THinokuri2::invalidateCollisionAll()
 void THinokuri2::validateCollisionAll()
 {
 	onHitFlag(HIT_FLAG_NO_COLLISION);
-	mHead->offHitFlag(HIT_FLAG_NO_COLLISION);
-	mBody->offHitFlag(HIT_FLAG_NO_COLLISION);
-	unk174->offHitFlag(HIT_FLAG_NO_COLLISION);
-	unk178->offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	Hino2BindHead(this)->offHitFlag(HIT_FLAG_NO_COLLISION);
+	Hino2BindBody(this)->offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	THino2Hit* left = unk174;
+	left->offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	THino2Hit* right = unk178;
+	right->offHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
 void THinokuri2::emitWaterParticle()
@@ -597,15 +716,38 @@ void THinokuri2::emitWaterParticle()
 		getJointTransByIndex(0x19, &position);
 	} else {
 		position = mPosition;
-		position.y += getSaveParam()->mSLWaterEmitPos.get();
+		position.y += Hino2Params(this)->mSLWaterEmitPos.get();
 	}
 	unk19C->mPos.value = position;
 	gpModelWaterManager->emitRequest(*unk19C);
 }
 
-void THinokuri2::shakeCamera(int) { }
+void THinokuri2::shakeCamera(int mode)
+{
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
+		return;
+	if (checkLiveFlag(LIVE_FLAG_AIRBORNE))
+		return;
 
-void THinokuri2::makeQuake(f32) { }
+	f32 range;
+	if (mode == CAM_SHAKE_MODE_ENEMY)
+		range = ((THino2Params*)getSaveParam())->mSLWalkShake.get();
+	else
+		range = ((THino2Params*)getSaveParam())->mSLJumpShake.get();
+
+	if (getDistToMarioSquared() <= range * range)
+		gpCameraShake->startShake((EnumCamShakeMode)mode, 0.8f);
+}
+
+void THinokuri2::makeQuake(f32 len)
+{
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
+		return;
+
+	len *= len;
+	if (getDistToMarioSquared() < len)
+		SMS_SendMessageToMario(this, 3);
+}
 
 void THinokuri2::setLevel(int level)
 {
@@ -619,7 +761,7 @@ void THinokuri2::setLevel(int level)
 	// (which shouldn't really ever happen but still)
 	const char* graphName;
 
-	if (THino2Params* prms = getSaveParam()) {
+	if (THino2Params* prms = ((THino2Params*)getSaveParam())) {
 		switch (mLevel) {
 		case 0:
 			graphName   = "hinokuri";
@@ -673,8 +815,7 @@ void THinokuri2::updateAnmSound()
 {
 	TSpineEnemy::updateAnmSound();
 	if (unk158 > 0)
-		SMSGetMSound()->startSoundActor(MSD_SE_BS_HINO_SEED_LQ_LEV, &mPosition,
-		                                0, nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_BS_HINO_SEED_LQ_LEV, &mPosition);
 }
 
 void THinokuri2::changeBck(int param_1)
@@ -699,7 +840,7 @@ void THinokuri2::changeBck(int param_1)
 			        param_1));
 		}
 
-		getMActor()->getAnmBck()->setFrameCtrl(param_1);
+		mMActor->getAnmBck()->setFrameCtrl(param_1);
 	}
 
 	mCurrentBck = param_1;
@@ -707,7 +848,7 @@ void THinokuri2::changeBck(int param_1)
 	J3DFrameCtrl* pJVar7 = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	if (pJVar7 != nullptr) {
 		if (mLevel == 0 && (param_1 - 23U <= 1 || param_1 - 26U <= 1))
-			pJVar7->setRate(getSaveParam()->mSLWalkSpeedRateLv0.get());
+			pJVar7->setRate(((THino2Params*)getSaveParam())->mSLWalkSpeedRateLv0.value);
 		else
 			pJVar7->setRate(1.0f);
 	}
@@ -760,15 +901,15 @@ BOOL THinokuri2::receiveMessageLv1(THitActor* sender, u32 message)
 		if (dmgAmount <= 0)
 			return true;
 
-		if (mHitPoints >= dmgAmount)
+		if (dmgAmount >= mHitPoints)
 			mHitPoints = 0;
 		else
-			mHitPoints -= dmgAmount;
+			mHitPoints = mHitPoints - dmgAmount;
 
 		++unk18C;
 
-		if (mSpine->getCurrentNerve() != &TNerveHino2Freeze::theNerve())
-			mSpine->setNext(&TNerveHino2Freeze::theNerve());
+		if (getSpine()->getCurrentNerve() != &TNerveHino2Damage::theNerve())
+			getSpine()->setNext(&TNerveHino2Damage::theNerve());
 
 		return true;
 	}
@@ -779,14 +920,21 @@ BOOL THinokuri2::receiveMessageLv1(THitActor* sender, u32 message)
 
 		mHitPoints = 0;
 
-		if (mSpine->getCurrentNerve() != &TNerveHino2Damage::theNerve()) {
-			mSpine->setNext(&TNerveHino2Damage::theNerve());
+		if (getSpine()->getCurrentNerve() != &TNerveHino2Damage::theNerve()) {
+			getSpine()->setNext(&TNerveHino2Damage::theNerve());
 		}
 
 		return true;
 	}
 
 	return false;
+}
+
+// Parked TU-locally: retail binds the mask pointer at each use.
+static inline THino2Mask* Hino2Mask(THinokuri2* self)
+{
+	THino2Mask* mask = self->unk1A4;
+	return mask;
 }
 
 BOOL THinokuri2::receiveMessageLv2(THitActor* sender, u32 message)
@@ -803,15 +951,15 @@ BOOL THinokuri2::receiveMessageLv2(THitActor* sender, u32 message)
 			return true;
 
 		unk190 += 1;
-		unk1A4->unkC += 1;
+		Hino2Mask(this)->unkC += 1;
 
-		unk168 = getSaveParam()->mSLInvincibleTimer.get();
+		unk168 = Hino2Params(this)->mSLInvincibleTimer.get();
 
 		if (unk190 > 2) {
 			unk190 = 0;
 			setLevel(mLevel - 1);
 
-			unk1A4->reset();
+			Hino2Mask(this)->reset();
 
 			mHitPoints = calcHitPoints();
 		}
@@ -824,19 +972,19 @@ BOOL THinokuri2::receiveMessageLv2(THitActor* sender, u32 message)
 			return true;
 
 		unk190 += 1;
-		unk1A4->unkC += 1;
+		Hino2Mask(this)->unkC += 1;
 
-		unk168 = getSaveParam()->mSLInvincibleTimer.get();
+		unk168 = ((THino2Params*)getSaveParam())->mSLInvincibleTimer.get();
 
 		if (unk190 > 2) {
 			unk190 = 0;
 			setLevel(mLevel - 1);
 
-			unk1A4->reset();
+			Hino2Mask(this)->reset();
 
 			mHitPoints = calcHitPoints();
 		} else {
-			unk1A4->unk10->setBckFromIndex(0xF);
+			unk1A4->startDamageMotion();
 		}
 
 		return true;
@@ -865,6 +1013,21 @@ BOOL THinokuri2::receiveMessage(THitActor* sender, u32 message)
 	return 0;
 }
 
+// Parked TU-locally: TPathNode::getPoint() reloads unk0 where retail tests and
+// dereferences one load. Shared-header need: a named local in PathNode.hpp.
+static inline const JGeometry::TVec3<f32>& Hino2NodePoint(const TPathNode& node)
+{
+	THitActor* owner = node.unk0;
+	if (owner != 0)
+		return owner->getPosition();
+
+	return node.unk4;
+}
+
+// TODO: frame is 0xa0 short (0xd8 vs 0x178) with every instruction exact;
+// a deficit that size is a missing inline level or helper, not a lever.
+// getBodyScale() at all six reads (+0x10) and getMapCollisionManager()
+// with getUnk8() (+0x10) add frame too, but the file never uses them.
 void THinokuri2::moveObject()
 {
 	if (checkLiveFlag(LIVE_FLAG_DEAD))
@@ -873,20 +1036,24 @@ void THinokuri2::moveObject()
 	if (unk164 > 0)
 		--unk164;
 
-	if (mLevel == 1) {
+	if (getLevel() == 1) {
 		f32 dhp    = calcHitPoints() - mHitPoints;
 		f32 fVar12 = 1.0f
-		             + (getSaveParam()->getSLDamageHeadScale() - 1.0f)
+		             + (((THino2Params*)getSaveParam())->getSLDamageHeadScale() - 1.0f)
 		                   * (dhp / calcHitPoints())
 		             - unk194;
 
-		unk194
-		    += fVar12 > 0.0f ? MsMin(fVar12, 0.004f) : MsMax(fVar12, -0.004f);
+		if (fVar12 > 0.0f)
+			fVar12 = std::min(fVar12, 0.004f);
+		else
+			fVar12 = std::max(fVar12, -0.004f);
+
+		unk194 += fVar12;
 	} else {
 		unk194 = 1.0f;
 	}
 
-	if (gpMarDirector->mMoveTickCount % 600 == 0)
+	if (gpMarDirector->unk58 % 600 == 0)
 		generateEnemy();
 
 	doShortCut();
@@ -899,20 +1066,20 @@ void THinokuri2::moveObject()
 			mMapCollisionManager->unk8->moveTrans(aTStack_30);
 	}
 
-	f32 headHitR = getSaveParam()->mSLHeadHitR.value;
+	f32 headHitR = ((THino2Params*)getSaveParam())->mSLHeadHitR.value;
 	mHead->setDamageRadius(unk194 * (headHitR * mBodyScale));
-	f32 bodyScale = getSaveParam()->mSLBodyScale.value;
-	mHead->setDamageHeight(unk194 * (mBodyScale * bodyScale));
+	f32 headHitH = ((THino2Params*)getSaveParam())->mSLHeadHitH.value;
+	mHead->setDamageHeight(unk194 * (headHitH * mBodyScale));
 
-	if (mLevel == 0) {
-		f32 bodyHitR0 = getSaveParam()->mSLBodyHitR0.value;
+	if (getLevel() == 0) {
+		f32 bodyHitR0 = ((THino2Params*)getSaveParam())->mSLBodyHitR0.value;
 		mBody->setDamageRadius(unk194 * (bodyHitR0 * mBodyScale));
-		f32 bodyHitH0 = getSaveParam()->mSLBodyHitH0.value;
+		f32 bodyHitH0 = ((THino2Params*)getSaveParam())->mSLBodyHitH0.value;
 		mBody->setDamageHeight(unk194 * (bodyHitH0 * mBodyScale));
 	} else {
-		f32 bodyHitR = getSaveParam()->mSLBodyHitR.value;
+		f32 bodyHitR = ((THino2Params*)getSaveParam())->mSLBodyHitR.value;
 		mBody->setDamageRadius(unk194 * (bodyHitR * mBodyScale));
-		f32 bodyHitH = getSaveParam()->mSLBodyHitH.value;
+		f32 bodyHitH = ((THino2Params*)getSaveParam())->mSLBodyHitH.value;
 		mBody->setDamageHeight(unk194 * (bodyHitH * mBodyScale));
 	}
 
@@ -929,14 +1096,13 @@ void THinokuri2::moveObject()
 	unk198
 	    += -MsClamp(MsWrap(MsAngleDiff(mRotation.y, oldRot), -180.0f, 180.0f),
 	                -30.0f, 30.0f)
-	       * getSaveParam()->mSLBankProp.get();
+	       * ((THino2Params*)getSaveParam())->mSLBankProp.get();
 
 	unk198 = MsWrap(unk198, -180.0f, 180.0f);
 
-	f32 prop = getSaveParam()->mSLBankLimit.get();
+	f32 prop = ((THino2Params*)getSaveParam())->mSLBankLimit.get();
 	unk198   = MsClamp(unk198, -prop, prop);
 
-	// looks like symmetric_clamp but it isn't???
 	if (unk198 < 0.0f) {
 		f32 fVar1 = 0.1f + unk198;
 		if (fVar1 > 0.0f)
@@ -968,7 +1134,7 @@ void THinokuri2::perform(u32 cue, JDrama::TGraphics* graphics)
 			J3DShape* shape
 			    = getModel()->getModelData()->getShapeNodePointer(i);
 			if (shape) {
-				if (mLevel == 0 || mLevel == 2)
+				if (getLevel() == 0 || getLevel() == 2)
 					shape->onFlag(J3DShpFlag_Visible);
 				else
 					shape->offFlag(J3DShpFlag_Visible);
@@ -1003,6 +1169,37 @@ void THinokuri2::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
+static inline J3DFrameCtrl* Hino2BckFrameCtrl(THinokuri2* self)
+{
+	MActor* actor = self->getMActor();
+	return actor->getFrameCtrl(ANM_TYPE_BCK);
+}
+
+static inline THinokuri2* Hino2Self(TSpineBase<TLiveActor>* spine)
+{
+	TLiveActor* body = spine->getBody();
+	return (THinokuri2*)body;
+}
+
+static inline TGraphTracer* Hino2Tracer(THinokuri2* self)
+{
+	TGraphTracer* tracer = self->unk124;
+	return tracer;
+}
+
+static inline bool Hino2CurAnmEndsNext(THinokuri2* self)
+{
+	MActor* actor = self->getMActor();
+	return actor->curAnmEndsNext();
+}
+
+static inline f32 Hino2SLJumpShake(THinokuri2* self)
+{
+	THino2Params* params = (THino2Params*)self->getSaveParam();
+	f32 shake            = params->mSLJumpShake.get();
+	return shake;
+}
+
 DEFINE_NERVE(TNerveHino2Appear, TLiveActor)
 {
 	THinokuri2* self = (THinokuri2*)spine->getBody();
@@ -1019,9 +1216,18 @@ DEFINE_NERVE(TNerveHino2Appear, TLiveActor)
 	return false;
 }
 
+// TODO: instruction-identical, frame 0xf0 against the ROM's 0x110. The ROM
+// keeps TStack_3C (0xd4) above local_60 (0xb0) and the rand() conversion
+// block 0x20 higher; moving either declaration to the top, or wrapping
+// either block in a TU-local inline, leaves the layout unchanged.
+// Moving local_60's declaration *with* its block into a TU-local inline
+// (so local_60 is a callee local created after TStack_3C) gives retail's
+// relative order and spacing (TStack_3C 0x24 above local_60) at 0xf0; the
+// remaining 0x20 is low region under local_60.
 DEFINE_NERVE(TNerveHino2GraphWander, TLiveActor)
 {
-	THinokuri2* self = (THinokuri2*)spine->getBody();
+	TLiveActor* body = spine->getBody();
+	THinokuri2* self = (THinokuri2*)body;
 
 	self->unk188 = 1;
 
@@ -1039,7 +1245,7 @@ DEFINE_NERVE(TNerveHino2GraphWander, TLiveActor)
 		}
 	}
 
-	if (gpMarDirector->unk7D >= 2 && self->unk164 <= 0) {
+	if (SMSGetMarDirector()->getCurrentStage() >= 2 && self->unk164 <= 0) {
 		if (self->getLevel() >= 1) {
 			spine->pushAfterCurrent(&TNerveHino2PrePol::theNerve());
 			return 1;
@@ -1048,11 +1254,12 @@ DEFINE_NERVE(TNerveHino2GraphWander, TLiveActor)
 		self->unk15C = 0;
 
 		JGeometry::TVec3<f32> local_60;
+
 		if (self->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-			local_60 = self->mPosition;
+			local_60 = self->getPosition();
 			local_60.y += 500.0f;
 		} else {
-			self->getJointTransByIndex(0x14, &local_60);
+			self->getJointTransByIndex(0x18, &local_60);
 		}
 
 		self->resetPolInterval();
@@ -1062,17 +1269,18 @@ DEFINE_NERVE(TNerveHino2GraphWander, TLiveActor)
 		self->changeBck(0x18);
 
 	if (self->getCurrentBck() == 0x18) {
-		self->walkToCurPathNode(self->mMarchSpeed, self->mTurnSpeed, 0.0f);
+		self->walkToCurPathNode(self->getMarchSpeed(), self->getTurnSpeed(), 0.0f);
 	}
 
-	int frame = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
+	int frame = Hino2BckFrameCtrl(self)->getFrame();
 	if (self->getLevel() != 0 && !self->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)
 	    && !self->isAirborne() && (frame == 0x24 || frame == 0x55)) {
-		f32 ws = self->getSaveParam()->mSLWalkShake.get();
-		if (!(ws * ws < self->mDistToMarioSquared))
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK3, 0.8f);
+		f32 ws = Hino2Params(self)->mSLWalkShake.get();
+		if (!(ws * ws < self->getDistToMarioSquared()))
+			SMSGetCameraShakeBound()->startShake(CAM_SHAKE_MODE_ENEMY, 0.8f);
 
 		JGeometry::TVec3<f32> TStack_3C;
+
 		if (frame == 0x24)
 			self->getJointTransByIndex(0x9, &TStack_3C);
 		else if (frame == 0x55)
@@ -1101,18 +1309,29 @@ DEFINE_NERVE(TNerveHino2Fly, TLiveActor)
 	return false;
 }
 
+// TODO: the node test swaps r3/r4 (retail loads the owner into r4) and the
+// frame is 0x50, retail 0x68; every other instruction matches. Retail's
+// velocity temp sits at 0x34 (ours 0x28). Worse: getPoint() or
+// Hino2NodePoint() as the argument, a by-value point copy, a named velocity,
+// mVelocity.set(...).
 DEFINE_NERVE(TNerveHino2JumpIn, TLiveActor)
 {
+	const JGeometry::TVec3<f32>* p;
 	THinokuri2* self = (THinokuri2*)spine->getBody();
 
 	if (spine->getTime() == 0)
 		self->changeBck(0x9);
 
 	if (self->getMActor()->curAnmEndsNext()) {
-		const JGeometry::TVec3<f32>& p = self->unk104.getPoint();
-		f32 f                          = self->unk124->unkC;
-		f32 grav                       = self->getGravityY();
-		self->mVelocity = self->calcVelocityToJumpToY(p, f, grav);
+		const TPathNode& node = self->unk104;
+		THitActor* owner = node.unk0;
+		if (owner != 0)
+			p = &owner->getPosition();
+		else
+			p = &node.unk4;
+		f32 f = self->unk124->unkC;
+		self->mVelocity
+		    = self->calcVelocityToJumpToY(*p, f, self->getGravityY());
 		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
 		spine->pushAfterCurrent(&TNerveHino2Fly::theNerve());
 		return true;
@@ -1127,14 +1346,19 @@ DEFINE_NERVE(TNerveHino2Landing, TLiveActor)
 
 	if (spine->getTime() == 0) {
 		self->changeBck(0xE);
-		f32 js = self->getSaveParam()->mSLJumpShake.get();
+		f32 js = ((THino2Params*)self->getSaveParam())->mSLJumpShake.get();
 		if (!(js * js < self->mDistToMarioSquared))
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK4, 0.8f);
+			gpCameraShake->startShake(CAM_SHAKE_MODE_ENEMY2, 0.8f);
 	}
 
-	// TODO: asserts or something? Hard to match
-	self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
-	self->checkLiveFlag(LIVE_FLAG_HIDDEN);
+	// TODO: retail converts the frame to int, tests CLIPPED_OUT and reloads
+	// the int with no compare or branch after it: a frame test whose body
+	// compiled to nothing. The compared frame number is lost (0x10 is a
+	// placeholder); a body with a TVec3 local drops the whole test instead.
+	// Frame is 0x20 short (0x40 vs 0x60), all below the fctiwz slot.
+	int frame = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
+	if (!self->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && frame == 0x10) {
+	}
 
 	if (self->getMActor()->curAnmEndsNext())
 		return true;
@@ -1146,28 +1370,32 @@ DEFINE_NERVE(TNerveHino2Turn, TLiveActor)
 {
 	THinokuri2* self = (THinokuri2*)spine->getBody();
 
-	JGeometry::TVec3<f32> posDiff = self->unk104.getPoint();
+	const TPathNode& node         = self->getUnkF4();
+	JGeometry::TVec3<f32> posDiff = Hino2NodePoint(node);
 
-	posDiff -= self->mPosition;
+	posDiff -= self->getPosition();
 
 	f32 angleDiff = MsAngleDiff(
 	    MsWrap(MsGetRotFromZaxisY(posDiff), 0.0f, 360.0f), self->mRotation.y);
 
 	if (spine->getTime() == 0 && fabsf(angleDiff) > 15.0f
-	    && self->mCurrentBck != 0x15) {
+	    && self->getCurrentBck() != 0x15) {
 		self->changeBck(0x15);
 	}
 
+	// Reading the path node, position and current bck through their
+	// accessors gives retail's 0x78 frame; mRotation stays raw, read and
+	// written (getRotation().y as well is 8 over).
 	f32 turnSpeed = self->mTurnSpeed;
-	f32 turn;
+	f32 fVar3;
 	if (angleDiff > 0.0f)
-		turn = MsMin(angleDiff, turnSpeed);
+		fVar3 = std::min(angleDiff, turnSpeed);
 	else
-		turn = MsMax(angleDiff, -turnSpeed);
+		fVar3 = std::max(angleDiff, -turnSpeed);
 
-	self->mRotation.y = MsWrap(self->mRotation.y + turn, 0.0f, 360.0f);
+	self->mRotation.y = MsWrap(self->mRotation.y + fVar3, 0.0f, 360.0f);
 
-	if (fabsf(turn) < self->mTurnSpeed * 0.5f)
+	if (fabsf(fVar3) < turnSpeed * 0.5f)
 		return true;
 
 	return false;
@@ -1185,13 +1413,13 @@ DEFINE_NERVE(TNerveHino2PrePol, TLiveActor)
 			int uVar5 = self->mWaitTimer;
 			uVar5 += 1;
 
-			int wait = self->getSaveParam()->mSLPrePolWait.get();
-			if (wait > uVar5) {
-				f32 prob = self->getSaveParam()->mSLStampProb.get();
+			int wait = Hino2Params(self)->mSLPrePolWait.get();
+			if (uVar5 > wait) {
+				f32 prob = ((THino2Params*)self->getSaveParam())->mSLStampProb.get();
 				if (rand() * (1.0f / (RAND_MAX + 1)) < prob) {
-					spine->pushAfterCurrent(&TNerveHino2Pollute::theNerve());
-				} else {
 					spine->pushAfterCurrent(&TNerveHino2Stamp::theNerve());
+				} else {
+					spine->pushAfterCurrent(&TNerveHino2Pollute::theNerve());
 				}
 
 				self->mWaitTimer = 0;
@@ -1208,29 +1436,30 @@ DEFINE_NERVE(TNerveHino2PrePol, TLiveActor)
 
 DEFINE_NERVE(TNerveHino2Pollute, TLiveActor)
 {
-	THinokuri2* self = (THinokuri2*)spine->getBody();
+	TLiveActor* body = spine->getBody();
+	THinokuri2* self = (THinokuri2*)body;
 
 	if (spine->getTime() == 0) {
 		self->changeBck(0x2);
 		return 0;
 	}
 
-	if (self->mCurrentBck == 2) {
-		if (self->getMActor()->curAnmEndsNext()) {
+	if (self->getCurrentBck() == 2) {
+		if (Hino2CurAnmEndsNext(self)) {
 			self->changeBck(3);
 			self->unk180 = TRUE;
 		}
 		return false;
 	}
 
-	if (self->mCurrentBck == 3) {
-		if (self->getMActor()->curAnmEndsNext()) {
+	if (self->getCurrentBck() == 3) {
+		if (Hino2CurAnmEndsNext(self)) {
 			int uVar1 = self->mWaitTimer;
 			++uVar1;
-			int polWait = self->getSaveParam()->mSLPolWaitCount.get();
+			int polWait = ((THino2Params*)self->getSaveParam())->mSLPolWaitCount.get();
 			if (uVar1 > polWait) {
 				self->unk180 = FALSE;
-				self->changeBck(3);
+				self->changeBck(0x10);
 				uVar1 = 0;
 			}
 			self->mWaitTimer = uVar1;
@@ -1238,9 +1467,9 @@ DEFINE_NERVE(TNerveHino2Pollute, TLiveActor)
 		return false;
 	}
 
-	if (self->mCurrentBck == 16) {
-		if (self->getMActor()->curAnmEndsNext()) {
-			self->changeBck(3);
+	if (self->getCurrentBck() == 16) {
+		if (Hino2CurAnmEndsNext(self)) {
+			self->changeBck(0x11);
 			self->unk15C = 0;
 
 			JGeometry::TVec3<f32> local_40;
@@ -1248,20 +1477,20 @@ DEFINE_NERVE(TNerveHino2Pollute, TLiveActor)
 				local_40 = self->mPosition;
 				local_40.y += 500.0f;
 			} else {
-				self->getJointTransByIndex(0x14, &local_40);
+				self->getJointTransByIndex(0x18, &local_40);
 			}
 		}
 		return false;
 	}
 
-	if (self->mCurrentBck == 17) {
-		if (self->getMActor()->curAnmEndsNext()) {
+	if (self->getCurrentBck() == 17) {
+		if (Hino2CurAnmEndsNext(self)) {
 			self->changeBck(1);
 		}
 		return false;
 	}
 
-	if (self->mCurrentBck == 1 && self->getMActor()->curAnmEndsNext()) {
+	if (self->getCurrentBck() == 1 && Hino2CurAnmEndsNext(self)) {
 		self->mHitPoints = self->calcHitPoints();
 
 		self->resetPolInterval();
@@ -1275,33 +1504,33 @@ DEFINE_NERVE(TNerveHino2Pollute, TLiveActor)
 
 DEFINE_NERVE(TNerveHino2Damage, TLiveActor)
 {
-	THinokuri2* self = (THinokuri2*)spine->getBody();
+	THinokuri2* self = Hino2Self(spine);
 
 	if (spine->getTime() == 0) {
 		self->unk180 = TRUE;
 		self->changeBck(0x5);
 	}
 
-	if (self->getMActor()->curAnmEndsNext()) {
-		if (self->mCurrentBck == 5)
+	if (Hino2CurAnmEndsNext(self)) {
+		if (self->getCurrentBck() == 5)
 			self->changeBck(2);
-		if (self->mCurrentBck == 2)
+		if (self->getCurrentBck() == 2)
 			self->changeBck(3);
 	}
 
 	if (self->unk18C > 0) {
-		if (self->mCurrentBck != 5)
+		if (self->getCurrentBck() != 5)
 			self->changeBck(5);
 
 		self->unk18C = 0;
-		if (self->mHitPoints == 0) {
+		if (self->getHitPoints() == 0) {
 			self->unk180 = FALSE;
 			spine->pushAfterCurrent(&TNerveHino2Squat::theNerve());
 			return true;
 		}
 	}
 
-	if (spine->getTime() >= self->getSaveParam()->getSLDamageTimer()) {
+	if (spine->getTime() >= Hino2Params(self)->getSLDamageTimer()) {
 		self->unk180 = FALSE;
 		if (self->getHitPoints() == 0) {
 			spine->pushAfterCurrent(&TNerveHino2Squat::theNerve());
@@ -1311,8 +1540,8 @@ DEFINE_NERVE(TNerveHino2Damage, TLiveActor)
 		if (self->getCurrentBck() != 4)
 			self->changeBck(4);
 
-		if (self->getMActor()->curAnmEndsNext() && self->getCurrentBck() == 4) {
-			self->unk124->reset();
+		if (Hino2CurAnmEndsNext(self) && self->getCurrentBck() == 4) {
+			Hino2Tracer(self)->reset();
 			self->goToShortestNextGraphNode();
 			spine->reset();
 			spine->pushAfterCurrent(&TNerveHino2GraphWander::theNerve());
@@ -1336,15 +1565,15 @@ DEFINE_NERVE(TNerveHino2Squat, TLiveActor)
 	if (spine->getTime() == 0)
 		self->changeBck(0x13);
 
-	if (self->getMActor()->curAnmEndsNext()) {
-		if (self->mCurrentBck == 0x13) {
-			f32 js = self->getSaveParam()->mSLJumpShake.get();
+	if (Hino2CurAnmEndsNext(self)) {
+		if (self->getCurrentBck() == 0x13) {
+			f32 js = Hino2SLJumpShake(self);
 			if (!(js * js < self->mDistToMarioSquared))
-				gpCameraShake->startShake(CAM_SHAKE_MODE_UNK4, 0.8f);
+				gpCameraShake->startShake(CAM_SHAKE_MODE_ENEMY2, 0.8f);
 			self->changeBck(0x14);
 		}
 
-		if (self->mCurrentBck == 0x14) {
+		if (self->getCurrentBck() == 0x14) {
 			spine->pushAfterCurrent(&TNerveHino2Burst::theNerve());
 			return true;
 		}
@@ -1355,17 +1584,17 @@ DEFINE_NERVE(TNerveHino2Squat, TLiveActor)
 
 DEFINE_NERVE(TNerveHino2Burst, TLiveActor)
 {
-	THinokuri2* self = (THinokuri2*)spine->getBody();
+	THinokuri2* self = Hino2Self(spine);
 
 	if (spine->getTime() == 0) {
 		self->changeBck(0xA);
 		self->emitWaterParticle();
 	}
 
-	if (self->getMActor()->curAnmEndsNext()) {
+	if (Hino2CurAnmEndsNext(self)) {
 		self->setLevel(self->mLevel - 1);
 		self->mHitPoints = self->calcHitPoints();
-		self->unk124->reset();
+		Hino2Tracer(self)->reset();
 		self->goToShortestNextGraphNode();
 		spine->reset();
 		spine->pushAfterCurrent(&TNerveHino2GraphWander::theNerve());
@@ -1377,7 +1606,8 @@ DEFINE_NERVE(TNerveHino2Burst, TLiveActor)
 
 DEFINE_NERVE(TNerveHino2Die, TLiveActor)
 {
-	THinokuri2* self = (THinokuri2*)spine->getBody();
+	TLiveActor* body = spine->getBody();
+	THinokuri2* self = (THinokuri2*)body;
 	if (spine->getTime() == 0) {
 		self->changeBck(0xD);
 		JGeometry::TVec3<f32> local_1C = self->mPosition;
@@ -1387,7 +1617,7 @@ DEFINE_NERVE(TNerveHino2Die, TLiveActor)
 		self->emitWaterParticle();
 	}
 
-	if (self->getMActor()->curAnmEndsNext()) {
+	if (Hino2CurAnmEndsNext(self)) {
 		self->unk124->reset();
 		self->goToShortestNextGraphNode();
 		spine->reset();
@@ -1407,10 +1637,10 @@ DEFINE_NERVE(TNerveHino2Stamp, TLiveActor)
 		self->setUnk160(0);
 	}
 
-	if (self->getMActor()->curAnmEndsNext()) {
+	if (Hino2CurAnmEndsNext(self)) {
 		int uVar7 = self->getUnk160();
 		++uVar7;
-		int stampCnt = self->getSaveParam()->mSLStampCount.get();
+		int stampCnt = Hino2Params(self)->mSLStampCount.get();
 		if (uVar7 > stampCnt) {
 			self->setUnk160(0);
 			self->resetPolInterval();
@@ -1422,11 +1652,11 @@ DEFINE_NERVE(TNerveHino2Stamp, TLiveActor)
 
 	int frame = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
 	if (!self->isAirborne() && (frame == 0x1C || frame == 0x3E)) {
-		f32 js = self->getSaveParam()->mSLJumpShake.get();
+		f32 js = Hino2Params(self)->mSLJumpShake.get();
 		if (!(js * js < self->getDistToMarioSquared()))
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK4, 0.8f);
+			SMSGetCameraShakeBound()->startShake(CAM_SHAKE_MODE_ENEMY2, 0.8f);
 
-		f32 sql = self->getSaveParam()->mSLStampQuakeLen.get();
+		f32 sql = Hino2Params(self)->mSLStampQuakeLen.get();
 		sql     = sql * sql;
 		if (self->getDistToMarioSquared() < sql)
 			SMS_SendMessageToMario(self, 3);
@@ -1442,7 +1672,7 @@ DEFINE_NERVE(TNerveHino2Freeze, TLiveActor)
 		self->changeBck(0x16);
 		self->unk184 = 1;
 	}
-	int timer = self->getSaveParam()->getSLFreezeTimerLv0();
+	int timer = ((THino2Params*)self->getSaveParam())->getSLFreezeTimerLv0();
 	if (spine->getTime() >= timer) {
 		self->unk184 = 0;
 		return true;

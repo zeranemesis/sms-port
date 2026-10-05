@@ -37,3 +37,5 @@ void GDOverflowed(void)
 }
 
 void GDSetOverflowCallback(GDOverflowCb callback) { overflowcb = callback; }
+
+GDOverflowCb GDGetOverflowCallback(void) { return overflowcb; }

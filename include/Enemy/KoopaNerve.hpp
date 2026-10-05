@@ -1,59 +1,110 @@
 #ifndef ENEMY_KOOPANERVE_HPP
 #define ENEMY_KOOPANERVE_HPP
 
+#include <Enemy/Koopa.hpp>
+#include <MarioUtil/MathUtil.hpp>
 #include <Strategic/Nerve.hpp>
-#include <Strategic/LiveActor.hpp>
 
-// The ten TKoopa nerve classes are declared here rather than in Enemy/Koopa.hpp
-// because only Enemy/Koopa.cpp can see them in the retail binary. Every one of
-// the KOOPA_NERVE macros below puts a `static Name nerve;` (plus MWCC's `init$`
-// guard and a 12-byte destructor-registration object in .bss) behind
-// Name::theNerve(), so a translation unit that merely *includes* the nerve
-// classes emits all ten statics even when it never calls the accessor.
+class TLiveActor;
+
+// The nerve singletons in this unit are not the DEFINE_NERVE shape: the map
+// mangles their statics as nerve$localstatic0$theNerve__..., which is what
+// MWCC emits for a static inside an *inline* function, so theNerve() was
+// written out in the header. Same as limitkoopa.cpp's ten nerves.
 //
-// Neither build/GMSP01/obj/System/MarNameRefGen_BossEnemy.o nor
-// build/GMSP01/obj/Enemy/koopajr.o contains any of them, although both of those
-// translation units include Koopa.hpp in this tree and both instantiate TKoopa
-// (koopajr.cpp via KoopaJr.hpp). marioEU.MAP likewise lists all twenty
-// `nerve$localstatic0$theNerve__..` / `init$localstatic1$theNerve__..` objects
-// as "found in Enemy.a Koopa.cpp" and nowhere else. Keeping the block in a
-// header that only Koopa.cpp includes is what reproduces that.
-
+// TNerveKoopaTurn's vtable is {0, 0, dtor, 0} with no execute slot filled, so
+// it is an abstract intermediate. Its children are the five nerves whose
+// destructors are 0x6c (two vtable stores) rather than 0x5c: Wait, Tumble,
+// TurnL, TurnR and Flame.
 class TNerveKoopaTurn : public TNerveBase<TLiveActor> {
+public:
+	virtual ~TNerveKoopaTurn() { }
 };
 
-// In the retail binary theNerve() is inlined in every user (weak function-local
-// statics), so the accessor is defined in the class.
-//
-// TODO: marioEU.MAP lists TNerveKoopaTurnL::execute and TNerveKoopaTurnR::execute
-// as *weak*, i.e. they were defined in a header, while every other execute in
-// the TU is a global defined in Koopa.cpp. Defining the two inline here would
-// fix validate-symbol-order.py's linkage check for Koopa.cpp; it is left alone
-// because moving their bodies (and the -180.0f / 360.0f literals they use) out
-// of Koopa.cpp is a reconstruction of those two functions, not a header move.
-#define KOOPA_NERVE(Name, Base)                                                	class Name : public Base {                                                 	public:                                                                    		virtual BOOL execute(TSpineBase<TLiveActor>*) const;                   		static const Name& theNerve()                                          		{                                                                      			static Name nerve;                                                 			return nerve;                                                      		}                                                                      	};
+#define DECLARE_KOOPA_NERVE(Name, Base)                                        \
+	class Name : public Base {                                                 \
+	public:                                                                    \
+		virtual BOOL execute(TSpineBase<TLiveActor>*) const;                   \
+		static const Name& theNerve()                                          \
+		{                                                                      \
+			static Name nerve;                                                 \
+			return nerve;                                                      \
+		}                                                                      \
+	};
 
-// The order of these ten declarations is load-bearing: each KOOPA_NERVE emits a
-// `nerve` static (plus MWCC's init$ guard and a 12-byte destructor-registration
-// object), and MWCC creates those in declaration order. build/GMSP01/obj's
-// .sbss/.bss layout therefore pins the order exactly, and the `addi r5, r31, 0xNN`
-// immediate every theNerve() passes to __register_global_object is the resulting
-// offset:
-//   0x00 TurnR  0x0c TurnL  0x18 Tumble 0x24 Provoke 0x30 Wait
-//   0x3c Flame  0x48 GetDown 0x54 Stagger 0x60 Fall  0x6c GetShowered
-// (`build/binutils/powerpc-eabi-nm.exe -n build/GMSP01/obj/Enemy/Koopa.o`).
-// Note that the TNerveBase-derived nerves Provoke / GetDown are interleaved with
-// the TNerveKoopaTurn-derived ones, so this is the original source order and not a
-// grouping by base class.
-KOOPA_NERVE(TNerveKoopaTurnR, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaTurnL, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaTumble, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaProvoke, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaWait, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaFlame, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaGetDown, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaStagger, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaFall, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaGetShowered, TNerveBase<TLiveActor>);
+// These two nerves' execute symbols are weak, so the bodies were written in
+// the class. They need the complete TKoopa, which is why the whole nerve set
+// lives in this header rather than in Koopa.hpp.
+//
+// One turn routine for both directions, called with a constant `left`: MWCC
+// folds the other arm only after inlining, so its objects (bindings, callee
+// locals, IRO temporaries) stay in each nerve's frame as dead words. That is
+// 0xb0 of the 0x108 both nerves used to be short (docs/catalog/frame-model.md,
+// "Dead code keeps its objects"); the arm order and spelling are frame-inert.
+// TODO: both frames still 0x58 short (0x148/0x150 vs 0x1a0/0x1a8), no stack
+// access to place the rest; a third `turnBody(diff)` arm gives +0x40.
+static inline bool KoopaTurn(TKoopa* koopa, f32 diff, bool left)
+{
+	if (left) {
+		if (diff < -koopa->getTurnSpeed())
+			return koopa->turnBody(-koopa->getTurnStep());
+		else if (diff < 0.0f)
+			return koopa->turnBody(diff);
+	} else {
+		if (diff > koopa->getTurnSpeed())
+			return koopa->turnBody(koopa->getTurnStep());
+		else if (diff > 0.0f)
+			return koopa->turnBody(diff);
+	}
+	return false;
+}
+class TNerveKoopaTurnR : public TNerveKoopaTurn {
+public:
+	virtual BOOL execute(TSpineBase<TLiveActor>* spine) const
+	{
+		TKoopa* koopa = (TKoopa*)spine->getBody();
+		if (KoopaTurn(koopa,
+		               WrapDegreesF(koopa->mTargetDir - koopa->mRotation.y), false))
+			return FALSE;
+		return TRUE;
+	}
+
+	static const TNerveKoopaTurnR& theNerve()
+	{
+		static TNerveKoopaTurnR nerve;
+		return nerve;
+	}
+};
+
+class TNerveKoopaTurnL : public TNerveKoopaTurn {
+public:
+	virtual BOOL execute(TSpineBase<TLiveActor>* spine) const
+	{
+		TKoopa* koopa = (TKoopa*)spine->getBody();
+		if (KoopaTurn(koopa,
+		               WrapDegreesF(koopa->mTargetDir - koopa->mRotation.y), true))
+			return FALSE;
+		return TRUE;
+	}
+
+	static const TNerveKoopaTurnL& theNerve()
+	{
+		static TNerveKoopaTurnL nerve;
+		return nerve;
+	}
+};
+
+// Declaration order is the retail .sbss/.bss order of the nerve statics
+// (TurnR, TurnL, Tumble, Provoke, Wait, Flame, GetDown, Stagger, Fall,
+// GetShowered): MWCC lays out an inline function's local static in the order
+// the inline *definitions* appear in the TU, not by first use.
+DECLARE_KOOPA_NERVE(TNerveKoopaTumble, TNerveKoopaTurn)
+DECLARE_KOOPA_NERVE(TNerveKoopaProvoke, TNerveBase<TLiveActor>)
+DECLARE_KOOPA_NERVE(TNerveKoopaWait, TNerveKoopaTurn)
+DECLARE_KOOPA_NERVE(TNerveKoopaFlame, TNerveKoopaTurn)
+DECLARE_KOOPA_NERVE(TNerveKoopaGetDown, TNerveBase<TLiveActor>)
+DECLARE_KOOPA_NERVE(TNerveKoopaStagger, TNerveBase<TLiveActor>)
+DECLARE_KOOPA_NERVE(TNerveKoopaFall, TNerveBase<TLiveActor>)
+DECLARE_KOOPA_NERVE(TNerveKoopaGetShowered, TNerveBase<TLiveActor>)
 
 #endif

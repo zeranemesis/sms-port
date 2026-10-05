@@ -2,27 +2,79 @@
 #define GC2D_TALK_2D_2_HPP
 
 #include <JSystem/JDrama/JDRViewObj.hpp>
+#include <GC2D/MessageLoader.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
 
 class JUTPoint;
 class J2DPane;
 class J2DSetScreen;
 class J2DTextBox;
-class JMSMesgEntry;
-class TBaseNPC;
-class TMessageLoader;
-class TBoundPane;
 class JUTTexture;
+class TBaseNPC;
+class TBoundPane;
+class TMarioGamePad;
 
 class TTalk2D2;
 class TMarioGamePad;
 
 extern TTalk2D2* gpTalk2D;
 
+/**
+ * @brief The NPC conversation window ("message_2.blo" / the sign board).
+ *
+ * @details Draws up to three lines of thirty characters each, laid out
+ * along a quadratic Bezier curve so the text follows the balloon's shape,
+ * and fades the characters in one at a time. Two screens are used: the
+ * normal balloon (message_2.blo) and the flat sign board
+ * (message_board_1.blo, used when the actor Mario talks to is a sign).
+ *
+ * Pane names in message_2.blo: "me_0" is the balloon root, "me_1".."me_3"
+ * the three line groups, "bac1".."bac3" their backgrounds, "f_1".."f_9"
+ * the three Bezier control points of each line, "cu_1".."cu_3" the
+ * "continue" cursors with their "cc_N"/"cs_N" blink frames, "me_4" the
+ * two-choice window and "slct" its text box, "sc_1"/"sc_2" the choice
+ * cursors.
+ */
 class TTalk2D2 : public JDrama::TViewObj {
 public:
-	TTalk2D2(const char* name = "<TTalk2D2>");
-	virtual ~TTalk2D2();
+	/// Characters per line, and the number of lines.
+	enum {
+		LINE_LENGTH = 30,
+		LINE_NUM    = 3,
+		CHAR_NUM    = LINE_LENGTH * LINE_NUM,
+	};
 
+	/// States of mTalkMode, dispatched by perform().
+	enum ETalkMode {
+		/// Nothing on screen.
+		TALK_MODE_IDLE = 0,
+		/// A message has been set but the window is still closed.
+		TALK_MODE_READY = 1,
+		/// Waiting for the camera to reach its talk position.
+		TALK_MODE_WAIT_CAMERA = 2,
+		/// Counting mWaitTimer down before the window opens.
+		TALK_MODE_WAIT_OPEN = 3,
+		/// Sliding/fading the window in.
+		TALK_MODE_OPENING = 4,
+		/// Open; typing characters out and polling the pad.
+		TALK_MODE_OPEN = 5,
+		/// Closing for good.
+		TALK_MODE_CLOSING = 6,
+		/// Clearing the text to make room for the next page.
+		TALK_MODE_ERASING = 7,
+		/// Board window only: fading the new page in.
+		TALK_MODE_BOARD_APPEAR = 8,
+	};
+
+	/// An NPC whose talk message is forced regardless of the event's ID.
+	struct TNpcMessage {
+		/* 0x0 */ JDrama::TNameRef* mNpc;
+		/* 0x4 */ u32 mMessageID;
+	};
+
+	TTalk2D2(const char* name = "<TTalk2D2>");
+
+	virtual ~TTalk2D2() { }
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -39,95 +91,87 @@ public:
 	void moveTalkWindow();
 	void checkControler();
 	bool closeNormalWindow();
-	void closeBoardWindow();
+	bool closeBoardWindow();
 	bool eraseNormalWindow();
 	bool eraseBoardWindow();
-	void appearBoardBoxWindow();
+	bool appearBoardBoxWindow();
 	void makeLine(f32*, f32*, f32, JUTPoint&, JUTPoint&, JUTPoint&);
 	void setupBoardTextBox(const void*, JMSMesgEntry*);
 	void setupTextBox(const void*, JMSMesgEntry*);
 	void setTagParam(JSUMemoryInputStream&, J2DTextBox&, int*, int*);
 	void openWindow(s8, f32);
 
+	/// Packed RGBA, not JUtility::TColor: retail initialises the table
+	/// statically, which TColor's constructors would prevent.
 	static u32 cColorTable[6];
 
-	int getTalkMode() const { return unk248; }
-	s8 getSelectedValue() const { return unk214; }
+	u32 getTalkMode() const { return mTalkMode; }
+	s8 getSelectedValue() const { return mSelectedValue; }
 
 public:
-	/* 0x10 */ J2DSetScreen* unk10;
-	/* 0x14 */ TBoundPane* unk14;
-	/* 0x18 */ J2DTextBox* unk18;
-	/* 0x1C */ J2DPane* unk1C;
-	/* 0x20 */ J2DPane* unk20;
-	/* 0x24 */ J2DPane* unk24;
-	/* 0x28 */ bool unk28; // TODO: unclear meaning, gates a talkModeOut/startSoundSystemSE branch in forceCloseTalk
-	/* 0x29 */ u8 unk29;
-	/* 0x2A */ char unk2A[0x2C - 0x2A];
-	/* 0x2C */ J2DSetScreen* unk2C;
-	/* 0x30 */ J2DPane* unk30[3];
-	/* 0x3C */ J2DPane* unk3C[3];
-	/* 0x48 */ J2DPane* unk48[3];
-	/* 0x54 */ J2DPane* unk54[3];
-	/* 0x60 */ J2DPane* unk60[3];
-	/* 0x6C */ J2DPane* unk6C[3];
-	/* 0x78 */ J2DPane* unk78[3];
-	/* 0x84 */ J2DPane* unk84[3];
-	/* 0x90 */ J2DPane* unk90; // DOL sets mAlpha to 0xFF during talk-mode transition
-	/* 0x94 */ f32 unk94; // reciprocal sampled curve length, used to normalize talk animation
-	/* 0x98 */ char unk98[0x9C - 0x98];
-	/* 0x9C */ J2DTextBox* unk9C[90]; // created as the 90 curve markers in loadAfter
-	/* 0x204 */ J2DPane* unk204;
-	/* 0x208 */ J2DTextBox* unk208;
-	/* 0x20C */ J2DPane* unk20C[2];
-	/* 0x214 */ s8 unk214; // the line the player selected in a choice window
-	/* 0x215 */ char unk215[0x218 - 0x215];
-	/* 0x218 */ char* mChoiceText[2];
-	/* 0x220 */ s16 unk220; // initialized to 0x1A; used in loadAfter curve geometry
+	/* 0x010 */ J2DSetScreen* mBoardScreen;
+	/* 0x014 */ TBoundPane* mBoardBound;
+	/* 0x018 */ J2DTextBox* mBoardTextBox;
+	/* 0x01C */ J2DPane* mBoardCursor;
+	/* 0x020 */ J2DPane* mBoardCursorOff;
+	/* 0x024 */ J2DPane* mBoardCursorOn;
+	/* 0x028 */ bool mIsBoard;
+	/* 0x029 */ u8 mBoardStep;
+	/* 0x02C */ J2DSetScreen* mScreen;
+	/* 0x030 */ J2DPane* mLinePane[LINE_NUM];
+	/* 0x03C */ J2DPane* mBackPane[LINE_NUM];
+	/* 0x048 */ J2DPane* mBezierStart[LINE_NUM];
+	/* 0x054 */ J2DPane* mBezierCtrl[LINE_NUM];
+	/* 0x060 */ J2DPane* mBezierEnd[LINE_NUM];
+	/* 0x06C */ J2DPane* mCursor[LINE_NUM];
+	/* 0x078 */ J2DPane* mCursorOff[LINE_NUM];
+	/* 0x084 */ J2DPane* mCursorOn[LINE_NUM];
+	/* 0x090 */ J2DPane* mBasePane;
+	/* 0x094 */ f32 mCharStep;
+	/* 0x098 */ u32 unk98;
+	/* 0x09C */ J2DTextBox* mCharBox[CHAR_NUM];
+	/* 0x204 */ J2DPane* mSelectPane;
+	/* 0x208 */ J2DTextBox* mSelectTextBox;
+	/* 0x20C */ J2DPane* mSelectCursor[2];
+	/* 0x214 */ s8 mSelectedValue; // the line the player selected
+	/* 0x218 */ char* mSelectString[2];
+	/* 0x220 */ s16 unk220;
 	/* 0x222 */ s16 unk222;
-	/* 0x224 */ u8 unk224[3]; // per-line open/character progress
-	/* 0x227 */ char unk227[0x228 - 0x227];
-	/* 0x228 */ s32 unk228[3]; // marker counts for the three lines
-	/* 0x234 */ f32 unk234[3]; // per-line opening progress
-	/* 0x240 */ char unk240[0x244 - 0x240];
-	/* 0x244 */ JUTTexture* unk244;
-	/* 0x248 */ u32 unk248; // talk mode
-	/* 0x24C */ TMarioGamePad* unk24C;
-	/* 0x250 */ u8 unk250;
-	/* 0x251 */ s8 unk251;
-	/* 0x252 */ u8 unk252;
-	/* 0x253 */ char unk253;
-	/* 0x254 */ void* unk254;
-	/* 0x258 */ TMessageLoader* unk258;
-	/* 0x25C */ TMessageLoader* unk25C;
-	/* 0x260 */ TMessageLoader* unk260;
-	/* 0x264 */ u32 unk264; // selected message ID
-	/* 0x268 */ char unk268[0x26A - 0x268];
-	/* 0x26A */ u8 unk26A;
-	/* 0x26B */ u8 unk26B;
-	/* 0x26C */ u8 unk26C;
-	/* 0x26D */ u8 unk26D;
-	/* 0x26E */ char unk26E[0x270 - 0x26E];
-	/* 0x270 */ u32 unk270; // secondary message parameter
-	/* 0x274 */ s32 unk274; // current line while parsing the normal message
-	/* 0x278 */ u32 unk278;
-	/* 0x27C */ s32 unk27C;
-	/* 0x280 */ u8 unk280;
-	/* 0x281 */ u8 unk281[0x2DC - 0x281]; // per-marker reveal delay
-	/* 0x2DC */ s16 unk2DC;
-	/* 0x2DE */ u16 unk2DE;
-	/* 0x2E0 */ struct {
-		TBaseNPC* npc;
-		u32 messageID;
-	} unk2E0[10];
-	/* 0x330 */ s16 unk330;
-	/* 0x332 */ s16 unk332;
-	/* 0x334 */ s16 unk334;
-	/* 0x336 */ char unk336[0x338 - 0x336];
-	/* 0x338 */ f32 unk338; // per-frame reveal step
-	/* 0x33C */ f32 unk33C; // initial glyph reveal threshold
-	/* 0x340 */ s16 unk340; // glyph alpha increment
-	/* 0x342 */ char unk342[0x344 - 0x342];
+	/* 0x224 */ u8 mCharCursor[LINE_NUM];
+	/* 0x228 */ int mLineLength[LINE_NUM];
+	/* 0x234 */ f32 mLineProgress[LINE_NUM];
+	/* 0x240 */ u32 unk240;
+	/* 0x244 */ JUTTexture* mBackTexture;
+	/* 0x248 */ u32 mTalkMode;
+	/* 0x24C */ TMarioGamePad* mGamePad;
+	/* 0x250 */ bool mNeedsPrepass;
+	/* 0x251 */ s8 mWaitTimer;
+	/* 0x252 */ bool mIsTalking;
+	/* 0x254 */ JMSMesgEntry* mMesgEntry;
+	/* 0x258 */ TMessageLoader* mMapMessage;
+	/* 0x25C */ TMessageLoader* mSysMessage;
+	/* 0x260 */ TMessageLoader* mCurMessage;
+	/* 0x264 */ u32 mMessageID;
+	/* 0x268 */ u16 unk268;
+	/* 0x26A */ bool mIsLastPage;
+	/* 0x26B */ bool mCursorBlinkUp;
+	/* 0x26C */ bool mFastForward;
+	/* 0x26D */ bool mForceClose;
+	/* 0x270 */ u32 mFlags;
+	/* 0x274 */ int mCurrentLine;
+	/* 0x278 */ int mTextOffset;
+	/* 0x27C */ u32 mCharColor; // see the TColor(u32) conversions at every use
+	/* 0x280 */ u8 mCharDelay;
+	/* 0x281 */ u8 mCharDelays[CHAR_NUM];
+	/* 0x2DC */ s16 mCharTimer;
+	/* 0x2DE */ u16 mCharIndex;
+	/* 0x2E0 */ TNpcMessage mNpcMessages[10];
+	/* 0x330 */ s16 mBaseX;
+	/* 0x332 */ s16 mBaseY;
+	/* 0x334 */ s16 mBaseRotation;
+	/* 0x338 */ f32 mProgressStep;
+	/* 0x33C */ f32 mLineDelay;
+	/* 0x340 */ s16 mAlphaStep;
 };
 
 #endif

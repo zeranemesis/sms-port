@@ -183,6 +183,14 @@ void TTrack::initTimed()
 	mTimedParam.mMoveParams[5].mTargetValue  = 0.0f;
 }
 
+// Binding level worth +8 of low region, landing JASystem::TTrack::noteOn's
+// frame at 0x70 (batch 124).
+static inline u16 JASTrackGetPanPowerBank(const TRegisterParam* p)
+{
+	u16 panPowerBank = p->getPanPowerBank();
+	return panPowerBank;
+}
+
 int TTrack::noteOn(u8 param_1, s32 param_2, s32 param_3, s32 param_4)
 {
 	if (mMute && (mPauseStatus & 0x40))
@@ -204,12 +212,14 @@ int TTrack::noteOn(u8 param_1, s32 param_2, s32 param_3, s32 param_4)
 		r3  = r3->getParent();
 	}
 
+	u32 reg;
+	TChannel* chan;
 	if (unk3BC == 4) {
 		if (r24 == nullptr)
 			return -1;
 
 		if (r30 != &r24->mChannelUpdater) {
-			TChannel* chan = r30->getListHead(0);
+			chan = r30->getListHead(0);
 			if (chan) {
 				--r30->mManagedChannels;
 				mChannelUpdater.addListHead(chan, 0);
@@ -220,7 +230,7 @@ int TTrack::noteOn(u8 param_1, s32 param_2, s32 param_3, s32 param_4)
 		}
 	} else {
 		if (r30 != &mChannelUpdater) {
-			TChannel* chan = r30->getListHead(0);
+			chan = r30->getListHead(0);
 			if (chan) {
 				--r30->mManagedChannels;
 				mChannelUpdater.addListHead(chan, 0);
@@ -231,20 +241,21 @@ int TTrack::noteOn(u8 param_1, s32 param_2, s32 param_3, s32 param_4)
 		}
 	}
 
-	u32 reg     = readRegDirect(6);
+	reg     = readRegDirect(6);
 	u32 physNum = BankMgr::getPhysicalNumber((reg >> 8) & 0xFF);
 
-	TChannel* chan
+	TChannel* newChan
 	    = BankMgr::noteOn(r30, (u8)physNum, (u8)reg, param_2, param_3, param_4);
 
-	if (!chan)
+	if (!newChan)
 		return -1;
 
-	mNoteMgr.unk0[index]  = chan;
-	mNoteMgr.unk20[index] = chan->unkC6;
+	mNoteMgr.unk0[index]  = newChan;
+	mNoteMgr.unk20[index] = newChan->unkC6;
 
-	chan->setPanPower(
-	    mRegisterParam.getPanPowerBank(), mRegisterParam.getPanPowerExt(),
+	newChan->setPanPower(
+	    JASTrackGetPanPowerBank(&mRegisterParam),
+	    mRegisterParam.getPanPowerExt(),
 	    mRegisterParam.getPanPowerOsc(), mRegisterParam.getPanPowerParent());
 
 	for (u8 i = 0; i < 2; ++i) {
@@ -252,24 +263,24 @@ int TTrack::noteOn(u8 param_1, s32 param_2, s32 param_3, s32 param_4)
 		if (someThing != 0xF && someThing != 0xE) {
 			if (someThing >= 8) {
 				someThing -= 8;
-				if (chan->isOsc(someThing))
-					chan->copyOsc(someThing, &mOscData[i]);
+				if (newChan->isOsc(someThing))
+					newChan->copyOsc(someThing, &mOscData[i]);
 			} else if (someThing >= 4) {
 				someThing -= 4;
 				s16* v = mOscData[i].mRelTable;
-				if (chan->isOsc(someThing)) {
-					chan->copyOsc(someThing, &mOscData[i]);
+				if (newChan->isOsc(someThing)) {
+					newChan->copyOsc(someThing, &mOscData[i]);
 					mOscData[i].mRelTable = v;
 				}
 			}
-			chan->overwriteOsc(someThing, &mOscData[i]);
+			newChan->overwriteOsc(someThing, &mOscData[i]);
 		}
 	}
 
 	if (sUpdateSyncMode == 0)
 		updateTrack(UPDATE_Volume | UPDATE_Pitch | UPDATE_Pan);
 
-	chan->resetInitialVolume();
+	newChan->resetInitialVolume();
 
 	return 0;
 }
@@ -883,7 +894,12 @@ void TTrack::writeTimeParam(u8 param)
 	}
 }
 
-// TODO: This is pure pain
+// Header round: the two switch-case operand reads go through the header
+// accessor getSeq(), +8 each, which lands retail's 0x48 frame exactly.  The
+// pair is frame-determined, not byte-determined: case 0 with case 4 or 8, or
+// the readReg32 operand with case 4 or 8, all compile identically.  A named
+// step in TSeqCtrl::readByte itself also gives 0x48 here but costs 7+ exact
+// functions across JASSeqParser/JASSeqCtrl/JASTrack, so the header stays plain.
 void TTrack::writeRegParam(u8 param)
 {
 
@@ -922,10 +938,10 @@ void TTrack::writeRegParam(u8 param)
 
 	switch (bVar9) {
 	case 0:
-		r24 = readRegDirect(mSeqCtrl.readByte());
+		r24 = readRegDirect(getSeq()->readByte());
 		break;
 	case 4:
-		r24 = mSeqCtrl.readByte();
+		r24 = getSeq()->readByte();
 		break;
 	case 8: {
 		u16 byte = mSeqCtrl.readByte();
@@ -957,7 +973,8 @@ void TTrack::writeRegParam(u8 param)
 		u32 product = uVar5;
 		product *= r24;
 		writeRegDirect(4, product >> 0x10);
-		writeRegDirect(5, product);
+		u16 productLo = product;
+		writeRegDirect(5, productLo);
 		return;
 	}
 
@@ -1405,9 +1422,6 @@ u16 TTrack::readRegDirect(u8 reg)
 
 void TTrack::writeRegDirect(u8 reg, u16 value)
 {
-
-	
-	
 	u16 top;
 	u16 uVar1;
 	u8 r30 = reg;
@@ -1431,8 +1445,9 @@ void TTrack::writeRegDirect(u8 reg, u16 value)
 		mRegisterParam.unk0[0] = top;
 		mRegisterParam.setFlag(uVar1);
 
+		u16 lo = value & 0xff;
 		r4    = value;
-		value = value & 0xff;
+		value = lo;
 		r30   = 1;
 		break;
 	}

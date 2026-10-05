@@ -51,11 +51,8 @@ SDLModelData* TModelDataKeeper::createAndKeepData(const char* name, u32 flags)
 	while (node->getNext())
 		node = node->getNext();
 
-	SDLModelData* data = loadModelData(name, flags, mFolder);
+	SDLModelData* data = loadModelData(name, flags, getFolder());
 	node->registerDataAndJoinNewNode(data, name);
-
-	
-	
 	return data;
 }
 
@@ -71,7 +68,7 @@ int TModelDataKeeper::getIndex(const char* name) const
 {
 	u16 key = JDrama::TNameRef::calcKeyCode(name);
 
-	const TModelDataNode* node = &mHead;
+	const TModelDataNode* node = getHead();
 	for (u32 i = 0; node && node->getData(); ++i) {
 		if (node->isSameName(name, key))
 			return i;
@@ -82,9 +79,6 @@ int TModelDataKeeper::getIndex(const char* name) const
 
 SDLModelData* TModelDataKeeper::getDataByName(const char* name) const
 {
-
-	
-	
 	int idx = getIndex(name);
 	if (idx < 0)
 		return nullptr;
@@ -122,9 +116,6 @@ MActor* TMActorKeeper::createAndRegister(SDLModelData* model_data,
 
 MActor* TMActorKeeper::getMActor(const char* name) const
 {
-
-	
-	
 	if (!getModelDataKeeper())
 		return mActors[0];
 
@@ -161,27 +152,26 @@ MActor* TMActorKeeper::createMActor(const char* model_data_name, u32 flags)
 	int index = keeper->getIndex(model_data_name);
 
 	if (index < 0) {
-		keeper->createAndKeepData(model_data_name, mModelLoaderFlags);
+		keeper->keepModelData(model_data_name, getModelLoaderFlags());
 		index = keeper->getIndex(model_data_name);
 	}
 
-	// TODO: fabricated structure - the original contains createMActorFromNthData's
-	// statements directly here, not a call (no bl createMActorFromNthData in the
-	// target's ObjModel.s, and the tail does not re-load mModelDataKeeper).
-	// Residual: loadModelData/registerDataAndJoinNewNode are inlined here but called
-	// in the target (frame 0x1a8 vs 0xa0), and the saved-register binding for
-	// this/name/flags/keeper is rotated. Neither structure reproduces both.
-	mActorModelDataIndices[mActorNum] = index;
-	SDLModelData* data = keeper->getNthData(index);
+	// createMActorFromNthData's body, duplicated in the original: routing this
+	// through the method leaves createAndRegister at depth 2, where MWCC
+	// refuses it and the whole allocator ranking shifts (77.5% vs 100%).
+	mActorModelDataIndices[getActorNum()] = index;
+	SDLModelData* data                = keeper->getNthData(index);
 	return createAndRegister(data, flags);
 }
 
+// Returns void, not MActor*: with a pointer return type and no `return`
+// statement MWCC keeps r3 reserved for the result across the whole body, so
+// the inlined getModelDataNum node walk was pushed into r5/r4 where retail
+// runs it in r3. Both callers (TAnimalBase::loadAfter, TBossEel::init)
+// discard the result. Same mechanism as TMarioGamePad::read().
 void TMActorKeeper::createMActorFromAllBmd(u32 flags)
 {
-
-	
-	
-	int num = mModelDataKeeper->getModelDataNum();
+	int num = getModelDataKeeper()->getModelDataNum();
 	for (int i = 0; i < num; ++i)
 		createMActorFromNthData(i, flags);
 }
@@ -206,15 +196,12 @@ TMActorKeeper::TMActorKeeper(TLiveManager* param_1, u16 param_2)
 
 TMActorKeeper::TMActorKeeper(TLiveManager* param_1)
 {
-
-	
-	
 	if (param_1) {
 		mModelDataKeeper = param_1->getModelDataKeeper();
 		mActorAnmData    = param_1->getMActorAnmData();
 	}
 
-	mModelDataNum          = mModelDataKeeper->getModelDataNum();
+	mModelDataNum          = getModelDataKeeper()->getModelDataNum();
 	mActorNum              = 0;
 	mActors                = new MActor*[mModelDataNum];
 	mActorModelDataIndices = new u16[mModelDataNum];

@@ -37,6 +37,24 @@ TBoidLeader::TBoidLeader(int num, const char* name)
 	mFlags |= FLAG_SIMULATE;
 }
 
+// TODO: 96.1%. Frame 0x150 vs 0x1e0. Retail reloads mNeighborRadius after
+// the first separation store (`lfs f27, 0x24(r28)`), so the sites read the
+// member, not a `radius` local (cc32). The structural residue is the
+// `d / d2 * r` product: retail copies the quotient through its own return
+// slot (0x84 -> 0x110 -> 0xc0, six instructions per site) before the
+// product's argument copy, i.e. its operator* took the quotient by
+// reference. A TU-local `BoidMul(const TVec3& v, f32 s) { return v * s; }`
+// at both sites reproduces those copies (96.1 -> 98.3, frame 0x168) but the
+// frame stays 0x78 short and the third loop's six hoisted literals take
+// callee-saved FPRs in another order (retail f27/f26/f23/f28/f25/f24), so it
+// is not committed; the header-level operator* form is the known-open
+// by-value-return class (JGVec3.hpp's comment above operator*). Rejected: an
+// explicit `JGeometry::TVec3<f32>(d / d2)` temporary (93.1), `BoidMul2` with
+// a named copy and `*=` (97.7), `BoidDiv(d, d2) * r` (90.3).
+// c-link5 re-measure: `BoidMul` at the two separation sites now scores 96.1
+// (frame 0x168, markers unchanged), not 98.3; adding it at the final
+// `mHeading * speed * length()` product (0x178), nesting it there (93.9) or
+// a copy-and-`*=` body (96.1) are no better.
 void TBoidLeader::calcBoids()
 {
 	TBoid* i;
@@ -61,10 +79,9 @@ void TBoidLeader::calcBoids()
 				if (d2 < 0.001f)
 					continue;
 
-				f32 radius = mNeighborRadius;
-				if (d2 < radius * radius) {
-					i->mSeparationForce += d / d2 * radius;
-					j->mSeparationForce -= d / d2 * radius;
+				if (d2 < mNeighborRadius * mNeighborRadius) {
+					i->mSeparationForce += d / d2 * mNeighborRadius;
+					j->mSeparationForce -= d / d2 * mNeighborRadius;
 
 					i->mAlignmentForce += j->mHeading;
 					j->mAlignmentForce += i->mHeading;
@@ -172,13 +189,28 @@ void TBoidLeader::updateGoal()
 }
 
 JGeometry::TVec3<f32>
+// Closed by re-pass II: the 4 extra bytes were `TUtil<f32>::one()`, which the
+// rules card already prices at +4 -- `normalize()` is
+// `setLength(*this, TUtil<f32>::one())`, so spelling the unit vector
+// `force.setLength(1.0f)` drops that one level and lands retail's 0x48 frame
+// and every displacement (99.6 -> 100.0). Only `calcGoalForce` wants it: the
+// same respelling is -8 in `calcForces` (0xa0 -> 0x98, still 8 over, and
+// 99.6 -> 99.5) and -8 in `calcBoids`, which is already 144 bytes short, so
+// the spelling is per call site here.
+// Inert on this function, measured in the same pass: a consumed
+// `const TVec3<f32>& goal = mGoal.getPoint();` binding, the pointer form
+// `const TVec3<f32>* goal = &mGoal.getPoint();`, `force.set(0,0,0)` for
+// `zero()`, and splitting `force` into one local per branch with an early
+// return (0x60). Worse: `force = mGraphGoal` for `force.set(mGraphGoal)`
+// (97.3). Statement-by-statement pool triage: every `+=`/`-=`/`*=` site costs
+// 0 bytes and the whole low region is the normalize expansion's 16.
 TBoidLeader::calcGoalForce(const JGeometry::TVec3<f32>& pos) const
 {
 	JGeometry::TVec3<f32> force;
 	if (mFlags & FLAG_USE_GRAPH_GOAL) {
 		force.set(mGraphGoal);
 		force -= pos;
-		force.normalize();
+		force.setLength(1.0f);
 	} else {
 		force.set(mGoal.getPoint());
 		force += mGoalOffset;
@@ -194,10 +226,24 @@ TBoidLeader::calcGoalForce(const JGeometry::TVec3<f32>& pos) const
 	return force;
 }
 
+// A direct-return level around the alignment product: it moves the
+// operator's by-value argument below calcGoalForce's return slot, retail's
+// pool order (cc32; a helper wrapping the whole `+=` or a scalar fork over
+// mAlignmentStrength is not it).
+static inline JGeometry::TVec3<f32> BoidAlignForce(const TBoidLeader* leader,
+                                                   const TBoid* boid)
+{
+	return boid->mAlignmentForce * leader->mAlignmentStrength;
+}
+
+// `away` is declared at the top and assigned later so it sits directly
+// under `force` in the named block, as retail's (cc32). TPathNode's
+// getPointRaw at the mFleeTarget site is -0x10 of frame against getPoint.
 JGeometry::TVec3<f32> TBoidLeader::calcForces(const TBoid* boid) const
 {
 	JGeometry::TVec3<f32> force = boid->mSeparationForce;
-	force += boid->mAlignmentForce * mAlignmentStrength;
+	JGeometry::TVec3<f32> away;
+	force += BoidAlignForce(this, boid);
 	force += boid->mCohesionForce;
 	force += calcGoalForce(boid->mPosition);
 
@@ -210,8 +256,8 @@ JGeometry::TVec3<f32> TBoidLeader::calcForces(const TBoid* boid) const
 	if (0.0f < mFleeRadius) {
 		f32 tmp = mFleeRadius;
 
-		JGeometry::TVec3<f32> away = boid->mPosition;
-		away -= mFleeTarget.getPoint();
+		away = boid->mPosition;
+		away -= mFleeTarget.getPointRaw();
 		f32 d2 = away.squared();
 		if (0.0f < d2 && d2 < tmp * tmp) {
 			away.setLength(mFleeStrength);

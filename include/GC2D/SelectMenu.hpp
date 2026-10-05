@@ -44,6 +44,11 @@ public:
 	void startOpenWindow();
 	void startCloseWindow();
 
+	// Inlined into perform (fabricated names): retail lays out the switch's
+	// and the 2D draw's stack objects as two inlined callees'.
+	void update();
+	void draw(JDrama::TGraphics* gfx);
+
 public:
 	enum SelectMenuState {
 		// Close the menu.
@@ -178,7 +183,7 @@ public:
 	// 3 - got
 	/* 0x150 */ u8 mShineUnlockStates[8];
 
-	/* 0x158 */ void* mScenarioBmg;
+	/* 0x158 */ void* mStageBmg;
 	/* 0x15C */ void* mScenarioBmg2;
 
 	// Unused; look like this has been moved to TSelectGrad.

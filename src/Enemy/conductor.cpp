@@ -21,6 +21,37 @@
 
 TConductor* gpConductor;
 
+// TU-local binders: named return steps that close genEnemy / perform /
+// isBossDefeated frames. Do not lift them into Conductor.hpp.
+static inline f32 conductorRadiusMin(TConductor* c)
+{
+	f32 v = c->unk84.mGenerateRadiusMin.get();
+	return v;
+}
+
+static inline f32 conductorRadiusMax(TConductor* c)
+{
+	f32 v = c->unk84.mGenerateRadiusMax.get();
+	return v;
+}
+
+static inline TAreaCylinderManager* conductorAppearArea(TConductor* c)
+{
+	TAreaCylinderManager* area = c->unkF8;
+	return area;
+}
+
+static inline TSpineEnemy* conductorFirstObj(TObjManager* mgr)
+{
+	return (TSpineEnemy*)mgr->getObj(0);
+}
+
+static inline int conductorObjNum(TLiveManager* mgr)
+{
+	int n = mgr->getObjNum();
+	return n;
+}
+
 TConductor::TCondParams::TCondParams()
     : TParams("/conductor.prm")
     , PARAM_INIT(mEnemyFarClip, 5000.0f)
@@ -94,11 +125,14 @@ void TConductor::registerEnemyInfoTable(TStageEnemyInfoTable* param_1)
 
 void TConductor::init()
 {
-	JGadget::TList<TEnemyManager*>::iterator it, e;
-	for (it = unk20.begin(), e = unk20.end(); it != e; ++it)
-		if (!(*it)->search("ヒノクリ２マネージャー")
-		    && !(*it)->search("ボスゲッソーマネージャー"))
-			(*it)->createEnemies((*it)->getCapacity());
+	for (JGadget::TList<TEnemyManager*>::iterator it = unk20.begin(),
+	                                              e  = unk20.end();
+	     it != e; ++it) {
+		if ((*it)->search("ヒノクリ２マネージャー") == nullptr) {
+			if ((*it)->search("ボスゲッソーマネージャー") == nullptr)
+				(*it)->createEnemies((*it)->getCapacity());
+		}
+	}
 
 	unkF8 = (TAreaCylinderManager*)search("ナメクリ出現エリアマネージャー");
 }
@@ -117,8 +151,9 @@ TLiveManager* TConductor::getManagerByName(const char* name)
 {
 	u16 key = JDrama::TNameRef::calcKeyCode(name);
 
-	JGadget::TList<TLiveManager*>::iterator it, e;
-	for (it = unk10.begin(), e = unk10.end(); it != e; ++it)
+	for (JGadget::TList<TLiveManager*>::iterator it = unk10.begin(),
+	                                             e  = unk10.end();
+	     it != e; ++it)
 		if ((*it)->searchF(key, name))
 			return *it;
 
@@ -129,12 +164,25 @@ void TConductor::polluterExterminated() { }
 
 BOOL TConductor::isBossDefeated()
 {
+	// Retail sends every map but 3 to the hinokuri arm (pivots cmpwi 2 /
+	// cmpwi 4: 2, below 2 and 4 upwards all branch there), so case 2 is also
+	// the default; without it maps other than 2 and 3 fell off the end.
+	// TODO: 95.6%. `case 2: default:` folds retail's tree into a single
+	// `cmpwi 3` test. Retail's tree needs a third case value: an extra
+	// label (`case 0:` 98.1, `case 5:` 98.4) reproduces it but has no
+	// evidence behind it. Already tried without that label: `default:` above
+	// `case 2:`, `default: ;`, an empty `case 4:`, an int switch operand,
+	// `case 3:` first (28.8), the hinokuri body after the switch (~29) and
+	// an if/else on map 3 (95.0). The remaining residue is the 4-low
+	// iterator slots. Dropping `default:` scores 98.8 but sends maps other
+	// than 2 and 3 off the end again, so it is not an option.
 	switch (gpMarDirector->mMap) {
-	case 2: {
+	case 2:
+	default: {
 		TLiveManager* mgr = getManagerByName("ヒノクリ２マネージャー");
 		if (!mgr)
 			return true;
-		for (int i = 0; i < mgr->getObjNum(); ++i)
+		for (int i = 0; i < conductorObjNum(mgr); ++i)
 			if (!((TSpineEnemy*)mgr->getObj(i))->checkLiveFlag(LIVE_FLAG_UNK40))
 				return false;
 
@@ -166,7 +214,7 @@ int TConductor::makeEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 
 	int result = 0;
 
-	for (int i = 0; i < mgr->getObjNum(); ++i) {
+	for (int i = 0; i < mgr->mObjNum; ++i) {
 		TLiveActor* actor = (TLiveActor*)mgr->getObj(i);
 		if (actor->checkLiveFlag(LIVE_FLAG_DEAD)) {
 			((TSpineEnemy*)actor)->resetToPosition(param_1);
@@ -179,7 +227,7 @@ int TConductor::makeEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 	if (param_4 == 0)
 		return result;
 
-	for (int i = 0; i < mgr->getObjNum(); ++i) {
+	for (int i = 0; i < mgr->mObjNum; ++i) {
 		TLiveActor* actor = (TLiveActor*)mgr->getObj(i);
 		if (!actor->checkLiveFlag(LIVE_FLAG_DEAD)
 		    && actor->checkLiveFlag(LIVE_FLAG_UNK800)
@@ -194,7 +242,7 @@ int TConductor::makeEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 	if (param_4 == 1)
 		return result;
 
-	for (int i = 0; i < mgr->getObjNum(); ++i) {
+	for (int i = 0; i < mgr->mObjNum; ++i) {
 		TLiveActor* actor = (TLiveActor*)mgr->getObj(i);
 		if (!actor->checkLiveFlag(LIVE_FLAG_DEAD)
 		    && !actor->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)
@@ -209,16 +257,18 @@ int TConductor::makeEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 	return result;
 }
 
-TSpineEnemy*
+	TSpineEnemy*
 TConductor::makeOneEnemyAppear(const JGeometry::TVec3<f32>& param_1,
                                const char* param_2, int param_3)
 {
+	TSpineEnemy* actor;
 	TEnemyManager* mgr = (TEnemyManager*)getManagerByName(param_2);
 
 	if (!mgr)
 		return nullptr;
 
-	if (TSpineEnemy* actor = (TSpineEnemy*)mgr->getActorByFlag(0x1)) {
+	actor = (TSpineEnemy*)mgr->getActorByFlag(0x1);
+	if (actor) {
 		actor->resetToPosition(param_1);
 		return actor;
 	}
@@ -226,7 +276,8 @@ TConductor::makeOneEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 	if (param_3 == 0)
 		return nullptr;
 
-	if (TSpineEnemy* actor = (TSpineEnemy*)mgr->getActorByFlag(0x804)) {
+	actor = (TSpineEnemy*)mgr->getActorByFlag(0x804);
+	if (actor) {
 		actor->resetToPosition(param_1);
 		return actor;
 	}
@@ -234,21 +285,36 @@ TConductor::makeOneEnemyAppear(const JGeometry::TVec3<f32>& param_1,
 	if (param_3 == 1)
 		return nullptr;
 
-	TSpineEnemy* enemy = mgr->getObj(0);
-	enemy->resetToPosition(param_1);
-	return enemy;
+	actor = conductorFirstObj(mgr);
+	actor->resetToPosition(param_1);
+	return actor;
 }
 
 void TConductor::killEnemiesWithin(const JGeometry::TVec3<f32>& param_1,
                                    f32 param_2)
 {
-	JGadget::TList<TEnemyManager*>::iterator it, e;
-	for (it = unk20.begin(), e = unk20.end(); it != e; ++it) {
-		if ((*it)->search("ボスワンワンマネージャー") == nullptr)
+	for (JGadget::TList<TEnemyManager*>::iterator it = unk20.begin(),
+	                                              e  = unk20.end();
+	     it != e; ++it) {
+		if (!(*it)->search("ボスワンワンマネージャー"))
 			(*it)->killChildrenWithin(param_1, param_2);
 	}
 }
 
+// TODO: the inlined getManagerByName's `it != e` copies (0x60/0x64) and `data`
+// (0x88) sit 4 below retail. Tried: `== nullptr` vs `!` on unkF0/info/mgr/
+// enemy, naming the manager name or the TLiveManager result,
+// SMSGetMarDirector()/SMSGetMap()/SMSGetPollution() forks (+4 on every slot),
+// raw `.value`, raw *gpMarioPos, raw unkF8, data declared at the top.
+// c-m28: regalloc.py pins the other residue: MsRandF's result (@1454, an
+// IRO temp) is coloured after the l/r bindings; retail colours it first
+// (moving it to the front of the order gives f31). TMsRange, named results,
+// `minR += (maxR - minR) * MsRandF()` spellings keep f30.
+// c-k12 debugger: ours has two named words (maxR, theta) between targetPos
+// and data where retail has one, retail one more inline word right below
+// data, and ours one more between getManagerByName's copies (0x70/0x64).
+// Without the radius binders the frame drops to 0xc8-0xd0; `maxR` unnamed is
+// 0xe0 with more slots wrong; hsearch 150 s: only a named MsRandF() (refused).
 void TConductor::genEnemyFromPollution()
 {
 	if (unkFC == 0)
@@ -257,7 +323,7 @@ void TConductor::genEnemyFromPollution()
 	if (!unkF0)
 		return;
 
-	if (gpMarDirector->mMoveTickCount % unk84.mGenerateTime.get() != 1)
+	if (gpMarDirector->unk58 % unk84.mGenerateTime.get() != 1)
 		return;
 
 	TStageEnemyInfo* info = unkF0->getMatchedInfo(0x1);
@@ -270,13 +336,15 @@ void TConductor::genEnemyFromPollution()
 	if (!mgr)
 		return;
 
-	JGeometry::TVec3<f32> targetPos = *gpMarioPos;
-	f32 r                           = MsRandF(unk84.mGenerateRadiusMin.get(),
-	                                          unk84.mGenerateRadiusMax.get());
+	f32 minR;
+	JGeometry::TVec3<f32> targetPos = SMS_GetMarioPos();
+	minR = conductorRadiusMin(this);
+	f32 maxR                        = conductorRadiusMax(this);
+	minR                            = MsRandF(minR, maxR);
 
 	f32 theta = MsRandF() * 360 * (65536.0f / 360.0f);
-	targetPos.x += r * JMASSin(theta);
-	targetPos.z += r * JMASCos(theta);
+	targetPos.x += minR * JMASSin(theta);
+	targetPos.z += minR * JMASCos(theta);
 
 	const TBGCheckData* data;
 	targetPos.y = gpMap->checkGround(targetPos, &data) + 1.0f;
@@ -285,7 +353,8 @@ void TConductor::genEnemyFromPollution()
 		return;
 
 	if (unkF8 != nullptr) {
-		TAreaCylinder* cyl = unkF8->getCylinderContains(targetPos);
+		TAreaCylinder* cyl
+		    = conductorAppearArea(this)->getCylinderContains(targetPos);
 		if (!cyl) {
 			f32 f = unk84.mGenerateProp.get();
 			if (MsRandF() > f)
@@ -305,9 +374,9 @@ void TConductor::genEnemyFromPollution()
 		return;
 
 	enemy->resetToPosition(targetPos);
-	enemy->moveObject();
+	enemy->calcRootMatrix();
 	if (enemy->getModel())
-		enemy->getModel()->entry();
+		enemy->getModel()->calc();
 }
 
 void TConductor::clipAloneActors(JDrama::TGraphics* param_1)
@@ -315,8 +384,8 @@ void TConductor::clipAloneActors(JDrama::TGraphics* param_1)
 	JGadget::TList<TLiveActor*>::iterator it = unk30.begin(), e = unk30.end();
 
 	SetViewFrustumClipCheckPerspective(
-	    gpCamera->getFovy(), gpCamera->getAspect(), param_1->getNearPlane(),
-	    unk84.getEnemyFarClip());
+	    SMSGetCameraBound()->getFovy(), gpCamera->getAspect(),
+	    param_1->getNearPlane(), unk84.getEnemyFarClip());
 
 	for (; it != e; ++it) {
 		TLiveActor* actor = *it;
@@ -366,7 +435,7 @@ JDrama::TNameRef* TConductor::searchF(u16 key, const char* name)
 
 void TConductor::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if ((cue & CUE_MOVE) && gpMarDirector->unk124 == 0)
+	if ((cue & CUE_MOVE) && SMSGetMarDirector()->unk124 == 0)
 		genEnemyFromPollution();
 
 	for (int i = 1; i >= 0; --i) {
@@ -402,26 +471,31 @@ void TConductor::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	{
-		JGadget::TList<TGenerator*>::iterator it, e;
-		for (it = unk60.begin(), e = unk60.end(); it != e; ++it)
+		for (JGadget::TList<TGenerator*>::iterator it = unk60.begin(),
+		                                           e  = unk60.end();
+		     it != e; ++it)
 			(*it)->testPerform(cue, graphics);
 	}
 
 	{
-		JGadget::TList<JDrama::TViewObj*>::iterator it, e;
-		for (it = unk40.begin(), e = unk40.end(); it != e; ++it)
+		for (JGadget::TList<JDrama::TViewObj*>::iterator it = unk40.begin(),
+		                                                 e  = unk40.end();
+		     it != e; ++it)
 			(*it)->testPerform(cue, graphics);
 	}
 
 	{
-		JGadget::TList<TAreaCylinderManager*>::iterator it, e;
-		for (it = unk50.begin(), e = unk50.end(); it != e; ++it)
+		for (JGadget::TList<TAreaCylinderManager*>::iterator it
+		     = unk50.begin(),
+		     e = unk50.end();
+		     it != e; ++it)
 			(*it)->testPerform(cue, graphics);
 	}
 
 	if (cue & CUE_ENTRY) {
-		JGadget::TList<SDLModelData*>::iterator it, e;
-		for (it = unk70.begin(), e = unk70.end(); it != e; ++it)
+		for (JGadget::TList<SDLModelData*>::iterator it = unk70.begin(),
+		                                             e  = unk70.end();
+		     it != e; ++it)
 			(*it)->entrySDLModels();
 	}
 

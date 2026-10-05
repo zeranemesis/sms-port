@@ -70,11 +70,15 @@ public:
 
 class TLookAtCamera : public TCamera {
 public:
+	// Parameter order position, up, target (the JSG accessor order and the
+	// member order): TSelectDir::rsetup, the only caller, creates its three
+	// TVec3 temporaries in that order in retail (slots high to low) and gets
+	// retail's f2/f3/f4 constant registers only this way (c-k31).
 	TLookAtCamera(const JGeometry::TVec3<f32>& position,
-	              const JGeometry::TVec3<f32>& target,
-	              const JGeometry::TVec3<f32>& up, f32 fovy, f32 aspect,
-	              const char* name)
-	    : TCamera(50.0f, 10000.0f, name)
+	              const JGeometry::TVec3<f32>& up,
+	              const JGeometry::TVec3<f32>& target, f32 fovy, f32 aspect,
+	              const char* name, f32 near = 50.0f, f32 far = 10000.0f)
+	    : TCamera(near, far, name)
 	{
 		mUp       = up;
 		mTarget   = target;
@@ -111,8 +115,15 @@ public:
 
 class TOrthoProj : public TCamera {
 public:
-	TOrthoProj(f32 near, f32 far, f32 top, f32 bottom, f32 left, f32 right)
-	    : TCamera(near, far, "<TOrthoProj>")
+	// The edges come as (left, top, bottom, right) while mField is stored
+	// {left, top, right, bottom} (perform() passes mField[1], [3], [0], [2]
+	// to C_MTXOrtho as top, bottom, left, right). MWCC evaluates the call's
+	// arguments right to left, so retail's render-size cameras, which call
+	// SMSGetGameRenderWidth() before SMSGetGameRenderHeight() and store the
+	// width in mField[2], pass (..., height, width).
+	TOrthoProj(f32 near, f32 far, f32 left, f32 top, f32 bottom, f32 right,
+	           const char* name = "<TOrthoProj>")
+	    : TCamera(near, far, name)
 	{
 		mField[0] = left;
 		mField[1] = top;

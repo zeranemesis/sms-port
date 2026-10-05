@@ -40,6 +40,18 @@ class TMarDirector;
 extern TMarDirector* gpMarDirector;
 inline TMarDirector* SMSGetMarDirector() { return gpMarDirector; }
 
+// Fabricated: the director bound to a named local before it is returned.
+// Many sites read the director through such a binding level, each expansion
+// +8 (+0x10 at some) of low region over SMSGetMarDirector; the plain
+// accessor as a binder costs far more sites than it gains (research batch
+// c-r30), so the two spellings are separate. Formerly parked TU-locally in
+// 19 units under 21 names.
+inline TMarDirector* SMSGetMarDirectorBound()
+{
+	TMarDirector* director = gpMarDirector;
+	return director;
+}
+
 enum {
 	// Some kind of light-related cues?
 	CUE_UNK10000 = 0x10000,
@@ -137,15 +149,30 @@ public:
 	// fabricated
 	u8 getCurrentMap() { return mMap; }
 	u8 getCurrentStage() { return unk7D; }
-	BOOL checkFlag(u16 flag) const { return mFlags & flag; }
-	void onFlag(u16 flag) { mFlags |= flag; }
-	void offFlag(u16 flag) { mFlags &= ~flag; }
-	bool checkDemoFlag(int flag) const { return mDemoFlags & flag; }
-	void onDemoFlag(int flag) { mDemoFlags |= flag; }
-	void offDemoFlag(int flag) { mDemoFlags &= ~flag; }
-	BOOL checkTransitionFlag(int flag) const { return mTransitionFlags & flag; }
-	void onTransitionFlag(int flag) { mTransitionFlags |= flag; }
-	void offTransitionFlag(int flag) { mTransitionFlags &= ~flag; }
+	// The const qualifier is load-bearing: the ROM re-reads unk4C/unk4E for
+	// every on/off after testing it, which only happens when the test goes
+	// through a const-qualified inline and the modify through a non-const one
+	// (MarDirectorDirect::updateGameMode, 0x802979B4).
+	bool checkUnk4CFlag(int flag) const { return unk4C & flag; }
+	void onUnk4CFlag(int flag) { unk4C |= flag; }
+	void offUnk4CFlag(int flag) { unk4C &= ~flag; }
+	bool checkUnk4EFlag(int flag) const { return unk4E & flag; }
+	bool checkUnk50Flag(int flag) const { return unk50 & flag; }
+	void onUnk4EFlag(int flag) { unk4E |= flag; }
+	void offUnk4EFlag(int flag) { unk4E &= ~flag; }
+	// Upstream's accessors over the same three words (unk4C = director
+	// flags, unk4E = demo flags, unk50 = transition flags). The BOOL returns
+	// and the extra level differ in codegen from the bool ones above, so a
+	// site picks whichever the ROM shows.
+	BOOL checkFlag(u16 flag) const { return unk4C & flag; }
+	void onFlag(u16 flag) { unk4C |= flag; }
+	void offFlag(u16 flag) { unk4C &= ~flag; }
+	bool checkDemoFlag(int flag) const { return unk4E & flag; }
+	void onDemoFlag(int flag) { unk4E |= flag; }
+	void offDemoFlag(int flag) { unk4E &= ~flag; }
+	BOOL checkTransitionFlag(int flag) const { return unk50 & flag; }
+	void onTransitionFlag(int flag) { unk50 |= flag; }
+	void offTransitionFlag(int flag) { unk50 &= ~flag; }
 	TGCConsole2* getConsole() { return mConsole; }
 
 	bool isTalkModeNow() const { return unk124 == 1 || unk124 == 2; }
@@ -164,13 +191,18 @@ public:
 	bool isThing() const { return isTalkModeNow() || unk124 == 4; }
 
 	void* getUnkD4() { return unkD4; }
-	TBaseNPC* getTalkingNPC() { return unkA0; }
+	TBaseNPC* getTalkingNPC()
+	{
+		TBaseNPC* talkingNPC = unkA0;
+		return talkingNPC;
+	}
 
 	int getRestTime()
 	{
 		s64 ticks = OSCheckStopwatch(&unkE8);
 		int time  = OSTicksToMilliseconds(ticks) / 10;
-		return unk120 - time;
+		int rest  = unk120 - time;
+		return rest;
 	}
 
 	void startTimer() { unkC8 = OSCheckStopwatch(&unkE8); }
@@ -178,17 +210,22 @@ public:
 
 public:
 	enum {
-		STATE_UNK0       = 0,
-		STATE_UNK1       = 1,
-		STATE_UNK2       = 2,
-		STATE_UNK3       = 3,
-		STATE_UNK4       = 4,
-		STATE_PAUSE_MENU = 5,
-		STATE_UNK7       = 7,
-		STATE_UNK9       = 9,
-		STATE_GUIDE      = 10,
-		STATE_CARD_SAVE  = 11,
-		STATE_UNK12      = 12,
+		STATE_UNK0  = 0,
+		STATE_UNK1  = 1,
+		STATE_UNK2  = 2,
+		STATE_UNK3  = 3,
+		STATE_UNK4  = 4,
+		STATE_UNK5  = 5,
+		STATE_UNK7  = 7,
+		STATE_UNK9  = 9,
+		STATE_UNK10 = 10,
+		STATE_UNK11 = 11,
+		STATE_UNK12 = 12,
+
+		// upstream names
+		STATE_PAUSE_MENU = STATE_UNK5,
+		STATE_GUIDE      = STATE_UNK10,
+		STATE_CARD_SAVE  = STATE_UNK11,
 	};
 
 	enum {
@@ -234,12 +271,12 @@ public:
 	/* 0x40 */ TPerformList* unk40;
 	/* 0x44 */ TPerformList* mShinePfLstMov;
 	/* 0x48 */ TPerformList* mShinePfLstAnm;
-	/* 0x4C */ u16 mFlags;
-	/* 0x4E */ u16 mDemoFlags;
-	/* 0x50 */ u16 mTransitionFlags;
-	/* 0x54 */ int mPendingSimulationTime;
-	/* 0x58 */ int mMoveTickCount;
-	/* 0x5C */ int mTickCount;
+	/* 0x4C */ u16 unk4C;
+	/* 0x4E */ u16 unk4E;
+	/* 0x50 */ u16 unk50;
+	/* 0x54 */ int unk54;
+	/* 0x58 */ int unk58;
+	/* 0x5C */ int unk5C;
 	/* 0x60 */ int unk60;
 	/* 0x64 */ u8 mState;
 	/* 0x68 */ u32 unk68;
@@ -253,7 +290,7 @@ public:
 	/* 0x7F */ u8 unk7F;
 	/* 0x80 */ JDrama::TViewObjPtrListT<JDrama::TViewObj>* unk80;
 	/* 0x84 */ TTalkCursor* unk84;
-	/* 0x88 */ JGadget::TVector_pointer<TBaseNPC> unk88;
+	/* 0x88 */ JGadget::TVector_pointer<TBaseNPC*> unk88;
 	/* 0xA0 */ TBaseNPC* unkA0; // talking NPC
 	/* 0xA4 */ u32 unkA4;
 	/* 0xA8 */ char unkA8[0x4];
@@ -274,18 +311,20 @@ public:
 	/* 0xE4 */ u32 unkE4;
 	/* 0xE8 */ OSStopwatch unkE8;
 	/* 0x120 */ int unk120;
+	// A u8, confirmed: every reader loads it with `lbz` and compares with a
+	// signed `cmpwi`, including TTalk2D2::perform's one-case switch.
 	/* 0x124 */ u8 unk124; // Game state, paused, shine animation, 2=talking
 	/* 0x125 */ u8 unk125;
 	/* 0x126 */ u8 unk126; // Next game state
 	/* 0x128 */ u16 unk128;
-	/* 0x12C */ TDemoInfo mDemoQueue[8];
-	/* 0x24C */ u8 mDemoQueueTail;
-	/* 0x24D */ u8 mDemoQueueHead;
+	/* 0x12C */ TDemoInfo unk12C[8];
+	/* 0x24C */ u8 unk24C;
+	/* 0x24D */ u8 unk24D;
 	/* 0x250 */ JDrama::TActor* unk250;
 	/* 0x254 */ TDemoCannon* unk254;
 	/* 0x258 */ MSStage* unk258;
 	/* 0x25C */ TShine* unk25C;
-	/* 0x260 */ bool mSetupDone;
+	/* 0x260 */ u8 unk260;
 	/* 0x261 */ u8 unk261;
 };
 

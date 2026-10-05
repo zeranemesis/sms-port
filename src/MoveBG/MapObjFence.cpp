@@ -1,52 +1,40 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <MoveBG/MapObjFence.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjMessenger.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/Graph.hpp>
-#include <Player/MarioAccess.hpp>
-#include <Player/Yoshi.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <Map/MapCollisionManager.hpp>
 #include <M3DUtil/MActor.hpp>
+#include <MarioUtil/MathUtil.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
-#include <MarioUtil/MathUtil.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <JSystem/JGeometry/JGMatrix34.hpp>
-#include <PowerPC_EABI_Support/Msl/MSL_C/MSL_Common/string.h>
+#include <Player/MarioAccess.hpp>
+#include <Player/Yoshi.hpp>
 #include <Strategic/Strategy.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/JGeometry/JGPosition3.hpp>
 #include <math.h>
+#include <string.h>
 
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-const char cDirtyTexName[]  = "H_ma_rak_dummy";
-
-// This unit is reverse_fn_order: with -inline deferred MWCC emits functions in
-// the reverse of their source order.
-
-f32 TRevolvingFenceInner::mSpeed      = 4.0f;
-f32 TFenceWater::mWaterAccel          = 2.1f;
-f32 TFenceWater::mBackSpeed           = 3.0f;
-int TFenceWater::mTurnedWaitTime      = 600;
-f32 TRailFence::mFallHeight           = 50000.0f;
-int TRailFence::mWaitTime             = 240;
+#include <Player/MarioDirtyStrings.hpp>
+// After the dirty-texture pair: retail's .rodata has setUpTrans's zero and
+// one literals between it and this unit's own strings (c-k29).
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
 
 BOOL TFence::receiveMessage(THitActor* sender, u32 message)
 {
 	if (message == HIT_MESSAGE_SUPER_HIP_DROP) {
 		startBck("fence_normal_shake");
-		return true;
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
 void TFence::initMapCollisionData()
@@ -70,8 +58,9 @@ void TFence::initMapCollisionData()
 
 void TFence::initMapObj()
 {
-	if (strstr(unkF4, "bamboo"))
-		unk138 = 1;
+	const char* name = unkF4;
+	if (strstr(name, "bamboo"))
+		mIsBamboo = 1;
 
 	TMapObjBase::initMapObj();
 }
@@ -80,11 +69,11 @@ BOOL TRevolvingFenceOuter::receiveMessage(THitActor* sender, u32 message)
 {
 	if (message == HIT_MESSAGE_SUPER_HIP_DROP) {
 		startBck("fence_revolve_outer_shake");
-		((TFence*)unk13C)->startBck("fence_revolve_inner_shake");
-		return true;
+		mInner->startBck("fence_revolve_inner_shake");
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
 void TRevolvingFenceOuter::initMapCollisionData()
@@ -98,73 +87,87 @@ void TRevolvingFenceOuter::initMapCollisionData()
 
 	mMapCollisionManager->setUpUnk8TRS(mPosition, mRotation, mScaling);
 
-	if (unk138)
-		unk13C = TMapObjBaseManager::newAndRegisterObj(
+	TRevolvingFenceInner* inner;
+	if (mIsBamboo) {
+		inner = (TRevolvingFenceInner*)TMapObjBaseManager::newAndRegisterObj(
 		    "bambooFence_revolve_inner", mPosition, mRotation,
 		    JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
-	else
-		unk13C = TMapObjBaseManager::newAndRegisterObj(
+	} else {
+		inner = (TRevolvingFenceInner*)TMapObjBaseManager::newAndRegisterObj(
 		    "fence_revolve_inner", mPosition, mRotation,
 		    JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+	}
 
-	unk13C->appear();
+	mInner = inner;
+	mInner->appear();
+}
+
+f32 TRevolvingFenceInner::mSpeed = 4.0f;
+
+static inline bool RevolvingFenceIsWall(const TRevolvingFenceInner* p)
+{
+	bool isWall = p->mIsWall;
+	return isWall;
 }
 
 BOOL TRevolvingFenceInner::receiveMessage(THitActor* sender, u32 message)
 {
-	if (message == HIT_MESSAGE_SUPER_HIP_DROP && !unk140) {
-		if (isState(1)) {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE1,
-			                                &mPosition, 0, nullptr, 0, 4);
-			mState = 3;
+	if (message == HIT_MESSAGE_SUPER_HIP_DROP && !RevolvingFenceIsWall(this)) {
+		if (isState(STATE_WAIT_FRONT)) {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE1, &mPosition);
+			setState(STATE_TURN_TO_BACK_CW);
 			startBck("fence_revolve_inner_roll_down");
 			offMapObjFlag(MAP_OBJ_FLAG_UNK100);
-			return true;
+			return TRUE;
 		}
 
-		if (isState(2)) {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE2,
-			                                &mPosition, 0, nullptr, 0, 4);
-			mState = 4;
+		if (isState(STATE_WAIT_BACK)) {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE2, &mPosition);
+			setState(STATE_TURN_TO_FRONT_CW);
 			startBck("fence_revolve_inner_roll_up");
 			offMapObjFlag(MAP_OBJ_FLAG_UNK100);
-			return true;
+			return TRUE;
 		}
 	}
 
-	if (message == HIT_MESSAGE_SUPER_HIP_DROP && unk140) {
-		f32 angle
-		    = MsWrap(180.0f * (getRotYFromAxisZ(*gpMarioPos) / 3.14f)
-		                 + mInitialRotation.y,
-		             -180.0f, 180.0f);
+	if (message == HIT_MESSAGE_SUPER_HIP_DROP && RevolvingFenceIsWall(this)) {
+		// Which side of the panel Mario is standing on decides the turn
+		// direction, so that he always gets pushed away from the fence.
+		f32 toMario = 180.0f * (getRotYFromAxisZ(SMS_GetMarioPos()) / 3.14f)
+		    + mInitialRotation.y;
+		toMario = MsWrap(toMario, -180.0f, 180.0f);
 
-		if ((-180.0f < angle && angle < -90.0f)
-		    || (0.0f < angle && angle < 90.0f)) {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE1,
-			                                &mPosition, 0, nullptr, 0, 4);
-			if (isState(1))
-				mState = 3;
+		if ((-180.0f < toMario && toMario < -90.0f)
+		    || (0.0f < toMario && toMario < 90.0f)) {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE1, &mPosition);
+			if (isState(STATE_WAIT_FRONT))
+				setState(STATE_TURN_TO_BACK_CW);
 			else
-				mState = 4;
+				setState(STATE_TURN_TO_FRONT_CW);
 		} else {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE2,
-			                                &mPosition, 0, nullptr, 0, 4);
-			if (isState(1))
-				mState = 5;
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_FENCE_REVERSE2, &mPosition);
+			if (isState(STATE_WAIT_FRONT))
+				setState(STATE_TURN_TO_BACK_CCW);
 			else
-				mState = 6;
+				setState(STATE_TURN_TO_FRONT_CCW);
 		}
-		return true;
+
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
+// UNUSED (0x10c, size-exact). The tail every controlWall case repeats; MWCC
+// inlines it into all four of them, and the out-of-line copy expands
+// MsMtxSetRotY where the inlined ones keep the call.
 void TRevolvingFenceInner::calcCurrentMtx()
 {
-	mRotation.y = unk13C + mInitialRotation.y;
-	// TODO: the result is thrown away in retail too
+	mRotation.y = mAngle + mInitialRotation.y;
+	// The result is thrown away in retail too: the wrap never lands back in
+	// mRotation.y, which is why MWCC keeps MsWrap out of line here.
 	MsWrap(mRotation.y, 0.0f, 360.0f);
+
 	MtxPtr mtx = getModel()->getAnmMtx(0);
 	MsMtxSetRotY(mtx, mRotation.y);
 	mtx[0][3] = mPosition.x;
@@ -172,73 +175,106 @@ void TRevolvingFenceInner::calcCurrentMtx()
 	mtx[2][3] = mPosition.z;
 }
 
+static inline f32 RevolvingFenceSpeed()
+{
+	f32 speed = TRevolvingFenceInner::mSpeed;
+	return speed;
+}
+
+static inline f32 RevolvingFenceInitRotY(const TRevolvingFenceInner* p)
+{
+	f32 rotY = p->mInitialRotation.y;
+	return rotY;
+}
+
 void TRevolvingFenceInner::controlWall()
 {
 	switch (mState) {
-	case 3:
-		unk13C += mSpeed;
-		if (unk13C > 180.0f) {
-			unk13C      = 180.0f;
-			mRotation.y = unk13C + mInitialRotation.y;
-			mState      = 2;
+	case STATE_WAIT_FRONT:
+	case STATE_WAIT_BACK:
+		break;
+
+	case STATE_TURN_TO_BACK_CW:
+		mAngle += RevolvingFenceSpeed();
+		if (mAngle > 180.0f) {
+			mAngle      = 180.0f;
+			mRotation.y = mAngle + RevolvingFenceInitRotY(this);
+			setState(STATE_WAIT_BACK);
 		}
 		calcCurrentMtx();
 		break;
-	case 4:
-		unk13C += mSpeed;
-		if (unk13C > 360.0f) {
-			unk13C      = 0.0f;
-			mRotation.y = unk13C + mInitialRotation.y;
-			mState      = 1;
+
+	case STATE_TURN_TO_FRONT_CW:
+		mAngle += RevolvingFenceSpeed();
+		if (mAngle > 360.0f) {
+			mAngle      = 0.0f;
+			mRotation.y = mAngle + RevolvingFenceInitRotY(this);
+			setState(STATE_WAIT_FRONT);
 		}
 		calcCurrentMtx();
 		break;
-	case 5:
-		unk13C -= mSpeed;
-		if (unk13C < -180.0f) {
-			unk13C      = 180.0f;
-			mRotation.y = unk13C + mInitialRotation.y;
-			mState      = 2;
+
+	case STATE_TURN_TO_BACK_CCW:
+		mAngle -= RevolvingFenceSpeed();
+		if (mAngle < -180.0f) {
+			mAngle      = 180.0f;
+			mRotation.y = mAngle + RevolvingFenceInitRotY(this);
+			setState(STATE_WAIT_BACK);
 		}
 		calcCurrentMtx();
 		break;
-	case 6:
-		unk13C -= mSpeed;
-		if (unk13C < 0.0f) {
-			unk13C      = 0.0f;
-			mRotation.y = unk13C + mInitialRotation.y;
-			mState      = 1;
+
+	case STATE_TURN_TO_FRONT_CCW:
+		mAngle -= RevolvingFenceSpeed();
+		if (mAngle < 0.0f) {
+			mAngle      = 0.0f;
+			mRotation.y = mAngle + mInitialRotation.y;
+			setState(STATE_WAIT_FRONT);
 		}
 		calcCurrentMtx();
 		break;
 	}
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TRevolvingFenceInner::controlGroundRoof (batch 127).
+static inline MActor* MapObjFenceMActorL0(const TRevolvingFenceInner* p)
+{
+	MActor* mActor = p->mMActor;
+	return mActor;
+}
+
+static inline MActor* MapObjFenceMActor(const TRevolvingFenceInner* p)
+{
+	MActor* mActor = MapObjFenceMActorL0(p);
+	return mActor;
+}
+
 void TRevolvingFenceInner::controlGroundRoof()
 {
-	// TODO: still 96.6%. The ROM's switch tree splits at 4
-	// (cmpwi 4 / beq / bge / cmpwi 3 / bge / b / cmpwi 6 / beq / bge) while ours
-	// splits at 5 and emits a `cmpwi r0, 7` upper-bound test. Both encode the
-	// same mapping ({4,6}->1, {3,5}->2); only the decision-tree shape differs.
-	// Listing the {4,6} group first is what got us here from 95.1%.
 	switch (mState) {
-	case 4:
-	case 6:
-		if (getMActor()->curAnmEndsNext()) {
-			mState = 1;
-			getMActor()->setFrameRate(0.0f, 0);
-			getMActor()->getFrameCtrl(0)->setFrame(0.0f);
-			getMActor()->calc();
+	case STATE_WAIT_FRONT:
+	case STATE_WAIT_BACK:
+		break;
+
+	case STATE_TURN_TO_BACK_CW:
+	case STATE_TURN_TO_BACK_CCW:
+		if (MapObjFenceMActor(this)->curAnmEndsNext(0, nullptr)) {
+			setState(STATE_WAIT_BACK);
+			mMActor->setFrameRate(0.0f, 0);
+			mMActor->getFrameCtrl(0)->setFrame(0.0f);
+			mMActor->calc();
 			onMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		}
 		break;
-	case 3:
-	case 5:
-		if (getMActor()->curAnmEndsNext()) {
-			mState = 2;
-			getMActor()->setFrameRate(0.0f, 0);
-			getMActor()->getFrameCtrl(0)->setFrame(0.0f);
-			getMActor()->calc();
+
+	case STATE_TURN_TO_FRONT_CW:
+	case STATE_TURN_TO_FRONT_CCW:
+		if (mMActor->curAnmEndsNext(0, nullptr)) {
+			setState(STATE_WAIT_FRONT);
+			mMActor->setFrameRate(0.0f, 0);
+			mMActor->getFrameCtrl(0)->setFrame(0.0f);
+			mMActor->calc();
 			onMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		}
 		break;
@@ -247,15 +283,17 @@ void TRevolvingFenceInner::controlGroundRoof()
 
 void TRevolvingFenceInner::setGroundCollision()
 {
+	// While Yoshi stands in the panel's footprint the collision follows the
+	// spinning model matrix instead of the object's own SRT.
 	if (SMS_GetYoshi()->isHatched()
-	    && mPosition.x - mBodyRadius < SMS_GetYoshi()->getTranslation().x
+	    && getPosition().x - mBodyRadius < SMS_GetYoshi()->getTranslation().x
 	    && mPosition.x + mBodyRadius > SMS_GetYoshi()->getTranslation().x
 	    && mPosition.z - mBodyRadius < SMS_GetYoshi()->getTranslation().z
 	    && mPosition.z + mBodyRadius > SMS_GetYoshi()->getTranslation().z) {
-		TMtx34f mtx;
+		JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > mtx;
 		mtx.set(getModel()->getAnmMtx(0));
-		if (mMapCollisionManager->getUnk8())
-			mMapCollisionManager->getUnk8()->moveMtx(mtx);
+		if (mMapCollisionManager->unk8)
+			mMapCollisionManager->unk8->moveMtx(mtx);
 	}
 
 	TMapObjBase::setGroundCollision();
@@ -265,7 +303,7 @@ void TRevolvingFenceInner::control()
 {
 	TMapObjBase::control();
 
-	if (unk140)
+	if (mIsWall)
 		controlWall();
 	else
 		controlGroundRoof();
@@ -286,66 +324,80 @@ void TRevolvingFenceInner::initMapObj()
 	TFence::initMapObj();
 
 	if (fabsf(mRotation.x) < 1.0f && fabsf(mRotation.z) < 1.0f)
-		unk140 = 1;
+		mIsWall = 1;
 	else
-		unk140 = 0;
+		mIsWall = 0;
 
 	mMapCollisionManager->setUpUnk8TRS(mPosition, mRotation, mScaling);
 }
+
+f32 TFenceWater::mWaterAccel     = 2.1f;
+f32 TFenceWater::mBackSpeed      = 3.0f;
+int TFenceWater::mTurnedWaitTime = 600;
 
 void TFenceWater::draw() const { }
 
 BOOL TFenceWater::receiveMessage(THitActor* sender, u32 message)
 {
-	if (!isState(3) && message == HIT_MESSAGE_SPRAYED_BY_WATER) {
-		unk13C = mWaterAccel;
-		if (unk13C > 0.0f)
+	if (!isState(STATE_TURNED) && message == HIT_MESSAGE_SPRAYED_BY_WATER) {
+		mTurnSpeed = mWaterAccel;
+		if (mTurnSpeed > 0.0f)
 			changeStatusToGo();
-		return true;
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
 void TFenceWater::changeStatusToGo()
 {
-	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_WATER_FENCE_FW, &mPosition, 0,
-	                                nullptr, 0, 4);
-	mState = 2;
+	gpMSound->startSoundActor(MSD_SE_OBJ_WATER_FENCE_FW, &mPosition);
+	setState(STATE_GO);
 }
 
 void TFenceWater::changeStatusToWait()
 {
-	unk140 = 0.0f;
-	unk13C = 0.0f;
-	mState = 1;
+	mTurnAngle = 0.0f;
+	mTurnSpeed = 0.0f;
+	setState(STATE_WAIT);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TFenceWater::controlRotation (batch 127).
+static inline f32 MapObjFenceTurnAngle(const TFenceWater* p)
+{
+	f32 turnAngle = p->mTurnAngle;
+	return turnAngle;
 }
 
 void TFenceWater::controlRotation()
 {
 	switch (mState) {
-	case 1:
+	case STATE_WAIT:
 		break;
-	case 2:
-		unk140 -= unk13C;
-		if (unk140 <= -90.0f) {
-			unk140 = -90.0f;
-			unk13C = 0.0f;
-			mState = 3;
+
+	case STATE_GO:
+		mTurnAngle -= mTurnSpeed;
+		if (MapObjFenceTurnAngle(this) <= -90.0f) {
+			mTurnAngle  = -90.0f;
+			mTurnSpeed  = 0.0f;
+			setState(STATE_TURNED);
 			startStateTimer(mTurnedWaitTime);
 		}
 		break;
-	case 3:
+
+	case STATE_TURNED:
 		if (!isStateTimerEngaged()) {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_WATER_FENCE_REV,
-			                                &mPosition, 0, nullptr, 0, 4);
-			unk13C = mBackSpeed;
-			mState = 4;
+			gpMSound->startSoundActor(MSD_SE_OBJ_WATER_FENCE_REV, &mPosition, 0,
+			                          nullptr, 0, 4);
+			mTurnSpeed = mBackSpeed;
+			setState(STATE_BACK);
 		}
 		break;
-	case 4:
-		unk140 += unk13C;
-		if (unk140 >= 0.0f)
+
+	case STATE_BACK:
+		mTurnAngle += mTurnSpeed;
+		if (mTurnAngle >= 0.0f)
 			changeStatusToWait();
 		break;
 	}
@@ -356,9 +408,10 @@ void TFenceWater::control()
 	TMapObjBase::control();
 	controlRotation();
 
-	mRotation.y = MsWrap(unk140 + mInitialRotation.y, 0.0f, 360.0f);
-	unk144->mPosition.x = 500.0f * MsCos(mRotation.y) + mPosition.x;
-	unk144->mPosition.z = mPosition.z - 500.0f * MsSin(mRotation.y);
+	mRotation.y = MsWrap(mTurnAngle + mInitialRotation.y, 0.0f, 360.0f);
+
+	mMessenger->mPosition.x = 500.0f * JMACos(getRotation().y) + mPosition.x;
+	mMessenger->mPosition.z = mPosition.z - 500.0f * JMASin(mRotation.y);
 }
 
 void TFenceWater::initMapCollisionData() { TMapObjBase::initMapCollisionData(); }
@@ -367,63 +420,53 @@ void TFenceWater::initMapObj()
 {
 	TFence::initMapObj();
 
-	unk144        = new TMapObjMessenger("地形オブジェメッセンジャー");
-	unk144->unk68 = this;
-	unk144->initHitActor(mActorType, 1, 0, 0.0f, 0.0f, 100.0f, 300.0f);
-	unk144->offHitFlag(HIT_FLAG_NO_COLLISION);
-	unk144->mPosition.set(mPosition.x, mPosition.y - 150.0f, mPosition.z);
+	mMessenger = new TMapObjMessenger("地形オブジェメッセンジャー");
+	mMessenger->unk68 = this;
+	mMessenger->initHitActor(getActorType(), 1, 0, 0.0f, 0.0f, 100.0f,
+	                         300.0f);
+	mMessenger->offHitFlag(HIT_FLAG_NO_COLLISION);
+	mMessenger->mPosition.set(mPosition.x, mPosition.y - 150.0f, mPosition.z);
 
-	static_cast<TIdxGroupObj*>(
-	    JDrama::TNameRefGen::search("オブジェクトグループ"))
-	    ->getChildren()
-	    .push_back(unk144);
+	TIdxGroupObj* group
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("オブジェクトグループ");
+	group->getChildren().push_back(mMessenger);
 }
 
-// fabricated
-// TODO: find the real inline this came from; it builds a ZYX euler rotation
-// out of degrees with sinf/cosf
-static inline void setEulerRotate(TMtx34f& mtx, f32 x, f32 y, f32 z)
-{
-	mtx.identity();
-
-	f32 sx = sinf(0.017453294f * x);
-	f32 sy = sinf(0.017453294f * y);
-	f32 sz = sinf(0.017453294f * z);
-	f32 cx = cosf(0.017453294f * x);
-	f32 cy = cosf(0.017453294f * y);
-	f32 cz = cosf(0.017453294f * z);
-
-	mtx.ref(0, 0) = cy * cz;
-	mtx.ref(1, 0) = cy * sz;
-	mtx.ref(2, 0) = -sy;
-	mtx.ref(0, 1) = sx * sy * cz - cx * sz;
-	mtx.ref(1, 1) = sx * sy * sz + cx * cz;
-	mtx.ref(2, 1) = sx * cy;
-	mtx.ref(0, 2) = cx * cz * sy + sx * sz;
-	mtx.ref(1, 2) = cx * sz * sy - sx * cz;
-	mtx.ref(2, 2) = cx * cy;
-}
-
+// TODO: frame 0x18 *short* (0xe0 vs 0xf8), instruction-exact, since
+// JGRotation3.hpp's setEular(f32) writes its matrix stores out (c-r37; the
+// old setter calls cost nine dead binding words per inlined expansion). The
+// missing six words are three per rotation at the two setEular call sites:
+// a one-line TU-local inline returning `0.017453294f * degrees`, applied to
+// mRotation.y and mRotation.z, supplies them (argument binding plus forced
+// load) and makes this exact, but its name is invented and it exists only for
+// those words, so it is parked on branch parked/c-r37-fence-helper for the
+// owner. Inert or wrong: a named radian local, `getRotation().y` (1 word per
+// site), the converter over getRotation() (4 per site), setTrans(mPosition),
+// MTXCopy without the MtxPtr local, a named model pointer.
 void TFenceWaterH::control()
 {
 	TMapObjBase::control();
 	controlRotation();
 
-	mRotation.z = MsWrap(unk140 + mInitialRotation.z, 0.0f, 360.0f);
+	mRotation.z = MsWrap(mTurnAngle + mInitialRotation.z, 0.0f, 360.0f);
 
-	TMtx34f rotY;
-	setEulerRotate(rotY, 0.0f, mRotation.y, 0.0f);
-	TMtx34f rotZ;
-	setEulerRotate(rotZ, 0.0f, 0.0f, mRotation.z);
-	MTXConcat(rotY, rotZ, rotY);
+	JGeometry::TPosition3<JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > >
+	    mtx;
+	mtx.identity();
+	mtx.setEular(0.0f, 0.017453294f * mRotation.y, 0.0f);
 
-	rotY.ref(0, 3) = mPosition.x;
-	rotY.ref(1, 3) = mPosition.y;
-	rotY.ref(2, 3) = mPosition.z;
-	MTXCopy(rotY, getModel()->getAnmMtx(0));
+	JGeometry::TRotation3<JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > >
+	    spin;
+	spin.identity();
+	spin.setEular(0.0f, 0.0f, 0.017453294f * mRotation.z);
 
-	unk144->mPosition.x = mPosition.x;
-	unk144->mPosition.y = mPosition.y - 150.0f;
+	MTXConcat(mtx, spin, mtx);
+	mtx.setTrans(mPosition.x, mPosition.y, mPosition.z);
+	MtxPtr matrix = mtx;
+	MTXCopy(matrix, getModel()->getAnmMtx(0));
+
+	mMessenger->mPosition.x = mPosition.x;
+	mMessenger->mPosition.y = mPosition.y - 150.0f;
 }
 
 void TFenceWaterH::changeStatusToGo()
@@ -438,24 +481,28 @@ void TFenceWaterH::changeStatusToWait()
 	setUpMapCollision(0);
 }
 
+f32 TRailFence::mFallHeight = 50000.0f;
+int TRailFence::mWaitTime   = 240;
+
 BOOL TRailFence::receiveMessage(THitActor* sender, u32 message)
 {
 	if (message == HIT_MESSAGE_SUPER_HIP_DROP) {
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MVING_FENCT_PNCH,
-		                                &mPosition, 0, nullptr, 0, 4);
+		gpMSound->startSoundActor(MSD_SE_OBJ_MVING_FENCT_PNCH, &mPosition);
 		setUpMapCollision(1);
 		offMapObjFlag(MAP_OBJ_FLAG_UNK100);
-		mState = 2;
-		return true;
+		setState(STATE_RUN);
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
+// UNUSED (0x11c): the STATE_FALL arm of control(), inlined there.
 void TRailFence::falling()
 {
 	JGeometry::TVec3<f32> velocity = mVelocity;
 	mPosition.y += velocity.y;
+
 	mVelocity.y -= mGravity;
 	if (mVelocity.y < -100.0f)
 		mVelocity.y = -100.0f;
@@ -465,7 +512,8 @@ void TRailFence::falling()
 		mPosition.y = mInitialPosition.y;
 		mPosition.z = mInitialPosition.z;
 		setUpMapCollision(0);
-		unk13C->setToNearest(mPosition);
+		mTracer->setTo(
+		    mTracer->getGraph()->findNearestNodeIndex(mPosition, 0xffffffff));
 		makeObjAppeared();
 		calcRootMatrix();
 		getModel()->calc();
@@ -473,35 +521,50 @@ void TRailFence::falling()
 	}
 }
 
+// The node read spelled against the raw index lets moveToShortestNext reuse
+// the loaded index as retail does (getCurrent() or getCurGraphIndex() reload
+// it), and the named `dist` gives retail's 8 bytes between `toNode` and the
+// first indexToPoint temporary. The two sounds use the two-argument
+// startSoundActor and the offset reads getPosition(): together they are
+// retail's dead words below the second temporary (frame 0x68 -> 0x88).
 void TRailFence::goOnRail()
 {
-	if (!unk13C->getGraph())
-		return;
+	if (mTracer->getGraph()) {
+		JGeometry::TVec3<f32> toNode = mTracer->getCurrentPos();
+		toNode.x -= getPosition().x;
+		toNode.y -= getPosition().y;
+		toNode.z -= getPosition().z;
 
-	JGeometry::TVec3<f32> dir = unk13C->getCurrentPos();
-	dir -= mPosition;
+		f32 dist
+		    = toNode.x * toNode.x + toNode.y * toNode.y + toNode.z * toNode.z;
+		if (dist < 50.0f) {
+			TRailNode* node = mTracer->getGraph()
+			                      ->getGraphNode(mTracer->mCurrIdx)
+			                      .getRailNode();
+			if (node->mConnectionNum == 0 && (node->mFlags & 8)) {
+				gpMSound->startSoundActor(MSD_SE_OBJ_MVING_FENCT_SET,
+				                          &mPosition);
+				startStateTimer(mWaitTime);
+				startAnim(1);
+				setState(STATE_AT_GOAL);
+				return;
+			}
 
-	if (dir.squared() < 50.0f) {
-		TGraphTracer* tracer = unk13C;
-		const TRailNode* node = tracer->getCurrent().getRailNode();
-		if (node->mConnectionNum == 0 && (node->mFlags & 8)) {
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MVING_FENCT_SET,
-			                                &mPosition, 0, nullptr, 0, 4);
-			startStateTimer(mWaitTime);
-			startAnim(1);
-			mState = 3;
-			return;
+			mTracer->moveToShortestNext();
+			toNode.set(mTracer->getCurrentPos());
 		}
 
-		tracer->moveToShortestNext();
-		dir.set(unk13C->getCurrentPos());
+		gpMSound->startSoundActor(MSD_SE_OBJ_MVING_FENCE_MOVE, &mPosition);
+		VECNormalize(toNode, toNode);
+		toNode.scale(mMoveSpeed);
+		mLinearVelocity.add(toNode);
 	}
+}
 
-	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MVING_FENCE_MOVE, &mPosition, 0,
-	                                nullptr, 0, 4);
-	VECNormalize(&dir, &dir);
-	dir.scale(unk140);
-	mLinearVelocity += dir;
+static inline TGraphTracer* RailFenceTracer(TRailFence* fence)
+{
+	TGraphTracer* tracer = fence->mTracer;
+	return tracer;
 }
 
 void TRailFence::control()
@@ -509,21 +572,47 @@ void TRailFence::control()
 	TMapObjBase::control();
 
 	switch (mState) {
-	case 1:
+	case STATE_WAIT:
 		break;
-	case 2:
+
+	case STATE_RUN:
 		goOnRail();
 		break;
-	case 3:
+
+	case STATE_AT_GOAL:
 		if (!isStateTimerEngaged()) {
 			removeMapCollision();
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_SUPERBLOCK_BREAK,
-			                                &mPosition, 0, nullptr, 0, 4);
-			mState = 4;
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_SUPERBLOCK_BREAK, &mPosition);
+			setState(STATE_FALL);
 		}
 		break;
-	case 4:
-		falling();
+
+	case STATE_FALL:
+		// falling()'s body, spelled out: MWCC refuses to inline the helper at
+		// its size and retail has no call here.
+		{
+			JGeometry::TVec3<f32> velocity = getVelocity();
+			mPosition.y += velocity.y;
+
+			mVelocity.y -= mGravity;
+			if (mVelocity.y < -100.0f)
+				mVelocity.y = -100.0f;
+
+			if (mPosition.y < mInitialPosition.y - mFallHeight) {
+				mPosition.x = mInitialPosition.x;
+				mPosition.y = mInitialPosition.y;
+				mPosition.z = mInitialPosition.z;
+				setUpMapCollision(0);
+				TGraphTracer* tracer = RailFenceTracer(this);
+				mTracer->setTo(
+				    tracer->getGraph()->findNearestNodeIndex(
+				        mPosition, 0xffffffff));
+				makeObjAppeared();
+				calcRootMatrix();
+				getModel()->calc();
+				onMapObjFlag(MAP_OBJ_FLAG_UNK100);
+			}
+		}
 		break;
 	}
 }
@@ -534,21 +623,22 @@ void TRailFence::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
 
-	char graphName[0x40];
-	stream.readString(graphName, 0x40);
+	char graphName[64];
+	stream.readString(graphName, 64);
+
 	TGraphWeb* graph = gpConductor->getGraphByName(graphName);
 	if (graph && !graph->isDummy()) {
-		unk13C->setGraph(graph);
-		unk13C->setToNearest(mPosition);
+		mTracer->setGraph(graph);
+		mTracer->setTo(graph->findNearestNodeIndex(mPosition, 0xffffffff));
 	}
 
-	unk140   = 8.0f;
-	mGravity = 0.3f;
+	mMoveSpeed = 8.0f;
+	mGravity   = 0.3f;
 }
 
 TRailFence::TRailFence(const char* name)
     : TFence(name)
+    , mTracer(new TGraphTracer)
+    , mMoveSpeed(0.0f)
 {
-	unk13C = new TGraphTracer;
-	unk140 = 0.0f;
 }

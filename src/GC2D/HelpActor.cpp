@@ -25,14 +25,18 @@ void THelpActor::load(JSUMemoryInputStream& stream)
 	unk6C = stream.readString();
 	initHitActor(0x40000320, 1, -0x80000000, mScaling.x * 100.0f,
 	             mScaling.y * 100.0f, 1.0f, 1.0f);
-	unk68 = local_10 + VERSION_SELECT(GMSJ01(0xE0030), GMSP01(0x33));
+#if defined(VERSION_GMSE01)
+	unk68 = local_10 + 0x33;
+#else
+	unk68 = local_10 + 0xE0030;
+#endif
 }
 
 void THelpActor::loadAfter()
 {
 	THitActor::loadAfter();
-	unk70 = static_cast<TLiveActor*>(JDrama::TNameRefGen::search(unk6C));
-	static_cast<TGCConsole2*>(JDrama::TNameRefGen::search("GCコンソール"))
+	unk70 = JDrama::TNameRefGen::search<TLiveActor>(unk6C);
+	JDrama::TNameRefGen::search<TGCConsole2>("GCコンソール")
 	    ->entryHelpActor(this);
 }
 
@@ -49,20 +53,19 @@ int THelpActor::getHelpID()
 
 void THelpActor::perform(u32 cue, JDrama::TGraphics*)
 {
-
-	
-	
 	if (cue & CUE_MOVE) {
 		if (unk74) {
-			if (getHelpID() == -1)
-				if (SMSGetMarDirector()->getConsole()->startDisappearBalloon(
-				        unk68, false))
+			if (getHelpID() == -1) {
+				TGCConsole2* console = SMSGetMarDirector()->getConsole();
+				if (console->startDisappearBalloon(unk68, false))
 					unk74 = false;
+			}
 		} else {
-			if (getHelpID() != -1)
-				if (SMSGetMarDirector()->getConsole()->startAppearBalloon(
-				        unk68, false))
+			if (getHelpID() != -1) {
+				TGCConsole2* console = SMSGetMarDirector()->getConsole();
+				if (console->startAppearBalloon(unk68, false))
 					unk74 = true;
+			}
 		}
 	}
 }

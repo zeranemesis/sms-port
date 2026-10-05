@@ -35,8 +35,7 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-static const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-static const char cDirtyTexName[]  = "H_ma_rak_dummy";
+#include <Player/MarioDirtyStrings.hpp>
 
 static const GXColor bodyColor[4] = {
 	{ 0x40, 0xA1, 0x24, 0xFF },
@@ -45,11 +44,31 @@ static const GXColor bodyColor[4] = {
 	{ 0xFF, 0xA0, 0xBE, 0xFF },
 };
 
-BOOL YoshiHeadCtrl(J3DNode* param_1, int param_2)
+// UNUSED (0x2c): movement's dismount plays MSD_SE_YV_YOSHI1 through
+// startMarioVoice(id, 1, 1), which is this body at the map size.
+void TYoshi::startVoice(u32 id) { gpMSound->startMarioVoice(id, 1, 1); }
+
+// Binding level worth +8 of low region, landing YoshiHeadCtrl's frame at
+// 0x50 (batch 124).
+static inline TNozzleBase* YoshiGetCurrentNozzle(const TWaterGun* p)
+{
+	TNozzleBase* currentNozzle = p->getCurrentNozzle();
+	return currentNozzle;
+}
+
+// The extra level makes retail's `addi r4, r28, 0` (not `mr`) at setModel.
+static inline void YoshiSetModel(MActor* actor, J3DModel* model)
+{
+	actor->setModel(model, 0);
+}
+
+// (func,local) in the map's closure.
+static BOOL YoshiHeadCtrl(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
 		const TWaterGun* waterGun = SMS_GetMarioWaterGun();
-		s16 angle                 = waterGun->getCurrentNozzle()->getGunAngle();
+		s16 angle
+		    = YoshiGetCurrentNozzle(waterGun)->getGunAngle();
 		Mtx mtx;
 		MsMtxSetRotRPH(mtx, 0.0f, 0.0f, SHORTANGLE2DEG(angle));
 		MTXConcat(J3DSys::mCurrentMtx, mtx, J3DSys::mCurrentMtx);
@@ -72,6 +91,9 @@ MtxPtr TYoshi::getMtxPtrFootR() const
 	return mActor->getModel()->getAnmMtx(mJointIdxFootR);
 }
 
+// TODO: frame is 0x10 short (0x280 vs retail 0x290); every instruction
+// matches. A texture-copy helper over both hand blocks overshoots (0x298 to
+// 0x2a8 by shape); an extract of the second block alone is exact (c-hs5).
 void TYoshi::init(TMario* param_1)
 {
 	mMario = param_1;
@@ -95,7 +117,7 @@ void TYoshi::init(TMario* param_1)
 	                       yoshiModelRaw, J3DMLF_MaterialPEFull
 	                                          | (4 << J3DMLF_TevStageNumShift)),
 	                   0, 1);
-	mActor->setModel(yoshiModel, 0);
+	YoshiSetModel(mActor, yoshiModel);
 	mActor->initNormalMotionBlend();
 	mActor->offMakeDL();
 
@@ -120,18 +142,18 @@ void TYoshi::init(TMario* param_1)
 	    J3DMLF_MaterialPEFull | (4 << J3DMLF_TevStageNumShift));
 
 	{
+		ResTIMG* timg
+		    = mActor->getModel()->getModelData()->getTexture()->getResTIMG(0);
 		J3DModelData* modelData = mMirrorModels[0]->getModelData();
-		modelData->getTexture()->setResTIMG(
-		    0,
-		    *mActor->getModel()->getModelData()->getTexture()->getResTIMG(0));
+		modelData->getTexture()->setResTIMG(0, *timg);
 		DCFlushRange(modelData->getTexture()->getResTIMG(0), sizeof(ResTIMG));
 	}
 
 	{
+		ResTIMG* timg
+		    = mActor->getModel()->getModelData()->getTexture()->getResTIMG(0);
 		J3DModelData* modelData = mMirrorModels[1]->getModelData();
-		modelData->getTexture()->setResTIMG(
-		    0,
-		    *mActor->getModel()->getModelData()->getTexture()->getResTIMG(0));
+		modelData->getTexture()->setResTIMG(0, *timg);
 		DCFlushRange(modelData->getTexture()->getResTIMG(0), sizeof(ResTIMG));
 	}
 
@@ -197,7 +219,7 @@ void TYoshi::init(TMario* param_1)
 	mActor->getFrameCtrl(ANM_TYPE_BTP)->setRate(0.5f);
 
 	mActor->getModel()->setBaseTRMtx(
-	    mMario->mModel->getModel()->getBaseTRMtx());
+	    mMario->getM3UModel()->getModel()->getBaseTRMtx());
 	mActor->getModel()->calc();
 
 	mActor->getModel()->getModelData()->onFlag1OnAllShapes();
@@ -210,17 +232,9 @@ void TYoshi::init(TMario* param_1)
 	for (int i = 0; i < 2; ++i)
 		mMirrorModels[i]->getModelData()->onFlag1OnAllShapes();
 
-#ifdef VERSION_GMSP01
 	mBodyAnmSound = new MAnmSoundMario(SMSGetMSound());
-#else
-	mBodyAnmSound = new MAnmSound(SMSGetMSound());
-#endif
 	mBodyAnmSound->initAnmSound(nullptr, 1, 0.0f);
-#ifdef VERSION_GMSP01
 	mTongueAnmSound = new MAnmSoundMario(SMSGetMSound());
-#else
-	mTongueAnmSound = new MAnmSound(SMSGetMSound());
-#endif
 	mTongueAnmSound->initAnmSound(nullptr, 1, 0.0f);
 
 	{
@@ -248,10 +262,10 @@ void TYoshi::init(TMario* param_1)
 	mBodyAnmSoundTable[16] = JKRGetResource("/yoshi/bas/yoshi_sidewalk_l.bas");
 	mBodyAnmSoundTable[17] = JKRGetResource("/yoshi/bas/yoshi_sidewalk_r.bas");
 	mBodyAnmSoundTable[18] = JKRGetResource("/yoshi/bas/yoshi_slide_end.bas");
-	mBodyAnmSoundTable[20] = JKRGetResource("/yoshi/bas/yoshi_wait.bas");
-	mBodyAnmSoundTable[21] = JKRGetResource("/yoshi/bas/yoshi_wait_alone.bas");
-	mBodyAnmSoundTable[22] = JKRGetResource("/yoshi/bas/yoshi_walk.bas");
-	mBodyAnmSoundTable[23] = JKRGetResource("/yoshi/bas/yoshi_water_die.bas");
+	mBodyAnmSoundTable[22] = JKRGetResource("/yoshi/bas/yoshi_wait.bas");
+	mBodyAnmSoundTable[23] = JKRGetResource("/yoshi/bas/yoshi_wait_alone.bas");
+	mBodyAnmSoundTable[24] = JKRGetResource("/yoshi/bas/yoshi_walk.bas");
+	mBodyAnmSoundTable[25] = JKRGetResource("/yoshi/bas/yoshi_water_die.bas");
 	// clang-format on
 
 	changeAnimation(0x17);
@@ -262,11 +276,11 @@ void TYoshi::initInLoadAfter()
 	mTongue->initInLoadAfter();
 
 	TMirrorActor* mirrorMain = new TMirrorActor("ヨッシーin鏡");
-	mirrorMain->init(mActor->getModel(), 4);
+	mirrorMain->init(mActor->getModel(), 0x20);
 
 	for (int i = 0; i < 2; ++i) {
 		TMirrorActor* mirror = new TMirrorActor("ヨッシー手in鏡");
-		mirror->init(mMirrorModels[i], 4);
+		mirror->init(mMirrorModels[i], 0x20);
 	}
 
 	mActor->getModel()->getModelData()->getJointNodePointer(21)->setCallBack(
@@ -348,7 +362,7 @@ u16 TYoshi::changeHand()
 	}
 
 	if ((status & MARIO_STATUS_FLAG_UNK8000) ? true : false) {
-		if (mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_L)) {
+		if (mMario->mGamePad->checkMeaning(0x2000)) {
 			E_SIDEWALK_TYPE type;
 			f32 a, b;
 			mMario->getSideWalkValues(&type, &a, &b);
@@ -361,35 +375,45 @@ u16 TYoshi::changeHand()
 				return 17;
 			}
 		}
-		if (mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_R))
+		if (mMario->mGamePad->checkMeaning(0x400))
 			return 13;
 	}
 
 	u32 a2 = mMario->mStatus;
-	if (a2 == 0x8023C)
+	if (a2 == 0x80023C)
 		return 6;
 	if (a2 == MARIO_STATUS_WIN_DEMO)
 		return 2;
 	return 22;
 }
 
-#pragma dont_inline on
-void TYoshi::getEmitPosDir(JGeometry::TVec3<f32>* dir,
-                           JGeometry::TVec3<f32>* pos) const
+// Retail reaches this only through emitTongue(), i.e. at inline depth 2
+// (budget 9): the four named chain steps bring it to 10 statements and restore
+// the out-of-line `bl` without `#pragma dont_inline`. The return type is not in
+// the mangled name; retail keeps r3 reserved for the whole body (the matrix
+// chain goes to r6), which is what a non-void function with no `return`
+// statement compiles to, so the declaration is non-void here.
+// TODO: the real return type is unknown; `int` is a placeholder.
+int TYoshi::getEmitPosDir(JGeometry::TVec3<f32>* pos,
+                           JGeometry::TVec3<f32>* dir) const
 {
-	MtxPtr mtx = mActor->getModel()->getAnmMtx(mJointIdxTongue);
+	MActor* actor   = mActor;
+	J3DModel* model = actor->getModel();
+	u16 joint       = mJointIdxTongue;
+	MtxPtr mtx      = model->getAnmMtx(joint);
 
-	pos->x = mtx[0][0];
-	pos->y = mtx[1][0];
-	pos->z = mtx[2][0];
+	dir->x = mtx[0][0];
+	dir->y = mtx[1][0];
+	dir->z = mtx[2][0];
 
-	dir->x = mtx[0][3];
-	dir->y = mtx[1][3];
-	dir->z = mtx[2][3];
+	pos->x = mtx[0][3];
+	pos->y = mtx[1][3];
+	pos->z = mtx[2][3];
 }
-#pragma dont_inline off
 
 void TYoshi::setEggYoshiPtr(TEggYoshi* egg) { mEgg = egg; }
+
+void TYoshi::appear() { }
 
 bool TYoshi::appearFromEgg(const JGeometry::TVec3<f32>& pos, f32 yrot,
                            TEggYoshi* egg)
@@ -397,15 +421,17 @@ bool TYoshi::appearFromEgg(const JGeometry::TVec3<f32>& pos, f32 yrot,
 	mLastTranslation = pos;
 	mTranslation     = pos;
 	mTranslation.y += 1.0f;
-	mEggRotSpeed = DEG2SHORTANGLE(yrot);
+	s16 rotSpeed = DEG2SHORTANGLE(yrot);
+	mEggRotSpeed = rotSpeed;
 	mState       = STATE_UNK2;
 
 	changeAnimation(0);
 
-	TTakeActor* fruit = (TTakeActor*)egg->getFruit();
+	THitActor* fruit = egg->getFruit();
+	TTakeActor* held = (TTakeActor*)fruit;
 	if (mMario->getHeldObject() == fruit) {
-		fruit->receiveMessage(mMario->getFloorHitActor(), HIT_MESSAGE_UNK8);
-		fruit->mHolder      = nullptr;
+		held->receiveMessage(mMario->getFloorHitActor(), HIT_MESSAGE_UNK8);
+		held->mHolder       = nullptr;
 		mMario->mHeldObject = nullptr;
 	}
 
@@ -418,12 +444,17 @@ bool TYoshi::appearFromEgg(const JGeometry::TVec3<f32>& pos, f32 yrot,
 	return true;
 }
 
+// Binding level worth +8 of low region, landing TYoshi::disappear's frame at
+// 0x20 (batch 121).
+static inline BOOL YoshiIsHatched(const TYoshi* p)
+{
+	BOOL hatched = p->isHatched();
+	return hatched;
+}
+
 bool TYoshi::disappear()
 {
-
-	
-	
-	if (isHatched()) {
+	if (YoshiIsHatched(this)) {
 		if (mState == STATE_MOUNTED)
 			mMario->getOffYoshi(true);
 
@@ -445,62 +476,85 @@ bool TYoshi::disappear()
 void TYoshi::kill()
 {
 
-	
-	
-
 	disappear();
 	mBodyAnmSound->stop();
 	mTongueAnmSound->stop();
 }
 
+// Binding level over the sound singleton, worth +8 of low region per site.
+static inline MSound* YoshiGetMSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+static inline J3DFrameCtrl* YoshiGetBckCtrl(TYoshi* p)
+{
+	MActor* actor = p->mActor;
+	return actor->getFrameCtrl(ANM_TYPE_BCK);
+}
+
 void TYoshi::ride()
 {
-
-	
-	
 	mState = STATE_MOUNTED;
 
 	changeAnimation(0x16);
 
 	gpModelWaterManager->unk5D5F = mType;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_YV_DELICIOUS, &mTranslation, 0,
-	                                nullptr, 0, 4);
+	YoshiGetMSound()->startSoundActor(MSD_SE_YV_DELICIOUS, &mTranslation, 0,
+	                                  nullptr, 0, 4);
 
-	SMSGetMSound()->unk88 = 1;
+	YoshiGetMSound()->unk88 = 1;
 	MSBgm::setStageBgmYoshiPercussion(true);
 	gpMarDirector->fireRideYoshi(this);
 }
 
 void TYoshi::getOff(bool param_1)
 {
-	if (mState != STATE_MOUNTED)
-		return;
+	if (mState == STATE_MOUNTED) {
+		unk2C  = 0.0f;
+		mState = STATE_UNMOUNTED;
+		unk2   = unk4;
 
-	unk2C  = 0.0f;
-	mState = STATE_UNMOUNTED;
-	unk2   = unk4;
+		if (param_1 == true) {
+			changeAnimation(1);
 
-	if (param_1 == true) {
-		changeAnimation(1);
+			SMSGetMSound()->startSoundActor(MSD_SE_YV_DAMAGE, &mTranslation);
 
-		SMSGetMSound()->startSoundActor(MSD_SE_YV_DAMAGE, &mTranslation, 0,
-		                                nullptr, 0, 4);
+			SMSRumbleMgr->start(0x15, 0x14, (f32*)nullptr);
+		} else {
+			changeAnimation(0x17);
 
-		SMSRumbleMgr->start(0x15, 0x14, (f32*)nullptr);
-	} else {
-		changeAnimation(0x17);
+			SMSGetMSound()->startSoundActor(MSD_SE_YV_PURU_PURU, &mTranslation);
+		}
 
-		SMSGetMSound()->startSoundActor(MSD_SE_YV_PURU_PURU, &mTranslation, 0,
-		                                nullptr, 0, 4);
+		SMS_RideMoveCalcLocalPos(unk94, mTranslation);
+		SMSGetMSound()->unk88 = 1;
+		MSBgm::setStageBgmYoshiPercussion(false);
 	}
 
-	SMS_RideMoveCalcLocalPos(unk94, mTranslation);
-	SMSGetMSound()->unk88 = 1;
-	MSBgm::setStageBgmYoshiPercussion(false);
+	mTongue->mState = TYoshiTongue::STATE_IDLE;
 }
 
-// TODO: tons of missing inlines
+BOOL TYoshi::thinkJumpEnd(u16 curIdx, u16* newIdx)
+{
+	if (curIdx == 12) {
+		*newIdx = 11;
+		return true;
+	}
+	return false;
+}
+
+// TODO: frame 0x60 against retail's 0x140. With the slide test inline (no
+// named `sliding`, a byte retail lacks) the named block is retail's (nextFrame,
+// type, dummy contiguous) and every slot sits exactly 0xdc low, so retail
+// creates 55 more words after `dummy`; ours has 12 there (oldAnm, 4 inline,
+// 7 F/P). The YoshiGetBckCtrl() binder on the final setRate fixes its load
+// order. getStatus/getVel/getGamePad/getForwardVel at all eight sites reach
+// only 0x28 more, so the rest is a missing inline level or dead code (an
+// argument-only call such as MActor's empty copyBckFrmCtrl(J3DFrameCtrl) would
+// home a by-value copy without code; unmeasured).
 void TYoshi::thinkAnimation()
 {
 	f32 nextFrame = mMario->getMotionFrameCtrl().getRate();
@@ -509,15 +563,7 @@ void TYoshi::thinkAnimation()
 	u32 status    = mMario->mStatus;
 
 	if (status & MARIO_STATUS_FLAG_RUNNING) {
-		BOOL tmp;
-		if (curIdx == 12) {
-			newIdx = 11;
-			tmp    = true;
-		} else {
-			tmp = false;
-		}
-
-		if (!tmp) {
+		if (!thinkJumpEnd(curIdx, &newIdx)) {
 			newIdx = 15;
 			if (status == MARIO_STATUS_CATCH || status == MARIO_STATUS_OIL_SLIP
 			    || status == MARIO_STATUS_OIL_SLOPE
@@ -549,13 +595,12 @@ void TYoshi::thinkAnimation()
 				newIdx = 12;
 		}
 	} else if ((status & MARIO_STATUS_FLAG_UNK200)
-	           && (status == MARIO_STATUS_CATCH_LOST || status == 0xC000023D
-	               || status == 0xC000023E)) {
+	           && (status == MARIO_STATUS_CATCH_LOST || status == 0x0C00023D
+	               || status == 0x0C00023E)) {
 		newIdx = 18;
 	} else {
-		bool sliding = (status & MARIO_STATUS_FLAG_UNK8000) ? true : false;
-		if (sliding) {
-			if (mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_L)) {
+		if ((status & MARIO_STATUS_FLAG_UNK8000) ? true : false) {
+			if (mMario->mGamePad->checkMeaning(0x2000)) {
 				E_SIDEWALK_TYPE type;
 				f32 dummy;
 				mMario->getSideWalkValues(&type, &nextFrame, &dummy);
@@ -569,17 +614,20 @@ void TYoshi::thinkAnimation()
 				case 2:
 					newIdx = 17;
 					break;
+				default:
+					goto dash;
 				}
-			} else if (mMario->mGamePad->checkMeaning(
-			               TMarioGamePad::MEANING_R)) {
-				newIdx = 13;
 			} else {
-				goto walking;
+			dash:
+				if (mMario->mGamePad->checkMeaning(0x400))
+					newIdx = 13;
+				else
+					goto walking;
 			}
 		} else {
 		walking:
 			u32 act = mMario->mStatus;
-			if (act == 0x8023C)
+			if (act == 0x80023C)
 				newIdx = 6;
 			else if (act == MARIO_STATUS_WIN_DEMO)
 				newIdx = 2;
@@ -626,7 +674,7 @@ void TYoshi::thinkAnimation()
 		mActor->setMotionBlendRatioForBck(0.0f);
 	}
 
-	mActor->getFrameCtrl(ANM_TYPE_BCK)->setRate(nextFrame);
+	YoshiGetBckCtrl(this)->setRate(nextFrame);
 }
 
 void TYoshi::thinkUpper()
@@ -638,19 +686,15 @@ void TYoshi::thinkUpper()
 
 	J3DJoint* joint
 	    = mActor->getModel()->getModelData()->getJointNodePointer(18);
-	TWaterGun* waterGun = mMario->mWaterGun;
-
-	bool shouldUseEatMtx = mTongue->mState != TYoshiTongue::STATE_IDLE
-	                        || waterGun->isEmitting();
-
-	if (shouldUseEatMtx) {
+	if (mTongue->mState != TYoshiTongue::STATE_IDLE
+	    || mMario->mWaterGun->isEmitting()) {
 		if (joint->getMtxCalc() != unk54) {
 			unk5C.setFrame(unk5C.getStart());
 			unk5C.setRate(1.0f);
 			unk5C.setEnd(unk4C->getFrameMax());
 			unk5C.setFrame(0.0f);
 			joint->setMtxCalc(unk54);
-			mBodyAnmSound->initAnmSound(mBodyAnmSoundTable[3], 1, 0.0f);
+			mTongueAnmSound->initAnmSound(mBodyAnmSoundTable[3], 1, 0.0f);
 		}
 
 		unk4C->setFrame(unk5C.getFrame());
@@ -661,7 +705,7 @@ void TYoshi::thinkUpper()
 			unk5C.setEnd(unk50->getFrameMax());
 			unk5C.setFrame(0.0f);
 			joint->setMtxCalc(unk58);
-			mBodyAnmSound->initAnmSound(mBodyAnmSoundTable[4], 1, 0.0f);
+			mTongueAnmSound->initAnmSound(mBodyAnmSoundTable[4], 1, 0.0f);
 		} else if (joint->getMtxCalc() == unk58) {
 			if (unk5C.checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE
 			                     | J3DFrameCtrl::STATE_LOOPED_ONCE))
@@ -677,9 +721,9 @@ void TYoshi::emitTongue()
 	JGeometry::TVec3<f32> pos;
 	JGeometry::TVec3<f32> dir;
 	getEmitPosDir(&pos, &dir);
-	JGeometry::TVec3<f32> vel;
-	vel.set(mMario->mVel);
-	mTongue->emit(pos, dir, vel);
+	// The unnamed temporary, built through TVec3(const Vec&), is what makes
+	// retail compute the third argument's address before the first two.
+	mTongue->emit(pos, dir, JGeometry::TVec3<f32>((const Vec&)mMario->getVel()));
 
 	int tries = 0;
 	do {
@@ -689,10 +733,18 @@ void TYoshi::emitTongue()
 			break;
 		++tries;
 	} while (tries < 10);
-
-	unkDC = 3;
 }
 
+// TODO: frame is 0x118, retail 0x158; every instruction matches. Retail
+// puts each emitTongue expansion's `mTipPos - pos` operand copy in the low
+// region (0xa8/0x88) under the named block; ours sits above it. Naming the
+// distance or routing it through a TU-local helper breaks the inlining.
+// mwcc-stack (c-d3): retail's top holds no 12-byte `diff` (case 0 as plain
+// dx/dz floats is instruction-exact and frees it), each expansion has one
+// more 4-byte object between the velocity temporary and `dir`, and the copy
+// is created at depth 2: `YoshiTipOffset(tip, pos).length()` with a local
+// `offset(tip); offset -= pos;` puts it there with exact instructions, but
+// leaves 3 depth-2 words short before the first copy and 2 between copies.
 void TYoshi::doSearch()
 {
 	switch (unkDC) {
@@ -702,7 +754,7 @@ void TYoshi::doSearch()
 			THitActor* target = mTongue->findTarget(false, false);
 			if (target != nullptr) {
 				JGeometry::TVec3<f32> diff;
-				diff.sub(target->mPosition, mTranslation);
+				diff.sub(target->mPosition, getTranslation());
 				unkE0 = matan(diff.z, diff.x);
 				unkDC = 1;
 				return;
@@ -717,6 +769,7 @@ void TYoshi::doSearch()
 		mEggRotSpeed = prev + delta;
 		if (delta > -256 && delta < 256) {
 			emitTongue();
+			unkDC = 3;
 			changeAnimation(3);
 		}
 		break;
@@ -725,6 +778,7 @@ void TYoshi::doSearch()
 	case 2:
 		if (mTongue->findTarget(false, true) != nullptr) {
 			emitTongue();
+			unkDC = 3;
 		} else {
 			unkDE = (s16)((f32)(unkEA - unkE8) * MsRandF() + (f32)unkE8);
 			unkDC = 0;
@@ -745,9 +799,6 @@ void TYoshi::doSearch()
 
 void TYoshi::doEat(u32 param_1)
 {
-
-	
-	
 	int r31;
 	BOOL bVar1 = true;
 
@@ -769,7 +820,7 @@ void TYoshi::doEat(u32 param_1)
 		break;
 	}
 
-	gpMarioParticleManager->emitAndBindToMtxPtr(
+	SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 	    0x3D, mActor->getModel()->getAnmMtx(unkF6), 0, this);
 
 	if (bVar1 == TRUE) {
@@ -777,7 +828,7 @@ void TYoshi::doEat(u32 param_1)
 		unkC  = unk8;
 		gpMarioParticleManager->emitAndBindToPosPtr(0x3E, &unk108, 0, this);
 		SMSGetMSound()->startSoundActor(MSD_SE_YO_TONGUE_GOKKUN,
-		                                &mTongue->mTipPos, 0, nullptr, 0, 4);
+		                                &mTongue->mTipPos);
 	}
 }
 
@@ -791,21 +842,23 @@ void TYoshi::thinkEat()
 	}
 }
 
+// Retail reads Mario's velocity, pad and Yoshi's position through their
+// accessors and binds both singletons: case 0's getVel() moves mMario to r4,
+// and the eight accessor/binder sites together land the 0x80 frame.
 void TYoshi::thinkHoldOut()
 {
 	switch (mFlutterState) {
 	case 0:
-		if (mMario->mVel.y < mMaxVSpdStartFlutter
-		    && mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_A))
+		if (mMario->getVel().y < mMaxVSpdStartFlutter
+		    && mMario->getGamePad()->checkMeaning(0x80))
 			mFlutterState = 1;
 		break;
 	case 1:
 		gpMarioParticleManager->emitAndBindToMtxPtr(
 		    0x119, mActor->getModel()->getAnmMtx(unkF6), 1, this);
-		if (mMario->mVel.y < 0.0f
-		    && 0.0f <= mFlutterAcceleration + mMario->mVel.y)
-			SMSGetMSound()->startSoundActor(MSD_SE_YV_FUNBARI, &mTranslation, 0,
-			                                nullptr, 0, 4);
+		if (mMario->getVel().y < 0.0f
+		    && 0.0f <= mFlutterAcceleration + mMario->getVel().y)
+			YoshiGetMSound()->startSoundActor(MSD_SE_YV_FUNBARI, &mTranslation);
 		if (mFlutterTimer != 0) {
 			mFlutterTimer -= 1;
 			mMario->mVel.y += mFlutterAcceleration;
@@ -813,7 +866,7 @@ void TYoshi::thinkHoldOut()
 			mFlutterState = 2;
 		}
 
-		if (!mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_A))
+		if (!mMario->getGamePad()->checkMeaning(0x80))
 			mFlutterState = 2;
 		break;
 	case 2:
@@ -822,6 +875,25 @@ void TYoshi::thinkHoldOut()
 	}
 }
 
+// Map size 0x140 exactly. Both ground probes in movement() expand it: retail
+// walks down through Mario-passable, non-water planes up to five times, with
+// isMarioThrough()/isWaterSurface() called out of line at depth 2.
+f32 TYoshi::checkGroundYoshi(const JGeometry::TVec3<f32>& pos, f32* out_y,
+                             const TBGCheckData** out_plane)
+{
+	*out_y = gpMap->checkGround(pos.x, 200.0f + pos.y, pos.z, out_plane);
+	for (int i = 0; i < 5; i++) {
+		if (!(*out_plane)->isMarioThrough() || (*out_plane)->isWaterSurface())
+			break;
+		*out_y = gpMap->checkGround(pos.x, *out_y - 1.0f, pos.z, out_plane);
+	}
+	mActor->setLightData(*out_plane, pos);
+	return *out_y;
+}
+
+// TODO: frame 0x1a8 against retail's 0x240. After doSearch() retail loads
+// mMario into r3 before the `unkC <= 0` test (mState then in r4); the other
+// three inlined disappear() sites match, so this one reads mMario earlier.
 void TYoshi::movement()
 {
 	if (!gpMarDirector->isDemoMode3() && !gpMarDirector->isDemoMode4()
@@ -838,7 +910,7 @@ void TYoshi::movement()
 		if (mActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 			mState = STATE_UNMOUNTED;
 			changeAnimation(0x17);
-			gpMSound->startMarioVoice(MSD_SE_YV_YOSHI1, 1, 1);
+			startVoice(MSD_SE_YV_YOSHI1);
 		}
 		break;
 
@@ -850,11 +922,9 @@ void TYoshi::movement()
 		SMS_RideMoveByGroundActor(unk94, &mTranslation, &rot);
 		mEggRotSpeed = DEG2SHORTANGLE(rot);
 
-		const TBGCheckData* ground;
-		JGeometry::TVec3<f32> trans = mTranslation;
-		f32 groundY
-		    = gpMap->checkGround(trans.x, 200.0f + trans.y, trans.z, &ground);
-		mActor->setLightData(ground, mTranslation);
+		const TBGCheckData* ground = nullptr;
+		f32 groundY;
+		checkGroundYoshi(mTranslation, &groundY, &ground);
 		unk2C -= mMario->mJumpParams.mGravity.get();
 		mTranslation.y += unk2C;
 
@@ -885,7 +955,7 @@ void TYoshi::movement()
 		mTranslation = mMario->mPosition;
 		mEggRotSpeed = mMario->mFaceAngle.y;
 
-		if (mMario->mGamePad->checkMeaning(TMarioGamePad::MEANING_B)) {
+		if (mMario->mGamePad->checkFrameMeaning(0x100)) {
 			emitTongue();
 		}
 		if (unkC <= 0)
@@ -936,9 +1006,8 @@ void TYoshi::movement()
 		mTongue->movement();
 
 		const TBGCheckData* ground;
-		f32 groundY = gpMap->checkGround(
-		    mTranslation.x, 200.0f + mTranslation.y, mTranslation.z, &ground);
-		mActor->setLightData(ground, mTranslation);
+		f32 groundY;
+		checkGroundYoshi(mTranslation, &groundY, &ground);
 
 		if (mState == STATE_UNMOUNTED && groundY > mTranslation.y) {
 			if (ground->isWaterSurface()) {
@@ -983,7 +1052,7 @@ void TYoshi::calcAnim()
 		break;
 	case STATE_MOUNTED:
 		thinkAnimation();
-		MTXCopy(mMario->getTakenMtx(), mtx);
+		PSMTXCopy(mMario->getTakenMtx(), mtx);
 		break;
 	case STATE_UNK1:
 		J3DGetTranslateRotateMtx(0, mEggRotSpeed, 0, mTranslation.x,
@@ -1022,21 +1091,21 @@ void TYoshi::calcAnim()
 			break;
 		}
 
-		MTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
+		PSMTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
 		mActor->calcAnm();
-		MTXCopy(mActor->getModel()->getAnmMtx(37),
+		PSMTXCopy(mActor->getModel()->getAnmMtx(37),
 		          mMirrorModels[0]->getBaseTRMtx());
-		MTXCopy(mActor->getModel()->getAnmMtx(32),
+		PSMTXCopy(mActor->getModel()->getAnmMtx(32),
 		          mMirrorModels[1]->getBaseTRMtx());
 		mMirrorModels[0]->calc();
 		mMirrorModels[1]->calc();
 		Mtx tongueMtx;
-		MTXCopy(mActor->getModel()->getAnmMtx(mJointIdxTongue), tongueMtx);
+		PSMTXCopy(mActor->getModel()->getAnmMtx(mJointIdxTongue), tongueMtx);
 		mTongue->calcAnim(tongueMtx);
 	}
 
 	{
-		MtxPtr m = mActor->getModel()->getAnmMtx(unkF6);
+		MtxPtr m = mActor->mModel->getAnmMtx(unkF6);
 		unkFC.x  = m[0][3];
 		unkFC.y  = m[1][3];
 		unkFC.z  = m[2][3];
@@ -1050,9 +1119,8 @@ void TYoshi::calcAnim()
 
 	u32 soundFlags = mMario->mSoundFlags;
 
-	mBodyAnmSound->animeLoop(&mTranslation,
-	                         mActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame(),
-	                         mActor->getFrameCtrl(ANM_TYPE_BCK)->getRate(),
+	mBodyAnmSound->animeLoop(&mTranslation, YoshiGetBckCtrl(this)->getFrame(),
+	                         YoshiGetBckCtrl(this)->getRate(),
 	                         soundFlags + 0x10000000, 4);
 	mTongueAnmSound->animeLoop(&unkFC, unk5C.getFrame(), unk5C.getRate(),
 	                           soundFlags + 0x10000000, 4);
@@ -1075,15 +1143,20 @@ void TYoshi::entry()
 
 	bool bVar1 = true;
 	if (mState == STATE_UNMOUNTED || mState == STATE_MOUNTED) {
-		if (unkC >= 360 && unkC < 600 && !(unkC & 0x10))
+		int timer = unkC;
+		if (timer >= 360 && timer < 600 && !(timer & 0x10))
 			bVar1 = false;
 
-		if (unkC < 360 && !(unkC & 0x8))
+		if (unkC < 360 && !(timer & 0x8))
 			bVar1 = false;
 	}
 
 	if (mState == STATE_EGG)
 		bVar1 = false;
+
+	if (gpMarDirector->isDemoMode3() || gpMarDirector->isDemoMode4()
+	    || gpMarDirector->isTalkModeNow())
+		bVar1 = true;
 
 	if (unkC < 600)
 		mType = 0;
@@ -1091,24 +1164,33 @@ void TYoshi::entry()
 	if (!isHatched())
 		return;
 
-	if (gpMarDirector->isTalkOrDemoModeNow())
-		bVar1 = true;
-
 	if (bVar1 != true)
 		return;
 
+	// TODO: the frame is 0x10 too tall: ours leaves 0x20 between the shadow
+	// request and the fctiwz slots where retail leaves 0x10. Every object
+	// below is at its retail offset. Spelling the demo test as
+	// isDemoModeNow() or raw unk124 compares, and int r/g/b, are worse.
+	// mwcc-stack (c-d3): above the request sit modelData (dead) and the three
+	// named tevColors (28 bytes; retail 12-16). The 12 two-byte objects at the
+	// bottom are one per field per distinct copy source, so sharing one
+	// tevColor (or one GXColorS10) drops 8 of them: 0x138, and a loop-local
+	// plus one shared for the mirrors gives 0x148 with every object 8 low.
+	// Raw mTranslation at both requests lands the frame but drops every object
+	// 0x10; declaring shadowRequest earlier (four spots) moves its ctor.
+	J3DModelData* modelData = mActor->getModel()->getModelData();
 	s16 r = (s16)unk84.x;
 	s16 g = (s16)unk84.y;
 	s16 b = (s16)unk84.z;
 
-	J3DModelData* modelData = mActor->getModel()->getModelData();
 	for (u16 i = 0; i < modelData->getMaterialNum(); ++i) {
 		J3DGXColorS10 tevColor;
 		tevColor.color.r = r;
 		tevColor.color.g = g;
 		tevColor.color.b = b;
 		tevColor.color.a = 0xFF;
-		modelData->getMaterialNodePointer(i)->setTevColor(2, &tevColor);
+		modelData->getMaterialNodePointer(i)->getTevBlock()->setTevColor(
+		    2, tevColor);
 	}
 
 	{
@@ -1120,7 +1202,8 @@ void TYoshi::entry()
 		mMirrorModels[0]
 		    ->getModelData()
 		    ->getMaterialNodePointer(0)
-		    ->setTevColor(2, &tevColor);
+		    ->getTevBlock()
+		    ->setTevColor(2, tevColor);
 	}
 
 	{
@@ -1132,21 +1215,22 @@ void TYoshi::entry()
 		mMirrorModels[1]
 		    ->getModelData()
 		    ->getMaterialNodePointer(0)
-		    ->setTevColor(2, &tevColor);
+		    ->getTevBlock()
+		    ->setTevColor(2, tevColor);
 	}
 
 	mActor->entry();
-	gpLightManager->getLightSet(LIGHT_TYPE_OBJECT)
-	    ->changeLightDrawBuffer(mActor->mLightId);
+	int id = mActor->mLightId;
+	gpLightManager->getLightSet(1)->changeLightDrawBuffer(id);
 	mMirrorModels[0]->entry();
 	mMirrorModels[1]->entry();
 	mTongue->entry();
-	gpLightManager->getLightSet(LIGHT_TYPE_OBJECT)->resetLightDrawBuffer();
+	gpLightManager->getLightSet(1)->resetLightDrawBuffer();
 
 	TCircleShadowRequest shadowRequest;
-	shadowRequest.mPosition = mTranslation;
+	shadowRequest.mPosition = getTranslation();
 	shadowRequest.mRadiusX = shadowRequest.mRadiusZ = unk114;
 
 	gpBindShadowManager->request(shadowRequest, 0);
-	gpQuestionManager->request(mTranslation, unk114);
+	gpQuestionManager->request(getTranslation(), unk114);
 }

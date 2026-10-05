@@ -30,7 +30,8 @@ namespace Dvd {
 	static volatile u32 bufferFull = false;
 	static volatile u32 bufferFull2;
 
-	typedef u8 FabricatedCallstack[0x40];
+	// the task function, then its TDvdCall (0x40 bytes with 4-byte pointers)
+	typedef u8 FabricatedCallstack[sizeof(void*) + sizeof(TDvdCall) + 4];
 	static FabricatedCallstack* callStackArray = 0;
 	static void** msgBuf                       = 0;
 	static u32 curQ                            = 0;
@@ -130,7 +131,7 @@ void* Dvd::dvdProc(void* param)
 		if (cs == 0)
 			continue;
 
-		(*(s32(**)(void*))cs)(((u8*)cs) + 4);
+		(*(s32(**)(void*))cs)((void**)cs + 1);
 	}
 }
 
@@ -474,13 +475,8 @@ s32 Dvd::openDvd(char* path, DVDFileInfo* fileInfo)
 {
 	s32 entryNum = registerFastOpen(path);
 	if (entryNum == -1)
-		DVDOpen(path, fileInfo);
-	else
-		DVDFastOpen(entryNum, fileInfo);
-	// TODO: is this a bug that they forgot to return entryNum
-	// but the assembly HAPPENS to work out in such a way that
-	// r3 still contains entryNum?
-	// Or is this a fakematch?
+		return DVDOpen(path, fileInfo);
+	return DVDFastOpen(entryNum, fileInfo);
 }
 
 static void* Dvd::getCallStack()

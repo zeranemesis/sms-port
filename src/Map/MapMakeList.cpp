@@ -1,6 +1,7 @@
 #include <Map/MapCollisionData.hpp>
 #include <Map/MapCollisionEntry.hpp>
 #include <Map/MapData.hpp>
+#include <algorithm>
 #include <MarioUtil/MathUtil.hpp>
 #include <dolphin/types.h>
 
@@ -21,7 +22,6 @@ u32 TMapCollisionData::getEntryID()
 	return result;
 }
 
-#pragma dont_inline on
 TBGCheckList* TMapCollisionData::allocCheckList(int kind, int count)
 {
 	TBGCheckList* result;
@@ -41,32 +41,29 @@ TBGCheckList* TMapCollisionData::allocCheckList(int kind, int count)
 	}
 	return result;
 }
-#pragma dont_inline off
 
 TBGCheckList* TMapCollisionData::getListRoot(int i, int j, int kind,
                                              int param_4) const
 {
-	TBGCheckList* result;
 	switch (kind) {
 	case TMapCollisionBase::KIND_WARP:
 	case TMapCollisionBase::KIND_STATIC:
-		result = &unk14[j + i * unk8].unk0[param_4];
-		break;
+		return &unk14[j + i * unk8].unk0[param_4];
 	case TMapCollisionBase::KIND_MOVE:
-		result = &unk18[j + i * unk8].unk0[param_4];
-		break;
+		return &unk18[j + i * unk8].unk0[param_4];
 	default:
-		result = nullptr;
-		break;
+		return nullptr;
 	}
-	return result;
 }
 
-#pragma dont_inline on
+// addCheckDataToGrid reaches these walkers, allocCheckList and addAfterPreNode
+// at depth 2 through the inlined UNUSED addCheckDataToList, so they stay calls
+// there; the out-of-line addCheckDataToList expands them at depth 1.
+// Only the last of addAfterPreNode's three next reads takes getNext()'s word.
 static void addAfterPreNode(int param_1, int param_2, TBGCheckList* param_3,
                             TBGCheckList* param_4, int kind)
 {
-	param_4->setNext(param_3->getNext());
+	param_4->setNext(param_3->mNext);
 	if (kind == TMapCollisionBase::KIND_WARP) {
 		TBGCheckListWarp* casted = static_cast<TBGCheckListWarp*>(param_4);
 		casted->unk10            = param_1;
@@ -74,7 +71,7 @@ static void addAfterPreNode(int param_1, int param_2, TBGCheckList* param_3,
 		casted->setPreNode(param_3);
 	}
 
-	if (param_3->getNext() != nullptr) {
+	if (param_3->mNext != nullptr) {
 		param_3->getNext()->setPreNode(param_4);
 	}
 
@@ -122,7 +119,6 @@ static TBGCheckList* addGroundNode(TBGCheckList* param_1, TBGCheckData* param_2)
 	}
 	return param_1;
 }
-#pragma dont_inline off
 
 void TMapCollisionData::addCheckDataToList(int i, int j, int param_3,
                                            int param_4, TBGCheckData* param_5)
@@ -145,19 +141,28 @@ void TMapCollisionData::addCheckDataToList(int i, int j, int param_3,
 	addAfterPreNode(j, i, list2, list3, param_3);
 }
 
+// TODO: 99.8%. Two residues left.
+//  - Frame 0x70 against retail's 0xe0: 112 bytes of dead low region below the
+//    single int-to-float conversion pair, which is the only referenced slot on
+//    either side. std::min/max' `const T&` parameters bind nothing here; the
+//    same templates taking their arguments by value are +0x28 and cost three
+//    register pairs, so the carrier is not the parameter form.
+//  - The Z inner min loads p2.z and p3.z into the opposite registers (retail
+//    f6 = p3.z, f5 = p2.z). The Z inner max takes (p2.z, p3.z) like the X
+//    pair; spelling the inner min the same way is 99.5%.
 bool TMapCollisionData::getGridArea(const TBGCheckData* param_1, int param_2,
                                     int* param_3, int* param_4, int* param_5,
                                     int* param_6)
 {
-	f32 minX = MsMin(param_1->mPoint1.x,
-	                 MsMin(param_1->mPoint3.x, param_1->mPoint2.x));
-	f32 minZ = MsMin(param_1->mPoint1.z,
-	                 MsMin(param_1->mPoint3.z, param_1->mPoint2.z));
+	f32 minX = std::min(param_1->mPoint1.x,
+	                    std::min(param_1->mPoint2.x, param_1->mPoint3.x));
+	f32 minZ = std::min(param_1->mPoint1.z,
+	                    std::min(param_1->mPoint3.z, param_1->mPoint2.z));
 
-	f32 maxX = MsMax(param_1->mPoint1.x,
-	                 MsMax(param_1->mPoint2.x, param_1->mPoint3.x));
-	f32 maxZ = MsMax(param_1->mPoint1.z,
-	                 MsMax(param_1->mPoint2.z, param_1->mPoint3.z));
+	f32 maxX
+	    = std::max(param_1->mPoint1.x, std::max(param_1->mPoint2.x, param_1->mPoint3.x));
+	f32 maxZ
+	    = std::max(param_1->mPoint1.z, std::max(param_1->mPoint2.z, param_1->mPoint3.z));
 
 	if (maxX < -mGridExtentX || maxZ < -mGridExtentY || minX > mGridExtentX
 	    || minZ > mGridExtentY)
@@ -189,6 +194,19 @@ bool TMapCollisionData::getGridArea(const TBGCheckData* param_1, int param_2,
 	return true;
 }
 
+// TODO: 93.1%. Retail calls the UNUSED addCheckDataToList at each of the
+// three sites, which expands the UNUSED getListRoot at depth 2 and keeps the
+// list helpers as calls.
+//  - Frame 0xd0 against retail's 0x108: 0x38 bytes of dead low region below
+//    the four getGridArea outputs (retail 0x50..0x5c).
+//  - The hoisted constants take f31 = 1024.0f, f30 = the int-conversion
+//    magic in retail; ours are swapped.
+//  - The int<->float conversion slots and their scheduling around the two
+//    polygonIsInGrid calls differ (retail's temporaries are allocated in
+//    z1, x1, z0, x0 order, the call's right-to-left argument order).
+//    Declaring the four ints in other orders, spelling the products
+//    constant-first or passing the conversions inline were inert or worse.
+//  - addCheckDataToList out of line is 0x270 against the map's 0x27c.
 void TMapCollisionData::addCheckDataToGrid(TBGCheckData* param_1, int kind)
 {
 	int iVar7 = param_1->getPlaneType();
@@ -201,45 +219,14 @@ void TMapCollisionData::addCheckDataToGrid(TBGCheckData* param_1, int kind)
 		for (int i = local_b4; i <= local_b8; ++i) {
 			for (int j = local_ac; j <= local_b0; ++j) {
 				if (kind == TMapCollisionBase::KIND_MOVE) {
-					TBGCheckList* list = getListRoot(i, j, kind, iVar7);
-					TBGCheckList* list2;
-					switch (iVar7) {
-					case 0:
-						list2 = addGroundNode(list, param_1);
-						break;
-					case 1:
-						list2 = addRoofNode(list, param_1);
-						break;
-					case 2:
-						list2 = addWallNode(list, param_1);
-						break;
-					}
-
-					TBGCheckList* list3 = allocCheckList(kind, 1);
-					list3->unk8         = param_1;
-					addAfterPreNode(j, i, list2, list3, kind);
+					addCheckDataToList(i, j, kind, iVar7, param_1);
 				} else if (iVar7 != 2) {
 					int iVar1 = (i + 1) * 1024.0f - mGridExtentY;
 					int iVar2 = (i * 1024.0f) - mGridExtentY;
 					int iVar3 = (j + 1) * 1024.0f - mGridExtentX;
 					int iVar4 = j * 1024.0f - mGridExtentX;
 					if (polygonIsInGrid(iVar4, iVar2, iVar3, iVar1, param_1)) {
-						TBGCheckList* list = getListRoot(i, j, kind, iVar7);
-						TBGCheckList* list2;
-						switch (iVar7) {
-						case 0:
-							list2 = addGroundNode(list, param_1);
-							break;
-						case 1:
-							list2 = addRoofNode(list, param_1);
-							break;
-						case 2:
-							list2 = addWallNode(list, param_1);
-							break;
-						}
-						TBGCheckList* list3 = allocCheckList(kind, 1);
-						list3->unk8         = param_1;
-						addAfterPreNode(j, i, list2, list3, kind);
+						addCheckDataToList(i, j, kind, iVar7, param_1);
 					}
 				} else {
 					int iVar1 = (i + 1) * 1024.0f - mGridExtentY;
@@ -249,23 +236,7 @@ void TMapCollisionData::addCheckDataToGrid(TBGCheckData* param_1, int kind)
 					if (polygonIsInGrid(iVar4 - 80.0f, iVar2 - 80.0f,
 					                    iVar3 + 80.0f, iVar1 + 80.0f,
 					                    param_1)) {
-						TBGCheckList* list = getListRoot(i, j, kind, iVar7);
-						TBGCheckList* list2;
-						switch (iVar7) {
-						case 0:
-							list2 = addGroundNode(list, param_1);
-							break;
-						case 1:
-							list2 = addRoofNode(list, param_1);
-							break;
-						case 2:
-							list2 = addWallNode(list, param_1);
-							break;
-						}
-
-						TBGCheckList* list3 = allocCheckList(kind, 1);
-						list3->unk8         = param_1;
-						addAfterPreNode(j, i, list2, list3, kind);
+						addCheckDataToList(i, j, kind, iVar7, param_1);
 					}
 				}
 			}
@@ -275,12 +246,11 @@ void TMapCollisionData::addCheckDataToGrid(TBGCheckData* param_1, int kind)
 
 void TMapCollisionData::removeCheckListNode(s32, s32) { }
 
+// The first loop reads mNext raw; getPreNode() and getNext() are the list's
+// binder-shaped accessors (research c-r30).
 void TMapCollisionData::updateCheckListNode(s32 param_1, s32 param_2,
                                             s32 param_3)
 {
-
-	
-	
 	TBGCheckListWarp* l   = &unk30[param_3];
 	TBGCheckListWarp* r   = &unk30[param_1];
 	TBGCheckListWarp* end = &unk30[param_3 + param_2];
@@ -290,7 +260,7 @@ void TMapCollisionData::updateCheckListNode(s32 param_1, s32 param_2,
 
 	for (int i = param_1; i < param_1 + param_2; ++i) {
 		TBGCheckListWarp* warp2 = &unk30[i];
-		TBGCheckListWarp* warp3 = (TBGCheckListWarp*)warp2->getNext();
+		TBGCheckListWarp* warp3 = (TBGCheckListWarp*)warp2->mNext;
 		if (l <= warp3 && warp3 < end)
 			warp2->setNext((TBGCheckListWarp*)((char*)warp3 - offset));
 
@@ -311,6 +281,8 @@ void printData(const TBGCheckListWarp*, int) { }
 
 void printList(const TBGCheckList*) { }
 
+// The sentinel store goes through setEntryStart; the low region is the
+// binder-shaped getPreNode()/getNext() reads (research c-r30).
 void TMapCollisionData::removeCheckListData(u16 start, s32 count)
 {
 	TBGCheckListWarp* curr;
@@ -324,7 +296,7 @@ void TMapCollisionData::removeCheckListData(u16 start, s32 count)
 	rangeStart = unk42[start];
 	rangeEnd   = unk42[start] + count;
 
-	unk42[start] = 9999;
+	setEntryStart(start, 9999);
 	unk242       = start;
 
 	for (i = rangeStart; i < rangeEnd; ++i) {
@@ -332,13 +304,6 @@ void TMapCollisionData::removeCheckListData(u16 start, s32 count)
 		curr->getPreNode()->setNext(curr->getNext());
 		if (curr->getNext() != nullptr) {
 			curr->getNext()->setPreNode(curr->getPreNode());
-
-	// Every diff marker of this function is a stack offset sitting 0x28 above
-	// ours (target frame 0x70 against 0x48). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 		}
 		curr->unk8 = nullptr;
 	}

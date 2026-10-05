@@ -1,7 +1,3 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Enemy/FireWanwan.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <System/MarDirector.hpp>
@@ -17,6 +13,11 @@
 #include <MarioUtil/MtxUtil.hpp>
 #include <Map/MapData.hpp>
 #include <Map/Map.hpp>
+// Rogue include: retail's .rodata opens with this header's zero object and
+// no-memory message, ahead of setUpTrans's zero and one literals and the
+// mtx-calc names (c-r35).
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 #include <Map/MapCollisionManager.hpp>
 #include <Map/MapCollisionEntry.hpp>
 #include <Map/PollutionManager.hpp>
@@ -27,6 +28,7 @@
 #include <Camera/CameraShake.hpp>
 #include <Enemy/Graph.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
@@ -101,26 +103,30 @@ void TTailRubber::reset(const JGeometry::TVec3<f32>& param_1,
 
 	for (int i = 1; i < unk0.size() - 1; ++i) {
 		JGeometry::TVec3<f32> pos;
-		pos.scaleAdd(f32(i) / f32(unk0.size()), param_1, diff);
+		pos.scaleAdd(f32(i) / f32(unk0.size()), diff, param_1);
 
 		Node& node = unk0[i];
 		node.mPos.set(pos);
-		node.mVel.set(0.0f, 0.0f, 0.0f);
+		node.mVel.zero();
 	}
 }
 
+// TODO: the map sizes (0x20, 0x30) leave no room for mVel.zero(): both are
+// the position store alone. Dropping the zero needs reset to zero the end
+// velocities itself, and every spelling tried stops reset inlining into
+// TFireWanwanTailHit::init (78%) or leaves it 0x144 (map 0x118).
 void TTailRubber::setHeadPos(const JGeometry::TVec3<f32>& param_1)
 {
 	Node& node = unk0.front();
 	node.mPos  = param_1;
-	node.mVel.set(0.0f, 0.0f, 0.0f);
+	node.mVel.zero();
 }
 
 void TTailRubber::setTailPos(const JGeometry::TVec3<f32>& param_1)
 {
 	Node& node = *(unk0.end() - 1);
 	node.mPos  = param_1;
-	node.mVel.set(0.0f, 0.0f, 0.0f);
+	node.mVel.zero();
 }
 
 void TTailRubber::movement()
@@ -147,6 +153,14 @@ void TTailRubber::bind()
 		bindOne(*it);
 }
 
+// TODO: 99.3%, every instruction matching. Retail adds the 20.0f as
+// `20.0f + fVar1` into fVar1's own register (f3); `fVar1 = 20.0f + fVar1`
+// fixes the operand order but not the register, so it is left as `+=`. Also
+// the `next - node.mPos` temporary sits 0xc high (0x20 vs 0x14). Inert:
+// the sum on one line, `+ 1.0f` on the call, a second local, a named limit.
+// TODO: retail adds 20.0f literal-first into fVar1's own register and keeps
+// the `next - mPos` temporary at 0x14 (ours 0x20). `fVar1 = fVar1 + 20.0f`, a
+// named `groundY` or `20.0f + fVar1` fix the operand order only (99.2).
 void TTailRubber::bindOne(Node& node)
 {
 	JGeometry::TVec3<f32> next = node.mPos;
@@ -176,7 +190,7 @@ void TTailRubber::adjust()
 	fake.mPos.set(unk0.front().mPos);
 	adjustOne(unk0[0], fake, unk0[1]);
 
-	fake.mPos.set(unk0.back().mPos);
+	fake.mPos.set(unk0[unk0.size() - 1].mPos);
 	adjustOne(unk0[unk0.size() - 1], unk0[unk0.size() - 2], fake);
 }
 
@@ -195,6 +209,9 @@ void TTailRubber::adjustOne(Node& curr, const Node& prev, const Node& next)
 	curr.mVel *= mDecay;
 }
 
+// TODO: 98.1% since TVec3's copy constructor became `: Vec(other)`; frame
+// 0xb8 against 0xa8 (ours also parks f31 at 0x70) and one `add` scheduled
+// late. Naming the length (`f32 len = diff.length()`) is worse (86.8-92.8).
 void TTailRubber::restrict()
 {
 	f32 avgHorLen = getLength();
@@ -208,13 +225,8 @@ void TTailRubber::restrict()
 		for (Node *e = unk0.begin() - 1, *it = unk0.end() - 2; it != e; --it) {
 			JGeometry::TVec3<f32> diff = (it + 1)->mPos;
 			diff -= it->mPos;
-			diff.y = 0.0f;
-			// hoisted: the ROM evaluates length() once. Spelled twice it
-			// re-emits the whole squared() + inline sqrt pair (35 extra
-			// instructions, 116 bytes) and the body outgrows the ROM's.
-			f32 len = diff.length();
-			if (avgHorLen < len) {
-				diff.setLength(len - avgHorLen);
+			if (avgHorLen < diff.length()) {
+				diff.setLength(diff.length() - avgHorLen);
 				it->mPos += diff;
 			}
 		}
@@ -223,9 +235,8 @@ void TTailRubber::restrict()
 			JGeometry::TVec3<f32> diff = (it - 1)->mPos;
 			diff -= it->mPos;
 			diff.y = 0.0f;
-			f32 len = diff.length();
-			if (avgHorLen < len) {
-				diff.setLength(len - avgHorLen);
+			if (avgHorLen < diff.length()) {
+				diff.setLength(diff.length() - avgHorLen);
 				it->mPos += diff;
 			}
 		}
@@ -308,16 +319,33 @@ void TFireWanwanManager::createModelData()
 	createModelDataArray(entry);
 }
 
+// Two-local binder, +0x10 per site: four getConsole sites land
+// TFireWanwanManager::perform's frame at 0x110.
+static inline TGCConsole2* FireWanwanMgrConsole()
+{
+	TMarDirector* director = gpMarDirector;
+	TGCConsole2* console   = director->getConsole();
+	return console;
+}
+
+// Bare-return fork over the indexed array. Zero frame; ranks the wanwan
+// pointer above the loop index (r29/r28) as retail does.
+static inline TFireWanwan* FireWanwanMgrObj(TFireWanwanManager* m, int i)
+{
+	return (TFireWanwan*)m->unk18[i];
+}
+
 void TFireWanwanManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TEnemyManager::perform(cue, graphics);
 
 	for (int i = 0; i < mObjNum; ++i) {
-		TFireWanwan* wanwan = (TFireWanwan*)unk18[i];
+		TFireWanwan* wanwan = FireWanwanMgrObj(this, i);
 		if (!gpMap->isInArea(wanwan->mPosition.x, wanwan->mPosition.z)
 		    || (wanwan->getGroundPlane()
 		        && wanwan->getGroundPlane()->isDeathPlane())) {
-			wanwan->kill();
+			// vtable slot 0xfc, not kill()'s 0xe4
+			wanwan->reset();
 		}
 	}
 
@@ -341,7 +369,7 @@ void TFireWanwanManager::checkBalloonHelpBoss22()
 		f32 helpRange22 = getWanwanParams()->mBoss22HelpRange.get();
 		if (diff.squared() < helpRange22 * helpRange22) {
 			mBoss22BalloonWasShown = true;
-			gpMarDirector->getConsole()->startAppearBalloon(0x16, true);
+			FireWanwanMgrConsole()->startAppearBalloon(0x16, true);
 		}
 	}
 }
@@ -352,7 +380,7 @@ void TFireWanwanManager::checkBalloonHelpBoss23()
 	    && getWanwanParams()->mBoss23TimerMax.get() > unk64) {
 		if (++unk64 >= getWanwanParams()->mBoss23TimerMax.get()) {
 			unk64 = getWanwanParams()->mBoss23TimerMax.get();
-			gpMarDirector->getConsole()->startAppearBalloon(0x17, true);
+			FireWanwanMgrConsole()->startAppearBalloon(0x17, true);
 		}
 	}
 }
@@ -360,7 +388,7 @@ void TFireWanwanManager::checkBalloonHelpBoss23()
 void TFireWanwanManager::checkBalloonHelpBoss24()
 {
 	if (mWanwanRecoversBeforeHelpBalloon == 0) {
-		gpMarDirector->getConsole()->startAppearBalloon(0x18, true);
+		FireWanwanMgrConsole()->startAppearBalloon(0x18, true);
 		mWanwanRecoversBeforeHelpBalloon = -1;
 	}
 }
@@ -371,7 +399,7 @@ void TFireWanwanManager::checkShineAppear()
 		return;
 
 	if (mWanwansKilled == getActiveObjNum() && gpMarDirector->unk124 != 3
-	    && gpMarDirector->getConsole()->unk10 == 0) {
+	    && FireWanwanMgrConsole()->unk10 == 0) {
 		mShineAppeared = true;
 		gpItemManager->makeShineAppearWithDemo(
 		    "シャイン（ボス用）", "ボスシャインカメラ",
@@ -381,8 +409,13 @@ void TFireWanwanManager::checkShineAppear()
 	}
 }
 
+// TODO: UNUSED (0x2c), body unknown: no call site or inlined copy survives.
 void TFireWanwanManager::receiveMessageFromTail(int) { }
 
+// TODO: 0x20 against the map's 0xac. A second case holding Die's kill
+// bookkeeping (last killer, recover count -1, ++killed == active -> balloon
+// 0x19, console through a director binder) is exactly 0xac and keeps Die at
+// 100%, but its dead inline temporaries add 0x30-0x40 to Recover's frame.
 void TFireWanwanManager::receiveMessageFromBody(const TFireWanwan* wanwan,
                                                 BodyMsgType msg)
 {
@@ -404,12 +437,30 @@ TFireWanwanTailNode::TFireWanwanTailNode(MActor* actor)
 {
 }
 
+// fabricated: the normalized cross product TFireWanwanTailNode::perform builds
+// its to-dir frame from. It is not SMS_CalcToDirMatrix: the global copy of that
+// (Kazekun.cpp, 0x23c) tests each axis with isZero() and falls back to a unit
+// axis, and calling it here drops perform 97.3% -> 37.8%. TFireWanwanTailHit::
+// perform does call the global and gains 73.4% -> 92.4% from it, so the two
+// sites really do use different code. The map has no symbol for it, but the
+// level is evidenced: retail bl's inv_sqrt from perform (depth 3 through this
+// and setLength), and the frame written out in perform is what keeps perform
+// itself out of line in performNodes (replacing the old `dont_inline`).
+static inline void CalcUnitCross(JGeometry::TVec3<f32>& out,
+                                 const JGeometry::TVec3<f32>& a,
+                                 const JGeometry::TVec3<f32>& b)
+{
+	out.cross(a, b);
+	out.setLength(out, 1.0f);
+}
+
 void TFireWanwanTailNode::setBarAnmMtx(MtxPtr mtx)
 {
 	mMActor->getModel()->setAnmMtx(mJointIdx, mtx);
 }
 
-#pragma dont_inline on
+// TODO: frame 0x120 retail vs 0xe8 here with every instruction in place; the
+// f26-f31 assignment differs from the cross product onward.
 void TFireWanwanTailNode::perform(u32 cue, JDrama::TGraphics* graphics,
                                   const JGeometry::TVec3<f32>& param_3,
                                   const JGeometry::TVec3<f32>& param_4)
@@ -417,25 +468,14 @@ void TFireWanwanTailNode::perform(u32 cue, JDrama::TGraphics* graphics,
 	if (cue & CUE_CALC_ANIM) {
 		TPosition3f mtx;
 
-		// The direction matrix is built INLINE here, unlike
-		// SMS_CalcToDirMatrix (kazekun.cpp) which this TU calls from
-		// TFireWanwanTailHit::perform. The original computes the two
-		// columns itself: it never normalises param_4, it only normalises
-		// the two cross products. See build/GMSP01/asm/Enemy/fireWanwan.s
-		// 0x800867C4-0x800868DC - the six fmsubs/fnmsubs in f26..f31 and
-		// the surviving `fmuls f0, f0, f1` (TUtil<f32>::one() out of
-		// setLength) only come out of this form.
-		JGeometry::TVec3<f32> v1;
-		v1.cross(JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f), param_4);
-		v1.normalize();
-
-		JGeometry::TVec3<f32> v2;
-		v2.cross(param_4, v1);
-		v2.normalize();
-
-		mtx.setXDir(v1);
-		mtx.setYDir(v2);
+		JGeometry::TVec3<f32> xDir;
+		CalcUnitCross(xDir, JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f), param_4);
+		JGeometry::TVec3<f32> yDir;
+		CalcUnitCross(yDir, param_4, xDir);
+		mtx.setXDir(xDir);
+		mtx.setYDir(yDir);
 		mtx.setZDir(param_4);
+
 		mtx.setTrans(param_3);
 
 		mMActor->getModel()->setBaseScale(mScale);
@@ -446,7 +486,6 @@ void TFireWanwanTailNode::perform(u32 cue, JDrama::TGraphics* graphics,
 	if (!(unk10 & 0x4))
 		mMActor->perform(cue, graphics);
 }
-#pragma dont_inline off
 
 TFireWanwanTailHit::TFireWanwanTailHit(TFireWanwan& param_1)
     : TTakeActor("ファイヤーワンワン尻尾当たり")
@@ -455,11 +494,24 @@ TFireWanwanTailHit::TFireWanwanTailHit(TFireWanwan& param_1)
 	MTXIdentity(unk74);
 }
 
+static inline TFireWanwan* FireWanwanTailOwner(const TFireWanwanTailHit* p)
+{
+	return p->mOwner;
+}
+
+static inline TTailRubber* FireWanwanTailRubber(const TFireWanwanTailHit* p)
+{
+	return p->unkA4;
+}
+
+static inline TFireWanwanSaveLoadParams*
+FireWanwanTailParams(const TFireWanwanTailHit* p)
+{
+	return FireWanwanTailOwner(p)->getSaveParam2();
+}
+
 BOOL TFireWanwanTailHit::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	if (sender->getActorType() == 0x80000001) {
 		if (message == HIT_MESSAGE_TAKE) {
 			if (!mOwner->canTakenByMario())
@@ -481,28 +533,32 @@ BOOL TFireWanwanTailHit::receiveMessage(THitActor* sender, u32 message)
 void TFireWanwanTailHit::behaveTaken(THitActor* param_1)
 {
 	mHolder            = (TTakeActor*)param_1;
-	unkA4->mFixTailPos = true;
+	FireWanwanTailRubber(this)->mFixTailPos = true;
 	SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_HOLD, &mPosition, 0,
 	                                nullptr, 0, 4);
-	((TFireWanwanManager*)mOwner->getManager())->unk64 = 1;
+	((TFireWanwanManager*)FireWanwanTailOwner(this)->getManager())->unk64 = 1;
 
-	mCurTailLength  = unkA4->getLength();
+	mCurTailLength  = FireWanwanTailRubber(this)->getLength();
 	mPrevTailLength = mCurTailLength;
 	moveRequest(param_1->mPosition);
 }
 
 void TFireWanwanTailHit::behaveApart()
 {
-	unkA4->mFixTailPos = false;
+	FireWanwanTailRubber(this)->mFixTailPos = false;
 
-	((TFireWanwanManager*)mOwner->getManager())->unk64 = 0;
-	mOwner->startThrownSound();
+	((TFireWanwanManager*)FireWanwanTailOwner(this)->getManager())->unk64 = 0;
+	FireWanwanTailOwner(this)->startThrownSound();
 	mThrowPow       = calcApartPow();
 	mCurTailLength  = 0.0f;
 	mPrevTailLength = 0.0f;
 	mHolder         = nullptr;
 }
 
+// TODO: 96.9%, frame 0x1d8 vs 0x208. The residue is the inlined
+// TTailRubber::reset loop: retail keeps param_1.y/.z in registers across it
+// and converts i/size in a different order. A copy-built diff, operator-,
+// `mPos = pos` and a named scale factor were all worse or frame-only.
 void TFireWanwanTailHit::init()
 {
 	unkA4      = new TTailRubber(5);
@@ -536,13 +592,13 @@ void TFireWanwanTailHit::init()
 		unkA8[i]->setScale(local_78);
 
 		TPosition3f mtx;
-		mtx.translation(unkA4->getNode(i)->mPos);
+		mtx.translation(getBodyNthPos(i));
 		actor->getModel()->setBaseTRMtx(mtx);
 		actor->getModel()->setBaseScale(local_78);
 		actor->getModel()->calc();
 	}
 
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 	initHitActor(0x10000028, 0, 0, 0.0f, 0.0f, 30.0f, 200.0f);
@@ -551,6 +607,11 @@ void TFireWanwanTailHit::init()
 	mIsOnFire = false;
 }
 
+// TODO: 99.0%. The ROM's inlined bindBody -> getBodyTailPow calls the weak
+// *const* ArrayWrapper<Node>::operator[] out of line (the map has no
+// non-const overload anywhere, so ArrayWrapper.hpp now carries only the const
+// one). The frame is 0x18 short (0x1f0 vs 0x208; getPosition() at the three
+// position reads, getHostPos()'s spelling, took it from 0x1d8).
 void TFireWanwanTailHit::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	THitActor::perform(cue, graphics);
@@ -577,27 +638,21 @@ void TFireWanwanTailHit::perform(u32 cue, JDrama::TGraphics* graphics)
 		unkBC->update();
 
 	if (mHolder != nullptr) {
-		JGeometry::TVec3<f32> local_3c = unkA4->getNode(4)->mPos;
-		local_3c -= mOwner->mPosition;
+		JGeometry::TVec3<f32> local_3c = getBodyNthPos(4);
+		local_3c -= mOwner->getPosition();
 		SMS_CalcToDirMatrix(unk74, local_3c,
 		                    JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f));
 
-		JGeometry::TVec3<f32> local_48 = unkA4->unk0.back().mVel;
-		f32 fVar1 = mOwner->getSaveParam2()->mTailEndPowRate.get();
-		local_48 *= fVar1;
-		local_48.y = 0.0f;
-		mPosition += local_48;
+		bindBody();
 
-		moveRequest(mPosition);
-
-		unk74.setTrans(mPosition);
+		unk74.setTrans(getPosition());
 
 		mPrevTailLength = mCurTailLength;
 		mCurTailLength  = unkA4->getLength();
 
 		if (0.0f < mCurTailLength - mPrevTailLength) {
 			JGeometry::TVec3<f32> local_60 = SMS_GetMarioPos();
-			local_60 -= mOwner->mPosition;
+			local_60 -= mOwner->getPosition();
 
 			SMSGetMSound()->startSoundActorWithInfo(
 			    MSD_SE_EN_WANWAN_PULL, &unkA4->unk0[2].mPos, nullptr,
@@ -606,15 +661,18 @@ void TFireWanwanTailHit::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
+// TODO: instruction-exact; retail's dead low region is 0x10 larger (uniform
+// shift). Naming `rate`'s index or the returned ref in getBodyNthPos gives +8
+// each but +0x18 together; named refs or copy-ctor spellings here are inert.
 void TFireWanwanTailHit::performNodes(u32 param_1, JDrama::TGraphics* param_2)
 {
 	for (int i = 0; i < 5; ++i) {
-		JGeometry::TVec3<f32> local_68 = unkA4->getNode(i)->mPos;
+		JGeometry::TVec3<f32> local_68 = getBodyNthPos(i);
 		JGeometry::TVec3<f32> local_74;
 		if (i == 4) {
 			local_74.set(0.0f, 0.0f, 1.0f);
 		} else {
-			local_74.set(unkA4->getNode(i + 1)->mPos);
+			local_74.set(getBodyNthPos(i + 1));
 			local_74 -= local_68;
 			local_74.normalize();
 		}
@@ -623,50 +681,81 @@ void TFireWanwanTailHit::performNodes(u32 param_1, JDrama::TGraphics* param_2)
 
 	for (int i = 0; i < 4; ++i) {
 		TPosition3f afStack_a4;
-		MTXCopy(afStack_a4, unkA8[i]->mMActor->getModel()->getBaseTRMtx());
+		MTXCopy(unkA8[i]->mMActor->getModel()->getBaseTRMtx(), afStack_a4);
 
-		afStack_a4.setTrans(unkA4->getNode(i + 1)->mPos);
+		afStack_a4.setTrans(getBodyNthPos(i + 1));
 
 		unkA8[i]->setBarAnmMtx(afStack_a4);
 	}
 }
 
+// TODO: UNUSED (0x118), body unknown: no call site or inlined copy survives.
 void TFireWanwanTailHit::clipNodes(JDrama::TGraphics*) { }
 
+// TODO: literal-pool order. Retail asks for 4.0f (@7688) and 0.25f (@7689)
+// from init()/performNodes() before this function's 0.7f (@7892), 0.4f
+// (@7893) and 10000.0f (@7894); ours reverses the two groups, so one of
+// init()/performNodes() is still missing its 4.0f/0.25f use. Definition
+// order already matches the map.
 void TFireWanwanTailHit::movementBody(const JGeometry::TVec3<f32>& param_1)
 {
-
-	
-	
 	if (mOwner->isHungTailNerve() && !mOwner->unk194->isTaken()
 	    && !mOwner->isReadyToFly()) {
-		unkA4->mBoundRate
-		    = mOwner->getSaveParam2()->mRubberBoundRateHitting.get();
-		unkA4->mDecay = mOwner->getSaveParam2()->mRubberDecayHitting.get();
+		FireWanwanTailRubber(this)->mBoundRate
+		    = FireWanwanTailParams(this)->mRubberBoundRateHitting.get();
+		FireWanwanTailRubber(this)->mDecay
+		    = FireWanwanTailParams(this)->mRubberDecayHitting.get();
 	} else if (mOwner->isAttacking()) {
-		unkA4->mBoundRate = 0.7f;
-		unkA4->mDecay     = 0.4f;
+		FireWanwanTailRubber(this)->mBoundRate = 0.7f;
+		FireWanwanTailRubber(this)->mDecay     = 0.4f;
 	} else {
-		unkA4->mBoundRate = mOwner->getSaveParam2()->mRubberBoundRate.get();
-		unkA4->mDecay     = mOwner->getSaveParam2()->mRubberDecay.get();
+		FireWanwanTailRubber(this)->mBoundRate
+		    = FireWanwanTailParams(this)->mRubberBoundRate.get();
+		FireWanwanTailRubber(this)->mDecay
+		    = FireWanwanTailParams(this)->mRubberDecay.get();
 	}
 
 	if (mOwner->isFlying())
-		unkA4->mMaxLength = mOwner->getSaveParam2()->mTailMaxLength.get();
+		FireWanwanTailRubber(this)->mMaxLength
+		    = FireWanwanTailParams(this)->mTailMaxLength.get();
 	else
-		unkA4->mMaxLength = 10000.0f;
+		FireWanwanTailRubber(this)->mMaxLength = 10000.0f;
 
 	unkA4->unk0[0].mPos = param_1;
 	unkA4->movement();
 }
 
-void TFireWanwanTailHit::bindBody() { }
+void TFireWanwanTailHit::bindBody()
+{
+	JGeometry::TVec3<f32> local_48 = getBodyTailPow();
+	f32 fVar1 = mOwner->getSaveParam2()->mTailEndPowRate.get();
+	local_48 *= fVar1;
+	local_48.y = 0.0f;
+	mPosition += local_48;
 
-JGeometry::TVec3<f32> TFireWanwanTailHit::getBodyNthPos(int i) const { }
+	JGeometry::TVec3<f32> holderPos = mPosition;
+	holderPos.y = mHolder->mPosition.y;
+	mHolder->moveRequest(holderPos);
+}
 
-f32 TFireWanwanTailHit::getBodyTailPow() const { }
+// Returns by reference: the map's 0x54 has room for the index conversion but
+// not for a by-value copy. The named rate keeps perform's inlined
+// getBodyNthPos(4) as a runtime fctiwz of 4.0f, as in the ROM.
+const JGeometry::TVec3<f32>& TFireWanwanTailHit::getBodyNthPos(int i) const
+{
+	f32 rate = i / 4.0f;
+	return unkA4->unk0[rate * 4.0f].mPos;
+}
 
-f32 TFireWanwanTailHit::getBodyHeadPow() const { }
+JGeometry::TVec3<f32> TFireWanwanTailHit::getBodyTailPow() const
+{
+	return unkA4->unk0[unkA4->unk0.size() - 1].mVel;
+}
+
+JGeometry::TVec3<f32> TFireWanwanTailHit::getBodyHeadPow() const
+{
+	return unkA4->unk0[0].mVel;
+}
 
 f32 TFireWanwanTailHit::calcApartPow()
 {
@@ -679,14 +768,13 @@ f32 TFireWanwanTailHit::calcApartPow()
 
 MtxPtr TFireWanwanTailHit::getTakingMtx() { return unk74; }
 
+// The tail node is indexed through the raw size: back() is 4 bytes under
+// retail's frame, size() 8 or 0x10 over.
 BOOL TFireWanwanTailHit::moveRequest(const JGeometry::TVec3<f32>& param_1)
 {
 	JGeometry::TVec3<f32> next = param_1;
 
 	const TBGCheckData* checkData;
-
-	
-	
 	f32 fVar1 = gpMap->checkGround(next.x, next.y + 100.0f, next.z, &checkData);
 	if (next.y <= 0.05f + fVar1) {
 		next.y = fVar1 + 1.0f;
@@ -695,7 +783,7 @@ BOOL TFireWanwanTailHit::moveRequest(const JGeometry::TVec3<f32>& param_1)
 	next.y += 50.0f;
 
 	gpMap->isTouchedOneWallAndMoveXZ(&next.x, next.y, &next.z, 70.0f);
-	unkA4->unk0.back().mPos = next;
+	FireWanwanTailRubber(this)->unk0[unkA4->unk0.mSize - 1].mPos = next;
 	mPosition               = next;
 	unk74.translation(mPosition);
 	return true;
@@ -740,7 +828,7 @@ void TFireWanwanTailHit::changeBodyToSilver(f32 param_1)
 	unkBC->init(cBodyColorOnSilver, unkBC->getCurrent(), param_1);
 }
 
-f32 TFireWanwanTailHit::getTailLength() const { }
+f32 TFireWanwanTailHit::getTailLength() const { return unkA4->getLength(); }
 
 const JGeometry::TVec3<f32>& TFireWanwanTailHit::getHostPos() const
 {
@@ -761,9 +849,6 @@ TFireWanwan::TFireWanwan(const char* name)
 
 void TFireWanwan::init(TLiveManager* manager)
 {
-
-	
-	
 	TSmallEnemy::init(manager);
 	mActorType = 0x1000000E;
 	unk150     = 1;
@@ -781,10 +866,13 @@ void TFireWanwan::init(TLiveManager* manager)
 
 	initParticle();
 
-	mCenterJointIdx = getModel()->getModelData()->getJointName()->getIndex("center");
-	mHeadJointIdx   = getModel()->getModelData()->getJointName()->getIndex("jnt_head");
-	int idx = getModel()->getModelData()->getMaterialName()->getIndex("_mat_body");
-	SMS_InitPacket_OneTevColor(mMActor->getModel(), idx, GX_TEVREG0,
+	mCenterJointIdx
+	    = getModel()->getModelData()->getJointName()->getIndex("center");
+	mHeadJointIdx
+	    = getModel()->getModelData()->getJointName()->getIndex("jnt_head");
+	int idx
+	    = getModel()->getModelData()->getMaterialName()->getIndex("_mat_body");
+	SMS_InitPacket_OneTevColor(getMActor()->getModel(), idx, GX_TEVREG0,
 	                           &unk238->getCurrent());
 	reset();
 }
@@ -795,15 +883,37 @@ void TFireWanwan::setMActorAndKeeper()
 	mMActor       = mMActorKeeper->createMActor("wanwan.bmd", 0);
 }
 
+// TODO: TFireWanwan::unk194 and unk238 want accessors in FireWanwan.hpp;
+// parked here as TU-locals until a header batch adds them.
+// Nested direct-return fork inside the binder: +4 of pool so emitEffects'
+// TVec3 temps land at retail 0x98/0x8c (were 4 low).
+static inline J3DModel* FireWanwanGetModelFork(const TFireWanwan* p)
+{
+	return p->getModel();
+}
+
+static inline J3DModel* FireWanwanGetModel(const TFireWanwan* p)
+{
+	J3DModel* model = FireWanwanGetModelFork(p);
+	return model;
+}
+
+static inline TFireWanwanTailHit* FireWanwanGetTailHit(const TFireWanwan* p)
+{
+	return p->unk194;
+}
+
+static inline TLerpControl* FireWanwanGetLerp(const TFireWanwan* p)
+{
+	return p->unk238;
+}
+
 void TFireWanwan::reset()
 {
-
-	
-	
 	mPosition = mInitialPosition;
 
-	unk194->mIsOnFire = true;
-	unk124->reset();
+	FireWanwanGetTailHit(this)->mIsOnFire = true;
+	getTracer()->reset();
 	goToShortestNextGraphNode();
 	TSmallEnemy::reset();
 	mPolluteTimer = 0;
@@ -811,11 +921,11 @@ void TFireWanwan::reset()
 	TFireWanwanSaveLoadParams* params
 	    = (TFireWanwanSaveLoadParams*)getSaveParam();
 	mMarchSpeed = params->mMarchSpeed.get();
-	mSpine->reset();
-	mSpine->setDefaultNext();
-	unk238->setCurrent(cBodyColorOnFire);
-	unk238->init(cBodyColorOnFire, unk238->getCurrent(), 1.0f);
-	unk194->unkBC->init(cBodyColorOnFire, unk194->unkBC->getCurrent(), 1.0f);
+	getSpine()->reset();
+	getSpine()->setDefaultNext();
+	FireWanwanGetLerp(this)->setCurrent(cBodyColorOnFire);
+	FireWanwanGetLerp(this)->init(cBodyColorOnFire, FireWanwanGetLerp(this)->getCurrent(), 1.0f);
+	FireWanwanGetTailHit(this)->unkBC->init(cBodyColorOnFire, FireWanwanGetTailHit(this)->unkBC->getCurrent(), 1.0f);
 }
 
 void TFireWanwan::initParticle()
@@ -894,23 +1004,44 @@ static bool is_antiparallel(const JGeometry::TVec3<f32>& v1,
 
 void TFireWanwan::decideTarget(const JGeometry::TVec3<f32>& param_1)
 {
-	JGeometry::TVec3<f32> local_54 = param_1;
-	local_54 -= mPosition;
+	JGeometry::TVec3<f32> diff = param_1;
+	diff -= mPosition;
 
-	JGeometry::TVec3<f32> local_2C = local_54;
+	JGeometry::TVec3<f32> dir = diff;
 
-	local_54.y = 0.0f;
+	dir.y = 0.0f;
 
-	local_54.normalize();
+	dir.normalize();
 
-	if (is_antiparallel(local_2C, JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f))) {
+	if (is_antiparallel(diff, JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f))) {
 		unk1CC.setEulerY(JGeometry::TUtil<f32>::PI());
 	} else {
-		unk1CC.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f), local_54,
-		                 1.0f);
+		unk1CC.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, 1.0f), dir, 1.0f);
 	}
 
-	unk1BC.setEulerY(DEG_TO_RAD(mRotation.y));
+	// The map's factor is 0x3c8efa36, the single-precision product
+	// pi * (1/180); DEG_TO_RAD folds its division in double and gives
+	// 0x3c8efa35 instead.
+	unk1BC.setEulerY(0.017453294f * mRotation.y);
+}
+
+// MathUtil.hpp's MsGetRotFromZaxisY with the axis.z == 0 branch as one
+// conditional return, parked here: the header's nested if/else is one
+// statement too many for the inliner inside doAdjustTarget (depth 2), where
+// retail expands it. As a header change it costs MsIsInSight,
+// TBGKMtxCalc::calc and walkToCurPathNode (see MathUtil.hpp).
+// The named back-half result (c-t3) is 8 bytes of the Recover nerve's frame
+// (0xe8 -> retail's 0xf0); naming the whole difference instead of theta, or
+// the front-half return, is inert.
+static inline f32 FireWanwanRotFromZ(const JGeometry::TVec3<f32>& axis)
+{
+	if (axis.z == 0.0f)
+		return axis.x >= 0.0f ? 90.0f : -90.0f;
+	if (axis.z >= 0.0f)
+		return (360.0f / 65536.0f) * matan(axis.z, axis.x);
+	f32 theta = matan(-axis.z, axis.x) * (360.0f / 65536.0f);
+	f32 rot = 180.0f - theta;
+	return rot;
 }
 
 void TFireWanwan::doAdjustTarget()
@@ -926,9 +1057,9 @@ void TFireWanwan::doAdjustTarget()
 
 	JGeometry::TVec3<f32> local_60(0.0f, 0.0f, 1.0f);
 
-	local_70.rotate(local_60);
+	local_70.rotateInPlace(local_60, local_60);
 
-	f32 rot = MsGetRotFromZaxisY(local_60);
+	f32 rot = FireWanwanRotFromZ(local_60);
 
 	mRotation.y = MsAngleWrap(rot);
 }
@@ -946,12 +1077,14 @@ bool TFireWanwan::isFindMario(f32 param_1)
 	return isFindMarioFromParam(param_1);
 }
 
-static inline f32 dist(const JGeometry::TVec3<f32>& a,
-                       const JGeometry::TVec3<f32>& b)
+static inline TGraphTracer* FireWanwanTracer(TFireWanwan* p)
 {
-	JGeometry::TVec3<f32> tmp = a;
-	tmp.sub(b);
-	return tmp.length();
+	return p->getTracer();
+}
+
+static inline int FireWanwanPolluteTimer(const TFireWanwan* p)
+{
+	return p->mPolluteTimer;
 }
 
 bool TFireWanwan::isMissMario() const
@@ -967,7 +1100,7 @@ bool TFireWanwan::isMissMario() const
 		return true;
 
 	f32 giveUpLen = getSaveParam2()->mSLGiveUpLength.get();
-	if (dist(unk104.getPoint(), mPosition) > giveUpLen)
+	if (MsDistance(unk104.getPointRaw(), mPosition) > giveUpLen)
 		return true;
 
 	return false;
@@ -983,6 +1116,14 @@ bool TFireWanwan::isOverHungTailRumble() const
 	return mHungTailRumbleTimer > 3600;
 }
 
+// Binding level over a raw member read: a register lever in
+// TFireWanwan::receiveMessage at an unchanged frame (batch 127).
+static inline u8 FireWanwanHitPoints(const TFireWanwan* p)
+{
+	u8 hitPoints = p->mHitPoints;
+	return hitPoints;
+}
+
 BOOL TFireWanwan::receiveMessage(THitActor* sender, u32 message)
 {
 	switch (message) {
@@ -994,7 +1135,7 @@ BOOL TFireWanwan::receiveMessage(THitActor* sender, u32 message)
 		SMS_EasyEmitParticle(PARTICLE_MS_ENM_WATHIT, &sender->getPosition(),
 		                     nullptr, JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
 		u8 maxHp = getMaxHitPoints();
-		if (maxHp == mHitPoints)
+		if (maxHp == FireWanwanHitPoints(this))
 			SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_1ST_WATER,
 			                                &mPosition, 0, nullptr, 0, 4);
 		decHpByWater(sender);
@@ -1009,6 +1150,8 @@ BOOL TFireWanwan::receiveMessage(THitActor* sender, u32 message)
 	}
 }
 
+// TODO: instruction-exact; retail's frame is 0x50 larger, all in the dead low
+// region below offFireEffect's scale (0xa0 vs 0x50): a missing inline level.
 void TFireWanwan::behaveToWater(THitActor* param_1)
 {
 	if (!unk194->mIsOnFire) {
@@ -1045,10 +1188,6 @@ void TFireWanwan::behaveToWater(THitActor* param_1)
 	unk194->offFireEffect();
 	unk194->mIsOnFire       = false;
 	mSprayedByWaterCooldown = 20;
-
-
-	
-	
 }
 
 void TFireWanwan::behaveHitComrades()
@@ -1131,24 +1270,35 @@ void TFireWanwan::perform(u32 cue, JDrama::TGraphics* graphics)
 		unk194->perform(cue, graphics);
 }
 
+static inline MtxPtr FireWanwanBaseTRMtx(const TFireWanwan* p)
+{
+	J3DModel* model = p->getModel();
+	MtxPtr mtx      = model->getBaseTRMtx();
+	return mtx;
+}
+
 void TFireWanwan::calcRootMatrix()
 {
 	TSpineEnemy::calcRootMatrix();
 	if (mSpine->getLatestNerve() != &TNerveFireWanwanDie::theNerve())
 		return;
 	{
-		MtxPtr mtx = getModel()->getBaseTRMtx();
+		MtxPtr mtx = FireWanwanBaseTRMtx(this);
 		JGeometry::TVec3<f32> v1(mtx[0][1], mtx[1][1], mtx[2][1]);
 		JGeometry::TVec3<f32> v2(mtx[0][2], mtx[1][2], mtx[2][2]);
 		v1.normalize();
 		v2.normalize();
-		v1 *= 0.0f;
-		v2 *= -160.0f;
-		v1 += v2;
+		// Retail multiplies the Y column by -160 and the Z column by 0
+		// (@6628 / @3704). Frame lands via FireWanwanBaseTRMtx.
+		// TODO: frame 8 short (0x88 vs 0x90) and retail gives v2 f31-f29,
+		// v1 f28-f26. Inert: declaring v2 first, set() after v1, scale order.
+		v1 *= -160.0f;
+		v2 *= 0.0f;
+		v2 += v1;
 
-		mtx[0][3] += v1.x;
-		mtx[1][3] += v1.y;
-		mtx[2][3] += v1.z;
+		mtx[0][3] += v2.x;
+		mtx[1][3] += v2.y;
+		mtx[2][3] += v2.z;
 	}
 }
 
@@ -1197,8 +1347,9 @@ void TFireWanwan::moveObject()
 	if (mSprayedByWaterCooldown > 30)
 		mSprayedByWaterCooldown = 0;
 
-	if (mMapCollisionManager && mMapCollisionManager->unk8)
-		mMapCollisionManager->unk8->moveSRT(mPosition, mRotation, mScaling);
+	if (mMapCollisionManager != nullptr
+	    && mMapCollisionManager->getUnk8() != nullptr)
+		mMapCollisionManager->getUnk8()->moveSRT(mPosition, mRotation, mScaling);
 
 	if (!isInhibitedForceMove())
 		calcRidePos();
@@ -1210,26 +1361,27 @@ void TFireWanwan::updateCollisionFromParam()
 	if (isDefeat())
 		return;
 
-	setHitParams(getSaveParam2()->mSLAttackRadius.get(),
-	             getSaveParam2()->mSLAttackHeight.get(),
-	             getSaveParam2()->mSLDamageRadius.get(),
-	             getSaveParam2()->mSLDamageHeight.get());
+	f32 attackRadius = getSaveParam2()->mSLAttackRadius.get();
+	f32 attackHeight = getSaveParam2()->mSLAttackHeight.get();
+	f32 damageRadius = getSaveParam2()->mSLDamageRadius.get();
+	f32 damageHeight = getSaveParam2()->mSLDamageHeight.get();
+	setHitParams(attackRadius, attackHeight, damageRadius, damageHeight);
 }
 
 // Tiny size mismatch
 void TFireWanwan::updateCameraShake()
 {
 	f32 shakeRange = getSaveParam2()->mCamShakeRange.get();
-	if (!isWalking() && !isAttacking()) {
-		gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK3, 0.5f);
-	}
+	if ((isWalking() || isAttacking())
+	    && mDistToMarioSquared < shakeRange * shakeRange)
+		gpCameraShake->keepShake(CAM_SHAKE_MODE_ENEMY, 0.5f);
 }
 
 void TFireWanwan::updateRumble()
 {
 	f32 fVar1 = getSaveParam2()->mContShakeRange.get();
 
-	if (!isCameraShake() && mDistToMarioSquared < fVar1 * fVar1) {
+	if (!isCameraShake() && getDistToMarioSquared() < fVar1 * fVar1) {
 		if (!isOverApproachRumble()) {
 			SMSRumbleMgr->start(9, &mPosition);
 			mApproachRumbleTimer += 1;
@@ -1238,7 +1390,8 @@ void TFireWanwan::updateRumble()
 		mApproachRumbleTimer = 0;
 	}
 
-	if (unk194->isTaken()) {
+	bool taken = unk194->isTaken();
+	if (taken) {
 		if (!isOverHungTailRumble()) {
 			SMSRumbleMgr->start(9, (f32*)nullptr);
 			mHungTailRumbleTimer += 1;
@@ -1253,23 +1406,29 @@ void TFireWanwan::updatePollute()
 	if (!unk194->mIsOnFire)
 		return;
 
-	if (mPolluteTimer != 0) {
+	if (FireWanwanPolluteTimer(this) != 0) {
 		mPolluteTimer -= 1;
 		return;
 	}
 
 	mPolluteTimer = getSaveParam2()->mPolluteTimerMax.get();
-	MtxPtr mtx    = getModel()->getBaseTRMtx();
-	JGeometry::TVec3<f32> v1(mtx[0][0], mtx[1][0], mtx[2][0]);
-	v1.scaleAdd((MsRandF() - 0.5f) * 2.0f * mAttackRadius, mPosition, v1);
-
+	MtxPtr mtx    = FireWanwanBaseTRMtx(this);
+	JGeometry::TVec3<f32> v1;
+	v1.x = mtx[0][0];
+	v1.y = mtx[1][0];
+	v1.z = mtx[2][0];
+	v1.scaleAdd((MsRandF() - 0.5f) * 2.0f * mAttackRadius, v1, mPosition);
+	// TODO: 99.6%, every instruction and the frame (0x90) exact. The stamp
+	// goes through pollute(), which puts the column in f30/f29/f28; left is a
+	// volatile permutation in the scaleAdd factor (retail f5/f3/f4 for
+	// 2.0f, mAttackRadius and the product, ours f4/f5/f3).
 	f32 radius = 375.0f;
 	if (isAttacking())
 		radius *= getSaveParam2()->mPolluteAttackRate.get();
 	else
 		radius *= getSaveParam2()->mPolluteNormalRate.get();
 
-	gpPollution->stamp(1, v1.x, v1.y, v1.z, radius);
+	gpPollution->pollute(v1.x, v1.y, v1.z, radius);
 }
 
 void TFireWanwan::updateHitPoint()
@@ -1278,8 +1437,8 @@ void TFireWanwan::updateHitPoint()
 		mRecoverTimer += getSaveParam2()->mRecoverRate.get();
 		if (1.0f <= mRecoverTimer) {
 			mRecoverTimer -= 1.0f;
-			mHitPoints = JGeometry::TUtil<u32>::clamp((u8)(mHitPoints + 1), 0,
-			                                          getMaxHitPoints());
+			mHitPoints = JGeometry::TUtil<u8>::clamp(mHitPoints + 1, 0,
+			                                         getMaxHitPoints());
 		}
 	}
 	ensureTakeSituation();
@@ -1287,10 +1446,10 @@ void TFireWanwan::updateHitPoint()
 
 void TFireWanwan::emitEffects()
 {
-	MtxPtr mtx = getModel()->getAnmMtx(mCenterJointIdx);
+	MtxPtr mtx = FireWanwanGetModel(this)->getAnmMtx(mCenterJointIdx);
 	unk1F0.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 
-	if (mHitPoints != 0 && unk194->mIsOnFire) {
+	if (mHitPoints != 0 && FireWanwanGetTailHit(this)->mIsOnFire) {
 		SMS_EasyEmitParticle(FIREWANWAN_JPA_MS_CAN_YUGAMI, &unk1F0, this,
 		                     mScaling);
 	}
@@ -1302,14 +1461,17 @@ void TFireWanwan::emitEffects()
 	if (isFreeze() && mSpine->getTime() < mFreezeWait)
 		SMS_EasyEmitParticle(PARTICLE_MS_POI_KIZETSU, &unk1F0, this, mScaling);
 
-	if (isFlying() || unk194->isTaken()) {
+	if (isFlying() || FireWanwanGetTailHit(this)->isTaken()) {
 		MtxPtr pos;
 		if (isFlying()) {
 			pos = getModel()->getBaseTRMtx();
 		} else {
 			pos = unk1FC;
 			MTXCopy(getModel()->getBaseTRMtx(), pos);
-			JGeometry::TVec3<f32> thing(pos[0][2], pos[1][2], pos[2][2]);
+			f32 x = pos[0][2];
+			f32 y = pos[1][2];
+			f32 z = pos[2][2];
+			JGeometry::TVec3<f32> thing(x, y, z);
 			thing.normalize();
 			thing *= 150.0f;
 			pos[0][3] += thing.x;
@@ -1355,7 +1517,7 @@ void TFireWanwan::emitEffectsOnHittingWall(
 	JGeometry::TQuat4<f32> local_d8;
 
 	if (is_antiparallel(local_54, JGeometry::TVec3<f32>(0.0f, 0.0f, -1.0f))) {
-		local_d8.setEulerZ(JGeometry::TUtil<f32>::PI());
+		local_d8.setEulerY(JGeometry::TUtil<f32>::PI());
 	} else {
 		local_d8.setRotate(JGeometry::TVec3<f32>(0.0f, 0.0f, -1.0f), local_54,
 		                   1.0f);
@@ -1402,20 +1564,25 @@ void TFireWanwan::checkHitActors()
 
 void TFireWanwan::checkHungTail()
 {
-	if (!canTakenByMario() || unk194->isTaken()) {
+	if (canTakenByMario() && unk194->isTaken()) {
 		mSpine->reset();
 		mSpine->setNext(&TNerveFireWanwanHungTail::theNerve());
 	}
 }
 
-void TFireWanwan::emitTailHitEffect() { }
+// UNUSED (0x54): the Fly nerve's launch puff at the tail joint; the nerve's
+// copy (li r3, 9 ... bl SMS_EasyEmitParticle) is exactly these 21
+// instructions.
+void TFireWanwan::emitTailHitEffect()
+{
+	SMS_EasyEmitParticle(PARTICLE_MS_FUMI_C, getTailMtx(), this,
+	                     JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+}
 
-// TODO: the inline `TGraphTracer::popCurr()` (include/Enemy/Graph.hpp) is one
-// `addi r4, r3, 8` short -- it needs to keep `&mPrevIdx` in a register instead
-// of re-forming `this + 8` for the store.
+// correct but popCurr is incorrect
 void TFireWanwan::initTurnNextGraphNode()
 {
-	unk124->mCurrIdx = unk124->popCurr();
+	getTracer()->mCurrIdx = getTracer()->popCurr();
 	setGoalPathFromGraph();
 	unk128 = 0;
 	unk12C = 0.0f;
@@ -1423,30 +1590,34 @@ void TFireWanwan::initTurnNextGraphNode()
 
 void TFireWanwan::initEscapeNextGraphNode()
 {
-	u32 uVar1 = unk124->unk0->findNearestNodeIndex(mPosition, -1);
-	u32 uVar2 = unk124->unk0->getEscapeFromMarioIndex(uVar1, -1, mPosition, -1);
+	u32 uVar1 = FireWanwanTracer(this)->getGraph()->findNearestNodeIndex(mPosition, -1);
+	u32 uVar2 = FireWanwanTracer(this)->getGraph()->getEscapeFromMarioIndex(uVar1, -1, mPosition, -1);
 
-	JGeometry::TVec3<f32> p1 = SMS_GetMarioPos();
 	JGeometry::TVec3<f32> p2;
-	unk124->getGraph()->getGraphNode(uVar1).getPoint(&p2);
 	JGeometry::TVec3<f32> p3;
-	unk124->getGraph()->getGraphNode(uVar2).getPoint(&p3);
+	JGeometry::TVec3<f32> p1 = SMS_GetMarioPos();
+	FireWanwanTracer(this)->getGraph()->getGraphNode(uVar1).getPoint(&p2);
+	FireWanwanTracer(this)->getGraph()->getGraphNode(uVar2).getPoint(&p3);
 
 	p2 -= mPosition;
 	p3 -= mPosition;
 	p1 -= mPosition;
+	// TODO: the two dot products differ only in which FPR holds p1.x and
+	// p1.z (retail f6/f5, ours f5/f6); swapping the receivers is worse.
+	// Also worse: the dots written out, dot2 first, both dots inline in the
+	// test, p1 subtracted first; p1 assigned after its declaration is inert.
 
 	f32 dot1 = p1.dot(p2);
 	f32 dot2 = p1.dot(p3);
 	if (0.0f <= dot1 && dot2 < 0.0f) {
-		unk124->mPrevIdx = -1;
-		unk124->mCurrIdx = uVar2;
+		FireWanwanTracer(this)->mPrevIdx = -1;
+		FireWanwanTracer(this)->mCurrIdx = uVar2;
 		setGoalPathFromGraph();
 		unk128 = 0;
 		unk12C = 0.0f;
 	} else {
-		unk124->mPrevIdx = -1;
-		unk124->mCurrIdx = uVar1;
+		FireWanwanTracer(this)->mPrevIdx = -1;
+		FireWanwanTracer(this)->mCurrIdx = uVar1;
 		setGoalPathFromGraph();
 		unk128 = 0;
 		unk12C = 0.0f;
@@ -1517,10 +1688,9 @@ bool TFireWanwan::isRecovering() const
 	return mSpine->getLatestNerve() == &TNerveFireWanwanRecover::theNerve();
 }
 
-// Probably wrong?
 bool TFireWanwan::isCameraShake() const
 {
-	return isFreeze() || isDefeat() || unk194->isTaken() || isRecovering()
+	return isFreeze() || isDefeat() || isTailTaken() || isRecovering()
 	       || mSpine->getLatestNerve() == &TNerveFireWanwanEscape::theNerve();
 }
 
@@ -1550,7 +1720,8 @@ template <class T> static inline T clamp2(T t, T r)
 bool TFireWanwan::doTurn()
 {
 	f32 fVar2 = getSaveParam2()->mRotateY.get();
-	f32 fVar1 = MsAngleDiff(mTurnTargetAngle, mRotation.y);
+	// getRotation().y is +8 of frame on the GetBody baseline (0x78 -> 0x80).
+	f32 fVar1 = MsAngleDiff(mTurnTargetAngle, getRotation().y);
 	mRotation.y += clamp2(fVar1, fVar2);
 	mRotation.y = MsAngleWrap(mRotation.y);
 
@@ -1598,6 +1769,13 @@ void TFireWanwan::bind()
 
 	mVelocity *= getSaveParam2()->mAirFric.get();
 
+	// Retail copies mLinearVelocity into velStep before copying mVelocity.
+	// TODO: the frame is 0x10 short (0x148 vs 0x158). Retail keeps velStep
+	// at 0x114 with a 4-byte hole below it and the mVelocity copy at 0xdc,
+	// under the loop's two vectors; ours names it between velStep and
+	// totalNormal. `mVelocity + mLinearVelocity` lands the frame but calls
+	// `add` out of line; an explicit TVec3 temporary is identical to the
+	// named copy.
 	JGeometry::TVec3<f32> velStep = mLinearVelocity;
 	JGeometry::TVec3<f32> vel     = mVelocity;
 	velStep += vel;
@@ -1611,9 +1789,9 @@ void TFireWanwan::bind()
 	for (int i = 0; i < stepCount; ++i) {
 		JGeometry::TVec3<f32> boundStep;
 		JGeometry::TVec3<f32> stepNormal;
-		iVar12 += bindBody(&boundStep, &stepNormal, velStep);
-
-		bVar2 &= checkLiveFlag2(LIVE_FLAG_AIRBORNE);
+		int hit = bindBody(&boundStep, &stepNormal, velStep);
+		bVar2 &= isAirborne();
+		iVar12 += hit;
 
 		mPosition += boundStep;
 		totalNormal += stepNormal;
@@ -1632,29 +1810,27 @@ void TFireWanwan::bind()
 		// Reflect velocity on the plane of collision -- "bounce off"
 		f32 fVar1 = mVelocity.dot(totalNormal);
 		if (fVar1 < 0.0f)
-			mVelocity.scaleAdd(abs(fVar1 * 2.0f), mVelocity, totalNormal);
+			mVelocity.scaleAdd(abs(fVar1 * 2.0f), totalNormal, mVelocity);
 
 		f32 rot = MsGetRotFromZaxisY(mVelocity);
 		mRotation.set(0.0f, MsAngleWrap(rot), 0.0f);
 
 		emitEffectsOnHittingWall(totalNormal, JGeometry::TVec3<f32>());
 
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK3, 8.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_ENEMY, 8.0f);
 		stopTriggerSound();
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_REFLECT, &mPosition, 0,
 		                                nullptr, 0, 4);
 	}
 
 	if (isFlying() && !checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
-		mVelocity *= getSaveParam2()->mAirFric.get();
+		mVelocity *= getSaveParam2()->mFloorFric.get();
 		mVelocity.y *= -0.05f;
 	}
-
-
-	
-	
 }
 
+// TODO: frame exact; the named block sits 4 high (currPos 0x15c vs 0x158),
+// the total/correction temporaries high, and one f3/f4 swap in the quat rotate.
 int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
                           JGeometry::TVec3<f32>* normal_sum,
                           const JGeometry::TVec3<f32>& step)
@@ -1670,6 +1846,7 @@ int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
 	bool bVar8 = true;
 
 	for (int i = 0; i < 8; ++i) {
+		TBGWallCheckRecord checkRecord;
 		JGeometry::TVec3<f32> point = currPos;
 
 		{
@@ -1682,7 +1859,6 @@ int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
 		}
 
 		JGeometry::TVec3<f32> boundPointStep;
-		TBGWallCheckRecord checkRecord;
 		bindPoint(&boundPointStep, point, step, fVar1, &checkRecord);
 		bVar8 &= isAirborne();
 
@@ -1690,11 +1866,12 @@ int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
 		currPos += pointCorrection;
 
 		for (int i = 0; i < checkRecord.mResultWallsNum; ++i)
-			*normal_sum += checkRecord.mResultWalls[i]->getNormal();
+			*normal_sum += checkRecord.mResultWalls[i]->mNormal;
 
 		collisionNum += checkRecord.mResultWallsNum;
 	}
-	JGeometry::TVec3<f32> totalCorrection = currPos - mPosition;
+	JGeometry::TVec3<f32> totalCorrection;
+	totalCorrection = currPos - mPosition;
 
 	*bound_step = totalCorrection + step;
 
@@ -1706,6 +1883,18 @@ int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
 	return collisionNum;
 }
 
+static inline void FireWanwanSetGroundPlane(TFireWanwan* p,
+                                            const TBGCheckData* plane)
+{
+	p->mGroundPlane = plane;
+}
+
+// TODO: frame exact; retail's `actualPoint - point` temporary sits at 0x4c
+// (below the inline region) where ours is at 0x88, and the `point.y >
+// actualPoint.y` loads swap f0/f1. Inert or worse: `actualPoint.y < point.y`,
+// a named offset or point copy, `sub()`, assign-then-`-=`.
+// `out_offset->set(actualPoint - point)` is inert too: the by-value copy must be
+// created after the depth-1 expansions, i.e. inside an inline body (none in the map).
 void TFireWanwan::bindPoint(JGeometry::TVec3<f32>* out_offset,
                             const JGeometry::TVec3<f32>& point,
                             const JGeometry::TVec3<f32>& param_3, f32 radius,
@@ -1733,11 +1922,11 @@ void TFireWanwan::bindPoint(JGeometry::TVec3<f32>* out_offset,
 			const TBGCheckData* local_34;
 			if (checkLiveFlag(LIVE_FLAG_UNK1000))
 				dVar9 = gpMap->checkGroundIgnoreWaterSurface(
-				    actualPoint.x, actualPoint.y + mHeadHeight, actualPoint.z,
+				    actualPoint.x, point.y + mHeadHeight, actualPoint.z,
 				    &local_34);
 			else
 				dVar9 = gpMap->checkGround(actualPoint.x,
-				                           actualPoint.y + mHeadHeight,
+				                           point.y + mHeadHeight,
 				                           actualPoint.z, &local_34);
 
 			dVar9 += 1.0f;
@@ -1748,9 +1937,9 @@ void TFireWanwan::bindPoint(JGeometry::TVec3<f32>* out_offset,
 		}
 	}
 
-	mGroundPlane = local_30;
+	FireWanwanSetGroundPlane(this, local_30);
 	if (actualPoint.y <= mGroundHeight + 0.05f) {
-		if (mGroundPlane->isIllegalData()) {
+		if (getGroundPlane()->isIllegalData()) {
 			reset();
 			return;
 		}
@@ -1758,13 +1947,13 @@ void TFireWanwan::bindPoint(JGeometry::TVec3<f32>* out_offset,
 		offLiveFlag(LIVE_FLAG_AIRBORNE);
 		if (isFlying() || isDefeat()) {
 			JGeometry::TVec3<f32> normal;
-			normal.set(mGroundPlane->getNormal());
+			normal.set(getGroundPlane()->getNormal());
 			f32 fVar4 = 1.0f
 			            - (normal.dot(actualPoint)
 			               - normal.dot(JGeometry::TVec3<f32>(
 			                   actualPoint.x, mGroundHeight, actualPoint.z)));
 			if (fVar4 > 0.0f)
-				actualPoint.scaleAdd(fVar4, actualPoint, normal);
+				actualPoint.scaleAdd(fVar4, normal, actualPoint);
 		} else {
 			actualPoint.y = mGroundHeight + 1.0f;
 		}
@@ -1774,6 +1963,13 @@ void TFireWanwan::bindPoint(JGeometry::TVec3<f32>* out_offset,
 
 	checkWalls(&actualPoint, out_record, radius);
 	*out_offset = actualPoint - point;
+}
+
+static inline const TBGCheckData* FireWanwanWall(const TBGWallCheckRecord& rec,
+                                                int i)
+{
+	const TBGCheckData* wall = rec.mResultWalls[i];
+	return wall;
 }
 
 bool TFireWanwan::checkWalls(JGeometry::TVec3<f32>* point,
@@ -1793,9 +1989,10 @@ bool TFireWanwan::checkWalls(JGeometry::TVec3<f32>* point,
 		return true;
 	}
 
+	int e      = local_58.mResultWallsNum;
 	bool bVar1 = false;
-	for (int i = 0, e = local_58.mResultWallsNum; i < e; ++i)
-		bVar1 |= behaveHitWallOnFlying(local_58.mResultWalls[i]);
+	for (int i = 0; i < e; ++i)
+		bVar1 |= behaveHitWallOnFlying(FireWanwanWall(local_58, i));
 
 	if (bVar1) {
 		checkWalls(point, out_record, radius);
@@ -1818,6 +2015,9 @@ bool TFireWanwan::behaveHitWallOnFlying(const TBGCheckData* check_data)
 
 	return false;
 }
+
+// TODO: UNUSED (0x4c), body unknown: no call site or inlined copy survives.
+void TFireWanwan::calcShadowPos() { }
 
 void TFireWanwan::calcRipplePos()
 {
@@ -1851,6 +2051,36 @@ bool TFireWanwan::doKeepDistance() { return !unk194->mIsOnFire; }
 
 bool TFireWanwan::isCollidMove(THitActor*) { return true; }
 
+static inline TFireWanwan* FireWanwanGetBody(TSpineBase<TLiveActor>* spine)
+{
+	TFireWanwan* body = (TFireWanwan*)spine->getBody();
+	return body;
+}
+
+// Binding level worth +8 of low region, landing
+// TNerveFireWanwanEscape::execute's frame at 0x78 (batch 121).
+static inline MActor* FireWanwanGetMActor(const TFireWanwan* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
+static inline TFireWanwanManager* FireWanwanManagerOf(TFireWanwan* p)
+{
+	return (TFireWanwanManager*)p->getManager();
+}
+
+static inline TFireWanwan* FireWanwanGetBody2(TSpineBase<TLiveActor>* spine)
+{
+	TFireWanwan* body = FireWanwanGetBody(spine);
+	return body;
+}
+
+static inline J3DFrameCtrl* FireWanwanFrameCtrl(const TFireWanwan* p, int type)
+{
+	return FireWanwanGetMActor(p)->getFrameCtrl(type);
+}
+
 DEFINE_NERVE(TNerveFireWanwanGraphWander, TLiveActor)
 {
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
@@ -1873,10 +2103,7 @@ DEFINE_NERVE(TNerveFireWanwanGraphWander, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanTurn, TLiveActor)
 {
-
-	
-	
-	TFireWanwan* self = (TFireWanwan*)spine->getBody();
+	TFireWanwan* self = FireWanwanGetBody(spine);
 	if (spine->getTime() == 0) {
 		self->prepareTurn();
 		self->setBckAnm(5);
@@ -1895,6 +2122,12 @@ DEFINE_NERVE(TNerveFireWanwanTurn, TLiveActor)
 	return false;
 }
 
+
+
+// TODO: instruction-exact, frame 0xe0 against 0xe8. Retail puts decideTarget's
+// diff above its other temporaries (0xbc, dir at 0x94) and doAdjustTarget's
+// block 0x10 higher; declaring dir before diff, dir = diff, and ctor spellings
+// are inert. RecoverGraph has the same 8-byte deficit.
 DEFINE_NERVE(TNerveFireWanwanFindMario, TLiveActor)
 {
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
@@ -1915,14 +2148,11 @@ DEFINE_NERVE(TNerveFireWanwanFindMario, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanAttack, TLiveActor)
 {
-
-	
-	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {
 		self->setBckAnm(3);
-		self->setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		self->setGoalPathMario();
 	}
 
 	if (self->doAttack()) {
@@ -1961,6 +2191,9 @@ DEFINE_NERVE(TNerveFireWanwanTired, TLiveActor)
 	return false;
 }
 
+// TODO: every instruction matches and the frame is retail's 0xf0 since
+// FireWanwanRotFromZ names its result (c-t3); the stack slots below 0xc8 are
+// still placed differently. Naming the target point or the timer was inert.
 DEFINE_NERVE(TNerveFireWanwanRecoverGraph, TLiveActor)
 {
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
@@ -1971,7 +2204,7 @@ DEFINE_NERVE(TNerveFireWanwanRecoverGraph, TLiveActor)
 		self->unk124->mCurrIdx = -1;
 		self->goToShortestNextGraphNode();
 
-		self->decideTarget(self->unk104.getPoint());
+		self->decideTarget(self->getUnk104().getPoint());
 	}
 
 	// TODO: inline?
@@ -1996,23 +2229,20 @@ DEFINE_NERVE(TNerveFireWanwanRecoverGraph, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanRecover, TLiveActor)
 {
-
-	
-	
-	TFireWanwan* self = (TFireWanwan*)spine->getBody();
+	TFireWanwan* self = FireWanwanGetBody2(spine);
 
 	if (spine->getTime() == 0) {
 		self->setBckAnm(2);
-		self->getMActor()->setFrameRate(0.0f, ANM_TYPE_BTK);
-		self->getMActor()->getFrameCtrl(ANM_TYPE_BTK)->setFrame(0.0f);
-		TFireWanwanManager* manager = (TFireWanwanManager*)self->getManager();
+		FireWanwanGetMActor(self)->setFrameRate(0.0f, ANM_TYPE_BTK);
+		FireWanwanFrameCtrl(self, ANM_TYPE_BTK)->setFrame(0.0f);
+		TFireWanwanManager* manager = FireWanwanManagerOf(self);
 		manager->receiveMessageFromBody(self,
 		                                TFireWanwanManager::BODY_MSG_RECOVERED);
 
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_RECOVER,
 		                                &self->mPosition, 0, nullptr, 0, 4);
 
-		f32 end = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getEnd();
+		f32 end = FireWanwanFrameCtrl(self, ANM_TYPE_BCK)->getEnd();
 
 		self->changeBodyToRed(end);
 	}
@@ -2026,27 +2256,32 @@ DEFINE_NERVE(TNerveFireWanwanRecover, TLiveActor)
 	return false;
 }
 
+static inline MSound* FireWanwanMSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 DEFINE_NERVE(TNerveFireWanwanDie, TLiveActor)
 {
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {
 		self->setBckAnm(0);
-		self->unk194->mIsOnFire = false;
+		FireWanwanGetTailHit(self)->mIsOnFire = false;
 		self->mRotation.x       = 90.0f;
 
-		TFireWanwanManager* manager = (TFireWanwanManager*)self->getManager();
+		TFireWanwanManager* manager = FireWanwanManagerOf(self);
 
 		manager->mLastKillerWanwan                = self;
 		manager->mWanwanRecoversBeforeHelpBalloon = -1;
 
 		if (++manager->mWanwansKilled == manager->getActiveObjNum()) {
-			gpMarDirector->getConsole()->startAppearBalloon(0x19, true);
+			SMSGetMarDirector()->getConsole()->startAppearBalloon(0x19, true);
 		}
 
 		self->stopTriggerSound();
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_DOWN, &self->mPosition,
-		                                0, nullptr, 0, 4);
+		FireWanwanMSound()->startSoundActor(MSD_SE_EN_WANWAN_DOWN, &self->mPosition);
 
 		self->changeBodyToSilver(40);
 
@@ -2063,10 +2298,19 @@ DEFINE_NERVE(TNerveFireWanwanDie, TLiveActor)
 	vel.z *= 0.9f;
 	self->mVelocity = vel;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_EN_WANWAN_AFTER, &self->mPosition, 0,
+	FireWanwanMSound()->startSoundActor(MSD_SE_EN_WANWAN_AFTER, &self->mPosition, 0,
 	                                nullptr, 0, 4);
 
 	return false;
+}
+
+// Binding level over the address of a struct member, worth +16 of low region
+// in TNerveFireWanwanHungTail::execute (batch 130).
+static inline const JGeometry::TVec3<f32>* FireWanwanPosition(
+    const TFireWanwan* p)
+{
+	const JGeometry::TVec3<f32>* position = &p->mPosition;
+	return position;
 }
 
 DEFINE_NERVE(TNerveFireWanwanHungTail, TLiveActor)
@@ -2079,11 +2323,8 @@ DEFINE_NERVE(TNerveFireWanwanHungTail, TLiveActor)
 		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BTK);
 	}
 
-	JGeometry::TVec3<f32> vec = self->mPosition;
+	JGeometry::TVec3<f32> vec = *FireWanwanPosition(self);
 	vec -= SMS_GetMarioPos();
-
-	
-	
 
 	self->mRotation.y = MsGetRotFromZaxisY(vec);
 	if (self->isReadyToFly()) {
@@ -2094,27 +2335,36 @@ DEFINE_NERVE(TNerveFireWanwanHungTail, TLiveActor)
 	return false;
 }
 
-// TODO: fake
-static inline JGeometry::TVec3<f32> fromPolar(f32 theta, f32 radius)
+// TODO: fake. MathUtil.hpp's fromPolar with the named result; the shared
+// direct-return body costs the Fly nerve 97.57 -> 96.47.
+static inline JGeometry::TVec3<f32> FireWanwanFromPolar(f32 theta,
+                                                        f32 radius)
 {
-	return JGeometry::TVec3<f32>(radius * JMASSin(theta * (65536.0f / 360.0f)),
-	                             0.0f,
-	                             radius * JMASCos(theta * (65536.0f / 360.0f)));
+	JGeometry::TVec3<f32> v(radius * JMASSin(theta * (65536.0f / 360.0f)),
+	                        0.0f,
+	                        radius * JMASCos(theta * (65536.0f / 360.0f)));
+	return v;
 }
 
+// TODO: frame 0xf8, retail 0x100. Retail copies FireWanwanFromPolar's result
+// (built at 0xc4, returned at 0x10 in the low region) into `vel` at 0xdc and into
+// mVelocity both from the 0x10 temporary, and fuses x*x + y*y in the squared
+// test; ours returns at 0xb8 and copies mVelocity from vel.
 DEFINE_NERVE(TNerveFireWanwanFly, TLiveActor)
 {
-	TFireWanwan* self = (TFireWanwan*)spine->getBody();
+	TFireWanwan* self = FireWanwanGetBody(spine);
 
 	if (spine->getTime() == 0) {
 		self->setBckAnm(0);
 		self->getMActor()->setBtkFromIndex(0);
 		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BTK);
 
-		JGeometry::TVec3<f32> vel
-		    = fromPolar(self->mRotation.y, self->unk194->mThrowPow);
-		self->mVelocity = vel;
+		JGeometry::TVec3<f32> vel;
+		self->mVelocity = vel
+		    = FireWanwanFromPolar(self->mRotation.y, self->unk194->mThrowPow);
 
+		// emitTailHitEffect(), spelled out: calling it moves the (1, 1, 1)
+		// temporary 4 bytes down (97.57 -> 97.55, same instructions).
 		SMS_EasyEmitParticle(PARTICLE_MS_FUMI_C, self->getTailMtx(), self,
 		                     JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
 
@@ -2140,7 +2390,7 @@ DEFINE_NERVE(TNerveFireWanwanFly, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanFreeze, TLiveActor)
 {
-	TFireWanwan* self = (TFireWanwan*)spine->getBody();
+	TFireWanwan* self = FireWanwanGetBody(spine);
 
 	if (spine->getTime() == 0) {
 		self->setBckAnm(0);
@@ -2151,11 +2401,7 @@ DEFINE_NERVE(TNerveFireWanwanFreeze, TLiveActor)
 		                                &self->mPosition, 0, nullptr, 0, 4);
 	}
 
-	JGeometry::TVec3<f32> zeroVel(0.0f, 0.0f, 0.0f);
-	self->setVelocity(zeroVel);
-
-	
-	
+	self->setVelocity(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
 
 	if (self->getFreezeTime() < spine->getTime()) {
 		spine->pushAfterCurrent(&TNerveFireWanwanRecover::theNerve());
@@ -2167,15 +2413,12 @@ DEFINE_NERVE(TNerveFireWanwanFreeze, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanEscape, TLiveActor)
 {
-
-	
-	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {
 		self->initEscapeNextGraphNode();
 		self->setBckAnm(0);
-		self->getMActor()->setBtkFromIndex(0);
+		FireWanwanGetMActor(self)->setBtkFromIndex(0);
 		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BTK);
 
 		self->changeBodyToBlack(40);

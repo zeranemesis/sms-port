@@ -15,7 +15,19 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-void TMirrorActor::isInMirror() const { }
+// UNUSED, 0x8 in the map: two instructions, so a plain getter for the
+// in-mirror flag rather than a recomputation.
+u8 TMirrorActor::isInMirror() const { return unk18; }
+
+// Parked, not promoted to TMirrorModelManager::isUnk18Present(): retail's
+// frame for checkIsInMirror needs the 8 bytes an inlined free function's
+// pointer parameter binds. A member predicate written over getUnk18() is +16
+// (0x70 vs 0x68) and the direct field test is +0 (0x60); see the trial table
+// at the declaration in include/Map/MapMirror.hpp.
+static inline bool MirrorActor_isMirrorNoPresent(const TMirrorModelManager* mgr)
+{
+	return mgr->getUnk18() != -1 ? true : false;
+}
 
 void TMirrorActor::checkIsInMirror()
 {
@@ -48,12 +60,12 @@ void TMirrorActor::checkIsInMirror()
 	}
 
 	int uVar4 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_18));
-	if (uVar4 != gpMirrorModelManager->unk18) {
+	if (uVar4 != gpMirrorModelManager->getUnk18()) {
 		unk18 = 0;
-	} else if (!gpMirrorModelManager->isUnk18Present() && !(unk1A & 4)
-	           && !(unk1A & 0x20)) {
+	} else if (!MirrorActor_isMirrorNoPresent(gpMirrorModelManager)
+	           && !(unk1A & 4) && !(unk1A & 0x20)) {
 		unk18 = 0;
-	} else if (gpMirrorModelManager->isUnk18Present()
+	} else if (MirrorActor_isMirrorNoPresent(gpMirrorModelManager)
 	           && !gpMirrorModelManager->isUpperThanMirrorPlane(local_18)) {
 		unk18 = 0;
 	} else {
@@ -68,11 +80,12 @@ void TMirrorActor::perform(u32 cue, JDrama::TGraphics* graphics)
 		if (unk18 == 0)
 			return;
 
-		for (u16 i = 0; i < unk10->getModelData()->getJointNum(); ++i)
-			unk14->setAnmMtx(i, unk10->getAnmMtx(i));
+		for (u16 i = 0; i < getUnk10()->getModelData()->getJointNum(); ++i)
+			MTXCopy(getUnk10()->getAnmMtx(i), unk14->getAnmMtx(i));
 
-		for (u16 i = 0; i < unk10->getModelData()->getWEvlpMtxNum(); ++i)
-			unk14->setWeightAnmMtx(i, unk10->getWeightAnmMtx(i));
+		for (u16 i = 0; i < getUnk10()->getModelData()->getWEvlpMtxNum(); ++i)
+			MTXCopy(getUnk10()->getWeightAnmMtx(i),
+			        unk14->getWeightAnmMtx(i));
 	}
 
 	if ((cue & CUE_CALC_VIEW) && unk18 != 0)
@@ -84,17 +97,76 @@ void TMirrorActor::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TMirrorActor::entryMirrorDrawBufferAlways(J3DModel* model)
 {
-	JDrama::TDrawBufObj* dbOpa = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf MirrorAlways Opa"));
+	JDrama::TDrawBufObj* dbOpa
+	    = (JDrama::TDrawBufObj*)JDrama::TNameRefGen::getInstance()
+	          ->getRootNameRef()
+	          ->search("DrawBuf MirrorAlways Opa");
 	j3dSys.setDrawBuffer(dbOpa->getDrawBuffer(), 0);
-	JDrama::TDrawBufObj* dbXlu = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf MirrorAlways Xlu"));
+	JDrama::TDrawBufObj* dbXlu
+	    = (JDrama::TDrawBufObj*)JDrama::TNameRefGen::getInstance()
+	          ->getRootNameRef()
+	          ->search("DrawBuf MirrorAlways Xlu");
 	j3dSys.setDrawBuffer(dbXlu->getDrawBuffer(), 1);
 	model->calc();
 	model->viewCalc();
 	model->entry();
 }
 
+// TODO: frame exact (0xd8) and every instruction exact; the only residue is
+// where the inlined push_back's temporaries sit.  Retail's three pairs are
+// 0x90/0x94, 0xa4/0xa8, 0xb4/0xb8 -- gaps of 0x10 and 0xc between them -- while
+// ours are 0x80/0x84, 0x9c/0xa0, 0xb4/0xb8, i.e. 8 extra bytes in each gap with
+// the top pair anchored.  The same shape is open in SDLModel::entry(), so this
+// is a JGadget list/iterator header property (std-list.hpp, JDRViewObjPtrList),
+// not a call-site one.  Rejected here: named `new` results (frame 8 over when
+// combined with getUnk14(), 11 diffs alone) and a named cast for the SDLModel
+// branch (+0).
+// Closure batch 129: stated positionally, retail's pool is 16 bytes *more
+// compact* (0x90..0xbc against our 0x80..0xbc) and carries 16 more dead bytes
+// below it -- exactly SDLModel::entry's signature, where the extra words sit
+// in the gaps between expansion groups. Also rejected: `search2` with the cast
+// at the site (frame unmoved, 7 diffs), `insert(getChildren().end(), this)`
+// (92.5%), and dropping the named `mirrorScene` (every pair moves +4 and pair
+// 3 +8, so the pairs are not rigidly anchored: pair 2 then lands on retail's
+// 0xa4/0xa8 while the gaps grow to 24 and 16).
+// Research batch 133 measured the whole push_back chain on an isolated model
+// and ruled the header out: `TList_pointer<T>::insert`'s own frame was 16
+// bytes over (an implicit derived-from-base conversion on its `return`, now
+// fixed and exact), but that leaves this function byte-identical. The three
+// pairs here are the `end()` chain, the derived iterator's construction and
+// `insert`'s argument/sret group; their sizes are already retail's and only
+// the two gaps between them are 8 bytes too wide each. Nothing in
+// std-list.hpp moves them -- see docs/catalog/frame-gaps.md, batch 133, for
+// the twenty-odd spellings measured.
+// Unit pass 2026-09-20, later-ladder spellings still inert or worse:
+// `mirrorScene->push_back(this)` frame 0xd0 and `addi r30, r3, 0`;
+// unnamed search plus a named `TList_pointer&` (launcher's packing knob)
+// +4 on every pair and pair 3 off 0xb4/0xb8; raw `unk14` at the
+// entryMirrorDrawBufferAlways site -8 frame and every pair -4; a TU-local
+// helper around search+push_back 87.1% (this stays in r30, end() is a `bl`).
+// cc42 sweep (not applied): search spelled named/unnamed/TU-local fork (plain
+// and named-result) x getChildren binders (named reference, pointer,
+// pointer-then-reference, double reference) x push forks taking
+// `TViewObj* const&` x cast/static_cast `this` x raw/accessor/binder unk14 x
+// named/unnamed modelData x five getSDLModelData spellings: nothing exact;
+// best is an unnamed TU-local search fork (pairs 0x8c/0x88, 0xa8/0xa4,
+// 0xc0/0xbc for retail's 0x94/0x90, 0xa8/0xa4, 0xb8/0xb4).
+// c-r38 (dbg): the pairs are push_back's depth-1/2/3 iterator objects, and
+// the words between them are entryMirrorDrawBufferAlways's: retail expands
+// that call one inline level deeper (its dbOpa/dbXlu between the depth-2 and
+// depth-3 pairs, its search bindings below them). A one-line inline taking
+// the J3DModel* (called with getUnk14()) around the call is byte-exact, but
+// it is a pass-through; a this-taking helper holding the whole `if` lands
+// every slot and swaps the search root to r29. Retail's enclosing inline is
+// not identified. Inert: `this->`/qualified call, raw unk14, entry defined
+// after init (also breaks map order); `insert(this)` changes code.
+// c-k31: spelling entryMirrorDrawBufferAlways's two searches unnamed through
+// any one-level wrapper (`TNameRefGen::search<TDrawBufObj>`,
+// `getInstance()->search<TDrawBufObj>` or a cast of `search2`) makes this
+// function byte-exact, but its own out-of-line copy is then 8-16 bytes of
+// frame over; that copy is exact only with the raw chain and a named dbOpa,
+// so the body is pinned and the extra level belongs to the call site. Copying
+// the body into this `if` (MapStaticObject's ReflectSky shape) changes code.
 void TMirrorActor::init(J3DModel* param_1, u16 param_2)
 {
 	unk1A = param_2;
@@ -108,12 +180,12 @@ void TMirrorActor::init(J3DModel* param_1, u16 param_2)
 	}
 
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* mirrorScene
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("鏡シーン"));
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >("鏡シーン");
 	mirrorScene->getChildren().push_back(this);
 
 	if (unk1A & 2)
-		entryMirrorDrawBufferAlways(unk14);
+		entryMirrorDrawBufferAlways(getUnk14());
 }
 
 TMirrorActor::TMirrorActor(const char* name)

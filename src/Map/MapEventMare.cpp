@@ -38,34 +38,51 @@ J3DModel* TMareWallRock::getMapModel() const
 
 void TMareWallRock::depress() { }
 
+// TODO: instruction-exact and frame-exact; `trans` still lands at 0x44(r1)
+// where retail has 0x40, so the low pool below the named block is 4 bytes
+// too tall. Exhausted: the call-temporary spelling (whole frame +8), a
+// named rotation vector shared by both emitters (-0x10), `JPABaseEmitter*
+// em` declared before `trans` and assigned after, the if-condition emitter
+// declarations, `trans.set()` against the constructor.
+// c-k9 debugger: below trans sit the two setRotation TVec3 temporaries (12
+// each), six S words and four s16 bindings (y and z per site); retail has one
+// word fewer (five S words or at most two s16 bindings).
+// Statement count: movement() calls this, so retail's body is over the
+// inliner's depth-1 budget. The if-condition emitter declarations with the
+// TVec3 constructor are three statements short (movement() then inlines it,
+// 8%); the statement-level emitter locals and the separate `trans.set()`
+// supply them and replace four `(void)0` fillers. Also enough: a named
+// `z = unkFC` or a named joint receiver in place of `trans.set()`. A named
+// collision receiver changes the code (93.9); a named `rot` per site is
+// frame +8; setGlobalDynamicsScale first reorders the code.
 void TMareWallRock::appear()
 {
-	// TODO: hack, remove me
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-
 	unk10C[0]->setUp();
 	unk104->awake();
-	unk10C[0]->moveTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, unkFC));
+	JGeometry::TVec3<f32> trans;
+	trans.set(0.0f, 0.0f, unkFC);
+	unk10C[0]->moveTrans(trans);
 	f32 rotY = unk128;
 
-	if (JPABaseEmitter* em = gpMarioParticleManager->emit(
-	        MAP_MAP_MS_MARE_OBJUP_A, &unk11C, 0, &unk11C)) {
+	JPABaseEmitter* em = gpMarioParticleManager->emit(MAP_MAP_MS_MARE_OBJUP_A,
+	                                                  &unk11C, 0, &unk11C);
+	if (em) {
 		em->setRotation(JGeometry::TVec3<f32>(0.0f, rotY, 0.0f));
 		em->setGlobalDynamicsScale(unk110);
 	}
 
-	if (JPABaseEmitter* em = gpMarioParticleManager->emit(
-	        MAP_MAP_MS_MARE_OBJUP_B, &unk11C, 2, &unk11C)) {
-		em->setRotation(JGeometry::TVec3<f32>(0.0f, rotY, 0.0f));
-		em->setGlobalDynamicsScale(unk110);
+	JPABaseEmitter* em2 = gpMarioParticleManager->emit(MAP_MAP_MS_MARE_OBJUP_B,
+	                                                   &unk11C, 2, &unk11C);
+	if (em2) {
+		em2->setRotation(JGeometry::TVec3<f32>(0.0f, rotY, 0.0f));
+		em2->setGlobalDynamicsScale(unk110);
 	}
 
 	unkF4 = 2;
 }
 
+// Case 4 declares its translation vector at the top of the block, above the
+// joint, which is what puts it directly under case 2's vector.
 void TMareWallRock::movement()
 {
 	switch (unkF4) {
@@ -79,16 +96,15 @@ void TMareWallRock::movement()
 		break;
 
 	case 2: {
-		J3DJoint* joint                 = unk104->getJoint();
-		J3DTransformInfo& transformInfo = joint->getTransformInfo();
+		J3DTransformInfo& transformInfo = unk104->getJoint()->getTransformInfo();
 		if (!TMapObjBase::isDemo()) {
 			transformInfo.mTranslate.z -= mAppearSpeed;
 			if (TMapObjBase::marioIsOn(this))
 				mPosition.z -= mAppearSpeed;
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition, 0,
-			                                nullptr, 0, 4);
-			SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition);
+			SMSGetRumbleMgrBound()->start(0x13, -1, (f32*)nullptr);
+			SMSGetCameraShakeBound()->keepShake(
+			    CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
 		}
 
 		unk104->getJoint()->setTransformInfo(transformInfo);
@@ -117,6 +133,7 @@ void TMareWallRock::movement()
 		break;
 
 	case 4: {
+		JGeometry::TVec3<f32> t;
 		J3DJoint* joint                 = unk104->getJoint();
 		J3DTransformInfo& transformInfo = joint->getTransformInfo();
 		if (!TMapObjBase::isDemo()) {
@@ -130,12 +147,12 @@ void TMareWallRock::movement()
 		f32 z = transformInfo.mTranslate.z;
 		if (z > unkFC) {
 			unk10C[0]->remove();
-			unk104->kill();
+			unk104->sleep();
 			unk100 = mWaitTimeToAppear;
 			unkF4  = 3;
 			return;
 		}
-		JGeometry::TVec3<f32> t(0.0f, 0.0f, z);
+		t.set(0.0f, 0.0f, z);
 		unk10C[0]->moveTrans(t);
 		break;
 	}
@@ -183,6 +200,15 @@ void TMareWallRock::initEffect()
 	}
 }
 
+// TODO: 99.91%. Instruction-exact; frame 0x148 against retail's 0x170 (the
+// path buffer sits at 0x64 in retail, 0x40 here): 0x24 of low-region
+// temporaries are still missing below it. Dropping the joint local for
+// two getJoint() reads fixed the max/min `lfsu` order. Inert: raw mJoint
+// at any subset of the three sites.
+// c-k11: retail's buffer is the top object (0x64..0x164) and nine more words
+// are created after it than ours. Worse: `mPosition.set(...)` (90.4), a TVec3
+// centre copied into mPosition, `Vec`/TVec3 copies of max/min, the two init
+// calls as a two-iteration loop (86.9); `* 0.5f` is inert.
 void TMareWallRock::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
@@ -196,15 +222,14 @@ void TMareWallRock::loadAfter()
 	unk10C[1]->init(buf, 0, this);
 	unk104          = TMapObjBase::getBuildingJointObj(unkF8 + 1);
 	unk108          = unkF8;
-	J3DJoint* joint = unk104->getJoint();
-	const Vec& max  = joint->getMax();
-	const Vec& min  = joint->getMin();
+	const Vec& max  = unk104->getJoint()->getMax();
+	const Vec& min  = unk104->getJoint()->getMin();
 	mPosition.x     = (max.x + min.x) / 2.0f;
 	mPosition.y     = (max.y + min.y) / 2.0f;
 	mPosition.z     = (max.z + min.z) / 2.0f;
 	unkFC           = 100.0f + (max.z - min.z);
-	TMapObjBase::moveJoint(unk104->mJoint, 0.0f, 0.0f, unkFC);
-	unk104->kill();
+	TMapObjBase::moveJoint(unk104->getJoint(), 0.0f, 0.0f, unkFC);
+	unk104->sleep();
 	initHitActor(0x4000022C, 1, 0, 0.0f, 0.0f, 0.0f, 0.0f);
 	initEffect();
 }
@@ -214,16 +239,32 @@ void TMareWallRock::load(JSUMemoryInputStream& stream)
 	JDrama::TActor::load(stream);
 }
 
+// UNUSED (0x84 in the map): the named twin of the inline default
+// constructor TMareEventWallRock::load's array new expands.
+TMareWallRock::TMareWallRock(const char* name)
+    : TLiveActor(name)
+{
+	unkF4  = 0;
+	unkF8  = 0;
+	unk100 = 0;
+	unk104 = nullptr;
+	unk108 = 0;
+	unk10C = nullptr;
+	unk128 = 0.0f;
+	unk110.set(1.0f, 1.0f, 1.0f);
+	unk11C.zero();
+}
+
 void TMareEventWallRock::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TNameRef::load(stream);
-	unk14 = new TMareWallRock[unk10];
+	unk14 = new TMareWallRock[getNumRock()];
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("マップグループ"));
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >("マップグループ");
 	for (int i = 0; i < unk10; ++i) {
-		unk14[i].unkF8 = i;
-		group->getChildren().push_back((JDrama::TViewObj*)&unk14[i]);
+		unk14[i].setIndex(i);
+		group->getChildren().push_back(&unk14[i]);
 	}
 }
 
@@ -234,59 +275,8 @@ TMareEventWallRock::TMareEventWallRock(const char* name)
 	unk14 = nullptr;
 }
 
-void TMareEventDepressWall::finishEvent() { }
-
-void TMareEventDepressWall::setJointPosX(float, int) { }
-
-void TMareEventDepressWall::rising()
+void TMareEventDepressWall::finishEvent()
 {
-	f32 x = TMapObjBase::getJointTransX(unk30[unk48]);
-	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk34[unk48], 0, nullptr,
-	                                0, 4);
-
-	{
-		int idx = unk48;
-		if (JPABaseEmitter* em = gpMarioParticleManager->emit(
-		        MAP_MAP_MS_MARE_BLOCKUP, &unk34[idx], 1, &unk34[idx])) {
-			em->setGlobalScale(unk38[idx]);
-			em->setRate(unk3C[idx]);
-			em->setGlobalParticleScale(
-			    JGeometry::TVec3<f32>(unk40[idx], unk40[idx], unk40[idx]));
-		}
-	}
-
-	if (unk1C[unk48]) {
-		if (x > 0.0f) {
-			x -= mRiseSpeed;
-			int idx = unk48;
-			TMapObjBase::setJointTransX(unk30[idx], x);
-			JGeometry::TVec3<f32> t(x, 0.0f, 0.0f);
-			unk28[idx].moveTrans(t);
-			return;
-		}
-		JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
-		unk28[unk48].remove();
-		unk24[unk48].setUpTrans(zero);
-		TMapObjBase::setJointTransX(unk30[unk48], 0.0f);
-		SMSRumbleMgr->stop(0x13);
-		unk48 += 1;
-		if (unk48 == unk10) {
-			unk44 = 4;
-			unk4C = mWaitTimeToWatch;
-			return;
-		}
-		unk4C = unk18[unk48];
-		unk44 = 2;
-		return;
-	}
-	if (x < 0.0f) {
-		x += mRiseSpeed;
-		int idx = unk48;
-		TMapObjBase::setJointTransX(unk30[idx], x);
-		JGeometry::TVec3<f32> t(x, 0.0f, 0.0f);
-		unk28[idx].moveTrans(t);
-		return;
-	}
 	JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
 	unk28[unk48].remove();
 	unk24[unk48].setUpTrans(zero);
@@ -302,10 +292,69 @@ void TMareEventDepressWall::rising()
 	unk44 = 2;
 }
 
-void TMareEventDepressWall::startToRise() { }
+void TMareEventDepressWall::setJointPosX(f32 x, int idx)
+{
+	TMapObjBase::setJointTransX(unk30[idx], x);
+	JGeometry::TVec3<f32> t(x, 0.0f, 0.0f);
+	unk28[idx].moveTrans(t);
+}
 
-void TMareEventDepressWall::emitEffect(int) { }
+// The two-argument startSoundActor form supplies the one word below the
+// finishEvent vectors that the six-argument call lacked.
+void TMareEventDepressWall::rising()
+{
+	f32 x = TMapObjBase::getJointTransX(unk30[unk48]);
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk34[unk48]);
 
+	emitEffect(unk48);
+
+	if (unk1C[unk48]) {
+		if (x > 0.0f) {
+			x -= mRiseSpeed;
+			setJointPosX(x, unk48);
+		} else {
+			finishEvent();
+		}
+	} else {
+		if (x < 0.0f) {
+			x += mRiseSpeed;
+			setJointPosX(x, unk48);
+		} else {
+			finishEvent();
+		}
+	}
+}
+
+void TMareEventDepressWall::startToRise()
+{
+	unk28[unk48].setUp();
+	unk24[unk48].remove();
+	unk44 = 3;
+}
+
+void TMareEventDepressWall::emitEffect(int idx)
+{
+	if (JPABaseEmitter* em = gpMarioParticleManager->emit(
+	        MAP_MAP_MS_MARE_BLOCKUP, &unk34[idx], 1, &unk34[idx])) {
+		em->setGlobalScale(unk38[idx]);
+		em->setRate(unk3C[idx]);
+		JGeometry::TVec3<f32> scale(unk40[idx], unk40[idx], unk40[idx]);
+		em->setGlobalParticleScale(scale);
+	}
+}
+
+// Both depressing branches start the same quake: rumble, camera shake and
+// sound. As one inline level its objects are created after both branches'
+// setJointPosX vectors, which is retail's slot order.
+static inline void DepressWallQuake(TMareEventDepressWall* wall, int i)
+{
+	SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
+	gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &wall->unk34[i]);
+}
+
+// Both branches expand the UNUSED setJointPosX and emitEffect, which gives
+// retail's slot order.
 void TMareEventDepressWall::depressing()
 {
 	int doneCount = 0;
@@ -315,24 +364,12 @@ void TMareEventDepressWall::depressing()
 			if (x < unk20[i]) {
 				if (!TMapObjBase::isDemo()) {
 					x += mDepressSpeed;
-					SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-					gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
-					SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk34[i],
-					                                0, nullptr, 0, 4);
-					JPABaseEmitter* em = gpMarioParticleManager->emit(
-					    MAP_MAP_MS_MARE_BLOCKUP, &unk34[i], 1, &unk34[i]);
-					if (em) {
-						em->setGlobalScale(unk38[i]);
-						em->setRate(unk3C[i]);
-						em->setGlobalParticleScale(JGeometry::TVec3<f32>(
-						    unk40[i], unk40[i], unk40[i]));
-					}
+					DepressWallQuake(this, i);
+					emitEffect(i);
 				} else {
 					SMSRumbleMgr->stop(0x13);
 				}
-				TMapObjBase::setJointTransX(unk30[i], x);
-				JGeometry::TVec3<f32> t(x, 0.0f, 0.0f);
-				unk28[i].moveTrans(t);
+				setJointPosX(x, i);
 				if (x >= unk20[i]) {
 					unk28[i].remove();
 					JGeometry::TVec3<f32> t2(x, 0.0f, 0.0f);
@@ -346,24 +383,12 @@ void TMareEventDepressWall::depressing()
 			if (x > -unk20[i]) {
 				if (!TMapObjBase::isDemo()) {
 					x -= mDepressSpeed;
-					SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-					gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
-					SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk34[i],
-					                                0, nullptr, 0, 4);
-					JPABaseEmitter* em = gpMarioParticleManager->emit(
-					    MAP_MAP_MS_MARE_BLOCKUP, &unk34[i], 1, &unk34[i]);
-					if (em) {
-						em->setGlobalScale(unk38[i]);
-						em->setRate(unk3C[i]);
-						em->setGlobalParticleScale(JGeometry::TVec3<f32>(
-						    unk40[i], unk40[i], unk40[i]));
-					}
+					DepressWallQuake(this, i);
+					emitEffect(i);
 				} else {
 					SMSRumbleMgr->stop(0x13);
 				}
-				TMapObjBase::setJointTransX(unk30[i], x);
-				JGeometry::TVec3<f32> t(x, 0.0f, 0.0f);
-				unk28[i].moveTrans(t);
+				setJointPosX(x, i);
 				if (x <= -unk20[i]) {
 					unk28[i].remove();
 					JGeometry::TVec3<f32> t2(x, 0.0f, 0.0f);
@@ -376,8 +401,7 @@ void TMareEventDepressWall::depressing()
 		}
 	}
 	if (doneCount == unk10) {
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr,
-		                                   0);
+		gpMSound->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr, 0);
 		SMSRumbleMgr->stop(0x13);
 		unk48 = 0;
 		unk4C = unk18[unk48];
@@ -398,9 +422,7 @@ void TMareEventDepressWall::perform(u32 cue, JDrama::TGraphics* graphics)
 		case 2:
 			if (!TMapObjBase::isDemo()) {
 				if (unk4C == 0) {
-					unk28[unk48].setUp();
-					unk24[unk48].remove();
-					unk44 = 3;
+					startToRise();
 					return;
 				}
 				unk4C -= 1;
@@ -466,16 +488,25 @@ void TMareEventDepressWall::initCommon()
 	unk3C = new f32[unk10];
 	unk40 = new f32[unk10];
 
-	J3DNode* joint = gpMap->getModelManager()
-	                     ->getJointModel(0)
-	                     ->getModelData()
-	                     ->getJointNodePointer(0)
+	J3DModelData* modelData
+	    = gpMap->getModelManager()->getJointModel(0)->getModelData();
+	J3DNode* joint = modelData->getJointNodePointer(0)
 	                     ->getChild()
 	                     ->getYounger()
 	                     ->getChild();
 
-	int skipCount = 0x43 - (unk14 + (unk10 - 1));
-	for (int i = 0; i < skipCount; ++i)
+	// The split sum with the subtraction left in the loop condition gives
+	// retail's `subi` before the add and its unrolled skip loop with the
+	// two trailing branches.
+	// TODO: the add's operands are swapped (retail `unk14 + last`); the
+	// named modelData lands the frame, one f32 slot is 4 low. Tried:
+	// `skipCount = unk14 + skipCount` (98.3), the whole count named first,
+	// u32/s32/s16/u16 counters (u32 lands the frame, 93%), down-counting
+	// and offset-start loops, count/sum levels, a shared function-scope `i`.
+	// Dropping the named sum lands the frame but loses the unrolled loop.
+	int skipCount = unk10 - 1;
+	skipCount += unk14;
+	for (int i = 0; i < 0x43 - skipCount; ++i)
 		joint = joint->getYounger();
 
 	for (int i = 0; i < unk10; ++i) {
@@ -506,7 +537,7 @@ void TMareEventDepressWall::init3rdEvent()
 	unk14 = 43;
 	initCommon();
 	TMapModelActor* actor
-	    = static_cast<TMapModelActor*>(JDrama::TNameRefGen::search("mareEP2"));
+	    = JDrama::TNameRefGen::search<TMapModelActor>("mareEP2");
 	if (actor) {
 		actor->setActor((MActor*)this);
 		unk18[0] = 2400;
@@ -531,7 +562,7 @@ void TMareEventDepressWall::init2ndEvent()
 	unk14 = 19;
 	initCommon();
 	TMapModelActor* actor
-	    = static_cast<TMapModelActor*>(JDrama::TNameRefGen::search("mareEP1"));
+	    = JDrama::TNameRefGen::search<TMapModelActor>("mareEP1");
 	if (actor) {
 		actor->setActor((MActor*)this);
 		unk18[0] = 3600;
@@ -546,7 +577,7 @@ void TMareEventDepressWall::init1stEvent()
 	unk14 = 8;
 	initCommon();
 	TMapModelActor* actor
-	    = static_cast<TMapModelActor*>(JDrama::TNameRefGen::search("mareEP0"));
+	    = JDrama::TNameRefGen::search<TMapModelActor>("mareEP0");
 	if (actor) {
 		actor->setActor((MActor*)this);
 		unk18[0] = 3600;
@@ -599,12 +630,12 @@ u32 TMareEventBumpyWall::touchWater(THitActor*)
 void TMareEventBumpyWall::bumpDownZ()
 {
 	f32 z = TMapObjBase::getJointTransZ(unk13C);
-	JGeometry::TVec3<f32> trans(z, 0.0f, 0.0f);
-	if (z > -unk144) {
+	JGeometry::TVec3<f32> trans(0.0f, 0.0f, z);
+	if (z > -getBumpLimit()) {
 		if (!TMapObjBase::isDemo()) {
 			z -= unk140;
 			SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
+			gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
 			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition, 0,
 			                                nullptr, 0, 4);
 		} else {
@@ -614,8 +645,9 @@ void TMareEventBumpyWall::bumpDownZ()
 		unk14C->moveTrans(trans);
 		return;
 	}
-	trans.z = -unk144;
-	TMapObjBase::setJointTransZ(unk13C, -unk144);
+	z = -unk144;
+	trans.z = z;
+	TMapObjBase::setJointTransZ(unk13C, z);
 	unk14C->remove();
 	unk148->setUpTrans(trans);
 	SMSRumbleMgr->stop(0x13);
@@ -625,12 +657,12 @@ void TMareEventBumpyWall::bumpDownZ()
 void TMareEventBumpyWall::bumpUpZ()
 {
 	f32 z = TMapObjBase::getJointTransZ(unk13C);
-	JGeometry::TVec3<f32> trans(z, 0.0f, 0.0f);
-	if (z < unk144) {
+	JGeometry::TVec3<f32> trans(0.0f, 0.0f, z);
+	if (z < getBumpLimit()) {
 		if (!TMapObjBase::isDemo()) {
 			z += unk140;
 			SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
+			gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
 			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition, 0,
 			                                nullptr, 0, 4);
 		} else {
@@ -640,8 +672,9 @@ void TMareEventBumpyWall::bumpUpZ()
 		unk14C->moveTrans(trans);
 		return;
 	}
-	trans.z = unk144;
-	TMapObjBase::setJointTransZ(unk13C, unk144);
+	z = unk144;
+	trans.z = z;
+	TMapObjBase::setJointTransZ(unk13C, z);
 	unk14C->remove();
 	unk148->setUpTrans(trans);
 	SMSRumbleMgr->stop(0x13);
@@ -652,11 +685,11 @@ void TMareEventBumpyWall::bumpDownX()
 {
 	f32 x = TMapObjBase::getJointTransX(unk13C);
 	JGeometry::TVec3<f32> trans(x, 0.0f, 0.0f);
-	if (x > -unk144) {
+	if (x > -getBumpLimit()) {
 		if (!TMapObjBase::isDemo()) {
 			x -= unk140;
 			SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
+			gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
 			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition, 0,
 			                                nullptr, 0, 4);
 		} else {
@@ -666,8 +699,9 @@ void TMareEventBumpyWall::bumpDownX()
 		unk14C->moveTrans(trans);
 		return;
 	}
-	trans.x = -unk144;
-	TMapObjBase::setJointTransX(unk13C, -unk144);
+	x = -unk144;
+	trans.x = x;
+	TMapObjBase::setJointTransX(unk13C, x);
 	unk14C->remove();
 	unk148->setUpTrans(trans);
 	SMSRumbleMgr->stop(0x13);
@@ -678,11 +712,11 @@ void TMareEventBumpyWall::bumpUpX()
 {
 	f32 x = TMapObjBase::getJointTransX(unk13C);
 	JGeometry::TVec3<f32> trans(x, 0.0f, 0.0f);
-	if (x < unk144) {
+	if (x < getBumpLimit()) {
 		if (!TMapObjBase::isDemo()) {
 			x += unk140;
 			SMSRumbleMgr->start(0x13, -1, (f32*)nullptr);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.5f);
+			gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.5f);
 			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &mPosition, 0,
 			                                nullptr, 0, 4);
 		} else {
@@ -692,8 +726,9 @@ void TMareEventBumpyWall::bumpUpX()
 		unk14C->moveTrans(trans);
 		return;
 	}
-	trans.x = unk144;
-	TMapObjBase::setJointTransX(unk13C, unk144);
+	x = unk144;
+	trans.x = x;
+	TMapObjBase::setJointTransX(unk13C, x);
 	unk14C->remove();
 	unk148->setUpTrans(trans);
 	SMSRumbleMgr->stop(0x13);

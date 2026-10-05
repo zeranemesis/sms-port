@@ -12,6 +12,73 @@ void TPerformList::forEachPerform(
 	}
 }
 
+// TODO: frame 0xc0 vs retail 0xe8, and the residue is **not** a plain frame
+// gap: the thirteen iterator copy slots pair up one-to-one but their *grouping*
+// differs, so no amount of low region lines them up. Ours are
+// [0x6c 0x70 0x74 0x78] [0x84 0x88] [0x90 0x94 0x98] [0xa8 0xac 0xb0 0xb4];
+// retail's are [0x90 0x94] [0xa4 0xa8] [0xb0 0xb4 0xb8 0xbc 0xc0]
+// [0xd0 0xd4 0xd8 0xdc] -- a 12-byte hole between the two `operator!=`
+// temporary pairs where we have none, and no hole inside the middle group
+// where we have four bytes. That is the shared `JGadget` iterator expansion
+// structure that batch 81 flagged in `std-list.hpp` (the same "off by 8 per
+// group gap" seen in `SDLModel::entry` and `TMirrorActor::init`), not
+// something this TU can spell.
+// Frame levers measured anyway (all 54 instructions, all 36 diffs, i.e. none
+// of them changes the grouping): one level that binds `getChildren()` is +0x10
+// per call site and +0x18 for both, a second stacked level +0x18 more,
+// `begin()`/`end()` without `getChildren()` -0x18. Worse: binding levels on
+// `begin()`/`end()` themselves (67 instructions), named iterator locals for b
+// and e (63), wrapping the whole call (81).
+// `forEachPerform`'s own out-of-line copy is exact (UNUSED 0xa4), so the body
+// is right; a dead 36-40 byte non-trivial local in it would land 0xe8 (it is
+// UNUSED, so a legal carrier) but nothing in a list walk motivates one and it
+// would not fix the grouping either.
+// Research batch 133 mapped every slot. All thirteen are the iterator copies
+// of the two three-deep begin()/end() chains plus the four by-value
+// comparison parameters, and reading the pool downward both builds start
+// [4] +12 and share the top group; retail then has {b2,b1,e2,e1,it}
+// contiguous and a 12-byte gap between `operator!=`'s parameter pair and
+// `operator==`'s, where we have a 4-byte gap higher up and none at the
+// bottom. Only two constructs split that bottom [4] into retail's
+// [2]+12 [2] shape, and both change the slot *count*: deleting the derived
+// iterator's `operator==` (13 slots, but the gap is 8 and the two top groups
+// then go wrong) or its `operator!=` (11 slots). `++it`, `const&` parameters
+// on either level's operators, explicit by-value slicing in `operator==`, and
+// explicit conversions on the `operator++(int)` returns were all measured and
+// none of them produce it -- see docs/catalog/frame-gaps.md, batch 133.
+// Closure batch 215 re-measured the slot map top-down, where the shape is
+// clearest: retail is [4]+12 [5]+4 [2]+12 [2] (0x90..0xdc, frame 0xe8) and we
+// are [4]+12 [3]+4 [2]+8 [4] (0x6c..0xb4, frame 0xc0), i.e. the same thirteen
+// slots with two of them moved from the bottom group up into the middle one
+// and the lower dead gap 4 bytes short; below the pool retail leaves 136 dead
+// bytes and we leave 100. Research 211's container-receiver knob does not
+// reach it: a named `TSingleLinkList<TPerformLink, 0>*` or `&` for
+// `getChildren()` is -0x10 (frame 0xb0) and a named `TPerformList* self` is
+// +8, and neither changes the grouping. `++it` in the loop is -0x10 and leaves
+// the out-of-line `forEachPerform` byte-exact (so the increment spelling is
+// free there); a `while` loop with the increment at the end is byte-identical
+// to the `for`; a named `end` iterator costs two instructions (95.4%). The
+// only construct measured that produces retail's grouping is research 161's
+// named result inside `TSingleNodeLinkList::begin()/end()`, a shared-header
+// change that lands perform at 0xe8 exactly but drops both
+// `TPerformList::push_back` overloads -- a std-list.hpp round item, not a
+// change this TU can make.
+// cc42 (slot-scored sweeps, nothing applied): TU-local receiver forks
+// (named-reference and pointer-then-reference getChildren binders),
+// begin()/end() forks (explicit base conversion, named base result, direct
+// `&mHead`/`mTail`, named derived result) in all 400 pairings, and loop-test
+// spellings in forEachPerform (`!(it == e)`, forks with by-value, `const&`,
+// named-bool and base-cast bodies, `++it`). Best: a named-reference list fork
+// with a named-base-result begin() and a `mTail` end() lands frame 0xe8 but
+// keeps our grouping ([it b0 b1] 4 [e0 e1] 8 [!= ==] for retail's
+// [it b0 b1 e0 e1] 4 [!=] 12 [==]); a named bool in the test adds one of the
+// three dead words retail has between the two comparison pairs, never more.
+// c-r38 (dbg, not applied): those three words are depth-3 objects of the loop
+// body created before `==`'s copies. With the direct `begin()`/`end()` site,
+// named `node` and `value` locals in TSingleLinkList::iterator::operator->
+// plus a named bool in its `operator!=` put every inline object in retail's
+// order at identical instructions (forEachPerform still 0xa4); only 12 IRO
+// words at the bottom remain (frame 0xb8). No evidence pins those spellings.
 void TPerformList::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	forEachPerform(getChildren().begin(), getChildren().end(), graphics, cue);
@@ -27,8 +94,9 @@ void TPerformList::load(JSUMemoryInputStream& stream)
 	while (stream.getLength() - stream.getPosition() > 0) {
 		stream.readString(elementName, 80);
 
-		obj = static_cast<JDrama::TViewObj*>(
-		    JDrama::TNameRefGen::search(elementName));
+		obj = (JDrama::TViewObj*)JDrama::TNameRefGen::getInstance()
+		          ->getRootNameRef()
+		          ->search(elementName);
 
 		u32 value = stream.readU32();
 
@@ -43,7 +111,7 @@ void TPerformList::load(JSUMemoryInputStream& stream)
 void TPerformList::push_back(const char* param_1, u32 param_2)
 {
 	JDrama::TViewObj* obj
-	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search(param_1);
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2(param_1);
 
 	Push_back(new TPerformLink(obj, param_2));
 }

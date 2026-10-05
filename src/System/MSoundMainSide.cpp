@@ -9,15 +9,13 @@
 #include <Camera/CubeMapTool.hpp>
 #include <Player/MarioAccess.hpp>
 
-// rogue includes needed for matching sinit & bss
+// rogue includes needed for matching __sinit: the JAL sound lists register in
+// reverse declaration order, and the target registers MSBgm first, then
+// MSSetSoundGrp/MSSetSound, so these two must be the last includes with no
+// earlier copy of MSoundBGM.hpp.
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-
-MSStage* MSStage::smMSStage;
-#ifdef VERSION_GMSP01
-MSStageCubeFade* MSStageCubeFade::smInstance             = nullptr;
-MSStageCubeFadeDouble* MSStageCubeFadeDouble::smInstance = nullptr;
-#endif
+#include <algorithm>
 
 namespace MSMainProc {
 
@@ -44,50 +42,41 @@ namespace MSStageInfo {
 
 } // namespace MSMainProc
 
-#ifdef VERSION_GMSP01
+MSStage* MSStage::smMSStage;
+MSStageCubeFade* MSStageCubeFade::smInstance;
+MSStageCubeFadeDouble* MSStageCubeFadeDouble::smInstance;
+
 void MSMainProc::setGateKeeperBGMPlayFlag(u32 param_1, bool param_2)
 {
-	MSStageCubeFadeDouble* stage = MSStageCubeFadeDouble::smInstance;
-	if (stage == nullptr)
+	if (MSStageCubeFadeDouble::smInstance == nullptr)
 		return;
 
 	if (param_1 == 3)
-		stage->mPlayFlag[0] = param_2;
+		MSStageCubeFadeDouble::smInstance->unk10[0] = param_2;
 	else if (param_1 == 4)
-		stage->mPlayFlag[1] = param_2;
+		MSStageCubeFadeDouble::smInstance->unk10[1] = param_2;
 }
 
 bool MSMainProc::getGateKeeperBGMStopFlag()
 {
-	MSStageCubeFadeDouble* stage = MSStageCubeFadeDouble::smInstance;
-	if (stage != nullptr) {
-		for (u8 i = 0; i < 2; ++i) {
-			if (stage->mPlayFlag[i])
+	if (MSStageCubeFadeDouble::smInstance != nullptr) {
+		for (u8 i = 0; i < 2; i++) {
+			if (MSStageCubeFadeDouble::smInstance->unk10[i] != 0)
 				return false;
 		}
 	}
 	return true;
 }
-#endif
 
-inline Vec getCubeCheckPos(const Vec& pos)
-{
-	Vec result = pos;
-	result.y += 75.0f;
-	return result;
-}
-
-// TODO: fake and wrong, figure this out
-inline TCubeGeneralInfo* getSoundCubeInfo(s32 no)
-{
-	return gpCubeSoundChange->getCubeInfo(no);
-}
+// Direct-return level over a raw member read: retail's u8 result is an
+// inline temporary of MSMainProc::getMonteVillageActorArea, not a named slot.
+static inline u8 MSoundMainSideUnkCD(const MSound* p) { return p->unkCD; }
 
 int MSMainProc::getMonteVillageActorArea(const Vec& param_1)
 {
 	int result = 4;
-	if (MSGMSound->unkCD == 8) {
-		switch (gpCubeFastC->getInCubeNo(getCubeCheckPos(param_1))) {
+	if (MSoundMainSideUnkCD(MSGMSound) == 8) {
+		switch (gpCubeFastC->getInCubeNo(MSGetEarPos(param_1))) {
 		case 0:
 			result = 2;
 			break;
@@ -97,27 +86,32 @@ int MSMainProc::getMonteVillageActorArea(const Vec& param_1)
 		default:
 			result = 3;
 			break;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x30 against 0x28). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 		}
 	}
 	return result;
 }
 
-void MSMainProc::entranceDemoWipeInEnd() { }
+// UNUSED, 0x10: four instructions, and the only flag of the array nothing
+// else raises is the one endStageEntranceDemo clears.
+void MSMainProc::entranceDemoWipeInEnd() { gpMSound->unkC8[4] = 1; }
 
 void MSMainProc::toInnerCameraDemo() { gpMSound->unkC8[2] = 1; }
 
 void MSMainProc::fromInnerCameraDemo() { gpMSound->unkC8[2] = 0; }
 
-void MSMainProc::toTHPDemo() { }
+// UNUSED, 0x38 and 0x34: the demo enter/leave pair of
+// startStageEntranceDemo/endStageEntranceDemo on the one free flag slot.
+void MSMainProc::toTHPDemo()
+{
+	gpMSound->demoModeIn(MSStageInfo::volOffCategory, false);
+	gpMSound->unkC8[3] = 1;
+}
 
-void MSMainProc::fromTHPDemo() { }
+void MSMainProc::fromTHPDemo()
+{
+	gpMSound->demoModeOut(false);
+	gpMSound->unkC8[3] = 0;
+}
 
 void MSMainProc::toTalkingCameraDemo()
 {
@@ -169,12 +163,15 @@ void MSMainProc::setBossNotDamagedFlag(bool param_1)
 	MSStageInfo::bossNotDamaged = param_1;
 }
 
+// TODO: every instruction matches; retail's frame is 0x88 against our 0x40
+// with no stack use in the body, so 0x48 of inline temporaries is missing
+// (likely an unrecovered inline level, not a per-site lever).
 void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 {
 
 	MSStageInfo::msStg                     = MSBgm::getSceneNo(0xfffffff0);
 	MSStageInfo::stageBgm                  = 0xfffffff0;
-	MSStageInfo::demoBgm                   = MSD_BGM_MONTE_ONSEN;
+	MSStageInfo::demoBgm                   = MSD_BGM_CAMERA;
 	MSStageInfo::flags                     = 10;
 	MSStageInfo::stageBgmSilent            = 0xfffffff0;
 	MSStageInfo::stageBgmSilentStartStatus = 2;
@@ -189,16 +186,18 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 	MSStageInfo::volOffCategory            = 0x1c7;
 	MSStageInfo::distFadeStageToKage       = 1;
 
+	MSStageCubeFadeDouble::smInstance = nullptr;
+
 	bool bVar2 = false;
 
 	switch (param_1) {
 	case 0:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_UNDERGROUND);
-		MSStageInfo::stageBgm = MSD_BGM_UNDERGROUND;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_AIRPORT);
+		MSStageInfo::stageBgm = MSD_BGM_AIRPORT;
 		break;
 	case 1:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BIANCO);
-		MSStageInfo::stageBgm = MSD_BGM_BIANCO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DOLPIC);
+		MSStageInfo::stageBgm = MSD_BGM_DOLPIC;
 		if (true) {
 			switch (param_2) {
 			case 0:
@@ -208,7 +207,7 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 				MSStageInfo::cubeFadeRatio = 0.22f;
 				break;
 			case 1:
-				MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+				MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 				MSStageInfo::flags   = 0;
 				MSStageInfo::volOffCategory -= 0x183;
 				break;
@@ -220,7 +219,7 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 				break;
 			case 8:
 				if (TFlagManager::getInstance()->getFlag(0x60003) > 0) {
-					MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+					MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 					MSStageInfo::flags   = 6;
 					MSStageInfo::volOffCategory -= 0x83;
 					MSStageInfo::fadeEvent  = 1;
@@ -229,18 +228,20 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 				}
 				break;
 			case 9:
-				MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+				MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 				MSStageInfo::flags   = 0;
 				MSStageInfo::volOffCategory -= 0x82;
 			}
 		}
 		break;
 	case 2:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAMMA);
-		MSStageInfo::stageBgm = MSD_BGM_MAMMA;
+		MSoundSESystem::MSRandPlay::createRandPlayVec(
+		    MSD_SE_OBJ_BIRD_BIA_1, 8);
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BIANCO);
+		MSStageInfo::stageBgm = MSD_BGM_BIANCO;
 		switch (param_2) {
 		case 0:
-			MSStageInfo::demoBgm       = MSD_BGM_GAMEOVER;
+			MSStageInfo::demoBgm       = MSD_BGM_CAMERA_KAGE;
 			MSStageInfo::flags         = 10;
 			MSStageInfo::fadeEvent     = 2;
 			MSStageInfo::switchBgm     = 0xfffffff0;
@@ -249,7 +250,7 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 			break;
 
 		case 6:
-			MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+			MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 			MSStageInfo::flags   = 3;
 			MSStageInfo::volOffCategory -= 0x83;
 			MSStageInfo::fadeEvent           = 1;
@@ -260,10 +261,10 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 		}
 		break;
 	case 3:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_GET_SHINE);
-		MSStageInfo::stageBgm = MSD_BGM_GET_SHINE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_RICCO);
+		MSStageInfo::stageBgm = MSD_BGM_RICCO;
 		if (param_2 == 6) {
-			MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+			MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 			MSStageInfo::flags   = 3;
 			MSStageInfo::volOffCategory -= 0x83;
 			MSStageInfo::fadeEvent           = 1;
@@ -272,40 +273,40 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 			MSStageInfo::distFadeStageToKage = 0;
 		}
 		if (param_2 == 4) {
-			MSStageInfo::switchBgm     = MSD_BGM_MAP_SELECT;
+			MSStageInfo::switchBgm     = MSD_BGM_BOSS;
 			MSStageInfo::fadeEvent     = 3;
-			MSStageInfo::switchBgm2    = MSD_BGM_CHUBOSS_MANTA;
+			MSStageInfo::switchBgm2    = MSD_BGM_BOSSGESO_2DN3RD;
 			MSStageInfo::cubeFadeRatio = 0.28f;
 		}
 		break;
 	case 4:
 		if (param_2 != 2) {
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_PINNAPACO_SEA);
-			MSStageInfo::stageBgm = MSD_BGM_PINNAPACO_SEA;
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAMMA);
+			MSStageInfo::stageBgm = MSD_BGM_MAMMA;
 		} else {
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAP_SELECT);
-			MSStageInfo::stageBgm = MSD_BGM_MAP_SELECT;
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BOSS);
+			MSStageInfo::stageBgm = MSD_BGM_BOSS;
 		}
 		if (param_2 == 6) {
-			MSStageInfo::switchBgm = 0xfffffff0;
-			MSStageInfo::demoBgm   = MSD_BGM_CAMERA;
-			MSStageInfo::flags     = 3;
+			MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
+			MSStageInfo::flags   = 3;
 			MSStageInfo::volOffCategory -= 0x83;
 			MSStageInfo::fadeEvent           = 1;
+			MSStageInfo::switchBgm           = 0xfffffff0;
 			MSStageInfo::switchBgm2          = 0xfffffff0;
 			MSStageInfo::distFadeStageToKage = 0;
 		} else if (param_2 == 2) {
-			MSStageInfo::demoBgm = MSD_BGM_MAP_SELECT;
+			MSStageInfo::demoBgm = MSD_BGM_BOSS;
 			MSStageInfo::flags   = 0;
 		}
 		break;
 	case 5:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_PINNAPACO);
-		MSStageInfo::stageBgm = MSD_BGM_PINNAPACO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_PINNAPACO_SEA);
+		MSStageInfo::stageBgm = MSD_BGM_PINNAPACO_SEA;
 		switch (param_2) {
 		case 0:
 			MSStageInfo::flags   = 10;
-			MSStageInfo::demoBgm = MSD_BGM_GAMEOVER;
+			MSStageInfo::demoBgm = MSD_BGM_CAMERA_KAGE;
 			break;
 		case 1:
 			MSStageInfo::volOffCategory -= 4;
@@ -313,46 +314,64 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 		}
 		break;
 	case 6:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_RICCO);
-		MSStageInfo::stageBgm = MSD_BGM_RICCO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SHILENA);
+		MSStageInfo::stageBgm = MSD_BGM_SHILENA;
 		break;
 	case 7:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAREVILLAGE);
-		MSStageInfo::stageBgm = MSD_BGM_MAREVILLAGE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
+		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
 		if (param_2 == 3) {
 			MSStageInfo::fadeEvent                 = 1;
 			MSStageInfo::switchBgm                 = 0xfffffff0;
 			MSStageInfo::switchBgm2                = 0xfffffff0;
-			MSStageInfo::stageBgm                  = MSD_BGM_CAMERA;
-			MSStageInfo::stageBgmSilent            = MSD_BGM_MAREVILLAGE;
+			MSStageInfo::stageBgm                  = MSD_BGM_KAGEMARIO;
+			MSStageInfo::stageBgmSilent            = MSD_BGM_DELFINO;
 			MSStageInfo::stageBgmSilentStartStatus = 2;
 			MSStageInfo::distFadeStageToKage       = 0;
 		}
 		break;
-	case 8:
-		switch (param_2) {
-		case 5:
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MERRY_GO_ROUND);
-			MSStageInfo::stageBgm = MSD_BGM_MERRY_GO_ROUND;
+	case 8: {
+		int scenario = param_2;
+
+		// Even episodes get the night ambience, odd ones the day set.
+		switch (scenario) {
+		case 0:
+		case 2:
+		case 4:
+		case 6:
+			MSoundSESystem::MSRandPlay::createRandPlayVec(
+			    MSD_SE_OBJ_MONTE_NIGHT_A1, 5);
 			break;
 		default:
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SHILENA);
-			MSStageInfo::stageBgm = MSD_BGM_SHILENA;
+			MSoundSESystem::MSRandPlay::createRandPlayVec(
+			    MSD_SE_OBJ_MONTE_DAY_A1, 5);
+			break;
+		}
+		switch (scenario) {
+		case 5:
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTE_RESCUE);
+			MSStageInfo::stageBgm = MSD_BGM_MONTE_RESCUE;
+			break;
+		default:
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTEVILLAGE);
+			MSStageInfo::stageBgm = MSD_BGM_MONTEVILLAGE;
 			break;
 		}
 		if (param_2 == 6) {
-			MSStageInfo::switchBgm = 0xfffffff0;
-			MSStageInfo::demoBgm   = MSD_BGM_CAMERA;
+			MSStageInfo::demoBgm   = MSD_BGM_KAGEMARIO;
 			MSStageInfo::flags     = 6;
 			MSStageInfo::volOffCategory -= 0x83;
 			MSStageInfo::fadeEvent  = 1;
+			MSStageInfo::switchBgm = 0xfffffff0;
 			MSStageInfo::switchBgm2 = 0xfffffff0;
+		} else if (param_2 == 1) {
+			break;
 		} else {
-			MSStageInfo::switchBgm  = 0xfffffff0;
 			MSStageInfo::fadeEvent  = 2;
+			MSStageInfo::switchBgm  = 0xfffffff0;
 			MSStageInfo::switchBgm2 = 0xfffffff0;
 
-			switch (param_2) {
+			switch (scenario) {
 			case 7:
 				MSStageInfo::cubeFadeUsePan = 0;
 				MSStageInfo::cubeFadeRatio  = 0.28f;
@@ -364,19 +383,20 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 			}
 
 			if (param_2 == 7) {
-				MSStageInfo::stageBgmSilent            = MSD_BGM_SHINE_APPEAR;
+				MSStageInfo::stageBgmSilent            = MSD_BGM_MONTE_LAST;
 				MSStageInfo::stageBgmSilentStartStatus = 2;
 			} else {
-				MSStageInfo::stageBgmSilent            = MSD_BGM_MECHAKUPPA;
+				MSStageInfo::stageBgmSilent            = MSD_BGM_MONTE_ONSEN;
 				MSStageInfo::stageBgmSilentStartStatus = 0;
 			}
 		}
 		break;
+	}
 	case 9:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_CORONA);
-		MSStageInfo::stageBgm = MSD_BGM_CORONA;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAREVILLAGE);
+		MSStageInfo::stageBgm = MSD_BGM_MAREVILLAGE;
 		if (param_2 == 6) {
-			MSStageInfo::demoBgm = MSD_BGM_CAMERA;
+			MSStageInfo::demoBgm = MSD_BGM_KAGEMARIO;
 			MSStageInfo::flags   = 3;
 			MSStageInfo::volOffCategory -= 0x83;
 			MSStageInfo::fadeEvent           = 1;
@@ -384,32 +404,34 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 			MSStageInfo::switchBgm2          = 0xfffffff0;
 			MSStageInfo::distFadeStageToKage = 0;
 		} else if (param_2 == 1) {
-			MSStageInfo::switchBgm  = MSD_BGM_MISS;
 			MSStageInfo::fadeEvent  = 3;
-			MSStageInfo::switchBgm2 = MSD_BGM_MISS;
+			MSStageInfo::switchBgm  = MSD_BGM_CHUBOSS;
+			MSStageInfo::switchBgm2 = MSD_BGM_CHUBOSS;
 		}
 		break;
 	case 13:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MARE_SEA);
-		MSStageInfo::stageBgm = MSD_BGM_MARE_SEA;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_PINNAPACO);
+		MSStageInfo::stageBgm = MSD_BGM_PINNAPACO;
 		if (param_2 == 4) {
 			MSStageInfo::fadeEvent                 = 1;
 			MSStageInfo::switchBgm                 = 0xfffffff0;
 			MSStageInfo::switchBgm2                = 0xfffffff0;
-			MSStageInfo::stageBgm                  = MSD_BGM_CAMERA;
-			MSStageInfo::stageBgmSilent            = MSD_BGM_MARE_SEA;
+			MSStageInfo::stageBgm                  = MSD_BGM_KAGEMARIO;
+			MSStageInfo::stageBgmSilent            = MSD_BGM_PINNAPACO;
 			MSStageInfo::stageBgmSilentStartStatus = 2;
 			MSStageInfo::distFadeStageToKage       = 0;
 		} else if (param_2 == 0) {
 			MSStageInfo::fadeEvent                 = 1;
 			MSStageInfo::switchBgm                 = 0xfffffff0;
 			MSStageInfo::switchBgm2                = 0xfffffff0;
-			MSStageInfo::stageBgm                  = MSD_BGM_CAMERA;
-			MSStageInfo::stageBgmSilent            = MSD_BGM_MARE_SEA;
+			MSStageInfo::stageBgm                  = MSD_BGM_KAGEMARIO;
+			MSStageInfo::stageBgmSilent            = MSD_BGM_PINNAPACO;
 			MSStageInfo::stageBgmSilentStartStatus = 2;
 			MSStageInfo::distFadeStageToKage       = 0;
+		} else if (param_2 == 6) {
+			// Episode 6 keeps the plain Mare Sea setup.
 		} else {
-			MSStageInfo::stageBgmSilent            = MSD_BGM_SCENARIO_SELECT;
+			MSStageInfo::stageBgmSilent            = MSD_BGM_MERRY_GO_ROUND;
 			MSStageInfo::cubeFadeRatio             = 0.12f;
 			MSStageInfo::stageBgmSilentStartStatus = 2;
 			MSStageInfo::fadeEvent                 = 2;
@@ -417,65 +439,65 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 			MSStageInfo::switchBgm2                = 0xfffffff0;
 			MSStageInfo::cubeFadeUsePan            = 1;
 		}
-		if (param_2 == 7)
+		if (param_2 == 6 || param_2 == 7)
 			MSStageInfo::stageBgm = 0xfffffff0;
 		break;
 	case 14:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EVENT);
-		MSStageInfo::stageBgm = MSD_BGM_EVENT;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_CASINO);
+		MSStageInfo::stageBgm = MSD_BGM_CASINO;
 		break;
 	case 15:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_CHUBOSS2);
-		MSStageInfo::stageBgm = MSD_BGM_CHUBOSS2;
-		SMSGetMSound()->loadArcSeqData(MSD_BGM_CHUBOSS2, false);
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAIN_TITLE);
+		MSStageInfo::stageBgm = MSD_BGM_MAIN_TITLE;
+		SMSGetMSound()->loadArcSeqData(MSD_BGM_MAIN_TITLE, false);
 		break;
 	case 16:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTEVILLAGE);
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MARE_SEA);
 		bVar2                 = true;
-		MSStageInfo::stageBgm = MSD_BGM_MONTEVILLAGE;
+		MSStageInfo::stageBgm = MSD_BGM_MARE_SEA;
 		break;
 	case 20:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BIANCO);
-		MSStageInfo::stageBgm = MSD_BGM_BIANCO;
-		MSStageInfo::demoBgm  = MSD_BGM_BIANCO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DOLPIC);
+		MSStageInfo::stageBgm = MSD_BGM_DOLPIC;
+		MSStageInfo::demoBgm  = MSD_BGM_DOLPIC;
 		MSStageInfo::flags    = 0;
 		break;
 	case 21:
 	case 22:
 	case 23:
 	case 24:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTE_RESCUE);
-		MSStageInfo::stageBgm = MSD_BGM_MONTE_RESCUE;
-		MSStageInfo::demoBgm  = MSD_BGM_MONTE_RESCUE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SKY_AND_SEA);
+		MSStageInfo::stageBgm = MSD_BGM_SKY_AND_SEA;
+		MSStageInfo::demoBgm  = MSD_BGM_SKY_AND_SEA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 28:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
-		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
-		MSStageInfo::demoBgm  = MSD_BGM_DELFINO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EXTRA);
+		MSStageInfo::stageBgm = MSD_BGM_EXTRA;
+		MSStageInfo::demoBgm  = MSD_BGM_EXTRA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 29:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTE_RESCUE);
-		MSStageInfo::stageBgm = MSD_BGM_MONTE_RESCUE;
-		MSStageInfo::demoBgm  = MSD_BGM_MONTE_RESCUE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SKY_AND_SEA);
+		MSStageInfo::stageBgm = MSD_BGM_SKY_AND_SEA;
+		MSStageInfo::demoBgm  = MSD_BGM_SKY_AND_SEA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 30:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
-		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EXTRA);
+		MSStageInfo::stageBgm = MSD_BGM_EXTRA;
 		break;
 	case 31:
 	case 32:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
-		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
-		MSStageInfo::demoBgm  = MSD_BGM_DELFINO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EXTRA);
+		MSStageInfo::stageBgm = MSD_BGM_EXTRA;
+		MSStageInfo::demoBgm  = MSD_BGM_EXTRA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 33:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTE_RESCUE);
-		MSStageInfo::stageBgm = MSD_BGM_MONTE_RESCUE;
-		MSStageInfo::demoBgm  = MSD_BGM_MONTE_RESCUE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SKY_AND_SEA);
+		MSStageInfo::stageBgm = MSD_BGM_SKY_AND_SEA;
+		MSStageInfo::demoBgm  = MSD_BGM_SKY_AND_SEA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 34:
@@ -484,16 +506,16 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 	case 41:
 	case 42:
 	case 43:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
-		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
-		MSStageInfo::demoBgm  = MSD_BGM_DELFINO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EXTRA);
+		MSStageInfo::stageBgm = MSD_BGM_EXTRA;
+		MSStageInfo::demoBgm  = MSD_BGM_EXTRA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 44:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTE_RESCUE);
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_SKY_AND_SEA);
 		bVar2                 = true;
-		MSStageInfo::stageBgm = MSD_BGM_MONTE_RESCUE;
-		MSStageInfo::demoBgm  = MSD_BGM_MONTE_RESCUE;
+		MSStageInfo::stageBgm = MSD_BGM_SKY_AND_SEA;
+		MSStageInfo::demoBgm  = MSD_BGM_SKY_AND_SEA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 45:
@@ -503,50 +525,51 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 	case 49:
 	case 50:
 	case 51:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_DELFINO);
-		MSStageInfo::stageBgm = MSD_BGM_DELFINO;
-		MSStageInfo::demoBgm  = MSD_BGM_DELFINO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EXTRA);
+		MSStageInfo::stageBgm = MSD_BGM_EXTRA;
+		MSStageInfo::demoBgm  = MSD_BGM_EXTRA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 52:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_KAGEMARIO);
-		MSStageInfo::stageBgm = MSD_BGM_KAGEMARIO;
-		MSStageInfo::demoBgm  = MSD_BGM_KAGEMARIO;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_CORONA);
+		MSStageInfo::stageBgm = MSD_BGM_CORONA;
+		MSStageInfo::demoBgm  = MSD_BGM_CORONA;
 		MSStageInfo::flags    = 0;
 		break;
 	case 55:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAP_SELECT);
-		MSStageInfo::stageBgm = MSD_BGM_MAP_SELECT;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BOSS);
+		MSStageInfo::stageBgm = MSD_BGM_BOSS;
 		break;
 	case 57:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MAP_SELECT);
-		MSStageInfo::stageBgm = MSD_BGM_MAP_SELECT;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_BOSS);
+		bVar2                 = true;
+		MSStageInfo::stageBgm = MSD_BGM_BOSS;
 		break;
 	case 58:
 		switch (param_2) {
 		case 0:
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_TIME_IVENT);
-			MSStageInfo::stageBgm = MSD_BGM_TIME_IVENT;
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_EVENT);
+			MSStageInfo::stageBgm = MSD_BGM_EVENT;
 			break;
 		case 1:
-			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_AIRPORT);
-			MSStageInfo::stageBgm = MSD_BGM_AIRPORT;
+			MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MECHAKUPPA);
+			MSStageInfo::stageBgm = MSD_BGM_MECHAKUPPA;
 			break;
 		}
 		break;
 	case 59:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_GET_SHINE);
-		MSStageInfo::stageBgm = MSD_BGM_GET_SHINE;
-		MSBgm::startBGM(MSD_BGM_MAP_SELECT);
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_RICCO);
+		MSStageInfo::stageBgm = MSD_BGM_RICCO;
+		MSBgm::startBGM(MSD_BGM_BOSS);
 		MSStageInfo::fadeEvent  = 2;
 		MSStageInfo::flags      = 3;
 		MSStageInfo::switchBgm  = 0xfffffff0;
 		MSStageInfo::switchBgm2 = 0xfffffff0;
 		break;
 	case 60:
-		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_MONTEMAN_RACE);
-		MSStageInfo::stageBgm = MSD_BGM_MONTEMAN_RACE;
-		MSStageInfo::demoBgm  = MSD_BGM_MONTEMAN_RACE;
+		MSStageInfo::msStg    = MSBgm::getSceneNo(MSD_BGM_KUPPA);
+		MSStageInfo::stageBgm = MSD_BGM_KUPPA;
+		MSStageInfo::demoBgm  = MSD_BGM_KUPPA;
 		MSStageInfo::flags    = 0;
 		MSStageInfo::volOffCategory -= 0x104;
 	}
@@ -556,6 +579,9 @@ void MSMainProc::setMSoundEnterStage(u8 param_1, u8 param_2)
 		SMSGetMSound()->enterStage(MSStageInfo::msStg, param_1, param_2);
 	}
 	MSSeCallBack::setWaterCameraFir(bVar2);
+#if defined(VERSION_GMSE01)
+	gpMSound->mWaterFirEnabled = bVar2;
+#endif
 	if (MSStageInfo::stageBgmSilent != 0xfffffff0
 	    && MSStageInfo::stageBgmSilentStartStatus == 0
 	    && SMSGetMSound()->unkCF != 0) {
@@ -633,11 +659,9 @@ void MSMainProc::startStageBGM(u8, u8)
 
 MSStage* MSStage::init(u8 param_1, u8 param_2)
 {
-	smMSStage = nullptr;
-#ifdef VERSION_GMSP01
+	smMSStage                         = nullptr;
 	MSStageCubeFade::smInstance       = nullptr;
 	MSStageCubeFadeDouble::smInstance = nullptr;
-#endif
 
 	gpMSound->unk9C->unk0 = 0.0f;
 
@@ -672,10 +696,8 @@ MSStage* MSStage::init(u8 param_1, u8 param_2)
 		if (gpCubeSoundChange->unk10 != 0) {
 			if (param_1 == 8)
 				smMSStage = new MSStageCubeFadeMonte;
-#ifdef VERSION_GMSP01
 			else if (param_1 == 1 && param_2 == 5)
 				smMSStage = new MSStageCubeFadeDouble;
-#endif
 			else
 				smMSStage = new MSStageCubeFade;
 		}
@@ -699,19 +721,22 @@ MSStage* MSStage::init(u8 param_1, u8 param_2)
 
 void MSStage::stageLoop() { proc(); }
 
-void MSStageProc::setBgmPosition(const Vec& pos, f32 dist, bool fade, u32 frame,
-                                 u32 fadeFrame)
+// TODO: both users are short (0x40, 0x68). Retail puts toCamSpace's `out`
+// directly above its by-value `in` copy (0x50/0x5c) with camPos at 0x70; ours
+// leaves `out` and camPos in the low region. Assign-later, a `pos` copy and a
+// named camera receiver move the frame but not that layout.
+void MSStageProc::setBgmPosition(const Vec& pos, f32 dist, bool fade, u32 cur,
+                                 u32 max)
 {
 	Vec camPos = gpMSound->mAudioCameras->toCamSpace(pos);
-
-	f32 pan   = MSHandle::calcPan(camPos, dist, 10000.0f);
-	f32 dolby = MSHandle::calcDolby(camPos, dist);
-	if (fade && frame < fadeFrame) {
-		pan = (pan - 0.5f) * frame / fadeFrame;
+	f32 pan    = MSHandle::calcPan(camPos, dist, 10000.0f);
+	f32 dolby  = MSHandle::calcDolby(camPos, dist);
+	if (fade && cur < max) {
+		pan -= 0.5f;
+		pan = pan * cur / max;
 		pan += 0.5f;
-		dolby = dolby * frame / fadeFrame;
+		dolby = dolby * cur / max;
 	}
-
 	MSBgm::setPan(1, pan, 1, 0);
 	MSBgm::setDolby(1, dolby, 1, 0);
 }
@@ -730,8 +755,10 @@ MSStageDistFade::MSStageDistFade(const Vec* param_1, f32 param_2, f32 param_3,
 	(void)0;
 }
 
-// TODO: fake and wrong
-inline f32 vec_dist(const Vec& a, const Vec& b)
+// TU-local: the map has no distance helper for this file, and `static inline`
+// is the only spelling that leaves no symbol behind while still reproducing
+// the four inlined `frsqrte` + three-refinement std::sqrtf chains.
+static inline f32 vec_dist(const Vec& a, const Vec& b)
 {
 	return std::sqrtf((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
 	                  + (a.z - b.z) * (a.z - b.z));
@@ -780,6 +807,10 @@ MSStageDistFadeMonte::MSStageDistFadeMonte(const Vec* param_1, f32 param_2,
 {
 }
 
+// TODO: frame 0xb0 vs retail 0x118 and fVar2/fVar12 in f30/f31 swapped.
+// Inert on the FPRs (c-sys1): every declaration order of fVar2 and fVar12.
+// `MSGetEarPos(SMS_GetMarioPos())` for the two copies gives 0xc8 with the same
+// instructions, but retail's copy sits directly above the ear-pos temporary.
 void MSStageDistFadeMonte::proc()
 {
 	JAISound* sound1 = MSBgm::getHandle(1);
@@ -787,8 +818,12 @@ void MSStageDistFadeMonte::proc()
 	if (sound1 == nullptr || sound2 == nullptr)
 		return;
 
-	f32 fVar12 = vec_dist(*unk10, getCubeCheckPos(SMS_GetMarioPos()));
-	f32 fVar2  = 0.0f;
+	Vec marioPos = SMS_GetMarioPos();
+	marioPos.y += 75.0f;
+	Vec marioPos2 = marioPos;
+	f32 fVar2;
+	f32 fVar12 = vec_dist(*unk10, marioPos2);
+	fVar2       = 0.0f;
 	if (fVar12 < unkC) {
 		fVar2 = 1.0f;
 	} else if (fVar12 < unk8) {
@@ -835,9 +870,7 @@ MSStageCubeFade::MSStageCubeFade()
     , unk8(-1)
     , unkC(MSMainProc::MSStageInfo::cubeFadeRatio)
 {
-#ifdef VERSION_GMSP01
 	smInstance = this;
-#endif
 }
 
 void MSStageCubeFade::proc()
@@ -847,10 +880,10 @@ void MSStageCubeFade::proc()
 	if (sound1 == nullptr)
 		return;
 
-	Vec local_2c = SMS_GetMarioPos();
-	local_2c.y   = getSoundCubeInfo(0)->unkC.y + 75.0f;
+	Vec local_164 = SMS_GetMarioPos();
+	local_164.y   = 75.0f + gpCubeSoundChange->getCubeInfo(0)->unkC.y;
 
-	unk4 = gpCubeSoundChange->getInCubeNo(local_2c);
+	unk4 = gpCubeSoundChange->getInCubeNo(local_164);
 	if (unk4 == -1) {
 		if (unk8 != -1) {
 			gpMSound->unk9C->unk0 = 0.0f;
@@ -859,35 +892,35 @@ void MSStageCubeFade::proc()
 		f32 ratio = calcParamRatioInCube(unk4);
 		gpMSound->unk9C->xFadeBgm(ratio);
 		if (MSMainProc::MSStageInfo::cubeFadeUsePan != 0) {
-			Vec cubePos  = getSoundCubeInfo(unk4)->unkC;
-			Vec marioPos = SMS_GetMarioPos();
-			cubePos.y    = marioPos.y;
-			f32 dist     = vec_dist(cubePos, marioPos);
-			MSStageProc::setBgmPosition(cubePos, dist, false, 0, 0);
+			Vec local_158 = gpCubeSoundChange->getCubeInfo(unk4)->unkC;
+			Vec local_14c = SMS_GetMarioPos();
+
+			// The pan is taken at Mario's own height, so the fade only
+			// reacts to the horizontal distance to the cube's centre.
+			local_158.y = local_14c.y;
+
+			f32 d = vec_dist(local_158, local_14c);
+
+			MSStageProc::setBgmPosition(local_158, d, false, 0, 0);
 		}
 	}
 	unk8 = unk4;
 }
 
-#ifdef VERSION_GMSP01
 void MSStageCubeFade::setBgmVolumeForce()
 {
-	s32 cubeNo
-	    = gpCubeSoundChange->getInCubeNo(getCubeCheckPos(SMS_GetMarioPos()));
-	f32 ratio;
-	if (cubeNo != -1)
-		ratio = calcParamRatioInCube(cubeNo);
-	else
-		ratio = 0.0f;
+	s32 r30 = gpCubeSoundChange->getInCubeNo(MSGetEarPos(SMS_GetMarioPos()));
 
-	gpMSound->unk9C->xFadeBgmForce(ratio);
+	f32 fVar1 = r30 != -1 ? calcParamRatioInCube(r30) : 0.0f;
+
+	gpMSound->unk9C->xFadeBgmForce(fVar1);
 }
 
 MSStageCubeFadeDouble::MSStageCubeFadeDouble()
 {
-	mPlayFlag[0] = false;
-	mPlayFlag[1] = false;
-	smInstance   = this;
+	unk10[0] = 0;
+	unk10[1] = 0;
+	smInstance = this;
 }
 
 void MSStageCubeFadeDouble::proc()
@@ -897,33 +930,40 @@ void MSStageCubeFadeDouble::proc()
 	if (sound1 == nullptr)
 		return;
 
-	Vec local_2c = SMS_GetMarioPos();
-	local_2c.y   = getSoundCubeInfo(0)->unkC.y + 75.0f;
+	Vec local_170 = SMS_GetMarioPos();
+	local_170.y   = 75.0f + gpCubeSoundChange->getCubeInfo(0)->unkC.y;
 
-	unk4 = gpCubeSoundChange->getInCubeNo(local_2c);
+	unk4 = gpCubeSoundChange->getInCubeNo(local_170);
 
-	bool play = false;
-	if ((unk4 == 0 || unk4 == 1) && mPlayFlag[unk4])
-		play = true;
+	// The pair test is materialised as a bool first (`li r0,1 ... mr r0,r4`).
+	// TODO: retail reloads unk4 for the unk10 index and copies the false
+	// value from bVar1's register.
+	bool bVar1      = false;
+	bool isPairCube = unk4 == 0 || unk4 == 1;
+	if (isPairCube && unk10[unk4] != 0)
+		bVar1 = true;
 
-	if (!play) {
+	if (!bVar1) {
 		if (unk8 != -1) {
 			gpMSound->unk9C->unk0 = 0.0f;
 			gpMSound->unk9C->xFadeBgmForce(0.0f);
 		}
 	} else {
-		gpMSound->unk9C->xFadeBgm(calcParamRatioInCube(unk4));
+		f32 ratio = calcParamRatioInCube(unk4);
+		gpMSound->unk9C->xFadeBgm(ratio);
 		if (MSMainProc::MSStageInfo::cubeFadeUsePan != 0) {
-			Vec cubePos  = getSoundCubeInfo(unk4)->unkC;
-			Vec marioPos = SMS_GetMarioPos();
-			cubePos.y    = marioPos.y;
-			f32 dist     = vec_dist(cubePos, marioPos);
-			MSStageProc::setBgmPosition(cubePos, dist, false, 0, 0);
+			Vec local_160 = gpCubeSoundChange->getCubeInfo(unk4)->unkC;
+			Vec local_154 = SMS_GetMarioPos();
+
+			local_160.y = local_154.y;
+
+			f32 d = vec_dist(local_160, local_154);
+
+			MSStageProc::setBgmPosition(local_160, d, false, 0, 0);
 		}
 	}
 	unk8 = unk4;
 }
-#endif
 
 MSStageCubeFadeMonte::MSStageCubeFadeMonte()
     : unk10(3)
@@ -931,6 +971,9 @@ MSStageCubeFadeMonte::MSStageCubeFadeMonte()
 {
 }
 
+// TODO: frame 0xb8 short of retail's, and the inlined setBgmPosition's
+// pan/dolby FPRs are swapped (retail d/dolby f30, pan f31), as in the other
+// cube-fade procs; passing vec_dist straight as the argument breaks the sqrt.
 void MSStageCubeFadeMonte::proc()
 {
 	JAISound* sound1 = MSBgm::getHandle(1);
@@ -938,10 +981,10 @@ void MSStageCubeFadeMonte::proc()
 	if (sound1 == nullptr)
 		return;
 
-	Vec local_2c = SMS_GetMarioPos();
-	local_2c.y   = getSoundCubeInfo(0)->unkC.y + 75.0f;
+	Vec local_19c = *gpMarioPos;
+	local_19c.y   = 75.0f + gpCubeSoundChange->unk14->begin()[0]->unkC.y;
 
-	unk4  = gpCubeSoundChange->getInCubeNo(local_2c);
+	unk4  = gpCubeSoundChange->getInCubeNo(local_19c);
 	unk10 = SMS_GetMonteVillageAreaInMario();
 
 	f32 fVar2 = unk4 != -1 ? calcParamRatioInCube(unk4) : 0.0f;
@@ -978,11 +1021,14 @@ void MSStageCubeFadeMonte::proc()
 		}
 
 		if (unk4 != -1 && MSMainProc::MSStageInfo::cubeFadeUsePan) {
-			Vec cubePos  = getSoundCubeInfo(unk4)->unkC;
-			Vec marioPos = SMS_GetMarioPos();
-			cubePos.y    = marioPos.y;
-			f32 dist     = vec_dist(cubePos, marioPos);
-			MSStageProc::setBgmPosition(cubePos, dist, false, 0, 0);
+			Vec local_190 = gpCubeSoundChange->unk14->begin()[unk4]->unkC;
+			Vec local_184 = *gpMarioPos;
+
+			local_190.y = local_184.y;
+
+			f32 d = vec_dist(local_190, local_184);
+
+			MSStageProc::setBgmPosition(local_190, d, false, 0, 0);
 		}
 	}
 
@@ -990,27 +1036,47 @@ void MSStageCubeFadeMonte::proc()
 	unk14 = unk10;
 }
 
+// The cube lookup sits two inline levels below calcParamRatioInCube, which
+// puts JGadget::TVector<void*>::begin() five levels down: deep enough that the
+// ROM `bl`s it in every caller, while the depth-0 lookups in the procs fold it.
+static inline TCubeGeneralInfo* getSoundCube(s32 id)
+{
+	return gpCubeSoundChange->getCube(id);
+}
+
+// UNUSED, 0x108: inlined into all four callers (proc, MSStageCubeFadeMonte and
+// MSStageCubeFadeDouble's procs and setBgmVolumeForce).
+//
+// The named dx/dz give retail's x-before-z fabs order; declared ahead of the
+// ratios they sit below them in the frame. The ternary `ratio` (with the
+// caller's ternary) keeps the result in f0 up to the caller's join.
+// TODO: the three procs' frames are still 0x80-0xc0 short of the ROM's.
 f32 MSStageCubeFade::calcParamRatioInCube(s32 id)
 {
-	f32 x = 0.0f;
-	f32 y = 0.0f;
-	f32 z = 0.0f;
+	f32 dx;
+	f32 dz;
+	f32 ratioX = 0.0f;
+	f32 ratioY = 0.0f;
+	f32 ratioZ = 0.0f;
 
-	Vec pos = SMS_GetMarioPos();
-	pos.y   = getSoundCubeInfo(id)->unkC.y + 75.0f;
+	Vec local_68 = *gpMarioPos;
+	TCubeGeneralInfo* cube = getSoundCube(id);
+	local_68.y = 75.0f + cube->unkC.y;
 
-	gpCubeSoundChange->calcPointInCubeRatio(pos, id, &x, &y, &z);
+	gpCubeSoundChange->calcPointInCubeRatio(local_68, id, &ratioX,
+	                                        &ratioY, &ratioZ);
 
-	f32 dx = std::fabs(x - 0.5f);
-	f32 dz = std::fabs(z - 0.5f);
-	f32 d  = dx > dz ? dx : dz;
+	dx        = std::fabs(ratioX - 0.5f);
+	dz        = std::fabs(ratioZ - 0.5f);
+	f32 fVar2 = std::max(dx, dz);
 
-	return d < unkC ? 1.0f : (0.5f - d) / (0.5f - unkC);
+	f32 ratio = fVar2 < unkC ? 1.0f : (0.5f - fVar2) / (0.5f - unkC);
+	return ratio;
 }
 
 void MSStageCubeSwitch::proc()
 {
-	unk4 = gpCubeSoundChange->getInCubeNo(getCubeCheckPos(SMS_GetMarioPos()));
+	unk4 = gpCubeSoundChange->getInCubeNo(MSGetEarPos(SMS_GetMarioPos()));
 
 	switch (unk4) {
 	case -1:

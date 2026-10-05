@@ -22,36 +22,39 @@ void TMario::rumbleStart(int channelDataIdx, int repeatCount)
 	}
 }
 
+// Binding level over SMSGetMSound(); with getHealth() at the clamp it gives
+// incHP retail's 0x20 of low region (neither alone does: the binder's rungs
+// are +0x10/+0x18/+0x28/+0x30, getHealth() +8).
+static inline MSound* MarioCollisionGetMSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 void TMario::incHP(int hp)
 {
-
-	
-	
-	// volatile u32 padding[10];
 	if (isUnderWater() || checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		mAir += hp;
 		if (mAir > mMaxAir) {
 			mAir = mMaxAir;
 		} else {
-			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER, 0, nullptr,
-			                                   0);
+			MarioCollisionGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER,
+			                                              0, nullptr, 0);
 		}
 		return;
 	}
 
 	mHealth += hp;
-	if (mHealth > mDeParams.mHpMax.get()) {
-		mHealth = mDeParams.mHpMax.get();
+	if (getHealth() > mDeParams.mHPMax.get()) {
+		mHealth = mDeParams.mHPMax.get();
 	} else {
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER, 0, nullptr, 0);
+		MarioCollisionGetMSound()->startSoundSystemSE(MSD_SE_SY_HP_RECOVER, 0,
+		                                              nullptr, 0);
 	}
 }
 
 void TMario::decHP(int hp)
 {
-
-	
-	
 	// volatile u32 padding[2];
 	if (isUnderWater() || checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		mAir -= hp;
@@ -68,7 +71,7 @@ void TMario::decHP(int hp)
 	}
 
 	mHealth -= hp;
-	if (0 >= mHealth) {
+	if (0 >= getHealth()) {
 		mHealth = 0;
 		loserExec();
 	}
@@ -100,7 +103,7 @@ bool TMario::isTakeSituation(THitActor* object)
 	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000000))
 		return false;
 
-	if (mStatus == MARIO_STATUS_CATCH)
+	if (getStatus() == MARIO_STATUS_CATCH)
 		return false;
 
 	if (onYoshi())
@@ -118,20 +121,14 @@ bool TMario::isTakeSituation(THitActor* object)
 	s16 attackAngle = getAttackAngle(object) - mFaceAngle.y;
 	if (attackAngle <= -0x2aaa) {
 		return false;
-
-	// Every diff marker of this function is a stack offset sitting 0x10 above
-	// ours (target frame 0x60 against 0x50). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	if (attackAngle >= 0x2aaa) {
 		return false;
 	}
 
-	f32 dist = JGeometry::TVec3<f32>(object->mPosition - mPosition).length();
+	f32 dist
+	    = JGeometry::TVec3<f32>(object->mPosition - getPosition()).length();
 	if (dist > mAttackRadius + object->getDamageRadius()) {
 		return false;
 	}
@@ -141,7 +138,7 @@ bool TMario::isTakeSituation(THitActor* object)
 
 bool TMario::canTake(THitActor* object)
 {
-	return mGamePad->checkMeaning(TMarioGamePad::MEANING_B)
+	return mGamePad->checkMeaning(TMarioGamePad::MEANING_0x100)
 	       && isTakeSituation(object);
 }
 
@@ -150,13 +147,13 @@ BOOL TMario::trampleExec(THitActor* param_1)
 	if (!checkStatusType(MARIO_STATUS_FLAG_JUMPING))
 		return false;
 
-	if (mStatus == MARIO_STATUS_DIVE)
+	if (getStatus() == MARIO_STATUS_DIVE)
 		return false;
 
 	if (param_1->receiveMessage(this, HIT_MESSAGE_TRAMPLE) == FALSE)
 		return false;
 
-	if (mStatus == MARIO_STATUS_BROAD_JUMP) {
+	if (getStatus() == MARIO_STATUS_BROAD_JUMP) {
 		changePlayerStatus(MARIO_STATUS_BACK_JUMP, 0, false);
 	} else {
 		switch (mAnimationId) {
@@ -202,13 +199,24 @@ BOOL TMario::trampleExec(THitActor* param_1)
 
 void TMario::resetNozzle() { }
 
+// Binding level worth +8 of low region, landing TMario::normalizeNozzle's
+// frame at 0x20 (batch 124).
+static inline bool MarioCollisionCheckFlagL0(const TMario* p, u32 i)
+{
+	bool flag = p->checkFlag(i);
+	return flag;
+}
+
+static inline bool MarioCollisionCheckFlag(const TMario* p, u32 i)
+{
+	bool flag = MarioCollisionCheckFlagL0(p, i);
+	return flag;
+}
+
 void TMario::normalizeNozzle()
 {
-
-	
-	
 	// volatile u32 padding[2];
-	if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+	if (MarioCollisionCheckFlag(this, MARIO_FLAG_HAS_FLUDD)) {
 		mWaterGun->changeNozzle(TWaterGun::Spray, true);
 		unk144 = -1;
 		unk148 = 0;
@@ -217,12 +225,10 @@ void TMario::normalizeNozzle()
 
 void TMario::loserExec()
 {
-
-	
-	
 	// volatile u32 padding[2];
-	if (mStatus != MARIO_STATUS_SWIM_DOWN && mStatus != MARIO_STATUS_ELEC_DOWN
-	    && mStatus != MARIO_STATUS_SWIM_P_DOWN
+	if (getStatus() != MARIO_STATUS_SWIM_DOWN
+	    && getStatus() != MARIO_STATUS_ELEC_DOWN
+	    && getStatus() != MARIO_STATUS_SWIM_P_DOWN
 	    && mStatus != MARIO_STATUS_DOWN_LOSER) {
 		onFlag(MARIO_FLAG_GAME_OVER);
 		mHealth = 0;
@@ -276,6 +282,26 @@ void TMario::floorDamageExec(const TMario::TEParams& params)
 	           params.mInvincibleTime.get());
 }
 
+// Where this body is *inlined* (damageExec) retail `bl`s JGVec3.hpp's copy
+// constructor twice and operator*=(f32), while inlining `scale` inside
+// operator*='s own emitted body -- the product sits at inline depth 5. A bare
+// `mPosition + offset * 50.0f` only reaches depth 4, where a one-statement
+// weak body still expands (batch 146's budget table). The emitted copy of
+// calcDamagePos, in contrast, `bl`s only `scale`, so the level cannot be
+// above the statement or above the function; it has to sit on the scaled
+// offset alone. Returning by value keeps the emitted copy's frame exact (a
+// `const TVec3&` return costs it 16 bytes). MarioSpecial's getOnWirePosAngle
+// is the same shape with the same fix.
+// TODO: two unrelated TUs wanting the identical forwarder suggests the real
+// construct is a shared inline (MarioUtil/MathUtil.hpp); parked TU-local
+// because that header is shared with linked units.
+// fabricated
+static inline JGeometry::TVec3<f32>
+MarioCollisionVecScaled(const JGeometry::TVec3<f32>& v, f32 scale)
+{
+	return v * scale;
+}
+
 // Closest i got, but i think this is wrong, but probably functionally
 // equivalent? I kinda suspect they didn't use this many helper functions? The
 // double epsilon check confused me
@@ -287,31 +313,47 @@ void TMario::calcDamagePos(const JGeometry::TVec3<f32>& pos)
 		return;
 	}
 	offset.normalize();
-	mDamagePos = mPosition + offset * 50.0f;
+	JGeometry::TVec3<f32> scaled = MarioCollisionVecScaled(offset, 50.0f);
+	mDamagePos = mPosition + scaled;
 }
 
+// TODO: 98.1%. Three residues left.
+//  - Frame 0x138 against retail's 0x150, and one extra copy: retail feeds the
+//    scaled offset's return slot (0xb8) straight to `add`, where the named
+//    `scaled` in calcDamagePos copies it once more (six instructions).
+//  - `animOffset1`'s materialised bool lands in r0 and is then `mr`ed into
+//    r31, where retail materialises straight into r31.
+//  - `mr r3, r24` against our `addi r3, r24, 0` at the `onYoshi()` call.
+// c-k14 (statement-mode model, codegen-tells.md c-r24): both of retail's
+// `bl TVec3::TVec3(const TVec3&)` copies now come out. They are `operator*`'s
+// by-value parameter copy and its return copy; the parameter copy is built
+// with the arguments of the call, so it sits one level deeper only when
+// MarioCollisionVecScaled is reached in statement mode. A class-typed named
+// initialiser (`TVec3 scaled = f(...)`) is statement mode and gives both
+// `bl`s; the old operand spelling (`mPosition + f(...)`) and a `const TVec3&`
+// binding are expression mode and expand the parameter copy. What is left is
+// the named copy itself: retail reached the helper in statement mode without
+// naming its result.
 void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
                         int waterEmit, f32 knockbackSpeed, int rumbleFrames,
                         f32 pollutionAmount, s16 invincibilityFrames)
 {
 	// volatile u32 padding[10];
-	u32 animationTypes[16] = {
-		MARIO_STATUS_SAFE_BACK_DOWN,
-		MARIO_STATUS_SHORT_BACK_DOWN,
-		MARIO_STATUS_BACK_DOWN,
-		MARIO_STATUS_WAIT,
-		MARIO_STATUS_JUMP_SHORT_BACK_DOWN,
-		MARIO_STATUS_JUMP_SHORT_BACK_DOWN,
-		MARIO_STATUS_JUMP_BACK_DOWN,
-		MARIO_STATUS_WAIT,
-		MARIO_STATUS_SAFE_FORE_DOWN,
-		MARIO_STATUS_SHORT_FORE_DOWN,
-		MARIO_STATUS_FORE_DOWN,
-		MARIO_STATUS_WAIT,
-		MARIO_STATUS_JUMP_SHORT_FORE_DOWN,
-		MARIO_STATUS_JUMP_SHORT_FORE_DOWN,
-		MARIO_STATUS_JUMP_FORE_DOWN,
-		MARIO_STATUS_WAIT,
+	u32 animationTypes[2][2][4] = {
+		{
+		    { MARIO_STATUS_SAFE_BACK_DOWN, MARIO_STATUS_SHORT_BACK_DOWN,
+		      MARIO_STATUS_BACK_DOWN, MARIO_STATUS_WAIT },
+		    { MARIO_STATUS_JUMP_SHORT_BACK_DOWN,
+		      MARIO_STATUS_JUMP_SHORT_BACK_DOWN,
+		      MARIO_STATUS_JUMP_BACK_DOWN, MARIO_STATUS_WAIT },
+		},
+		{
+		    { MARIO_STATUS_SAFE_FORE_DOWN, MARIO_STATUS_SHORT_FORE_DOWN,
+		      MARIO_STATUS_FORE_DOWN, MARIO_STATUS_WAIT },
+		    { MARIO_STATUS_JUMP_SHORT_FORE_DOWN,
+		      MARIO_STATUS_JUMP_SHORT_FORE_DOWN,
+		      MARIO_STATUS_JUMP_FORE_DOWN, MARIO_STATUS_WAIT },
+		},
 	};
 
 	if (isInvincible())
@@ -323,15 +365,17 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 
 	if (onYoshi()) {
 		getOffYoshi(true);
-		SMSGetMSound()->startSoundActor(MSD_SE_YV_DAMAGE, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_YV_DAMAGE, &mPosition);
 		return;
 	}
 
-	u32 animOffset1 = checkStatusType(MARIO_STATUS_FLAG_JUMPING) ? 1 : 0;
-	if (onYoshi()) {
-		animOffset1 = true;
-	}
+	u32 animOffset1;
+	if (checkStatusType(MARIO_STATUS_FLAG_JUMPING))
+		animOffset1 = 1;
+	else
+		animOffset1 = 0;
+	if (onYoshi())
+		animOffset1 = 1;
 
 	if (damageAnimType == 3) {
 		if (mStatus == MARIO_STATUS_RUN || mStatus == MARIO_STATUS_OIL_RUN) {
@@ -356,7 +400,6 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 			mFaceAngle.y += 0x8000;
 		}
 
-		// Inline?
 		bool canPlayAnimation = true;
 		if (mStatus == MARIO_STATUS_TOROCCO)
 			canPlayAnimation = false;
@@ -365,14 +408,14 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 			canPlayAnimation = false;
 
 		if (checkStatusType(MARIO_STATUS_FLAG_SWIMMING))
-			canPlayAnimation = true;
+			canPlayAnimation = false;
 
-		if (canPlayAnimation) {
+		if (canPlayAnimation == TRUE) {
 			// I don't think this is correct, but was the closest i could get
-			u32 statusIdx = animationTypes[damageAnimType + animOffset1 * 4
-			                               + animOffset2 * 8];
-			if (mHolder == nullptr || mHolder->isActorType(0x40000098)) {
-				// Knocked from a wire hang by damage?
+			u32 statusIdx
+			    = animationTypes[animOffset2][animOffset1][damageAnimType];
+			if (mHolder != nullptr && mHolder->isActorType(0x40000098)) {
+				// Knocked off a wire (the holder is one) by damage
 				changePlayerDropping(MARIO_STATUS_WIRE_HANG_LAND_SAFE_DOWN, 0);
 			} else {
 				changePlayerDropping(statusIdx, 0);
@@ -396,7 +439,7 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 
 	// I hope this is bcs of inlines
 	if (damageAnimType != 3) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK2, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_DAMAGE, 1.0f);
 	}
 
 	if (damageAnimType != 3) {
@@ -422,12 +465,19 @@ void TMario::damageExec(THitActor* hittingActor, int damage, int damageAnimType,
 	dirtyLimitCheck();
 }
 
+// The held object is read three times in the release block below, and retail
+// binds it once: the binding level is worth the 0x18 of low region considerTake
+// was missing (closure batch 226). Bindings on `mStatus`, `mHolder` or the
+// earlier `mHeldObject` tests are +8 each and collapse in pairs.
+// fabricated
+static inline THitActor* MarioCollisionHeld(const TMario* p)
+{
+	THitActor* held = p->mHeldObject;
+	return held;
+}
+
 void TMario::considerTake()
 {
-
-	
-	
-	// volatile u32 missingStack[6];
 	bool check = false;
 
 	if (isUpperState(UPPER_STATE_HOLDING_OBJECT))
@@ -451,9 +501,9 @@ void TMario::considerTake()
 	if (mHolder != nullptr && mHolder->mHeldObject != this)
 		mHolder = nullptr;
 
-	if (mHeldObject != nullptr && !check) {
-		mHeldObject->receiveMessage(this, HIT_MESSAGE_THROWN);
-		mHeldObject->receiveMessage(this, HIT_MESSAGE_UNK8);
+	if (MarioCollisionHeld(this) != nullptr && !check) {
+		MarioCollisionHeld(this)->receiveMessage(this, HIT_MESSAGE_THROWN);
+		MarioCollisionHeld(this)->receiveMessage(this, HIT_MESSAGE_UNK8);
 		mHeldObject = nullptr;
 	}
 

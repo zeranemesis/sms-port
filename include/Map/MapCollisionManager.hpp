@@ -14,6 +14,7 @@ public:
 	TMapCollisionManager(u16, const char*, const TLiveActor*);
 	void init(const char* file, u16, const char* path);
 	void createCollision(const char*, u8);
+	void getFileName(const char*, char*);
 	void changeCollision(u32);
 
 	// fabricated
@@ -26,8 +27,12 @@ public:
 		Mtx mtx;
 		MsMtxSetTRS(mtx, trans.x, trans.y, trans.z, rot.x, rot.y, rot.z,
 		            scale.x, scale.y, scale.z);
-		unk8->setUpMtx(mtx);
+		setUpUnk8Mtx(mtx);
 	}
+
+	// fabricated: the inline level that leaves TMapCollisionBase::setMtx a
+	// `bl` in TNerveBWDie::execute and TMapStaticObj::init, as in retail.
+	void setUpUnk8Mtx(MtxPtr mtx) { unk8->setUpMtx(mtx); }
 
 public:
 	/* 0x0 */ TMapCollisionBase** mEntries;

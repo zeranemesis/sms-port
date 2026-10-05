@@ -1,38 +1,79 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Enemy/TinKoopa.hpp>
-#include <Enemy/Conductor.hpp>
 #include <Enemy/CoasterKiller.hpp>
+#include <Enemy/Conductor.hpp>
 #include <Enemy/EffectObj.hpp>
 #include <Enemy/Graph.hpp>
-#include <Camera/CameraShake.hpp>
-#include <GC2D/GCConsole2.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <M3DUtil/MActor.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/JUtility/JUTNameTab.hpp>
-#include <MSound/MSound.hpp>
-#include <MSound/MSoundSE.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <MarioUtil/MathUtil.hpp>
-#include <Player/Mario.hpp>
-#include <Player/MarioAccess.hpp>
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/Spine.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Strategy.hpp>
-#include <System/FlagManager.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/MActorData.hpp>
+#include <Camera/CameraShake.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DCluster.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <JSystem/JParticle/JPAResourceManager.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <Player/Mario.hpp>
+#include <Player/MarioAccess.hpp>
 #include <System/MarDirector.hpp>
+#include <System/FlagManager.hpp>
 #include <System/Particles.hpp>
+#include <System/EmitterViewObj.hpp>
+#include <GC2D/GCConsole2.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
 
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-#include <Enemy/popo.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
 
-// TODO: this translation unit is freshly scaffolded from marioEU.MAP. Class
-// layouts only contain the fields verified so far; the effect emitters, the
-// break nerve, TTinKoopa::init and the parts setup are not decompiled yet.
+// The body model's animation list runs break1..4 (0..3), damage1..4 (5..8) and
+// wait1..5 (12..16). tinkoopa_bastable only names the slots that have a .bas
+// file; the three gaps (4, 9, 10, 11) are animations without sound.
+enum {
+	TINKOOPA_ANM_BREAK1  = 0,
+	TINKOOPA_ANM_DAMAGE1 = 5,
+	TINKOOPA_ANM_WAIT1   = 12,
+	// TTinKoopa_getWaitAnimationIndex's last slot; also the "nothing to play"
+	// entry of the break and damage tables.
+	TINKOOPA_ANM_WAIT5 = 16,
+};
+
+// Plate numbers. They index every one of the ten TTinKoopa_get* tables.
+enum {
+	TINKOOPA_PARTS_HEAD    = 0,
+	TINKOOPA_PARTS_BREAST  = 1,
+	TINKOOPA_PARTS_STOMACH = 2,
+	TINKOOPA_PARTS_RARM    = 3,
+	TINKOOPA_PARTS_LARM    = 4,
+	TINKOOPA_PARTS_LEG     = 5,
+	TINKOOPA_PARTS_NUM     = 6,
+};
+
+// Slots of TTinKoopa_jointNameTable, so a joint index is one lookup away.
+enum {
+	TINKOOPA_JOINT_HEAD         = 0,
+	TINKOOPA_JOINT_BREAST       = 1,
+	TINKOOPA_JOINT_STOMACH      = 2,
+	TINKOOPA_JOINT_RARM         = 3,
+	TINKOOPA_JOINT_LARM         = 4,
+	TINKOOPA_JOINT_LEG          = 5,
+	TINKOOPA_JOINT_LEYE         = 6,
+	TINKOOPA_JOINT_REYE         = 7,
+	TINKOOPA_JOINT_FIRE         = 8,
+	TINKOOPA_JOINT_FIRE_COL     = 9,
+	TINKOOPA_JOINT_FEMUR        = 10,
+	TINKOOPA_JOINT_KILLER_FIRST = 11,
+	TINKOOPA_JOINT_NUM          = 15,
+};
 
 static const char* tinkoopa_bastable[] = {
 	"/scene/tinkoopa/bas/tinkoopa_break1.bas",
@@ -55,17 +96,16 @@ static const char* tinkoopa_bastable[] = {
 };
 
 static const char* TTinKoopa_jointNameTable[] = {
-	"jnt_head",     "jnt_breast",   "jnt_stomach",   "jnt_rarm",
-	"jnt_larm",     "jnt_leg",      "jnt_leye",      "jnt_reye",
-	"fire_null",    "fire_col_null", "jnt_femur",    "killer_null1",
-	"killer_null2", "killer_null3", "killer_null4",
+	"jnt_head",      "jnt_breast",    "jnt_stomach",  "jnt_rarm",
+	"jnt_larm",      "jnt_leg",       "jnt_leye",     "jnt_reye",
+	"fire_null",     "fire_col_null", "jnt_femur",    "killer_null1",
+	"killer_null2",  "killer_null3",  "killer_null4",
 };
 
-static int TTinKoopa_jointIndexTable[15];
-static int TTinKoopa_breakingAnimationTable[] = { 0, 4, 11, 9, 10, 0 };
+static int TTinKoopa_jointIndexTable[TINKOOPA_JOINT_NUM];
 
-TTinKoopaParams::TTinKoopaParams(const char* path)
-    : TSpineEnemyParams(path)
+TTinKoopaParams::TTinKoopaParams(const char* prm)
+    : TSpineEnemyParams(prm)
     , PARAM_INIT(mSLPartsHP, 2)
     , PARAM_INIT(mSLFlameHP, 10)
     , PARAM_INIT(mSLFlameRevivalTime, 10)
@@ -82,7 +122,10 @@ TTinKoopaParams::TTinKoopaParams(const char* path)
 {
 	TParams::load(mPrmPath);
 
-	// NOTE: the values from the .prm file are overridden right away
+	// Every one of the thirteen values is overwritten right after the load,
+	// so /enemy/tinkoopa.prm has no say in the fight at all. The stores are
+	// there in the retail object, in this order, reading the literals out of
+	// .sdata through TParamRT::set's reference parameter.
 	mSLPartsHP.set(1);
 	mSLFlameHP.set(50);
 	mSLFlameRevivalTime.set(1200);
@@ -98,74 +141,82 @@ TTinKoopaParams::TTinKoopaParams(const char* path)
 	mSLKillerApproachingDistance.set(2000.0f);
 }
 
-int TTinKoopa_getJointIndex(int index)
+// The ten tables below are indexed by plate number, except the animation ones
+// which are indexed by damage stage. All ten helpers are UNUSED at 0x18 bytes:
+// a table lookup is cheaper than a call, so every site got the body inlined.
+
+static int TTinKoopa_getJointIndex(int parts)
 {
-	return TTinKoopa_jointIndexTable[index];
+	return TTinKoopa_jointIndexTable[parts];
 }
 
-const char* TTinKoopa_getCollisionFileName(int index)
+static const char* TTinKoopa_getCollisionFileName(int parts)
 {
-	static const char* table[] = {
-		"/scene/tinkoopa/head_col.col",  "/scene/tinkoopa/breast_col.col",
+	static const char* table[TINKOOPA_PARTS_NUM] = {
+		"/scene/tinkoopa/head_col.col",    "/scene/tinkoopa/breast_col.col",
 		"/scene/tinkoopa/stomach_col.col", "/scene/tinkoopa/rarm_col.col",
-		"/scene/tinkoopa/larm_col.col",  "/scene/tinkoopa/leg_col.col",
+		"/scene/tinkoopa/larm_col.col",    "/scene/tinkoopa/leg_col.col",
 	};
-	return table[index];
+	return table[parts];
 }
 
-const char* TTinKoopa_getPartsFileName(int index)
+static const char* TTinKoopa_getPartsFileName(int parts)
 {
-	static const char* table[] = {
-		nullptr,           "tinkoopa_breast.bmd", "tinkoopa_stomach.bmd",
-		"tinkoopa_rarm.bmd", "tinkoopa_larm.bmd", nullptr,
+	// The head and the leg never break off, so they have no debris model.
+	static const char* table[TINKOOPA_PARTS_NUM] = {
+		nullptr,               "tinkoopa_breast.bmd", "tinkoopa_stomach.bmd",
+		"tinkoopa_rarm.bmd",   "tinkoopa_larm.bmd",   nullptr,
 	};
-	return table[index];
+	return table[parts];
 }
 
-int TTinKoopa_getBreakingAnimationIndex(int index)
+static int TTinKoopa_getBreakingAnimationIndex(int parts)
 {
-	return TTinKoopa_breakingAnimationTable[index];
+	static int table[TINKOOPA_PARTS_NUM] = { 0, 4, 11, 9, 10, 0 };
+	return table[parts];
 }
 
-u32 TTinKoopa_getActorType(int index)
+static u32 TTinKoopa_getActorType(int parts)
 {
-	static u32 table[] = {
-		0x08000019, 0x0800001A, 0x0800001B,
-		0x0800001D, 0x0800001C, 0x0800001E,
+	static u32 table[TINKOOPA_PARTS_NUM] = {
+		0x08000019, 0x0800001A, 0x0800001B, 0x0800001D, 0x0800001C, 0x0800001E,
 	};
-	return table[index];
+	return table[parts];
 }
 
-int TTinKoopa_getWaitAnimationIndex(int phase)
+static int TTinKoopa_getWaitAnimationIndex(int stage)
 {
-	static int table[] = { 12, 13, 14, 15, 16 };
-	return table[phase];
+	static int table[5] = { 12, 13, 14, 15, 16 };
+	return table[stage];
 }
 
-int TTinKoopa_getBreakAnimationIndex(int phase)
+static int TTinKoopa_getBreakAnimationIndex(int stage)
 {
-	static int table[] = { 0, 1, 2, 3, 16 };
-	return table[phase];
+	static int table[5] = { 0, 1, 2, 3, 16 };
+	return table[stage];
 }
 
-int TTinKoopa_getDamageAnimationIndex(int phase)
+static int TTinKoopa_getDamageAnimationIndex(int stage)
 {
-	static int table[] = { 5, 6, 7, 8, 16 };
-	return table[phase];
+	static int table[5] = { 5, 6, 7, 8, 16 };
+	return table[stage];
 }
 
-int TTinKoopa_getPartsVisibleFrame(int phase)
+static int TTinKoopa_getPartsVisibleFrame(int stage)
 {
-	static int table[] = { 100, 134, 134, 100, 0 };
-	return table[phase];
+	static int table[5] = { 100, 134, 134, 100, 0 };
+	return table[stage];
 }
 
-int TTinKoopa_getBreakingPartsIndex(int phase)
+static int TTinKoopa_getBreakingPartsIndex(int stage)
 {
-	static int table[] = { 2, 3, 4, 1, 2 };
-	return table[phase];
+	static int table[5] = { 2, 3, 4, 1, 2 };
+	return table[stage];
 }
 
+// The joints of each debris model that puff smoke on the way down and blow up
+// when it disappears. The head and leg plates have none, so the two-argument
+// effect helpers are only ever reached for plates 1 to 4.
 static const char* breastTrackJointNameTable[] = {
 	"breast_1", "breast_2", "breast_3", "breast_4", "breast_5", "breast_6",
 };
@@ -175,87 +226,144 @@ static const char* bellyTrackJointNameTable[] = {
 	"stomach_4", "stomach_5", "stomach_6",
 };
 
-static const char* rightArmTrackJointNameTable[] = {
-	"rarm_1",
-	"rarm_2",
-	"rarm_3",
-	"rarm_4",
-};
+static const char* rightArmTrackJointNameTable[]
+    = { "rarm_1", "rarm_2", "rarm_3", "rarm_4" };
 
-static const char* leftArmTrackJointNameTable[] = {
-	"larm_1",
-	"larm_2",
-	"larm_3",
-	"larm_4",
-};
+static const char* leftArmTrackJointNameTable[]
+    = { "larm_1", "larm_2", "larm_3", "larm_4" };
 
-void TTinKoopa::init(TLiveManager* manager)
+// TODO: 94.8%. The ROM reads TTinKoopa_jointNameTable through the
+// `...data.0` section base (@1431 + 0x7c) and hoists that base and
+// &TTinKoopa_jointIndexTable (= `...bss.0`) into r29/r30 in the prologue,
+// storing with `stwx`; we address both tables by name just before the loop.
+// Probed: MWCC here switches a section to base+offset only once the function
+// holds 3+ surviving references to local objects of that section (dead reads
+// are dropped first). The ROM merges with 2 per section (name table + the
+// collision-name table; index table + the Wait nerve's dtor chain), so it had
+// one more live reference in each, most likely in the joint loop. Inert:
+// `= {0}` (merges, but moves the table to .data), sizeof bounds, pointer
+// forms, inline name/setter accessors, jointNames fetched in the loop.
+// The rest of the residue is frame (0x170 vs 0x160) in the inlined
+// makeCoasterDistanceTable/iterator blocks.
+void TTinKoopa::init(TLiveManager* live_manager)
 {
-	// TODO: not decompiled yet
+	mManager = live_manager;
+	mManager->manageActor(this);
+
+	mSpine->initWith(&TNerveTinKoopaWait::theNerve());
+
+	mMActorKeeper = new TMActorKeeper(mManager, 7);
+	mMActor       = mMActorKeeper->createMActor("tinkoopa_body.bmd", 0);
+
+	JUTNameTab* jointNames = getModel()->getModelData()->getJointName();
+	for (int i = 0; i < TINKOOPA_JOINT_NUM; i++)
+		TTinKoopa_jointIndexTable[i]
+		    = jointNames->getIndex(TTinKoopa_jointNameTable[i]);
+
+	mFlame = new TTinKoopaFlame("flame", this);
+
+	for (int i = 0; i < TINKOOPA_PARTS_NUM; i++) {
+		mParts[i] = new TTinKoopaPartsBase(TTinKoopa_getCollisionFileName(i),
+		                                   i, this);
+		mParts[i]->initTinKoopaPartsBase();
+	}
+
+	initHitActor(0x08000018, 1, 0, 0.0f, 0.0f,
+	             getSaveParams()->getSLDamageRadius(),
+	             getSaveParams()->getSLDamageHeight0());
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	getMActor()->setLightType(1);
+
+	J3DModel* model = getMActor()->getModel();
+	if (model->getSkinDeform() == nullptr)
+		model->setSkinDeform(new J3DSkinDeform, (J3DDeformAttachFlag)1);
+
+	calcRootMatrix();
+	getMActor()->calc();
+
+	mKillerGraph = gpConductor->getGraphByName("killer");
+	makeCoasterDistanceTable();
+
+	mLaunchSchedule = new TTinKoopaLaunchSchedule(11, this);
+	makeLaunchSchedule();
+
+	initAnmSound();
+	resetTinKoopa();
 }
 
+// The whole fight on paper: lap, animation frame, how many killers and which
+// side of the body they come out of. A count of -1 means "let the damage stage
+// decide", which is what TTinKoopaLaunchOrder::checkOrder works out.
 void TTinKoopa::makeLaunchSchedule()
 {
 	int i = 0;
-	mLaunchSchedule->mOrders[i++]->makeOrder(0, 600, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(0, 1230, -1, 1);
-	mLaunchSchedule->mOrders[i++]->makeOrder(0, 2450, -1, 1);
-	mLaunchSchedule->mOrders[i++]->makeOrder(1, 240, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(1, 280, -1, 1);
-	mLaunchSchedule->mOrders[i++]->makeOrder(1, 630, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(1, 900, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(1, 1200, -1, 1);
-	mLaunchSchedule->mOrders[i++]->makeOrder(2, 565, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(2, 700, -1, 0);
-	mLaunchSchedule->mOrders[i++]->makeOrder(2, 2220, -1, 1);
+	TTinKoopaLaunchOrder* order;
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(0, 600, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(0, 1230, -1, 1);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(0, 2450, -1, 1);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(1, 240, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(1, 280, -1, 1);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(1, 630, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(1, 900, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(1, 1200, -1, 1);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(2, 565, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(2, 700, -1, 0);
+	order = mLaunchSchedule->mOrders[i++];
+	order->makeOrder(2, 2220, -1, 1);
 }
 
-TTinKoopaFlame::TTinKoopaFlame(const char* name, TTinKoopa* owner)
+TTinKoopaFlame::TTinKoopaFlame(const char* name, TTinKoopa* tin_koopa)
     : THitActor(name)
-    , mOwner(owner)
+    , mTinKoopa(tin_koopa)
 {
-	// TODO: not decompiled yet, only seen inlined into TTinKoopa::init
+	initHitActor(0x08000027, 0, 0, 0.0f, 0.0f,
+	             mTinKoopa->getSaveParams()->getSLFlameDamageRadius0(),
+	             mTinKoopa->getSaveParams()->getSLFlameDamageHeight0());
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
+	    ->getChildren()
+	    .push_back(this);
+
+	resetTinKoopaFlame();
 }
 
 void TTinKoopaFlame::makeHitCollision()
 {
-	if (mOwner->mPhase == 0)
-		setHitParams(0.0f, 0.0f,
-		             mOwner->getParams()->mSLFlameDamageRadius0.get(),
-		             mOwner->getParams()->mSLFlameDamageHeight0.get());
-	else if (mOwner->mPhase == 1)
-		setHitParams(0.0f, 0.0f,
-		             mOwner->getParams()->mSLFlameDamageRadius1.get(),
-		             mOwner->getParams()->mSLFlameDamageHeight1.get());
+	if (mTinKoopa->getDamageStage() == 0)
+		setHitParams(
+		    0.0f, 0.0f,
+		    mTinKoopa->getSaveParams()->mSLFlameDamageRadius0.get(),
+		    mTinKoopa->getSaveParams()->mSLFlameDamageHeight0.get());
+	else if (mTinKoopa->getDamageStage() == 1)
+		setHitParams(
+		    0.0f, 0.0f,
+		    mTinKoopa->getSaveParams()->mSLFlameDamageRadius1.get(),
+		    mTinKoopa->getSaveParams()->mSLFlameDamageHeight1.get());
 }
 
 void TTinKoopaFlame::resetTinKoopaFlame()
 {
-	mHitPoints = mOwner->getParams()->mSLFlameHP.get();
-	unk6C      = 1.0f;
-	mIsHit     = 0;
+	mHitPoints = (s16)mTinKoopa->getSaveParams()->getSLFlameHP();
+	mScale     = 1.0f;
+	mSprayed   = false;
 }
 
 BOOL TTinKoopaFlame::receiveMessage(THitActor* sender, u32 message)
 {
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
-		if (mOwner->mFlameTimer <= 0) {
-			if (mHitPoints > 0)
-				mHitPoints--;
-
-			if (mHitPoints <= 0) {
-				mHitPoints = mOwner->getParams()->mSLFlameHP.get();
-				mOwner->mFlameTimer
-				    = (s16)mOwner->getParams()->mSLFlameRevivalTime.get();
-				onHitFlag(HIT_FLAG_NO_COLLISION);
-			}
-
-			if (!mIsHit) {
-				mIsHit = 1;
-				gpMarioParticleManager->emitAndBindToPosPtr(0xF3, &mPosition,
-				                                            0, this);
-			}
-		}
+		hitWater();
 		return TRUE;
 	}
 	return FALSE;
@@ -263,339 +371,426 @@ BOOL TTinKoopaFlame::receiveMessage(THitActor* sender, u32 message)
 
 void TTinKoopaFlame::hitWater()
 {
-	// TODO: UNUSED in the map (size 0xd4), contents unknown
+	if (mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP] > 0)
+		return;
+
+	if (mHitPoints > 0)
+		mHitPoints--;
+
+	if (mHitPoints <= 0) {
+		mHitPoints
+		    = (s16)mTinKoopa->getSaveParams()->mSLFlameHP.get();
+		mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP]
+		    = (s16)mTinKoopa->getSaveParams()->mSLFlameRevivalTime.get();
+		onHitFlag(HIT_FLAG_NO_COLLISION);
+	}
+
+	if (!mSprayed) {
+		mSprayed = true;
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_FLAME_YUGE,
+		                                            &mPosition, 0, this);
+	}
 }
 
 void TTinKoopaFlame::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	THitActor::perform(cue, graphics);
 
-	if (cue & CUE_MOVE) {
-		if (mOwner->mFlameTimer <= 0 && mOwner->mPhase != 4) {
-			int frame;
-			if (mOwner->mPhase == 0)
-				frame = 2750;
-			else
-				frame = 3400;
+	if (cue & 1)
+		checkMario();
 
-			if (mOwner->checkTruckAnimationPass(frame))
-				SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
-		}
-	}
+	if (cue & 2) {
+		MtxPtr mtx = mTinKoopa->getModel()->getAnmMtx(
+		    TTinKoopa_getJointIndex(TINKOOPA_JOINT_FIRE_COL));
+		mPosition.x = mtx[0][3];
+		mPosition.y = mtx[1][3];
+		mPosition.z = mtx[2][3];
 
-	if (cue & CUE_CALC_ANIM) {
-		MtxPtr mtx
-		    = mOwner->getModel()->getAnmMtx(TTinKoopa_jointIndexTable[9]);
-		mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		emitFlameEffects();
-		if (mOwner->mFlameTimer <= 0)
+
+		if (mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP] <= 0)
 			offHitFlag(HIT_FLAG_NO_COLLISION);
-		mIsHit = 0;
+
+		mSprayed = false;
 	}
 }
 
 void TTinKoopaFlame::checkMario()
 {
-	// TODO: UNUSED in the map (size 0xc4), contents unknown
+	if (mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP] > 0)
+		return;
+
+	if (mTinKoopa->mDamageStage == 4)
+		return;
+
+	int frame;
+	if (mTinKoopa->mDamageStage == 0)
+		frame = 2750;
+	else
+		frame = 3400;
+
+	if (mTinKoopa->checkTruckAnimationPass(frame))
+		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 }
 
+// UNUSED, 0x18 in the map: six instructions, so the body can only be the bare
+// stage test.
 bool TTinKoopaFlame::isHighPosition()
 {
-	// TODO: UNUSED in the map (size 0x18), contents unknown
-	return false;
+	return mTinKoopa->mDamageStage != 0;
 }
 
 void TTinKoopaFlame::emitFlameEffects()
 {
-	if (mOwner->mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()) {
-		MtxPtr mtx
-		    = mOwner->getModel()->getAnmMtx(TTinKoopa_jointIndexTable[8]);
+	if (mTinKoopa->mSpine->getCurrentNerve()
+	    != &TNerveTinKoopaWait::theNerve())
+		return;
 
-		f32 phaseScale = 1.0f;
-		if (mOwner->mPhase != 0)
-			phaseScale = 1.6f;
-		if (mOwner->mFlameTimer > 0) {
-			unk6C -= 0.05f;
-			if (unk6C < 0.3f)
-				unk6C = 0.3f;
-		} else {
-			unk6C += 0.05f;
-			if (unk6C > 1.0f)
-				unk6C = 1.0f;
-		}
+	MtxPtr mtx = mTinKoopa->getModel()->getAnmMtx(
+	    TTinKoopa_getJointIndex(TINKOOPA_JOINT_FIRE));
 
-		f32 scale  = unk6C * phaseScale;
-		f32 scaleY = scale;
-		if (mOwner->mFlameTimer > 0)
-			scaleY *= 0.5f;
+	f32 height = 1.0f;
+	if (isHighPosition())
+		height = 1.6f;
 
-		JGeometry::TVec3<f32> emitterScale(scale, scaleY, scale);
-
-		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0x1BB, mtx, 1, this);
-		if (emitter)
-			emitter->setGlobalScale(emitterScale);
-
-		emitter = gpMarioParticleManager->emitAndBindToMtxPtr(0x1BC, mtx,
-		                                                     1, this);
-		if (emitter)
-			emitter->setGlobalScale(emitterScale);
-
-		emitter = gpMarioParticleManager->emitAndBindToMtxPtr(0x1F2, mtx,
-		                                                     3, this);
-		if (emitter)
-			emitter->setGlobalScale(emitterScale);
-
-		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_MKP_FIRE, &mPosition,
-		                                        nullptr, scale, 0, 0,
-		                                        nullptr, 0, 4);
+	if (mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP] > 0) {
+		mScale -= 0.05f;
+		if (mScale < 0.3f)
+			mScale = 0.3f;
+	} else {
+		mScale += 0.05f;
+		if (mScale > 1.0f)
+			mScale = 1.0f;
 	}
+
+	f32 scaleY;
+	f32 scale;
+	scaleY = scale = mScale * height;
+	if (mTinKoopa->mTimers[TINKOOPA_TIMER_FLAME_STOP] > 0)
+		scaleY *= 0.5f;
+
+	JGeometry::TVec3<f32> flameScale(scale, scaleY, scale);
+
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    TINKOOPA_JPA_MS_MKP_FIRE_A, mtx, 1, this);
+	if (emitter)
+		emitter->setGlobalScale(flameScale);
+
+	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_FIRE_B,
+	                                                      mtx, 1, this);
+	if (emitter)
+		emitter->setGlobalScale(flameScale);
+
+	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_FIRE_C,
+	                                                      mtx, 3, this);
+	if (emitter)
+		emitter->setGlobalScale(flameScale);
+
+	SMSGetMSound()->startSoundActorWithInfo(
+	    MSD_SE_BS_MKP_FIRE, &mPosition, nullptr, scale, 0, 0, nullptr, 0, 4);
 }
 
-TTinKoopaLaunchOrder::TTinKoopaLaunchOrder(TTinKoopa* owner)
-    : mOwner(owner)
+// UNUSED, 0x1c in the map.
+TTinKoopaLaunchOrder::TTinKoopaLaunchOrder(TTinKoopa* tin_koopa)
+    : mTinKoopa(tin_koopa)
     , mLap(0)
     , mFrame(0)
     , mCount(0)
-    , mSide(0)
+    , mDirection(0)
 {
 }
 
-void TTinKoopaLaunchOrder::makeOrder(s8 lap, long frame, s8 count, s8 side)
+// UNUSED, 0x14 in the map: four stores.
+void TTinKoopaLaunchOrder::makeOrder(s8 lap, long frame, s8 count,
+                                     s8 direction)
 {
-	mLap   = lap;
-	mFrame = frame;
-	mCount = count;
-	mSide  = side;
+	mLap       = lap;
+	mFrame     = frame;
+	mCount     = count;
+	mDirection = direction;
 }
 
 void TTinKoopaLaunchOrder::checkOrder()
 {
-	if (mOwner->mLap == mLap && mOwner->checkTruckAnimationPass(mFrame)) {
-		int count = 1;
-		if (mCount == -1) {
-			if (mOwner->mPhase == 0)
-				count = 1;
-			else if (mOwner->mPhase == 1)
-				count = 1;
-			else if (mOwner->mPhase == 2)
-				count = 2;
-			else if (mOwner->mPhase == 3)
-				count = 3;
-		} else {
-			count = mCount;
-		}
+	TTinKoopa* tinKoopa;
+	int count;
+	int lap = mTinKoopa->getLap();
+	if (lap != mLap)
+		return;
 
-		if (mSide == 1)
-			count = count <= 2 ? count : 2;
+	if (!mTinKoopa->checkTruckAnimationPass(mFrame))
+		return;
 
-		mOwner->makeKillerQueue(count, mSide);
+	count = 1;
+	if (mCount == -1) {
+		if (mTinKoopa->mDamageStage == 0)
+			count = 1;
+		else if (mTinKoopa->mDamageStage == 1)
+			count = 1;
+		else if (mTinKoopa->mDamageStage == 2)
+			count = 2;
+		else if (mTinKoopa->mDamageStage == 3)
+			count = 3;
+	} else {
+		count = mCount;
 	}
+
+	// The right-hand launchers are the two the arms cover, so once an arm is
+	// gone only two of them are left.
+	if ((int)mDirection == 1)
+		count = count <= 2 ? count : 2;
+
+	// TODO: 99.5%, every instruction right. Naming the lap puts the getLap()
+	// compare's operands in retail's order; the direction and receiver still
+	// sit in r5/r4 where ours are r4/r5: the direction (mDirection's CSE temp,
+	// or makeKillerQueue's s8 binding when it is named) is an `@` object and
+	// is coloured before the named receiver, so retail's receiver is an `@`
+	// object created earlier, yet loaded before the clamp. Declaring the
+	// receiver above `count` gives count its r6. Inert: a named u8 or s8
+	// direction in any declaration order, an unnamed receiver (sinks the load
+	// past the clamp), the clamp as a ternary argument.
+	tinKoopa = mTinKoopa;
+	int num = count;
+	if (num > 4)
+		num = 4;
+	tinKoopa->makeKillerQueue(num, mDirection);
 }
 
-TTinKoopaLaunchSchedule::TTinKoopaLaunchSchedule(u8 num, TTinKoopa* owner)
+// UNUSED, 0xa4 in the map: inlined into TTinKoopa::init.
+TTinKoopaLaunchSchedule::TTinKoopaLaunchSchedule(u8 num, TTinKoopa* tin_koopa)
     : mOrderNum(num)
-    , mOwner(owner)
+    , mTinKoopa(tin_koopa)
 {
 	mOrders = new TTinKoopaLaunchOrder*[mOrderNum];
-	for (int i = 0; i < mOrderNum; ++i)
-		mOrders[i] = new TTinKoopaLaunchOrder(mOwner);
+	for (int i = 0; i < mOrderNum; i++)
+		mOrders[i] = new TTinKoopaLaunchOrder(tin_koopa);
 }
 
+// UNUSED, 0x64 in the map: inlined into TTinKoopa::perform.
 void TTinKoopaLaunchSchedule::checkOrder()
 {
-	for (int i = 0; i < mOrderNum; ++i)
+	for (int i = 0; i < mOrderNum; i++)
 		mOrders[i]->checkOrder();
 }
 
+// UNUSED, 0x94 in the map: inlined into TTinKoopa::init.
 TTinKoopaPartsBase::TTinKoopaPartsBase(const char* name, int index,
-                                       TTinKoopa* owner)
+                                       TTinKoopa* tin_koopa)
     : TLiveActor(name)
-    , mIsBreaking(0)
-    , mIndex(index)
-    , mOwner(owner)
-    , mBreakActor(nullptr)
+    , mBreaking(false)
+    , mPartsIndex(index)
+    , mTinKoopa(tin_koopa)
+    , mPartsMActor(nullptr)
 {
 }
 
+// The named actor keeper is the 4-byte object below the JGadget iterator
+// pool that every slot was missing.
 void TTinKoopaPartsBase::initTinKoopaPartsBase()
 {
-	initHitActor(TTinKoopa_getActorType(mIndex), 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+	initHitActor(TTinKoopa_getActorType(mPartsIndex), 0, 0, 0.0f, 0.0f, 0.0f,
+	             0.0f);
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 
-	TEnemyNameRefGroup* group = (TEnemyNameRefGroup*)
-	    JDrama::TNameRefGen::search("敵グループ");
-	group->mObjects.insert(group->mObjects.end(), this);
+	TIdxGroupObj* group
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
+	group->getChildren().push_back(this);
 
 	mCollision = new TMapCollisionMove();
-	mCollision->init(TTinKoopa_getCollisionFileName(mIndex), 0, this);
-	mCollision->setUpTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+	mCollision->init(TTinKoopa_getCollisionFileName(mPartsIndex), 0, this);
 
-	const char* bmdName = TTinKoopa_getPartsFileName(mIndex);
-	if (bmdName != nullptr) {
-		mBreakActor = mOwner->getActorKeeper()->createMActor(bmdName, 0);
-		mBreakActor->setLightType(1);
+	JGeometry::TVec3<f32> origin(0.0f, 0.0f, 0.0f);
+	mCollision->setUpTrans(origin);
+
+	const char* modelName = TTinKoopa_getPartsFileName(mPartsIndex);
+	if (modelName) {
+		TMActorKeeper* keeper = mTinKoopa->getActorKeeper();
+		mPartsMActor          = keeper->createMActor(modelName, 0);
+		mPartsMActor->setLightType(1);
 	}
 
-	mIsBreaking = 0;
-	mCollision->setUpTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+	resetTinKoopaPartsBase();
 }
 
-void TTinKoopaPartsBase::reset()
-{
-	mIsBreaking = 0;
-	mCollision->setUpTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
-}
+void TTinKoopaPartsBase::reset() { resetTinKoopaPartsBase(); }
 
+// UNUSED, 0x4c in the map: the same size as reset(), which is nothing but a
+// call to it.
 void TTinKoopaPartsBase::resetTinKoopaPartsBase()
 {
-	// TODO: UNUSED in the map (size 0x4c), contents unknown
+	mBreaking = false;
+
+	JGeometry::TVec3<f32> origin(0.0f, 0.0f, 0.0f);
+	mCollision->setUpTrans(origin);
 }
 
 void TTinKoopaPartsBase::startBreaking()
 {
-	mIsBreaking = 1;
-	int jointIndex = TTinKoopa_jointIndexTable[mIndex];
-	MtxPtr jointMtx = mOwner->getModel()->getAnmMtx(jointIndex);
-	mPosition.x = jointMtx[0][3];
-	mPosition.y = jointMtx[1][3];
-	mPosition.z = jointMtx[2][3];
+	mBreaking = true;
 
-	if (mBreakActor == nullptr)
-		return;
+	int joint  = TTinKoopa_getJointIndex(mPartsIndex);
+	MtxPtr mtx = mTinKoopa->getModel()->getAnmMtx(joint);
+	mPosition.x = mtx[0][3];
+	mPosition.y = mtx[1][3];
+	mPosition.z = mtx[2][3];
 
-	mBreakActor->setBckFromIndex(TTinKoopa_getBreakingAnimationIndex(mIndex));
-	MtxPtr breakMtx = mBreakActor->getModel()->getBaseTRMtx();
-	breakMtx[0][3] = mPosition.x;
-	breakMtx[1][3] = mPosition.y;
-	breakMtx[2][3] = mPosition.z;
-	PSMTXCopy(breakMtx, mBreakActor->getModel()->getBaseTRMtx());
+	if (mPartsMActor) {
+		mPartsMActor->setBckFromIndex(
+		    TTinKoopa_getBreakingAnimationIndex(mPartsIndex));
 
-	if (mBreakActor != nullptr) {
-		if (mIndex == 1) {
-			emitPartsTrackEffects(breastTrackJointNameTable, 6);
-		} else if (mIndex == 2) {
-			emitPartsTrackEffects(bellyTrackJointNameTable, 6);
-		} else if (mIndex == 3) {
-			emitPartsTrackEffects(rightArmTrackJointNameTable, 4);
-		} else if (mIndex == 4) {
-			emitPartsTrackEffects(leftArmTrackJointNameTable, 4);
-		}
+		MtxPtr base = mPartsMActor->getModel()->getBaseTRMtx();
+		base[0][3]  = getPosition().x;
+		base[1][3]  = getPosition().y;
+		base[2][3]  = mPosition.z;
+		mPartsMActor->getModel()->setBaseTRMtx(base);
+
+		if (mPartsMActor)
+			emitPartsTrackEffects();
 	}
 }
 
+// UNUSED, 0x2fc in the map. It must exist as a function even though the retail
+// object has no copy of it: startBreaking's four calls to the two-argument
+// overload are this switch inlined, and the out-of-line copy is big because
+// there the overload inlines too.
 void TTinKoopaPartsBase::emitPartsTrackEffects()
 {
-	// TODO: UNUSED in the map (size 0x2fc), contents unknown
+	if (mPartsIndex == TINKOOPA_PARTS_BREAST)
+		emitPartsTrackEffects(breastTrackJointNameTable, 6);
+	else if (mPartsIndex == TINKOOPA_PARTS_STOMACH)
+		emitPartsTrackEffects(bellyTrackJointNameTable, 6);
+	else if (mPartsIndex == TINKOOPA_PARTS_RARM)
+		emitPartsTrackEffects(rightArmTrackJointNameTable, 4);
+	else if (mPartsIndex == TINKOOPA_PARTS_LARM)
+		emitPartsTrackEffects(leftArmTrackJointNameTable, 4);
 }
 
-#pragma dont_inline on
-void TTinKoopaPartsBase::emitPartsTrackEffects(const char** joints, int num)
+void TTinKoopaPartsBase::emitPartsTrackEffects(const char** joint_names,
+                                               int num)
 {
-	mBreakActor->getModel()->calc();
-	JUTNameTab* jointName = mBreakActor->getModel()->getModelData()->getJointName();
-	for (int i = 0; i < num; ++i) {
-		int jointIndex = jointName->getIndex(joints[i]);
-		if (jointIndex >= 0) {
-			MtxPtr jointMtx = mBreakActor->getModel()->getAnmMtx(jointIndex);
-			unk108[i].set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-			gpMarioParticleManager->emitAndBindToPosPtr(0xF4, &unk108[i], 0,
-			                                            mOwner);
-		} else {
-			break;
-		}
+	mPartsMActor->getModel()->calc();
+
+	JUTNameTab* jointNames
+	    = mPartsMActor->getModel()->getModelData()->getJointName();
+
+	// TODO: the ROM leaves this early return unfused (`bge +8; b epilogue`)
+	// where we emit a single `blt epilogue`.  An explicit `else` around the
+	// body is refuted -- MWCC normalises it back to our form.
+	for (int i = 0; i < num; i++) {
+		int joint = jointNames->getIndex(joint_names[i]);
+		if (joint < 0)
+			return;
+
+		MtxPtr mtx = mPartsMActor->getModel()->getAnmMtx(joint);
+		mEffectPos[i].set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    TINKOOPA_JPA_MS_MKP_KEMU_PARTS, &mEffectPos[i], 0, mTinKoopa);
 	}
 }
-#pragma dont_inline off
 
 void TTinKoopaPartsBase::emitPartsDisappearEffects()
 {
-	if (mBreakActor == nullptr
-	    || !mBreakActor->checkCurBckFromIndex(
-	        TTinKoopa_getBreakingAnimationIndex(mIndex)))
-		return;
-	if (!mBreakActor->getFrameCtrl(0)->checkPass(60))
+	if (!mPartsMActor)
 		return;
 
-	if (mIndex == 1) {
+	if (!mPartsMActor->checkCurBckFromIndex(
+	        TTinKoopa_getBreakingAnimationIndex(mPartsIndex)))
+		return;
+
+	// The frame stays an int all the way into checkPass: the retail object
+	// converts it at run time instead of loading a float constant.
+	J3DFrameCtrl* ctrl = mPartsMActor->getFrameCtrl(ANM_TYPE_BCK);
+	int disappearFrame = 60;
+	if (!ctrl->checkPass((f32)disappearFrame))
+		return;
+
+	if (mPartsIndex == TINKOOPA_PARTS_BREAST)
 		emitPartsDisappearEffects(breastTrackJointNameTable, 6, 4.0f);
-	} else if (mIndex == 2) {
+	else if (mPartsIndex == TINKOOPA_PARTS_STOMACH)
 		emitPartsDisappearEffects(bellyTrackJointNameTable, 6, 4.0f);
-	} else if (mIndex == 3) {
+	else if (mPartsIndex == TINKOOPA_PARTS_RARM)
 		emitPartsDisappearEffects(rightArmTrackJointNameTable, 4, 3.0f);
-	} else if (mIndex == 4) {
+	else if (mPartsIndex == TINKOOPA_PARTS_LARM)
 		emitPartsDisappearEffects(leftArmTrackJointNameTable, 4, 3.0f);
-	}
 
-	mOwner->mBreakingParts = nullptr;
+	mTinKoopa->mBreakingParts = nullptr;
 }
 
-void TTinKoopaPartsBase::emitPartsDisappearEffects(const char** joints,
-                                                   int num, f32 param_3)
+void TTinKoopaPartsBase::emitPartsDisappearEffects(const char** joint_names,
+                                                   int num, f32 scale)
 {
+	JGeometry::TVec3<f32> effectScale(mScaling);
+	effectScale.scale(scale);
+
 	JUTNameTab* jointNames
-	    = mBreakActor->getModel()->getModelData()->getJointName();
-	JGeometry::TVec3<f32> effectScale = mScaling;
-	effectScale.x *= param_3;
-	effectScale.y *= param_3;
-	effectScale.z *= param_3;
+	    = mPartsMActor->getModel()->getModelData()->getJointName();
 
-	for (int i = 0; i < num; ++i) {
-		int jointIndex = jointNames->getIndex(joints[i]);
-		if (jointIndex < 0)
-			break;
+	for (int i = 0; i < num; i++) {
+		int joint = jointNames->getIndex(joint_names[i]);
+		if (joint < 0)
+			return;
 
-		MtxPtr jointMtx = mBreakActor->getModel()->getAnmMtx(jointIndex);
-		unk108[i].set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-		TEffectExplosion* explosion = static_cast<TEffectExplosion*>(
-		    gpConductor->makeOneEnemyAppear(unk108[i],
-		                                   "エフェクト爆発マネージャー", 1));
-		if (explosion == nullptr)
-			break;
-		explosion->generate(unk108[i], effectScale);
+		MtxPtr mtx = mPartsMActor->getModel()->getAnmMtx(joint);
+		mEffectPos[i].set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+		TEffectExplosion* explosion
+		    = (TEffectExplosion*)gpConductor->makeOneEnemyAppear(
+		        mEffectPos[i], "エフェクト爆発マネージャー", 1);
+		if (!explosion)
+			return;
+
+		explosion->generate(mEffectPos[i], effectScale);
 	}
 }
 
 BOOL TTinKoopaPartsBase::receiveMessage(THitActor* sender, u32 message)
 {
 	if (sender->getActorType() == 0x1000002B) {
-		mOwner->hitParts();
+		mTinKoopa->hitParts();
 		return TRUE;
 	}
 	return FALSE;
 }
 
+// The no-argument curAnmEndsNext() overload is what colours the joint index
+// after the arguments (its constant argument copies raise `this`'s degree).
 void TTinKoopaPartsBase::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TLiveActor::perform(cue, graphics);
 
-	if (cue & CUE_MOVE)
-		mCollision->moveMtx(mOwner->getModel()->getAnmMtx(
-		    TTinKoopa_jointIndexTable[mIndex]));
+	if (cue & 1)
+		mCollision->moveMtx(mTinKoopa->getModel()->getAnmMtx(
+		    TTinKoopa_getJointIndex(mPartsIndex)));
 
-	if (cue & CUE_CALC_ANIM && mIsBreaking) {
-		if (mBreakActor != nullptr && mBreakActor->curAnmEndsNext(0, nullptr))
-			mIsBreaking = 0;
+	if ((cue & 2) && mBreaking) {
+		if (mPartsMActor && mPartsMActor->curAnmEndsNext())
+			mBreaking = false;
 	}
 
-	if (mIsBreaking) {
-		if (mBreakActor != nullptr)
-			mBreakActor->perform(cue, graphics);
+	if (mBreaking) {
+		if (mPartsMActor)
+			mPartsMActor->perform(cue, graphics);
 	}
 }
 
-TTinKoopaMtxCalc::TTinKoopaMtxCalc(TTinKoopa* owner)
-    : mOwner(owner)
+// UNUSED, 0x98 in the map: nothing in the retail object ever makes one.
+TTinKoopaMtxCalc::TTinKoopaMtxCalc(TTinKoopa* tin_koopa)
+    : mTinKoopa(tin_koopa)
 {
-	// TODO: UNUSED in the map (size 0x98), not verified
 }
 
-void TTinKoopaMtxCalc::joinAnm(int)
+// UNUSED, 0x38 in the map.
+void TTinKoopaMtxCalc::joinAnm(int index)
 {
-	// TODO: UNUSED in the map (size 0x38), contents unknown
+	M3UMtxCalcSIAnmBlendQuat::joinAnm(
+	    mTinKoopa->getMActor()->getCurBckAnmPtr());
 }
 
-void TTinKoopaMtxCalc::calc(u16 index) { M3UMtxCalcSIAnmBlendQuat::calc(index); }
+void TTinKoopaMtxCalc::calc(u16 joint)
+{
+	M3UMtxCalcSIAnmBlendQuat::calc(joint);
+}
 
 TTinKoopa::TTinKoopa(const char* name)
     : TSpineEnemy(name)
@@ -607,166 +802,285 @@ TTinKoopa::TTinKoopa(const char* name)
 	mScaledBodyRadius = 2000.0f;
 }
 
+// UNUSED, 0x16c in the map: inlined into init.
 void TTinKoopa::makeCoasterDistanceTable()
 {
-	// TODO: UNUSED in the map (size 0x16c), inlined into init
+	mCoasterDistances = new f32[mKillerGraph->getNodeNum() - 1];
+
+	// The running total is never used afterwards, but the retail object adds
+	// it up all the same, so the original kept the lap length around.
+	JGeometry::TVec3<f32> next = mKillerGraph->indexToPoint(0);
+	f32 total = 0.0f;
+	for (int i = 0; i < mKillerGraph->getNodeNum() - 1; i++) {
+		JGeometry::TVec3<f32> cur = next;
+		next                      = mKillerGraph->indexToPoint(i + 1);
+		mCoasterDistances[i]      = cur.distance(next);
+		total += mCoasterDistances[i];
+	}
 }
 
-// TODO: the ROM calls this out of line from checkTinKoopaKillerApproachingMessage;
-// dont_inline is a stopgap.
-#pragma dont_inline on
 f32 TTinKoopa::calcCoasterDistance(int from, int to)
 {
 	f32 distance = 0.0f;
-	for (int i = from; i < to; ++i)
-		distance += mCoasterDistanceTable[i];
+	for (int i = from; i < to; i++)
+		distance += mCoasterDistances[i];
 	return distance;
 }
-#pragma dont_inline off
 
-f32 TTinKoopa::calcCoasterDistanceInOrder(int, int)
+// UNUSED, 0x220 in the map. checkKillerApproachingFromBack wants exactly this
+// and spells the two branches out instead of calling it, which is why its own
+// copy is this big: there calcCoasterDistance inlines three times over.
+f32 TTinKoopa::calcCoasterDistanceInOrder(int from, int to)
 {
-	// TODO: UNUSED in the map (size 0x220), contents unknown
-	return 0.0f;
+	if (to >= from)
+		return calcCoasterDistance(from, to);
+
+	f32 distance = calcCoasterDistance(from, mKillerGraph->getNodeNum() - 1);
+	f32 rest     = calcCoasterDistance(0, to);
+	return rest + distance;
 }
 
-bool TTinKoopa::checkKillerApproachingFromBack(TCoasterKiller*,
-                                               JGeometry::TVec3<f32>, f32)
+// UNUSED, 0xdc in the map: inlined into
+// checkTinKoopaKillerApproachingMessage.
+// TODO: ours 0x2a8 (calcCoasterDistance expanded three times). A probe level between
+// calcCoasterDistanceInOrder and calcCoasterDistance gives exactly 0xdc but shrinks
+// InOrder to 0x1b0 and costs the (exact) caller 0x10 of frame; a level above InOrder
+// stops its expansion (0x98). Inert: calc/body respellings, named locals, if-forms.
+bool TTinKoopa::checkKillerApproachingFromBack(TCoasterKiller* killer,
+                                               JGeometry::TVec3<f32> pos,
+                                               f32 limit)
 {
-	// TODO: UNUSED in the map (size 0xdc), contents unknown
-	return false;
+	if (killer->checkLiveFlag(LIVE_FLAG_DEAD))
+		return false;
+
+	if (killer->getPathDir() != 0)
+		return false;
+
+	return calcCoasterDistanceInOrder(killer->getPathIdx(),
+	                                  mKillerGraph->findNearestNodeIndex(pos, -1))
+	       <= limit;
 }
 
 void TTinKoopa::reset()
 {
 	TSpineEnemy::reset();
+
 	mFlame->resetTinKoopaFlame();
-	for (int i = 0; i < 6; ++i)
+
+	for (int i = 0; i < TINKOOPA_PARTS_NUM; i++)
 		mParts[i]->reset();
+
 	makeHitCollision();
-	mFlame->makeHitCollision();
 	resetTinKoopa();
-	changeBck(TTinKoopa_getWaitAnimationIndex(mPhase));
+
+	changeBck(TTinKoopa_getWaitAnimationIndex(mDamageStage));
+}
+
+// Instruction-exact; the frame is 0x70 against the ROM's 0x88.
+static inline TMario* TinKoopaResetMarioRef()
+{
+	return gpMarioOriginal;
+}
+
+static inline TMario* TinKoopaResetMario()
+{
+	TMario* mario = TinKoopaResetMarioRef();
+	return mario;
 }
 
 void TTinKoopa::resetTinKoopa()
 {
-	if (mKillerManager == nullptr)
-		mKillerManager = (TEnemyManager*)JDrama::TNameRefGen::search(
-		    "コースターキラーマネージャー");
+	if (!mKillerManager) {
+		TCoasterKillerManager* manager
+		    = (TCoasterKillerManager*)JDrama::TNameRefGen::search<
+		        TCoasterKillerManager>("コースターキラーマネージャー");
+		mKillerManager = manager;
+	}
 
-	mTruck           = gpMarioOriginal->mKoopaRail;
-	mPhase           = 0;
-	unk154           = 0;
-	unk158           = 0;
-	mLap             = 0;
-	unk168           = 0;
-	mPartsHP         = getParams()->mSLPartsHP.get();
-	mBreakingParts   = nullptr;
-	mKillerQueueNum  = 0;
-	mKillerQueueIdx  = 0;
-	mKillerQueue[0]  = 0;
-	mKillerQueue[1]  = 0;
-	mKillerQueue[2]  = 0;
-	mKillerQueue[3]  = 0;
-	mKillerTimer     = 0;
-	mFlameTimer      = 0;
-	mDefeatTimer     = 0;
-	mKillerTimer     = 0;
-	unk1B4           = 0.0f;
-	unk1B8           = 30.0f;
-	unk1BC           = 15.0f;
-	unk1C0           = 45.0f;
+	// TODO: the retail object reads mKillerManager->unk38 here and throws the
+	// value away, so something the original wrote between the search and the
+	// rail fetch went through the manager's save params. One dead `lwz`.
+	// The retail object asks the killer manager for its active count here and
+	// throws the answer away: all that is left of the statement is the two
+	// loads and the null test getActiveObjNum() starts with. Dropping it
+	// loses exactly those two instructions.
+	mKillerManager->getActiveObjNum();
+
+	mTruckMActor = TinKoopaResetMario()->mKoopaRail;
+
+	mDamageStage = 0;
+	unk154       = 0;
+	unk158       = 0;
+	mLap         = 0;
+
+	mFirstFlameMessageDone = false;
+
+	mPartsHitPoints = getSaveParams()->getSLPartsHP();
+	mBreakingParts  = nullptr;
+
+	mKillerNum   = 0;
+	mKillerIndex = 0;
+	for (int i = 0; i < 4; i++)
+		mKillerDirs[i] = 0;
+
+	mTimers[TINKOOPA_TIMER_KILLER]      = 0;
+	mTimers[TINKOOPA_TIMER_FLAME_STOP]  = 0;
+	mTimers[TINKOOPA_TIMER_DEFEAT_WAIT] = 0;
+	mTimers[TINKOOPA_TIMER_KILLER]      = 0;
+
+	unk1B4 = 0.0f;
+	unk1B8 = 30.0f;
+	unk1BC = 15.0f;
+	unk1C0 = 45.0f;
 }
 
+// UNUSED, 0x1a0 in the map: the damage-stage switch plus the flame's own
+// collision, inlined into both reset() and the break nerve.
 void TTinKoopa::makeHitCollision()
 {
-	// TODO: the target also compares mPhase against 2 afterwards, with no
-	// code for it; the third branch is unknown
-	if (mPhase == 0) {
-		setHitParams(0.0f, 0.0f, getParams()->mSLDamageRadius.get(),
-		             getParams()->mSLDamageHeight0.get());
-	} else if (mPhase == 1) {
-		setHitParams(0.0f, 0.0f, getParams()->mSLDamageRadius.get(),
-		             getParams()->mSLDamageHeight1.get());
-	}
+	// TODO: the ROM keeps the third arm's `cmpwi r0, 2` (and the `b` over it
+	// that arm 1 needs), which MWCC only emits when the arm holds a statement
+	// that generates no code -- an empty `{ }` body is deleted compare and
+	// all.  Which statement is not recoverable: a placeholder `a = a;` lands
+	// TTinKoopa::reset at 99.9% and TNerveTinKoopaBreak::execute at 100%, but
+	// it is a mechanism, not a plausible source, so it is not committed.  A
+	// `switch` with an empty `case 2:` is refuted (reset 98.6% -> 94.2%: it
+	// builds a range tree), and so is a call to the TU's own empty
+	// printTinKoopaDebugInfo (MWCC deletes the expansion before the arm).
+	if (mDamageStage == 0)
+		setHitParams(0.0f, 0.0f, getSaveParams()->mSLDamageRadius.get(),
+		             getSaveParams()->mSLDamageHeight0.get());
+	else if (mDamageStage == 1)
+		setHitParams(0.0f, 0.0f, getSaveParams()->mSLDamageRadius.get(),
+		             getSaveParams()->mSLDamageHeight1.get());
+	else if (mDamageStage == 2) { }
+
+	mFlame->makeHitCollision();
 }
 
-void TTinKoopa::makeKillerQueue(int num, s8 side)
+// UNUSED, 0x44 in the map: inlined into TTinKoopaLaunchOrder::checkOrder.
+void TTinKoopa::makeKillerQueue(int num, s8 direction)
 {
-	if (num > 4)
-		num = 4;
-	mKillerQueueIdx = 0;
-	mKillerQueueNum = num;
-	for (int i = 0; i < mKillerQueueNum; ++i)
-		mKillerQueue[i] = side;
-	mKillerTimer = 0;
+	mKillerIndex = 0;
+	mKillerNum   = num;
+
+	for (int i = 0; i < mKillerNum; i++)
+		mKillerDirs[i] = direction;
+
+	mTimers[TINKOOPA_TIMER_KILLER] = 0;
 }
 
+// UNUSED, 0x8c in the map: inlined into perform.
 void TTinKoopa::checkLap()
 {
-	if (mTruck != nullptr
-	    && mTruck->getFrameCtrl(0)->checkPass(
-	        -(mTruck->getFrameCtrl(0)->getEnd() - 1))) {
+	if (!mTruckMActor)
+		return;
+
+	J3DFrameCtrl* ctrl = mTruckMActor->getFrameCtrl(ANM_TYPE_BCK);
+	if (ctrl->checkPass((f32)(ctrl->getEnd() - 1))) {
 		mLap++;
 		if (mLap > 2)
 			mLap = 0;
 	}
 }
 
+// UNUSED, 0x78 in the map: every scripted moment of the fight goes through
+// this, so it is inlined at each of them.
 bool TTinKoopa::checkTruckAnimationPass(int frame)
 {
-	if (mTruck == nullptr)
+	if (!mTruckMActor)
 		return false;
-	return mTruck->getFrameCtrl(0)->checkPass(frame) ? true : false;
+
+	if (mTruckMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass((f32)frame))
+		return true;
+
+	return false;
 }
 
-void printTinKoopaDebugInfo(TTinKoopa*)
-{
-	// TODO: UNUSED in the map (size 0x24c), contents unknown
-}
+// UNUSED, 0x24c in the map, and nothing references it: a debug dump of the
+// fight's state. Whatever it printed was dead-stripped along with it, so the
+// format strings are not in the retail object and cannot be recovered -- and
+// inventing any would push this TU's whole string pool along. The body is
+// therefore left empty on purpose.
+// TODO: incorrect size.
+static void printTinKoopaDebugInfo(TTinKoopa* tin_koopa) { }
 
 void TTinKoopa::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (cue & CUE_CALC_ANIM) {
+	if (cue & 2) {
 		emitTinKoopaEffects();
 		checkKillerLaunch();
 	}
 
-	if (cue & CUE_CALC_ANIM) {
+	if (cue & 1) {
 		updateTimers();
 		checkLap();
+		mLaunchSchedule->checkOrder();
 		checkTinKoopaMessage();
 	}
 
 	TSpineEnemy::perform(cue, graphics);
+
 	mFlame->perform(cue, graphics);
 
-	for (int i = 0; i < 6; ++i)
+	for (int i = 0; i < TINKOOPA_PARTS_NUM; i++)
 		mParts[i]->perform(cue, graphics);
 }
 
+// UNUSED, 0x3b4 in the map, and nothing references it: the eye beam never made
+// it into the fight. Only the four floats resetTinKoopa initialises say what it
+// would have swept, so the body below is a reconstruction from those and from
+// the map's weak JGeometry::TRotation3::setEular, which is the one header
+// inline this TU pulls in and nothing else here uses.
+// TODO: incorrect size, and setEular itself is missing from our object: MWCC
+// expands it here while the retail compile kept a weak out-of-line copy (0x100,
+// dead-stripped). A minimal body, a second call and a following mult33 all
+// still inline, and TMapObjBase::rotateVecByAxisY gets the call with the very
+// same shape, so the lever is not the call site.
 void TTinKoopa::makeEyeBeamEffect()
 {
-	// TODO: UNUSED in the map (size 0x3b4), contents unknown
+	unk1B4 += unk1BC;
+	if (unk1B4 > unk1C0)
+		unk1B4 = unk1C0;
+
+	JGeometry::TVec3<f32> leftEye;
+	getJointTransByIndex(TTinKoopa_getJointIndex(TINKOOPA_JOINT_LEYE),
+	                     &leftEye);
+
+	JGeometry::TRotation3<JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > >
+	    leftBeam;
+	leftBeam.setEular(mRotation.y, unk1B4, 0.0f);
+
+	JGeometry::TVec3<f32> rightEye;
+	getJointTransByIndex(TTinKoopa_getJointIndex(TINKOOPA_JOINT_REYE),
+	                     &rightEye);
+
+	JGeometry::TRotation3<JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > >
+	    rightBeam;
+	rightBeam.setEular(mRotation.y, -unk1B4, 0.0f);
+
+	unk1C4 = unk1B8;
 }
 
+// UNUSED, 0x4c in the map: the three countdowns of perform's movement cue.
+// The timers are an array: MWCC's unrolled indexed loop is what materialises
+// each element's address for the store (`addi r4, this, 0x178`).
 void TTinKoopa::updateTimers()
 {
-	if (mKillerTimer > 0)
-		mKillerTimer--;
-	if (mFlameTimer > 0)
-		mFlameTimer--;
-	if (mDefeatTimer > 0)
-		mDefeatTimer--;
+	for (int i = 0; i < TINKOOPA_TIMER_NUM; ++i)
+		if (mTimers[i] > 0)
+			mTimers[i]--;
 }
 
 const char** TTinKoopa::getBasNameTable() const { return tinkoopa_bastable; }
 
+// UNUSED, 0x70 in the map: the animation switch every nerve does.
 void TTinKoopa::changeBck(int index)
 {
-	mMActor->setBckFromIndex(index);
-	setAnmSound(getBas(index));
+	getMActor()->setBckFromIndex(index);
+
+	const char** table = getBasNameTable();
+	setAnmSound(table == nullptr ? nullptr : table[index]);
 }
 
 BOOL TTinKoopa::receiveMessage(THitActor* sender, u32 message)
@@ -778,245 +1092,350 @@ BOOL TTinKoopa::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
-// TODO: the ROM calls this out of line from both receiveMessage() overloads, but
-// MWCC's inline ladder pulls it into them here. dont_inline is a stopgap until
-// the real reason (probably a statement-count difference) is found.
-#pragma dont_inline on
+// getSpine() at the two early-return nerve tests is the last +8 of frame
+// (0x68 -> 0x70). Raw mSpine is instruction-identical and 8 short.
 void TTinKoopa::hitParts()
 {
-	if (mSpine->getCurrentNerve() != &TNerveTinKoopaBreak::theNerve()
-	    && mSpine->getCurrentNerve() != &TNerveTinKoopaDamage::theNerve()
-	    && mPhase != 4) {
-		gpMarDirector->mConsole->startAppearBalloon(0x24, true);
-		mPartsHP--;
-		if (mPartsHP <= 0)
-			mSpine->pushNerve(&TNerveTinKoopaBreak::theNerve());
-		else
-			mSpine->pushNerve(&TNerveTinKoopaDamage::theNerve());
-	}
-}
-#pragma dont_inline off
+	if (getSpine()->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
+		return;
+	if (getSpine()->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve())
+		return;
+	if (mDamageStage == 4)
+		return;
 
+	startTinKoopaMessage(BALLOON_MSG_TINKOOPA_PARTS_HIT);
+
+	mPartsHitPoints--;
+
+	int hitPoints = mPartsHitPoints;
+	if (hitPoints <= 0) {
+		const TNerveBase<TLiveActor>* nerve = &TNerveTinKoopaBreak::theNerve();
+		mSpine->pushNerve(nerve);
+		return;
+	}
+
+	const TNerveBase<TLiveActor>* nerve = &TNerveTinKoopaDamage::theNerve();
+	mSpine->pushNerve(nerve);
+}
+
+// UNUSED, 0x4c in the map: inlined into the break nerve.
 void TTinKoopa::startBreakingParts()
 {
-	// TODO: UNUSED in the map (size 0x4c), contents unknown
+	mBreakingParts = mParts[TTinKoopa_getBreakingPartsIndex(mDamageStage)];
+	mBreakingParts->startBreaking();
 }
 
-void TTinKoopa::launchKiller(int side)
+// Binding level over a raw member read, worth +8 of low region in
+// TTinKoopa::launchKiller (batch 127).
+static inline int TinkoopaKillerIndex(const TTinKoopa* p)
 {
-	TSpineEnemy* killer = mKillerManager->getDeadEnemy();
-	if (killer != nullptr) {
-		killer->reset();
-		int joint;
-		if (side == 1)
-			joint = mKillerQueueIdx + 11;
-		else
-			joint = 14 - mKillerQueueIdx;
-		joint = TTinKoopa_jointIndexTable[joint];
-		getJointTransByIndex(joint, &killer->mPosition);
-		((TCoasterKiller*)killer)->mPathDir = side;
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0xEF, getModel()->getAnmMtx(joint), 0, this);
-		SMSGetMSound()->startSoundActor(0x285D, &killer->mPosition, 0,
-		                                nullptr, 0, 4);
-	}
+	int killerIndex = p->mKillerIndex;
+	return killerIndex;
 }
 
+void TTinKoopa::launchKiller(int direction)
+{
+	TCoasterKiller* killer
+	    = (TCoasterKiller*)mKillerManager->getDeadEnemy();
+	if (!killer)
+		return;
+
+	killer->reset();
+
+	int slot;
+	if (direction == 1)
+		slot = TINKOOPA_JOINT_KILLER_FIRST + TinkoopaKillerIndex(this);
+	else
+		slot = (TINKOOPA_JOINT_KILLER_FIRST + 3) - mKillerIndex;
+
+	int joint = TTinKoopa_getJointIndex(slot);
+	getJointTransByIndex(joint, &killer->mPosition);
+	killer->mPathDir = direction;
+
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    TINKOOPA_JPA_MS_MKP_KILLER, getModel()->getAnmMtx(joint), 0, this);
+
+	gpMSound->startSoundActor(MSD_SE_EN_KILLER_FIRE, &killer->mPosition, 0,
+	                          nullptr, 0, 4);
+}
+
+// UNUSED, 0xd8 in the map: inlined into perform's draw cue.
 void TTinKoopa::checkKillerLaunch()
 {
-	if (mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	    && mKillerQueueIdx < mKillerQueueNum && mKillerTimer <= 0) {
-		launchKiller(mKillerQueue[mKillerQueueIdx]);
-		mKillerQueueIdx++;
-		mKillerTimer = getParams()->mSLKillerInterval.get();
-	}
+	if (mSpine->getCurrentNerve() != &TNerveTinKoopaWait::theNerve())
+		return;
+
+	if (mKillerIndex >= mKillerNum)
+		return;
+
+	if (mTimers[TINKOOPA_TIMER_KILLER] > 0)
+		return;
+
+	launchKiller(mKillerDirs[mKillerIndex]);
+	mKillerIndex++;
+	mTimers[TINKOOPA_TIMER_KILLER] = getSaveParams()->getSLKillerInterval();
 }
 
+// UNUSED, 0x1e0 in the map: the three message checks of perform's movement
+// cue, which the retail object has inlined together.
 void TTinKoopa::checkTinKoopaMessage()
 {
-	for (int i = 0; i < mLaunchSchedule->mOrderNum; ++i)
-		mLaunchSchedule->mOrders[i]->checkOrder();
-
 	checkTinKoopaKillerApproachingMessage();
-	checkTinKoopaFirstRocketMessage();
+
+	if (mTruckMActor) {
+		J3DFrameCtrl* ctrl = mTruckMActor->getFrameCtrl(ANM_TYPE_BCK);
+		if (mLap == 0 && ctrl->checkPass(300.0f))
+			startTinKoopaMessage(BALLOON_MSG_TINKOOPA_LAP);
+	}
+
+	checkTinKoopaFirstFlameMessage();
 }
 
+// The node indices go straight into calcCoasterDistanceInOrder (its bindings
+// are the two words under `pos` and hold the node in r28), the limit is
+// named here, and the wrap sum adds two named distances.
 void TTinKoopa::checkTinKoopaKillerApproachingMessage()
 {
-	// TODO: the tested flag is 0x80000000, which has no name in LiveActor.hpp
-	// yet; it needs adding to the LIVE_FLAG_ enum in that shared header.
-	for (int i = 0; i < mKillerManager->getActiveObjNum(); ++i) {
-		TCoasterEnemy* enemy = (TCoasterEnemy*)mKillerManager->getObj(i);
-		if (enemy->checkLiveFlag(0x80000001))
+	for (int i = 0; i < mKillerManager->getActiveObjNum(); i++) {
+		TCoasterKiller* killer = (TCoasterKiller*)mKillerManager->getObj(i);
+		if (killer->checkLiveFlag(LIVE_FLAG_DEAD))
 			continue;
 
-		f32 distance = getParams()->mSLKillerApproachingDistance.get();
-		JGeometry::TVec3<f32> marioPos = *gpMarioPos;
-
-		bool approaching = false;
-		if (!enemy->checkLiveFlag(0x80000001) && enemy->mPathDir == 0) {
-			int idx = mGraph->findNearestNodeIndex(marioPos, -1);
-			f32 d;
-			if (idx >= enemy->mPathIdx)
-				d = calcCoasterDistance(enemy->mPathIdx, idx);
-			else
-				d = calcCoasterDistance(0, mGraph->unk8 - 1)
-				    + calcCoasterDistance(0, idx);
-			approaching = d <= distance;
-		}
-
-		if (approaching)
-			gpMarDirector->mConsole->startAppearBalloon(0x9, true);
+		f32 limit = getSaveParams()->getSLKillerApproachingDistance();
+		if (checkKillerApproachingFromBack(killer, *gpMarioPos, limit))
+			startTinKoopaMessage(BALLOON_MSG_TINKOOPA_KILLER_APPROACHING);
 	}
 }
 
+// UNUSED, 0x6c in the map, and nothing references it: the rocket nozzle hint
+// the fight does not use. Modelled on the flame one, which is the same shape
+// without the stage split.
+// TODO: incorrect size.
 void TTinKoopa::checkTinKoopaFirstRocketMessage()
 {
-	if (mTruck != nullptr && mLap == 0
-	    && mTruck->getFrameCtrl(0)->checkPass(300.0f))
-		gpMarDirector->mConsole->startAppearBalloon(0xA, true);
+	if (!mTruckMActor)
+		return;
+
+	if (mFirstFlameMessageDone)
+		return;
+
+	if (mSpine->getCurrentNerve() != &TNerveTinKoopaWait::theNerve())
+		return;
+
+	if (mTruckMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(2600.0f)) {
+		startTinKoopaMessage(BALLOON_MSG_TINKOOPA_FIRST_FLAME);
+		mFirstFlameMessageDone = true;
+	}
 }
 
 void TTinKoopa::checkTinKoopaFirstFlameMessage()
 {
-	if (mTruck != nullptr && unk168 == 0
-	    && mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()) {
-		J3DFrameCtrl* ctrl = mTruck->getFrameCtrl(0);
-		if (mPhase == 0) {
-			if (ctrl->checkPass(2600.0f)) {
-				gpMarDirector->mConsole->startAppearBalloon(0xB, true);
-				unk168 = 1;
-			}
-		} else if (ctrl->checkPass(3100.0f)) {
-			gpMarDirector->mConsole->startAppearBalloon(0xB, true);
-			unk168 = 1;
+	if (!getTruckMActor())
+		return;
+
+	if (mFirstFlameMessageDone)
+		return;
+
+	if (mSpine->getCurrentNerve() != &TNerveTinKoopaWait::theNerve())
+		return;
+
+	J3DFrameCtrl* ctrl = getTruckMActor()->getFrameCtrl(ANM_TYPE_BCK);
+	if (mDamageStage == 0) {
+		if (ctrl->checkPass(2600.0f)) {
+			startTinKoopaMessage(BALLOON_MSG_TINKOOPA_FIRST_FLAME);
+			mFirstFlameMessageDone = true;
 		}
+	} else if (ctrl->checkPass(3100.0f)) {
+		startTinKoopaMessage(BALLOON_MSG_TINKOOPA_FIRST_FLAME);
+		mFirstFlameMessageDone = true;
 	}
 }
 
-void TTinKoopa::startTinKoopaMessage(u32)
+// UNUSED, 0x2c in the map.
+void TTinKoopa::startTinKoopaMessage(u32 id)
 {
-	// TODO: UNUSED in the map (size 0x2c), contents unknown
+	SMSGetMarDirector()->getConsole()->startAppearBalloon(id, true);
+}
+
+// The ten leading joint-matrix reads bind the model into a named local; the
+// nerve-tested tail below reads it straight through the accessor.
+static inline J3DModel* TinkoopaEffectModel(const TTinKoopa* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
 }
 
 void TTinKoopa::emitTinKoopaEffects()
 {
-	MtxPtr jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]);
-	mEffectJoint0Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]);
-	mEffectJoint1Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]);
-	mEffectJoint3Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-	jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]);
-	mEffectJoint4Pos.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
+	MtxPtr mtx;
 
-	const void* secondaryOwner = (const char*)this + 0x1FC;
-	gpMarioParticleManager->emitAndBindToPosPtr(0x1AC, &mEffectJoint1Pos, 1,
-	                                             this);
-	if (mPhase > 1)
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0x1AD, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]), 1,
-		    this);
-	if (mPhase > 2)
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0x1AE, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]), 1,
-		    this);
+	mtx = TinkoopaEffectModel(this)->getAnmMtx(
+	    TTinKoopa_getJointIndex(TINKOOPA_JOINT_HEAD));
+	mHeadPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 
-	if (mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	    && mPhase <= 0)
+	mtx = TinkoopaEffectModel(this)->getAnmMtx(
+	    TTinKoopa_getJointIndex(TINKOOPA_JOINT_BREAST));
+	mBreastPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+	mtx = TinkoopaEffectModel(this)->getAnmMtx(
+	    TTinKoopa_getJointIndex(TINKOOPA_JOINT_RARM));
+	mRightArmPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+	mtx = TinkoopaEffectModel(this)->getAnmMtx(
+	    TTinKoopa_getJointIndex(TINKOOPA_JOINT_LARM));
+	mLeftArmPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+	gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_HIBANA_W1BR,
+	                                            &mBreastPos, 1, this);
+
+	if (mDamageStage > 1)
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0x1AF, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 1,
-		    this);
+		    TINKOOPA_JPA_MS_MKP_HIBANA_W3AR,
+		    TinkoopaEffectModel(this)->getAnmMtx(
+		        TTinKoopa_getJointIndex(TINKOOPA_JOINT_RARM)),
+		    1, this);
+
+	if (mDamageStage > 2)
+		gpMarioParticleManager->emitAndBindToMtxPtr(
+		    TINKOOPA_JPA_MS_MKP_HIBANA_W4AR,
+		    TinkoopaEffectModel(this)->getAnmMtx(
+		        TTinKoopa_getJointIndex(TINKOOPA_JOINT_LARM)),
+		    1, this);
+
+	if (mDamageStage <= 0) {
+		if (mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve())
+			gpMarioParticleManager->emitAndBindToMtxPtr(
+			    TINKOOPA_JPA_MS_MKP_BIRI_W1ST,
+			    TinkoopaEffectModel(this)->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_STOMACH)),
+			    1, this);
+	}
 
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x1B0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[3]), 1, this);
-	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x1B0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[4]), 1,
-	    secondaryOwner);
-	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x1B1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[10]), 1,
+	    TINKOOPA_JPA_MS_MKP_BIRI_W1AR,
+	    TinkoopaEffectModel(this)->getAnmMtx(TTinKoopa_getJointIndex(TINKOOPA_JOINT_RARM)), 1,
 	    this);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x1B2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]), 1,
+	    TINKOOPA_JPA_MS_MKP_BIRI_W1AR,
+	    TinkoopaEffectModel(this)->getAnmMtx(TTinKoopa_getJointIndex(TINKOOPA_JOINT_LARM)), 1,
+	    this + 1);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    TINKOOPA_JPA_MS_MKP_BIRI_W1FE,
+	    TinkoopaEffectModel(this)->getAnmMtx(TTinKoopa_getJointIndex(TINKOOPA_JOINT_FEMUR)),
+	    1, this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    TINKOOPA_JPA_MS_MKP_BIRI_W1HE,
+	    getModel()->getAnmMtx(TTinKoopa_getJointIndex(TINKOOPA_JOINT_HEAD)), 1,
 	    this);
 
 	if (mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
-		gpMarioParticleManager->emitAndBindToPosPtr(0x1B3, &mEffectJoint1Pos, 1,
-		                                             this);
-		gpMarioParticleManager->emitAndBindToPosPtr(
-		    0x1B3, &mEffectJoint1Pos, 1, secondaryOwner);
-		gpMarioParticleManager->emitAndBindToPosPtr(0x1B4, &mEffectJoint1Pos, 1,
-		                                             this);
-		gpMarioParticleManager->emitAndBindToPosPtr(
-		    0x1B4, &mEffectJoint1Pos, 1, secondaryOwner);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_BIRI_D1BR_A,
+		                                            &mBreastPos, 1, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_BIRI_D1BR_A,
+		                                            &mBreastPos, 1, this + 1);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_BIRI_D1BR_B,
+		                                            &mBreastPos, 1, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_BIRI_D1BR_B,
+		                                            &mBreastPos, 1, this + 1);
 	}
+
 	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	     && mPhase <= 1)
+	     && mDamageStage > 1)
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
-		gpMarioParticleManager->emitAndBindToPosPtr(0x1B5, &mEffectJoint3Pos, 1,
-		                                             this);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_KEMU_B1AR,
+		                                            &mRightArmPos, 1, this);
+
 	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	     && mPhase <= 2)
+	     && mDamageStage > 2)
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
 		gpMarioParticleManager->emitAndBindToPosPtr(
-		    0x1B5, &mEffectJoint4Pos, 1, secondaryOwner);
-	if (((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	      && mPhase > 0)
-	     || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
-	     || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
-	    && (mPhase == 1 || mPhase == 2)) {
-		jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]);
-		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B6, jointMtx, 1, this);
-		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B7, jointMtx, 1, this);
-	}
+		    TINKOOPA_JPA_MS_MKP_KEMU_B1AR, &mLeftArmPos, 1, this + 1);
+
 	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
-	     && mPhase <= 2)
+	     && mDamageStage > 0)
+	    || (mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
+	        && mDamageStage > 0)
+	    || (mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()
+	        && (mDamageStage == 1 || mDamageStage == 2))) {
+		MtxPtr breast = getModel()->getAnmMtx(
+		    TTinKoopa_getJointIndex(TINKOOPA_JOINT_BREAST));
+		gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_KEMU_W2BR_A,
+		                                            breast, 1, this);
+		gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_KEMU_W2BR_B,
+		                                            breast, 1, this);
+	}
+
+	if ((mSpine->getCurrentNerve() == &TNerveTinKoopaWait::theNerve()
+	     && mDamageStage > 2)
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve())
-		gpMarioParticleManager->emitAndBindToPosPtr(0x1B8, &mEffectJoint0Pos, 1,
-		                                             this);
+		gpMarioParticleManager->emitAndBindToPosPtr(TINKOOPA_JPA_MS_MKP_KEMU_B1HE,
+		                                            &mHeadPos, 1, this);
+
 	if (mSpine->getCurrentNerve() == &TNerveTinKoopaDamage::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
-		jointMtx = getModel()->getAnmMtx(TTinKoopa_jointIndexTable[10]);
-		gpMarioParticleManager->emitAndBindToMtxPtr(0x1BA, jointMtx, 1, this);
-		gpMarioParticleManager->emitAndBindToMtxPtr(0x1B9, jointMtx, 1, this);
+		MtxPtr femur = getModel()->getAnmMtx(
+		    TTinKoopa_getJointIndex(TINKOOPA_JOINT_FEMUR));
+		gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_KEMU_B1FE_R,
+		                                            femur, 1, this);
+		gpMarioParticleManager->emitAndBindToMtxPtr(TINKOOPA_JPA_MS_MKP_KEMU_B1FE_L,
+		                                            femur, 1, this);
 	}
 
 	if (mSpine->getCurrentNerve() == &TNerveTinKoopaBreak::theNerve()) {
-		if ((mPhase == 0 || mPhase == 3)
-		    && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
-		if ((mPhase == 1 || mPhase == 2)
-		    && getMActor()->getFrameCtrl(0)->checkPass(104.0f))
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+		if ((mDamageStage == 0 || mDamageStage == 3)
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(100.0f))
+			gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
 
-		if ((mPhase == 0 || mPhase == 3)
-		    && getMActor()->getFrameCtrl(0)->checkPass(108.0f))
+		if ((mDamageStage == 1 || mDamageStage == 2)
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(104.0f))
+			gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
+
+		if ((mDamageStage == 0 || mDamageStage == 3)
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(108.0f))
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xF0, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
-			    this);
-		if (mPhase == 0 && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
+			    TINKOOPA_JPA_MS_MKP_SMOKE1,
+			    getModel()->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_STOMACH)),
+			    0, this);
+
+		if (mDamageStage == 0
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(100.0f))
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xF1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
-			    this);
-		if (mPhase == 3 && getMActor()->getFrameCtrl(0)->checkPass(100.0f))
+			    TINKOOPA_JPA_MS_MKP_PARGE_B14,
+			    getModel()->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_STOMACH)),
+			    0, this);
+
+		if (mDamageStage == 3
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(100.0f))
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xF1, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]), 0,
-			    this);
-		if (mPhase == 1 && getMActor()->getFrameCtrl(0)->checkPass(106.0f))
+			    TINKOOPA_JPA_MS_MKP_PARGE_B14,
+			    getModel()->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_BREAST)),
+			    0, this);
+
+		if (mDamageStage == 1
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(106.0f))
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xF2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[1]), 0,
-			    this);
-		if (mPhase == 2 && getMActor()->getFrameCtrl(0)->checkPass(106.0f))
+			    TINKOOPA_JPA_MS_MKP_PARGE_B23,
+			    getModel()->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_RARM)),
+			    0, this);
+
+		if (mDamageStage == 2
+		    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(106.0f))
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xF2, getModel()->getAnmMtx(TTinKoopa_jointIndexTable[2]), 0,
-			    this);
+			    TINKOOPA_JPA_MS_MKP_PARGE_B23,
+			    getModel()->getAnmMtx(
+			        TTinKoopa_getJointIndex(TINKOOPA_JOINT_LARM)),
+			    0, this);
 	}
 
-	if (mBreakingParts != nullptr)
+	if (mBreakingParts)
 		mBreakingParts->emitPartsDisappearEffects();
 }
 
@@ -1027,8 +1446,8 @@ TTinKoopaManager::TTinKoopaManager(const char* name)
 
 void TTinKoopaManager::createModelData()
 {
-	static TModelDataLoadEntry entry[] = {
-		{ "tinkoopa_body.bmd", 0x10240000, 0 },
+	static const TModelDataLoadEntry entry[] = {
+		{ "tinkoopa_body.bmd", 0x14240000, 0 },
 		{ nullptr, 0, 0 },
 	};
 	createModelDataArray(entry);
@@ -1040,9 +1459,15 @@ void TTinKoopaManager::load(JSUMemoryInputStream& stream)
 	unk38 = new TTinKoopaParams("/enemy/tinkoopa.prm");
 }
 
+// TODO: registers only: retail masks each loop's particle id into r5 and
+// passes that to JPAResourceManager::load, we pass the unmasked sum in r5 and
+// index with the masked copy. Inert: `(u16)` or `i + base` at the call, TU-local
+// SMS_LoadParticle forks with int/u16-copy parameters or `== false`.
+// An `int id` fork called with `(u16)(base + i)` passes and indexes the masked r5 as retail (~6 -> ~5); left: the sum is
+// coloured r5 where retail uses r0. bossManta's loadAfter has the same residue, so the fix belongs in System/Particles.hpp.
 void TTinKoopaManager::loadAfter()
 {
-	static const char* onetimeFilenames[] = {
+	static const char* onetimeFilenames[7] = {
 		"/scene/tinkoopa/jpa/ms_mkp_hibana_d1he.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_killer.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_smoke1.jpa",
@@ -1051,10 +1476,10 @@ void TTinKoopaManager::loadAfter()
 		"/scene/tinkoopa/jpa/ms_mkp_flame_yuge.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_kemu_parts.jpa",
 	};
-	for (int i = 0; i < 7; ++i)
-		SMS_LoadParticle(onetimeFilenames[i], i + 0xEE);
+	for (int i = 0; i < 7; i++)
+		SMS_LoadParticle(onetimeFilenames[i], TINKOOPA_JPA_MS_MKP_HIBANA_D1HE + i);
 
-	static const char* loopFilenames[] = {
+	static const char* loopFilenames[17] = {
 		"/scene/tinkoopa/jpa/ms_mkp_hibana_w1br.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_hibana_w3ar.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_hibana_w4ar.jpa",
@@ -1073,26 +1498,32 @@ void TTinKoopaManager::loadAfter()
 		"/scene/tinkoopa/jpa/ms_mkp_fire_a.jpa",
 		"/scene/tinkoopa/jpa/ms_mkp_fire_b.jpa",
 	};
-	for (int i = 0; i < 17; ++i)
-		SMS_LoadParticle(loopFilenames[i], i + 0x1AC);
+	for (int i = 0; i < 17; i++)
+		SMS_LoadParticle(loopFilenames[i], TINKOOPA_JPA_MS_MKP_HIBANA_W1BR + i);
 
-	static const char* loopIndirectFilenames[] = {
+	static const char* loopIndirectFilenames[1] = {
 		"/scene/tinkoopa/jpa/ms_mkp_fire_c.jpa",
 	};
-	SMS_LoadParticle(loopIndirectFilenames[0], 0x1F2);
+	for (int i = 0; i < 1; i++)
+		SMS_LoadParticle(loopIndirectFilenames[i], TINKOOPA_JPA_MS_MKP_FIRE_C + i);
 }
 
+// Mecha-Bowser is placed by hand, so the manager never makes one.
 TSpineEnemy* TTinKoopaManager::createEnemyInstance() { return nullptr; }
 
 DEFINE_NERVE(TNerveTinKoopaWait, TLiveActor)
 {
-	TTinKoopa* self = (TTinKoopa*)spine->getBody();
+	TTinKoopa* tinKoopa = (TTinKoopa*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->changeBck(TTinKoopa_getWaitAnimationIndex(self->mPhase));
-		self->mDefeatTimer = self->getParams()->mSLDefeatWaitTime.get();
+		tinKoopa->changeBck(
+		    TTinKoopa_getWaitAnimationIndex(tinKoopa->mDamageStage));
+		tinKoopa->mTimers[TINKOOPA_TIMER_DEFEAT_WAIT]
+		    = tinKoopa->getSaveParams()->getSLDefeatWaitTime();
 	}
 
-	if (self->mPhase == 4 && self->mDefeatTimer <= 0)
+	if (tinKoopa->mDamageStage == 4
+	    && tinKoopa->mTimers[TINKOOPA_TIMER_DEFEAT_WAIT] <= 0)
 		TFlagManager::smInstance->setBool(true, 0x5000A);
 
 	return FALSE;
@@ -1100,20 +1531,26 @@ DEFINE_NERVE(TNerveTinKoopaWait, TLiveActor)
 
 DEFINE_NERVE(TNerveTinKoopaDamage, TLiveActor)
 {
-	TTinKoopa* self = (TTinKoopa*)spine->getBody();
+	TTinKoopa* tinKoopa = (TTinKoopa*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->changeBck(TTinKoopa_getDamageAnimationIndex(self->mPhase));
+		tinKoopa->changeBck(
+		    TTinKoopa_getDamageAnimationIndex(tinKoopa->getDamageStage()));
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0xEE, self->getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]),
+		    TINKOOPA_JPA_MS_MKP_HIBANA_D1HE,
+		    tinKoopa->getModel()->getAnmMtx(
+		        TTinKoopa_getJointIndex(TINKOOPA_JOINT_HEAD)),
 		    0, this);
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
 	}
 
-	if (self->mMActor->checkCurBckFromIndex(
-	        TTinKoopa_getDamageAnimationIndex(self->mPhase))
-	    && self->mMActor->curAnmEndsNext(0, nullptr)) {
-		self->changeBck(TTinKoopa_getWaitAnimationIndex(self->mPhase));
-		return TRUE;
+	if (tinKoopa->getMActor()->checkCurBckFromIndex(
+	        TTinKoopa_getDamageAnimationIndex(tinKoopa->mDamageStage))) {
+		if (tinKoopa->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+			tinKoopa->changeBck(
+			    TTinKoopa_getWaitAnimationIndex(tinKoopa->mDamageStage));
+			return TRUE;
+		}
 	}
 
 	return FALSE;
@@ -1121,39 +1558,48 @@ DEFINE_NERVE(TNerveTinKoopaDamage, TLiveActor)
 
 DEFINE_NERVE(TNerveTinKoopaBreak, TLiveActor)
 {
-	TTinKoopa* self = (TTinKoopa*)spine->getBody();
+	TTinKoopa* tinKoopa = (TTinKoopa*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->changeBck(TTinKoopa_getBreakAnimationIndex(self->mPhase));
+		tinKoopa->changeBck(
+		    TTinKoopa_getBreakAnimationIndex(tinKoopa->mDamageStage));
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    0xEE, self->getModel()->getAnmMtx(TTinKoopa_jointIndexTable[0]),
+		    TINKOOPA_JPA_MS_MKP_HIBANA_D1HE,
+		    tinKoopa->getModel()->getAnmMtx(
+		        TTinKoopa_getJointIndex(TINKOOPA_JOINT_HEAD)),
 		    0, this);
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
-		if (self->mPhase == 3) {
-			((TCoasterKillerManager*)self->mKillerManager)->unk60 = 1;
+		gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
+
+		// The last plate is the cue for the killers to stop coming and for
+		// the boss music to fade out.
+		if (tinKoopa->mDamageStage == 3) {
+			tinKoopa->mKillerManager->unk60 = 1;
 			MSBgm::stopTrackBGMs(7, 10);
 		}
 	}
 
-	if (self->mMActor->checkCurBckFromIndex(
-	        TTinKoopa_getBreakAnimationIndex(self->mPhase))) {
-		TTinKoopaPartsBase* parts
-		    = self->mParts[TTinKoopa_getBreakingPartsIndex(self->mPhase)];
-		if (self->mMActor->curAnmEndsNext(0, nullptr)) {
+	if (tinKoopa->getMActor()->checkCurBckFromIndex(
+	        TTinKoopa_getBreakAnimationIndex(tinKoopa->mDamageStage))) {
+		TTinKoopaPartsBase* parts = tinKoopa->getParts(
+		    TTinKoopa_getBreakingPartsIndex(tinKoopa->mDamageStage));
+
+		if (tinKoopa->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 			parts->mCollision->remove();
-			self->mPhase++;
-			self->makeHitCollision();
-			self->mFlame->makeHitCollision();
-			self->changeBck(TTinKoopa_getWaitAnimationIndex(self->mPhase));
-			self->mPartsHP = self->getParams()->mSLPartsHP.get();
+			tinKoopa->mDamageStage++;
+			tinKoopa->makeHitCollision();
+			tinKoopa->changeBck(
+			    TTinKoopa_getWaitAnimationIndex(tinKoopa->mDamageStage));
+			tinKoopa->mPartsHitPoints
+			    = tinKoopa->getSaveParams()->getSLPartsHP();
 			return TRUE;
 		}
 
-		if (!parts->mIsBreaking
-		    && self->mMActor->getFrameCtrl(0)->checkPass(
-		        TTinKoopa_getPartsVisibleFrame(self->mPhase))) {
-			self->mBreakingParts
-			    = self->mParts[TTinKoopa_getBreakingPartsIndex(self->mPhase)];
-			self->mBreakingParts->startBreaking();
+		if (!parts->isBreaking()) {
+			if (tinKoopa->getMActor()
+			        ->getFrameCtrl(ANM_TYPE_BCK)
+			        ->checkPass((f32)TTinKoopa_getPartsVisibleFrame(
+			            tinKoopa->mDamageStage)))
+				tinKoopa->startBreakingParts();
 		}
 	}
 

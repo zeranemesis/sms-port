@@ -77,25 +77,40 @@ void MActorAnmDataBase::sortByFileNameRaw(void** anms)
 	}
 }
 
+// TODO: frame 0x10 against 0x20; retail's allocator temporary sits at 0x14,
+// 8 bytes higher. Tried (cc36): explicit `unk1C()` / `unk1C(TAllocator())`,
+// `unk0` assigned in the body, by-value TU-local allocator forks (named,
+// nested, by-value and const& parameters): they land 0x18/0x10, 0x20/0x18,
+// 0x28/0x18 or 0x30/0x20 (frame/temp), never 0x20/0x14.
+// Retail's temp is the third inline temporary (0xc, 0x10 taken first) plus
+// 8 bytes of named-local area; SDLModelData and TConductor pin TList's own
+// ctor at zero extra slots, so the extra slots belong to this ctor, not
+// std-list.hpp. Inert in the header (tl1): mSize/mAllocator set in the body,
+// `const A&` parameter, TList()/TList(const A&) overloads, a named node local
+// or a static InitNode_(&oEnd_) in Initialize_; a derived list wrapper type.
+// c-k1 (dbg.sh): ours has exactly one object, the allocator default-argument
+// temporary @650 at 0xc (`this` at 0x8). Retail needs one or two words created
+// before it (the 0x20 frame puts the top above 0x18) and two created after it
+// (0xc, 0x10). Inert: a chained `mBrkNum = ... = mBckNum = 0;`.
 MActorAnmData::MActorAnmData()
-    : unk1C(), unk0(0)
+    : unk0(0)
 {
-    mBckAnms = nullptr;
-    mBpkAnms = nullptr;
-    mBtpAnms = nullptr;
-    mBtkAnms = nullptr;
-    mBrkAnms = nullptr;
-    mBlkAnms = nullptr;
+	mBckAnms = nullptr;
+	mBpkAnms = nullptr;
+	mBtpAnms = nullptr;
+	mBtkAnms = nullptr;
+	mBrkAnms = nullptr;
+	mBlkAnms = nullptr;
 
-    unk44 = 0;
-    unk48 = nullptr;
+	unk44 = 0;
+	unk48 = nullptr;
 
-    mBckNum = 0;
-    mBlkNum = 0;
-    mBpkNum = 0;
-    mBtpNum = 0;
-    mBtkNum = 0;
-    mBrkNum = 0;
+	mBckNum = 0;
+	mBlkNum = 0;
+	mBpkNum = 0;
+	mBtpNum = 0;
+	mBtkNum = 0;
+	mBrkNum = 0;
 }
 
 u16 MActorCalcKeyCode(const char* name)
@@ -126,6 +141,14 @@ void MActorAnmData::addIncidentalAnm(const char* parts_name, int joint_index)
 	unk1C.push_back(info);
 }
 
+// TODO: fabricated binder; its named step is the +8 of low pool and the
+// ranking (additional_files above the finder) retail shows in init.
+static inline JKRFileFinder* findFirst(const char* path)
+{
+	JKRFileFinder* finder = JKRFileLoader::findFirstFile(path);
+	return finder;
+}
+
 void MActorAnmData::init(const char* anm_folder, const char** additional_files)
 {
 	char fullAnmPath[256];
@@ -143,12 +166,11 @@ void MActorAnmData::init(const char* anm_folder, const char** additional_files)
 	char anmFolder[256];
 	snprintf(anmFolder, 0xff, "%s%s", fullAnmPath, "/");
 
-	JKRFileFinder* fileFinder = JKRFileLoader::findFirstFile(fullAnmPath);
+	JKRFileFinder* fileFinder = findFirst(fullAnmPath);
 
-	JKRFileFinder* finder = fileFinder;
 	do {
-		addFileNum(finder->mBase.mFileName);
-	} while (finder->findNextFile());
+		addFileNum(fileFinder->mBase.mFileName);
+	} while (fileFinder->findNextFile());
 
 	if (additional_files != nullptr)
 		for (int i = 0; i == 0 || additional_files[i] != nullptr; ++i)
@@ -176,7 +198,7 @@ void MActorAnmData::init(const char* anm_folder, const char** additional_files)
 	mBtkNum = 0;
 	mBrkNum = 0;
 
-	fileFinder = JKRFileLoader::findFirstFile(fullAnmPath);
+	fileFinder = findFirst(fullAnmPath);
 	do {
 		strstr(fileFinder->mBase.mFileName, "#");
 		addFileTable(fileFinder->mBase.mFileName);
@@ -201,10 +223,6 @@ void MActorAnmData::init(const char* anm_folder, const char** additional_files)
 		mBrkAnms->loadAnmPtrArray2(anmFolder, ".brk");
 	if (mBlkAnms)
 		mBlkAnms->loadAnmPtrArray2(anmFolder, ".blk");
-
-	// Dummy to match original stack frame (MWCC: last declared gets low offsets)
-	char dummy[12];
-	(void)dummy;
 }
 
 void MActorAnmData::addFileNum(const char* name)
@@ -223,7 +241,7 @@ void MActorAnmData::addFileNum(const char* name)
 		++mBlkNum;
 }
 
-inline char* MActorAnmData::getSimpleName(const char* file_name)
+char* MActorAnmData::getSimpleName(const char* file_name)
 {
 	u32 length = strlen(file_name) - (strlen(strrchr(file_name, '.')) - 1);
 	char* simple_name = new char[length];
@@ -231,47 +249,51 @@ inline char* MActorAnmData::getSimpleName(const char* file_name)
 	return simple_name;
 }
 
+// TODO: fabricated wrapper; the extra inline level is what gives retail's
+// r28/r29 ranking and per-site frame in addFileTable.
+static inline u16 calcKey(const char* name) { return MActorCalcKeyCode(name); }
+
 void MActorAnmData::addFileTable(const char* param_1)
 {
 	if (strstr(param_1, ".bck") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBckAnms->mAnmNames[mBckNum]    = simple_name;
-		mBckAnms->mAnmKeyCodes[mBckNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBckAnms->mAnmNames[mBckNum] = simple_name;
+		mBckAnms->setKeyCode(mBckNum, calcKey(simple_name));
 		++mBckNum;
 	}
 
 	if (strstr(param_1, ".bpk") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBpkAnms->mAnmNames[mBpkNum]    = simple_name;
-		mBpkAnms->mAnmKeyCodes[mBpkNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBpkAnms->mAnmNames[mBpkNum] = simple_name;
+		mBpkAnms->setKeyCode(mBpkNum, calcKey(simple_name));
 		++mBpkNum;
 	}
 
 	if (strstr(param_1, ".btp") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBtpAnms->mAnmNames[mBtpNum]    = simple_name;
-		mBtpAnms->mAnmKeyCodes[mBtpNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBtpAnms->mAnmNames[mBtpNum] = simple_name;
+		mBtpAnms->setKeyCode(mBtpNum, calcKey(simple_name));
 		++mBtpNum;
 	}
 
 	if (strstr(param_1, ".btk") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBtkAnms->mAnmNames[mBtkNum]    = simple_name;
-		mBtkAnms->mAnmKeyCodes[mBtkNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBtkAnms->mAnmNames[mBtkNum] = simple_name;
+		mBtkAnms->setKeyCode(mBtkNum, calcKey(simple_name));
 		++mBtkNum;
 	}
 
 	if (strstr(param_1, ".brk") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBrkAnms->mAnmNames[mBrkNum]    = simple_name;
-		mBrkAnms->mAnmKeyCodes[mBrkNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBrkAnms->mAnmNames[mBrkNum] = simple_name;
+		mBrkAnms->setKeyCode(mBrkNum, calcKey(simple_name));
 		++mBrkNum;
 	}
 
 	if (strstr(param_1, ".blk") != nullptr) {
-		char* simple_name               = getSimpleName(param_1);
-		mBlkAnms->mAnmNames[mBlkNum]    = simple_name;
-		mBlkAnms->mAnmKeyCodes[mBlkNum] = MActorCalcKeyCode(simple_name);
+		char* simple_name = getSimpleName(param_1);
+		mBlkAnms->mAnmNames[mBlkNum] = simple_name;
+		mBlkAnms->setKeyCode(mBlkNum, calcKey(simple_name));
 		++mBlkNum;
 	}
 }

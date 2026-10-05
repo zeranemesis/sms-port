@@ -1,25 +1,27 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <System/DummyStrings.hpp>
-
 #include <Map/MapWire.hpp>
 
 #include <dolphin/mtx.h>
 #include <dolphin/gx.h>
+#include <fake_tgmath.h>
 #include <dolphin/types.h>
 
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoaderFlags.hpp>
 #include <JSystem/JMath.hpp>
 #include <Camera/CubeMapTool.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/ModelUtil.hpp>
 #include <MoveBG/MapObjManager.hpp>
 #include <Player/MarioAccess.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
+// After the no-memory message: retail's .rodata has setUpTrans's zero and one
+// literals between it and this unit's own data (c-r35).
+#include <Map/MapCollisionEntry.hpp>
 
 TMapWirePoint::TMapWirePoint()
 {
@@ -39,57 +41,83 @@ f32 TMapWire::mFootLength     = 26.0f;
 f32 TMapWire::mDrawWidth      = 5.0f;
 f32 TMapWire::mDrawHeight     = 6.0f;
 
+// Retail adds the point before the offset inside the strip loops, which only
+// happens when the vertex goes through a helper taking the point by reference.
+static inline void addPoint(const JGeometry::TVec3<f32>& p, f32 dx, f32 dz)
+{
+	GXPosition3f32(p.x + dx, p.y, p.z + dz);
+}
+
+static inline void subPoint(const JGeometry::TVec3<f32>& p, f32 dx, f32 dz)
+{
+	GXPosition3f32(p.x - dx, p.y, p.z - dz);
+}
+
+static inline void downPoint(const JGeometry::TVec3<f32>& p, f32 h)
+{
+	GXPosition3f32(p.x, p.y - h, p.z);
+}
+
+// TODO: frame is 0x70, retail 0x78; helper placement on the start/end points
+// moves it in 8-byte steps but no tried split reaches 0x78.
 void TMapWire::drawLower() const
 {
 	f32 xOffset = mDrawAxes.x;
-	f32 zOffset = mDrawAxes.y;
 	xOffset *= mDrawWidth;
+	f32 zOffset = mDrawAxes.y;
 	zOffset *= mDrawWidth;
 
 	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (mNumActiveMapWirePoints + 2) * 2);
 
-	GXPosition3f32(mStartPoint.x - xOffset, mStartPoint.y,
-	               mStartPoint.z - zOffset);
-	GXPosition3f32(mStartPoint.x, mStartPoint.y - mDrawHeight, mStartPoint.z);
+	subPoint(mStartPoint, xOffset, zOffset);
+	downPoint(getStartPoint(), mDrawHeight);
 
 	for (int i = 0; i < mNumActiveMapWirePoints; i++) {
-		GXPosition3f32(mMapWirePoints[i].mPosition.x - xOffset,
-		               mMapWirePoints[i].mPosition.y,
-		               mMapWirePoints[i].mPosition.z - zOffset);
-		GXPosition3f32(mMapWirePoints[i].mPosition.x,
-		               mMapWirePoints[i].mPosition.y - mDrawHeight,
-		               mMapWirePoints[i].mPosition.z);
+		subPoint(mMapWirePoints[i].mPosition, xOffset, zOffset);
+		downPoint(mMapWirePoints[i].mPosition, mDrawHeight);
 	}
 
-	GXPosition3f32(mEndPoint.x - xOffset, mEndPoint.y, mEndPoint.z - zOffset);
-	GXPosition3f32(mEndPoint.x, mEndPoint.y - mDrawHeight, mEndPoint.z);
+	subPoint(mEndPoint, xOffset, zOffset);
+	downPoint(mEndPoint, mDrawHeight);
 
 	GXEnd();
 
 	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (mNumActiveMapWirePoints + 2) * 2);
 
-	GXPosition3f32(mStartPoint.x, mStartPoint.y - mDrawHeight, mStartPoint.z);
-	GXPosition3f32(mStartPoint.x + xOffset, mStartPoint.y,
-	               mStartPoint.z + zOffset);
+	downPoint(mStartPoint, mDrawHeight);
+	addPoint(mStartPoint, xOffset, zOffset);
 
-	const JGeometry::TVec3<f32>* point;
 	for (int i = 0; i < mNumActiveMapWirePoints; i++) {
-		point = &mMapWirePoints[i].mPosition;
-		GXPosition3f32(point->x, point->y - mDrawHeight, point->z);
-		GXPosition3f32(point->x + xOffset, point->y, point->z + zOffset);
+		downPoint(mMapWirePoints[i].mPosition, mDrawHeight);
+		addPoint(mMapWirePoints[i].mPosition, xOffset, zOffset);
 	}
 
-	GXPosition3f32(mEndPoint.x, mEndPoint.y - mDrawHeight, mEndPoint.z);
-	GXPosition3f32(mEndPoint.x + xOffset, mEndPoint.y, mEndPoint.z + zOffset);
+	downPoint(mEndPoint, mDrawHeight);
+	addPoint(mEndPoint, xOffset, zOffset);
 
 	GXEnd();
 }
 
+// TODO: frame is 0x40, retail 0x58; helpers on the start/end points, a
+// const getPoint(), and TVec2/TVec3 offset locals were inert or wrong.
+// lever-search closes it only with a mixed spelling (a named
+// `startPoint` ref for the first vertex's x/z, getStartPoint() elsewhere):
+// docs/progress/lever-search/mapwire_drawupper.patch. Not applied as
+// implausible; addPoint/subPoint on either spelling stays at 99.9.
+// Each getX() passed to addPoint/subPoint is one dead word: all four start
+// and end vertices through the helpers with getStartPoint() on both start
+// ones is instruction-exact at 0x50; getEndPoint() in the end helpers lands
+// 0x58 but schedules the r31 restore after mtlr (and a raw end with the
+// accessor in only one helper breaks the body).
+// c-hs4: getStartPoint() at all six inline start reads (end raw, inline or
+// through the helpers) lands 0x58 with every slot; the only residue is the
+// first vertex's two fadds, where retail adds point + offset (addPoint's
+// order). addPoint(getStartPoint()) there is 0x50, and `xOffset + x` is inert.
 void TMapWire::drawUpper() const
 {
 	f32 xOffset = mDrawAxes.x;
-	f32 zOffset = mDrawAxes.y;
 	xOffset *= mDrawWidth;
+	f32 zOffset = mDrawAxes.y;
 	zOffset *= mDrawWidth;
 
 	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, (mNumActiveMapWirePoints + 2) * 2);
@@ -99,11 +127,9 @@ void TMapWire::drawUpper() const
 	GXPosition3f32(mStartPoint.x - xOffset, mStartPoint.y,
 	               mStartPoint.z - zOffset);
 
-	const JGeometry::TVec3<f32>* point;
 	for (int index = 0; index < mNumActiveMapWirePoints; index++) {
-		point = &mMapWirePoints[index].mPosition;
-		GXPosition3f32(point->x + xOffset, point->y, point->z + zOffset);
-		GXPosition3f32(point->x - xOffset, point->y, point->z - zOffset);
+		addPoint(mMapWirePoints[index].mPosition, xOffset, zOffset);
+		subPoint(mMapWirePoints[index].mPosition, xOffset, zOffset);
 	}
 
 	GXPosition3f32(mEndPoint.x + xOffset, mEndPoint.y, mEndPoint.z + zOffset);
@@ -116,13 +142,13 @@ f32 TMapWire::getPointPowerAtReleased(f32 pos) const
 {
 	// 1 = default height, 0 = stretched all the way down
 	f32 relativeHeightAtPos;
-	if (pos >= mHangPos)
+	if (pos >= mHangPos) {
 		relativeHeightAtPos = (pos - mHangPos) / (1.0f - mHangPos);
-	else
+	} else {
 		relativeHeightAtPos = 1.0f - pos / mHangPos;
+	}
 
 	f32 power = 1.0f - relativeHeightAtPos * relativeHeightAtPos;
-
 	return power;
 }
 
@@ -135,12 +161,13 @@ void TMapWire::getPointPosAtReleased(f32 pos, JGeometry::TVec3<f32>* out) const
 	getPointPosDefault(pos, &defaultPoint);
 
 	f32 power = getPointPowerAtReleased(pos);
-	out->set(linePoint.x,
-	         linePoint.y
-	             + (1.0f - mBounceRemainingPower)
-	                   * (defaultPoint.y - linePoint.y)
-	             + power * mHangOrBouncePoint.y,
-	         linePoint.z);
+
+	// Component stores: retail stores x before the y blend is finished.
+	out->x = linePoint.x;
+	out->y = linePoint.y
+	         + (1.0f - mBounceRemainingPower) * (defaultPoint.y - linePoint.y)
+	         + power * mHangOrBouncePoint.y;
+	out->z = linePoint.z;
 }
 
 void TMapWire::updatePointAtReleased(int index)
@@ -153,7 +180,11 @@ void TMapWire::updatePointAtReleased(int index)
 		pos = mapWirePoint->mPosOnWire + mapWirePoint->mPosReturnRate;
 	}
 
-	getPointPosAtReleased(pos, &mapWirePoint->mPosition);
+	// The point is computed into a local and then copied: writing straight
+	// into mPosition puts move()/release() instructions off retail.
+	JGeometry::TVec3<f32> newPos;
+	getPointPosAtReleased(pos, &newPos);
+	mapWirePoint->mPosition.set(newPos.x, newPos.y, newPos.z);
 }
 
 bool TMapWire::updateMovePointAtReleased()
@@ -168,19 +199,25 @@ bool TMapWire::updateMovePointAtReleased()
 		mMoveTimer -= 2.0f;
 	}
 
-	f32 cosine           = JMASCos(mMoveTimer * 32768.0f);
-	mHangOrBouncePoint.y = cosine * mBounceAmplitude * mBounceRemainingPower;
-
+	f32 bounceCos = JMASCos(mMoveTimer * 32768.0f);
+	mHangOrBouncePoint.y = bounceCos * mBounceAmplitude * mBounceRemainingPower;
 	return false;
 }
 
 void TMapWire::initPointAtJustReleased(f32 pos, TMapWirePoint* point)
 {
 	point->mPosOnWire = pos;
-	getPointPosAtReleased(pos, &point->mPosition);
+	JGeometry::TVec3<f32> newPos;
+	getPointPosAtReleased(pos, &newPos);
+	point->mPosition.set(newPos.x, newPos.y, newPos.z);
 	point->mPosReturnRate = (point->mDefaultPosOnWire - pos) / 1000.0f;
 }
 
+// TODO: 99.8%: frame 0x138 vs ours 0xf8, every instruction and register
+// right. Same missing slots as move(). Assigning Mario's velocity
+// component-wise (upstream's spelling) moves the register choice closer
+// than the three-argument constructor did; SMS_GetMarioSpeed*() at all
+// four reads instead of the raw pointers adds 0x10 of frame (c-hs6).
 void TMapWire::release()
 {
 	if (mState == TMapWire::RELEASED)
@@ -220,11 +257,11 @@ void TMapWire::release()
 
 	f32 stretchRatio = mStretchRate * abs(mHangPos - 0.5f);
 
-	if (*gpMarioSpeedY > 0) {
+	if (SMS_GetMarioSpeedY() > 0) {
 		JGeometry::TVec3<f32> marioVel;
-		marioVel.x       = *gpMarioSpeedX;
-		marioVel.y       = *gpMarioSpeedY;
-		marioVel.z       = *gpMarioSpeedZ;
+		marioVel.x = SMS_GetMarioSpeedX();
+		marioVel.y = SMS_GetMarioSpeedY();
+		marioVel.z = SMS_GetMarioSpeedZ();
 		mBounceAmplitude = mHeightRate * marioVel.length();
 	} else {
 		mBounceAmplitude = mReleaseHeight;
@@ -303,10 +340,16 @@ void TMapWire::calcViewAndDBEntry()
 	mEndFittingModel->viewCalc();
 }
 
+// TODO: 99.8%: frame 0xd8 vs ours 0x90, every instruction right: retail's
+// linePoint/defaultPoint pair sits 0x34 higher and the JMASCos fctiwz slot
+// 0x1c further above it. getPointPosDefault spelled as component stores,
+// a named sag or scaleAdd changes code (move 90-92%); declaring newPos,
+// linePoint/defaultPoint or a named y earlier is frame-inert or +8, and
+// computing power first changes code. Needs a structural lead. The JMASCos
+// product's register came from updateMovePointAtReleased naming the cosine
+// and multiplying it first (either alone is inert).
 void TMapWire::move()
 {
-	bool bounceFinished;
-
 	switch (mState) {
 	case IDLE:
 		break;
@@ -315,9 +358,7 @@ void TMapWire::move()
 		break;
 
 	case RELEASED:
-		bounceFinished = updateMovePointAtReleased();
-
-		if (bounceFinished) {
+		if (updateMovePointAtReleased()) {
 			TMapWirePoint* mapWirePoint;
 
 			for (int i = 0; i < mNumActiveMapWirePoints; i++) {
@@ -327,44 +368,53 @@ void TMapWire::move()
 
 			mState = TMapWire::IDLE;
 		} else {
-			for (int i = 0; i < mNumActiveMapWirePoints; i++)
+			for (int i = 0; i < mNumActiveMapWirePoints; i++) {
 				updatePointAtReleased(i);
+			}
 		}
 	}
 }
 
 f32 TMapWire::getPosInWire(const JGeometry::TVec3<f32>& point) const
 {
-	// TODO: This needs stack offset adjustments
+	// TODO: frame, instructions and named block match: retail's perpPoint is
+	// the top named slot (0x9c), so it is declared first and assigned later
+	// (c-t6; named getStartPoint/getEndPoint references are worse). Left:
+	// the two length temporaries of the return swap places (retail's first
+	// at 0x54, its second at 0x60); a named denominator moves the frame.
 
 	// Position here is only considered in the horizontal plane
-	JGeometry::TVec3<f32> flatStart = mStartPoint;
-	JGeometry::TVec3<f32> flatEnd   = mEndPoint;
+	JGeometry::TVec3<f32> perpPoint;
+	JGeometry::TVec3<f32> flatStart = getStartPoint();
+	JGeometry::TVec3<f32> flatEnd   = getEndPoint();
 	flatStart.y                     = 0.0f;
 	flatEnd.y                       = 0.0f;
 
-	JGeometry::TVec3<f32> perpPoint
-	    = MsPerpendicFootToLineR(flatStart, flatEnd, point);
+	perpPoint = MsPerpendicFootToLineR(flatStart, flatEnd, point);
 
-	f32 totalLength   = JGeometry::TVec3<f32>(flatEnd - flatStart).length();
-	f32 partialLength = JGeometry::TVec3<f32>(perpPoint - flatStart).length();
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
-	return partialLength / totalLength;
+	return JGeometry::TVec3<f32>(perpPoint - flatStart).length()
+	     / JGeometry::TVec3<f32>(flatEnd - flatStart).length();
 }
 
+/**
+ * @brief Gets a position on the straight line connecting the wire's endpoints.
+ *
+ * @param pos the relative position on the wire (0 to 1)
+ * @param out the output vector
+ */
+// TODO: retail spells the products span-first (`fmadds span, pos, start`).
+// `out->set(...)` here is refuted: it lands move()'s out-of-line `bl set<f>`
+// (84.3 -> 85.4) but costs getPointPosOnWire 95.8 -> 48.9, so the
+// out-of-line `set` in move()/release() must come from a deeper expansion.
 void TMapWire::getPointPosOnLine(f32 pos, JGeometry::TVec3<f32>* out) const
 {
-	out->set(mStartPoint.x + mWireSpan.x * pos,
-	         mStartPoint.y + mWireSpan.y * pos,
-	         mStartPoint.z + mWireSpan.z * pos);
+	out->set(mWireSpan.x * pos + mStartPoint.x, mWireSpan.y * pos + mStartPoint.y,
+	         mWireSpan.z * pos + mStartPoint.z);
 }
 
+// TODO: 99.7%: the line point's x/z loads are ordered x before z in retail,
+// z before x here (getPointPosDefault's set arguments); spelling it as
+// component stores or a scaleAdd shrinks the frame to 0x58 and costs move.
 void TMapWire::getPointPosOnWire(f32 pos, JGeometry::TVec3<f32>* out) const
 {
 	if (pos < 0.0f) {
@@ -377,32 +427,23 @@ void TMapWire::getPointPosOnWire(f32 pos, JGeometry::TVec3<f32>* out) const
 	if (mState == TMapWire::HANGING) {
 		getPointPosAtHanged(pos, out);
 	} else {
-		JGeometry::TVec3<f32> linePoint;
-		linePoint.x = mStartPoint.x + mWireSpan.x * pos;
-		linePoint.y = mStartPoint.y + mWireSpan.y * pos;
-		linePoint.z = mStartPoint.z + mWireSpan.z * pos;
-
-		JGeometry::TVec3<f32> defaultPoint;
-		getPointPosDefault(pos, &defaultPoint);
-
-		f32 lineX = linePoint.x;
-		f32 lineZ = linePoint.z;
-		f32 power = getPointPowerAtReleased(pos);
-		out->x    = lineX;
-		out->y
-		    = linePoint.y
-		      + (1.0f - mBounceRemainingPower) * (defaultPoint.y - linePoint.y)
-		      + power * mHangOrBouncePoint.y;
-		out->z = lineZ;
+		getPointPosAtReleased(pos, out);
 	}
 }
 
+/**
+ * @brief The "default" position of a point on this wire after accounting for
+ * its sag factor.
+ *
+ * @param pos the relative position on the wire (0 to 1)
+ * @param out the output vector
+ */
 void TMapWire::getPointPosDefault(f32 pos, JGeometry::TVec3<f32>* out) const
 {
-	out->set(mStartPoint.x + mWireSpan.x * pos,
-	         mStartPoint.y + mWireSpan.y * pos
+	out->set(mWireSpan.x * pos + mStartPoint.x,
+	         mWireSpan.y * pos + mStartPoint.y
 	             - mWireSag * JMASSin(pos * 32768.0f),
-	         mStartPoint.z + mWireSpan.z * pos);
+	         mWireSpan.z * pos + mStartPoint.z);
 }
 
 void TMapWire::initTipPoints(const TCubeGeneralInfo* cubeInfo)
@@ -428,7 +469,9 @@ void TMapWire::initTipPoints(const TCubeGeneralInfo* cubeInfo)
 	mWireSpan = mEndPoint - mStartPoint;
 }
 
-// TODO: Needs work, but otherwise mathematically equivalent
+// TODO: two instructions differ and the frame is 0x30 short (0x180 vs
+// 0x1b0); getStartPoint() at the start reads (end raw, as in drawUpper) took
+// it from 0x168.
 void TMapWire::init(const TCubeGeneralInfo* cubeInfo)
 {
 	mNumMapWirePoints = (s32)((cubeInfo->getUnk24().z / 50.0f + 1.0f) - 2.0f);
@@ -456,15 +499,16 @@ void TMapWire::init(const TCubeGeneralInfo* cubeInfo)
 		point2->reset();
 	}
 
-	if (mEndPoint.x != mStartPoint.x) {
-		f32 angle   = atanf((mEndPoint.z - mStartPoint.z)
-		                    / (mEndPoint.x - mStartPoint.x));
+	if (mEndPoint.x != getStartPoint().x) {
+		f32 angle   = atanf((mEndPoint.z - getStartPoint().z)
+		                    / (mEndPoint.x - getStartPoint().x));
 		mWireHAngle = -angle * 180.0f / M_PI + 90.0f;
 	} else {
 		mWireHAngle = 0.0f;
 	}
 
-	mDrawAxes.set(mEndPoint.x - mStartPoint.x, mEndPoint.z - mStartPoint.z);
+	mDrawAxes.set(mEndPoint.x - getStartPoint().x,
+	              mEndPoint.z - getStartPoint().z);
 	mDrawAxes.normalize();
 	mDrawAxes.rotate(M_PI / 2);
 
@@ -480,9 +524,9 @@ void TMapWire::init(const TCubeGeneralInfo* cubeInfo)
 
 	Mtx mtx;
 
-	MsMtxSetXYZRPH(mtx, mStartPoint.x, mStartPoint.y, mStartPoint.z,
-	               cubeInfo->getUnk18().x, cubeInfo->getUnk18().y,
-	               cubeInfo->getUnk18().z);
+	MsMtxSetXYZRPH(mtx, getStartPoint().x, getStartPoint().y,
+	               getStartPoint().z, cubeInfo->getUnk18().x,
+	               cubeInfo->getUnk18().y, cubeInfo->getUnk18().z);
 	mStartFittingModel->setBaseTRMtx(mtx);
 	mStartFittingModel->calc();
 

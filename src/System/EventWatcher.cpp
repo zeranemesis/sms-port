@@ -34,20 +34,6 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-// The original calls JGeometry::TUtil<f32>::sqrt(v) out-of-line here
-// (bl sqrt__Q29JGeometry8TUtil<f>Ff), with the range guard inside the
-// callee. JGUtil.hpp only offers the inline spelling, so MWCC always
-// expands these sites and the call never appears.
-// FABRICATED: the callee is orig_sqrt, so the `bl` itself still shows as
-// one mismatched instruction. Making JGUtil.hpp out-of-line instead was
-// measured repo-wide at -32.2 points - see docs/AGENT_MATCHING_TIPS.md.
-#pragma dont_inline on
-static f32 orig_sqrt(f32 v) {
-	return JGeometry::TUtil<f32>::sqrt(v);
-}
-#pragma dont_inline off
-
-
 // TODO: from M3UJoint or J3DJoint?
 static void dummy()
 {
@@ -82,8 +68,8 @@ static void evGetNameRefHandle(TSpcTypedInterp<TEventWatcher>* interp,
 {
 	interp->verifyArgNum(1, &arg_num);
 
-	JDrama::TNameRef* ref
-	    = JDrama::TNameRefGen::search(interp->pop().getDataString());
+	JDrama::TNameRef* ref = JDrama::TNameRefGen::search<JDrama::TNameRef>(
+	    interp->pop().getDataString());
 
 	interp->push((int)ref);
 }
@@ -97,7 +83,7 @@ static void evGetNameRefName(TSpcTypedInterp<TEventWatcher>* interp,
 
 	const char* name;
 	if (ref)
-		name = ((JDrama::TNameRef*)ref)->getName();
+		name = ((JDrama::TNameRef*)(u32)ref)->getName();
 	else
 		name = "";
 
@@ -114,16 +100,24 @@ static JDrama::TNameRef* getNameRefPtr(TSpcSlice slice)
 	switch (slice.typeof()) {
 	case TSpcSlice::TYPE_STRING: {
 		const char* name = slice.getDataString();
-		result           = JDrama::TNameRefGen::search(name);
+		result           = JDrama::TNameRefGen::search<JDrama::TNameRef>(name);
 		break;
 	}
 
 	case TSpcSlice::TYPE_INT:
-		result = (JDrama::TNameRef*)slice.getDataInt();
+		result = (JDrama::TNameRef*)(u32)slice.getDataInt();
 		break;
 	}
 
 	return result;
+}
+
+// Binding level worth +16 of low region, landing evGetNPCType's frame at
+// 0x90 (batch 124).
+static inline u32 EventWatcherGetActorType(const TBaseNPC* p)
+{
+	u32 actorType = p->getActorType();
+	return actorType;
 }
 
 static void evGetNPCType(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
@@ -132,7 +126,7 @@ static void evGetNPCType(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	int result    = -1;
 	TBaseNPC* npc = (TBaseNPC*)getNameRefPtr(interp->pop());
 	if (npc)
-		result = npc->getActorType() - 0x4000001;
+		result = EventWatcherGetActorType(npc) - 0x4000001;
 	interp->push(result);
 }
 
@@ -181,6 +175,9 @@ static void evSetFlagNPCDead(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push();
 }
 
+// TODO: 99.8%, every instruction right; frame 0x158 vs 0x150, with the
+// upper objects (pops, slices, the diff) 0xc high. Inert: unnamed num or obj,
+// u32 type, count declared first, TSpcSlice(pop()) for dist.
 static void evIsNearSameActors(TSpcTypedInterp<TEventWatcher>* interp,
                                u32 arg_num)
 {
@@ -204,9 +201,7 @@ static void evIsNearSameActors(TSpcTypedInterp<TEventWatcher>* interp,
 	for (int i = 0; i < num; ++i) {
 		TMapObjBase* obj = gpMapObjManager->getObj(i);
 		if (type == obj->getActorType()) {
-			JGeometry::TVec3<f32> diff = which->mPosition;
-			diff -= obj->mPosition;
-			if (orig_sqrt(diff.squared()) <= dist)
+			if ((which->mPosition - obj->mPosition).length() <= dist)
 				count++;
 		}
 	}
@@ -216,32 +211,37 @@ static void evIsNearSameActors(TSpcTypedInterp<TEventWatcher>* interp,
 /// Counts how many of the actors named by arguments 2..n sit within a given
 /// distance of the actor named by argument 0. The arguments stay on the process
 /// stack until the end, because the count of them is only known at run time.
+// TODO: every instruction and the 0xe0 frame match; the pushed count slice sits
+// 4 low (0x64 vs 0x68). `!= nullptr` tests, a TSpcSlice push, a const dist and
+// the pop loop spelled with `i` are inert.
+// Length of the unnamed operator- result is what makes MWCC call
+// TUtil<f32>::sqrt as retail does (a named diff expands it); the raw mData
+// reads give retail's single `mSize - (arg_num - i)` subtraction.
 static void evIsNearActors(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	int count = 0;
+	u32 i;
 
 	if (arg_num >= 3) {
 		THitActor* which = (THitActor*)getNameRefPtr(
-		    interp->mProcessStack.getFromTop(arg_num - 1));
+		    interp->mProcessStack.mData[interp->mProcessStack.mSize - arg_num]);
 		if (which) {
 			f32 dist
 			    = interp->mProcessStack.getFromTop(arg_num - 2).getDataFloat();
 
-			count = 1;
-			for (u32 i = 2; i < arg_num; ++i) {
+			for (i = 2, count = 1; i < arg_num; ++i) {
 				THitActor* other = (THitActor*)getNameRefPtr(
-				    interp->mProcessStack.getFromTop(arg_num - 1 - i));
+				    interp->mProcessStack
+				        .mData[interp->mProcessStack.mSize - (arg_num - i)]);
 				if (other) {
-					JGeometry::TVec3<f32> diff = which->mPosition;
-					diff -= other->mPosition;
-					if (orig_sqrt(diff.squared()) <= dist)
+					if ((which->mPosition - other->mPosition).length() <= dist)
 						count++;
 				}
 			}
 		}
 	}
 
-	for (int i = 0; i < arg_num; ++i)
+	for (int i = 0; i < (int)arg_num; ++i)
 		interp->pop();
 
 	interp->push(count);
@@ -263,9 +263,15 @@ static void evGetTalkNPCName(TSpcTypedInterp<TEventWatcher>* interp,
 
 	TBaseNPC* npc = SMSGetMarDirector()->getTalkingNPC();
 
-	if (!npc)
-		interp->push("");
-	else
+	// Named so push(const char*) cannot prove the pointer non-null and
+	// drop setDataString's `if (!v)` — `push("")` constant-folds it
+	// away (94.4% -> 98.1%). Merging both arms into one name local
+	// collapses the two push expansions (60%). Residue is the 4-byte
+	// slice-slot family.
+	if (!npc) {
+		const char* name = "";
+		interp->push(name);
+	} else
 		interp->push(npc->getName());
 }
 
@@ -288,26 +294,55 @@ static void evGetTalkNPCName(TSpcTypedInterp<TEventWatcher>* interp,
 // measurement: a named `TSpcSlice` local (fewer temporaries, not more), a
 // popInt() on TSpcInterp, `operator int()`, and an extra copy inside
 // TSpcInterp::pop() itself (that one makes the whole file worse).
+// Bare-return fork over the raw global. Named at the call site it lands
+// retail's 0x88 frame and the `addi r5, r30, 0` argument copy; the raw global
+// named directly, or the binder form of this fork, stays 8 or 4 bytes off.
+static inline TTalk2D2* EventWatcherTalk2DForMsgID() { return gpTalk2D; }
+
 static void evSetTalkMsgID(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
 	int p1 = TSpcSlice(interp->pop()).getDataInt();
 	int p2 = TSpcSlice(interp->pop()).getDataInt();
-	gpTalk2D->setMessageID(p2, p1);
+	TTalk2D2* talk2D = EventWatcherTalk2DForMsgID();
+	talk2D->setMessageID(p2, p1);
 	interp->push();
+}
+
+// evGetTalkMode matches with a direct-return fork and a named int result.
+// TODO: frames now exact via TU-local binders (the
+// director for getTalkNPC). Residue is load order: retail
+// stores the slice type word, then the inlined member. A helper that
+// both names the pointer and pushes made TSpcStack::push a `bl` (38%).
+// evGetTalkNPCName is the same family at a 4-byte slice slot; evIsTalkModeNow
+// is frame-exact with the slice 4 low.
+static inline u32 EventWatcherTalkMode()
+{
+	return gpTalk2D->getTalkMode();
 }
 
 static void evGetTalkMode(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	interp->push((int)gpTalk2D->getTalkMode());
+	int mode = EventWatcherTalkMode();
+	interp->push(mode);
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// evForceCloseTalk (batch 127); with a named int result it also closes
+// evGetTalkSelectedValue.
+static inline TTalk2D2* EventWatcherGetTalk2D()
+{
+	TTalk2D2* talk2D = gpTalk2D;
+	return talk2D;
 }
 
 static void evGetTalkSelectedValue(TSpcTypedInterp<TEventWatcher>* interp,
                                    u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	interp->push((int)gpTalk2D->getSelectedValue());
+	int value = EventWatcherGetTalk2D()->getSelectedValue();
+	interp->push(value);
 }
 
 static void evSetValue2TalkVariable(TSpcTypedInterp<TEventWatcher>* interp,
@@ -322,10 +357,16 @@ static void evSetValue2TalkVariable(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push();
 }
 
+// Bare-return fork whose body calls the header accessor: +4 of pool.
+static inline bool EventWatcherIsTalkModeNow()
+{
+	return SMSGetMarDirector()->isTalkModeNow();
+}
+
 static void evIsTalkModeNow(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	int value = SMSGetMarDirector()->isTalkModeNow() ? 1 : 0;
+	int value = EventWatcherIsTalkModeNow() ? 1 : 0;
 	interp->push(value);
 }
 
@@ -333,9 +374,9 @@ static void evSetFlagNPCCanTaken(TSpcTypedInterp<TEventWatcher>* interp,
                                  u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
-	int arg          = TSpcSlice(interp->pop()).getDataInt();
+	s32 arg          = TSpcSlice(interp->pop()).getDataInt();
 	const char* name = interp->pop().getDataString();
-	TBaseNPC* npc = static_cast<TBaseNPC*>(JDrama::TNameRefGen::search(name));
+	TBaseNPC* npc    = (TBaseNPC*)JDrama::TNameRefGen::search2(name);
 	if (npc) {
 		if (arg)
 			npc->onLiveFlag(LIVE_FLAG_UNK100000);
@@ -357,13 +398,16 @@ static void evPushNerve4LiveActor(TSpcTypedInterp<TEventWatcher>* interp,
 	const char* actorName               = interp->pop().getDataString();
 
 	TLiveActor* liveActor
-	    = static_cast<TLiveActor*>(JDrama::TNameRefGen::search(actorName));
+	    = (TLiveActor*)JDrama::TNameRefGen::search2(actorName);
 	if (liveActor && nerve)
 		liveActor->mSpine->pushNerve(nerve);
 
 	interp->push();
 }
 
+// TODO: 99.8%, instruction-exact at retail's 0xb0; every getNameRefPtr and
+// push temporary sits 4 low. Inert: `result` or `liveActor` declared early,
+// u32 flag, early return, `!= nullptr`; slice copies change the code.
 static void evIsOnLiveActorFlag(TSpcTypedInterp<TEventWatcher>* interp,
                                 u32 arg_num)
 {
@@ -382,11 +426,11 @@ static void evSetHide4LiveActor(TSpcTypedInterp<TEventWatcher>* interp,
                                 u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
-	int value             = TSpcSlice(interp->pop()).getDataInt();
+	s32 value             = TSpcSlice(interp->pop()).getDataInt();
 	const char* actorName = interp->pop().getDataString();
 
 	TLiveActor* liveActor
-	    = static_cast<TLiveActor*>(JDrama::TNameRefGen::search(actorName));
+	    = (TLiveActor*)JDrama::TNameRefGen::search2(actorName);
 	if (liveActor) {
 		if (value) {
 			liveActor->onLiveFlag(LIVE_FLAG_HIDDEN);
@@ -400,15 +444,24 @@ static void evSetHide4LiveActor(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push();
 }
 
+// TODO (also evSetHide4LiveActor and evSetFlagNPCCanTaken): 99.95%, every
+// instruction and every referenced local slot exact, frame 8 bytes too big
+// (0xa0 vs 0x98) -- the mirror of the "last 8 bytes" family: eight unreferenced
+// bytes between our highest local and the register saves. Spelling the search
+// out as `getInstance()->getRootNameRef()->search(name)` removes exactly those
+// 8 (frame exact) but then shifts the slots 4-8 down, so the missing level is
+// one below search2, not at the call site. Naming the popped string is
+// load-bearing (the ROM keeps it in r27 and copies with `addi r3, r27, 0`);
+// inlining it into the search argument costs 1.2 points.
 static void evSetDead4LiveActor(TSpcTypedInterp<TEventWatcher>* interp,
                                 u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
-	int value             = TSpcSlice(interp->pop()).getDataInt();
+	s32 value             = TSpcSlice(interp->pop()).getDataInt();
 	const char* actorName = interp->pop().getDataString();
 
 	TLiveActor* liveActor
-	    = static_cast<TLiveActor*>(JDrama::TNameRefGen::search(actorName));
+	    = (TLiveActor*)JDrama::TNameRefGen::search2(actorName);
 	if (liveActor) {
 		if (value) {
 			liveActor->onLiveFlag(LIVE_FLAG_DEAD);
@@ -422,15 +475,32 @@ static void evSetDead4LiveActor(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push();
 }
 
+// Binder over the director accessor; the raw-global
+// SMSGetMarDirectorBound binder is 8 cheaper.
+static inline TMarDirector* EventWatcherMarDirector()
+{
+	TMarDirector* marDirector = SMSGetMarDirector();
+	return marDirector;
+}
+
+// A named director for the stopwatch and the binder for the store: retail's
+// 0x68 frame with every slot in place.
 static void evSetTimeLimit(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	int time = TSpcSlice(interp->pop()).getDataInt();
-	OSResetStopwatch(&SMSGetMarDirector()->unkE8);
-	SMSGetMarDirector()->unk120 = time;
+	int time               = TSpcSlice(interp->pop()).getDataInt();
+	TMarDirector* director = SMSGetMarDirector();
+	OSResetStopwatch(&director->unkE8);
+	EventWatcherMarDirector()->unk120 = time;
 	interp->push();
 }
 
+// TODO (also evSetPollutionIncreaseCount): instruction-exact, frame 0x58 vs
+// retail 0x70 with every slot 0x10 low. The dead getDataInt still reserves
+// slots: TSpcSlice(interp->pop()) as in evSetTimeLimit is +8, a bare pop()
+// or a named slice is smaller; getDataFloat, operator int are inert or worse.
+// Also measured: an f32/u32/u8 local, a const reference to the slice, a
+// double TSpcSlice copy (0x68 but +14 instructions), getDataString, push(0).
 static void evSetAttentionTime(TSpcTypedInterp<TEventWatcher>* interp,
                                u32 arg_num)
 {
@@ -455,8 +525,15 @@ static void evSetPollutionIncreaseCount(TSpcTypedInterp<TEventWatcher>* interp,
 
 static void evGetRestTime(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
+	// TODO: frame exact with the raw global; the pushed slice sits 4 low
+	// (0x1c vs 0x20), the evIsTalkModeNow class. Inert: SMSGetMarDirector(),
+	// a named director or result, (int), an explicit TSpcSlice.
+	// Header lever (not taken here, MarDirector.hpp is not this unit's):
+	// binding the result inside TMarDirector::getRestTime
+	// (`int rest = unk120 - time; return rest;`) closes this function and
+	// moves nothing else in the unit; it is getRestTime's only caller.
 	interp->verifyArgNum(0, &arg_num);
-	interp->push(SMSGetMarDirector()->getRestTime());
+	interp->push(gpMarDirector->getRestTime());
 }
 
 static void evGetPollutionLevel(TSpcTypedInterp<TEventWatcher>* interp,
@@ -466,26 +543,19 @@ static void evGetPollutionLevel(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push((int)gpPollution->getPollutionDegree());
 }
 
+// TODO: both are UNUSED (map 0x174 and 0x148, i.e. 93 and 82 instructions), so
+// there is no assembly to read and no string of their own left in the pool --
+// this TU's .rodata is already exact with the stubs empty, so whatever they
+// referenced was shared. 90-odd instructions is far more than any neighbouring
+// builtin, so a body cannot be invented from the name; left empty on purpose
+// rather than guessed. If evidence turns up it will be the event table these
+// two write into, since `interp` and `arg_num` are all they are given.
 static void evSetEventStart(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	interp->verifyArgNum(1, &arg_num);
-	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
-	if (event) {
-		event->startControl();
-		event->unk18 = 2;
-		event->unk1C = nullptr;
-		u32 dummy = event->unk18;
-		(void)dummy;
-	}
-	interp->push();
 }
 
 static void evSetEventEnd(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	interp->verifyArgNum(1, &arg_num);
-	TMapEvent* event = (TMapEvent*)interp->pop().getDataInt();
-	event->finishControl();
-	interp->push();
 }
 
 static void evSetNextStage(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
@@ -494,11 +564,11 @@ static void evSetNextStage(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	int scenario = TSpcSlice(interp->pop()).getDataInt();
 	int stage    = TSpcSlice(interp->pop()).getDataInt();
 
-	// This function reads the global directly. The rest of the file goes
-	// through SMSGetMarDirector(), but here the accessor makes the match worse
-	// (94.8% -> 92.4%), so the original must have had the bare global.
-	gpMarDirector->setNextStage((scenario & 0xff) + ((stage + 1) << 8),
-	                            nullptr);
+	// The director is a named local over the plain accessor: retail's 0x88
+	// frame. Chaining the accessor or the raw global is 8 short, a binder 8
+	// long.
+	TMarDirector* director = SMSGetMarDirector();
+	director->setNextStage((scenario & 0xff) + ((stage + 1) << 8), nullptr);
 
 	interp->push();
 }
@@ -507,18 +577,24 @@ static void evRegisterMovie(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	int movieId = TSpcSlice(interp->pop()).getDataInt();
-	SMSGetMarDirector()->fireStreamingMovie(movieId);
+	TMarDirector* director = SMSGetMarDirector();
+	director->fireStreamingMovie(movieId);
 	interp->push();
 }
 
+// The nil push has two spellings and they are not interchangeable: writing the
+// temporary at the call site (`push(TSpcSlice())`) puts the slice one 4-byte
+// pool slot *above* where the zero-argument `push()` overload puts it, because
+// that overload builds the same temporary one inlining level down. Both forms
+// occur among this file's exact functions, so the choice is per function; here
+// the accessor binder above plus the call-site temporary is what lands
+// retail's 0x38 frame with the slice at 0x24 (the raw-global fork plus
+// `push()` is 0x30/0x1c, and `push()` alone with the binder is 0x38/0x20).
 static void evGameOver(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-
-	
-	
 	interp->verifyArgNum(0, &arg_num);
-	SMSGetMarDirector()->onFlag(TMarDirector::DIRECTOR_FLAG_SHINE_GET_PENDING);
-	interp->push();
+	EventWatcherMarDirector()->onUnk4CFlag(0x1);
+	interp->push(TSpcSlice());
 }
 
 static void evIsGraffitoCoverage0(TSpcTypedInterp<TEventWatcher>* interp,
@@ -528,20 +604,26 @@ static void evIsGraffitoCoverage0(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push(gpPollution->cleanedAll() ? 1 : 0);
 }
 
+// TODO: 99.2%, frame exact; only the loop counter/layer registers differ
+// (retail i in r7 with the layer in r5 in both loops).
+// Register model (c-g4): the layer webs get r3/r4 because only the own loop's
+// strength-reduced counter interferes with them; retail's r5 needs both
+// counters (r3 and r4) live across both loops, i.e. different liveness, not
+// a colouring order (no single move in the replay reaches retail).
 static void evSetGraffitoMultiplied(TSpcTypedInterp<TEventWatcher>* interp,
                                     u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	int enable = TSpcSlice(interp->pop()).getDataInt();
 
-	TPollutionManager* pollution = gpPollution;
 	int i                        = 0;
+	TPollutionManager* pollution = gpPollution;
 	if (enable) {
 		for (; i < pollution->getJointModelNum(); ++i)
-			pollution->getLayer(i)->startSpread();
+			((TPollutionLayer*)pollution->getJointModel(i))->startSpread();
 	} else {
 		for (; i < pollution->getJointModelNum(); ++i)
-			pollution->getLayer(i)->stopSpread();
+			((TPollutionLayer*)pollution->getJointModel(i))->stopSpread();
 	}
 
 	interp->push();
@@ -554,11 +636,16 @@ static void evIsBossDefeated(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push(gpConductor->isBossDefeated() ? 1 : 0);
 }
 
+static inline TGCConsole2* EventWatcherConsoleForClearDemo()
+{
+	return SMSGetMarDirector()->getConsole();
+}
+
 static void evLaunchEventClearDemo(TSpcTypedInterp<TEventWatcher>* interp,
                                    u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	TGCConsole2* console = SMSGetMarDirector()->getConsole();
+	TGCConsole2* console = EventWatcherConsoleForClearDemo();
 	console->unk94->startAppearShineGet();
 	console->unk47 = 1;
 	interp->push();
@@ -630,8 +717,9 @@ static void evRaiseBuilding(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 
 	int id = TSpcSlice(interp->pop()).getDataInt();
 
-	TMapEventSinkShadowMario* event = static_cast<TMapEventSinkShadowMario*>(
-	    JDrama::TNameRefGen::search("イベント（カゲマリオゲート）"));
+	TMapEventSinkShadowMario* event
+	    = (TMapEventSinkShadowMario*)JDrama::TNameRefGen::search2(
+	        "イベント（カゲマリオゲート）");
 
 	if (event)
 		event->raiseBuilding(id);
@@ -644,11 +732,17 @@ static void evForceCloseTalk(TSpcTypedInterp<TEventWatcher>* interp,
 {
 	interp->verifyArgNum(0, &arg_num);
 
-	gpTalk2D->forceCloseTalk();
+	EventWatcherGetTalk2D()->forceCloseTalk();
 
 	interp->push();
 }
 
+// TODO: 99.9%, instruction-exact at retail's 0xa0; the popped slices sit 4
+// low and the pushed one 8 low. All 216 combinations of accessor, raw member,
+// raw global and both director binders over the three sites, times the two
+// nil-push spellings, stay at >=17 markers (the best, 0xa8, puts the pops in
+// place and the push 4 low). Inert or worse: a switch, a named console,
+// TSpcSlice pops, C-style declarations.
 static void evInsertTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
@@ -656,8 +750,8 @@ static void evInsertTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	int p1 = interp->pop().getDataInt();
 	int p2 = interp->pop().getDataInt();
 
-	if (p2 == 0)
-		SMSGetMarDirector()->getConsole()->startAppearTimer(0, p1);
+	if (p2 == 1)
+		SMSGetMarDirectorBound()->getConsole()->startAppearTimer(0, p1);
 	else if (p2 == 2)
 		SMSGetMarDirector()->getConsole()->startAppearTimer(1, p1);
 	else
@@ -668,14 +762,11 @@ static void evInsertTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 
 static void evStartTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-
-	
-	
 	interp->verifyArgNum(1, &arg_num);
 
 	int time = interp->pop().getDataInt();
 
-	SMSGetMarDirector()->startTimer();
+	SMSGetMarDirectorBound()->startTimer();
 	SMSGetMarDirector()->getConsole()->startMoveTimer(time);
 
 	interp->push();
@@ -685,8 +776,7 @@ static void evStartMonteman(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 
-	TEMario* monteMan
-	    = static_cast<TEMario*>(JDrama::TNameRefGen::search("モンテマン"));
+	TEMario* monteMan = (TEMario*)JDrama::TNameRefGen::search2("モンテマン");
 
 	int id = TSpcSlice(interp->pop()).getDataInt();
 	if (monteMan)
@@ -710,8 +800,7 @@ static void evMonteManReachFlag(TSpcTypedInterp<TEventWatcher>* interp,
 
 	interp->verifyArgNum(0, &arg_num);
 
-	TEMario* monteMan
-	    = static_cast<TEMario*>(JDrama::TNameRefGen::search("モンテマン"));
+	TEMario* monteMan = JDrama::TNameRefGen::search<TEMario>("モンテマン");
 	if (monteMan->isGoal())
 		result = 1;
 
@@ -737,7 +826,8 @@ static void evKillMushroom1up(TSpcTypedInterp<TEventWatcher>* interp,
                               u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	((TMushroom1up*)getNameRefPtr(interp->pop()))->kill();
+	TMushroom1up* mushroom = (TMushroom1up*)getNameRefPtr(interp->pop());
+	mushroom->kill();
 	interp->push();
 }
 
@@ -745,9 +835,9 @@ static void evAppearMushroom1up(TSpcTypedInterp<TEventWatcher>* interp,
                                 u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	TMushroom1up* mushroom = (TMushroom1up*)getNameRefPtr(interp->pop());
-	mushroom->appear();
-	SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_1UP_APPEAR, 0, nullptr, 0);
+	((TMushroom1up*)getNameRefPtr(interp->pop()))->appear();
+	MSound* sound = SMSGetMSoundBound();
+	sound->startSoundSystemSE(MSD_SE_SY_1UP_APPEAR, 0, nullptr, 0);
 	interp->push();
 }
 
@@ -764,8 +854,7 @@ static void evAppearShineFromNPC(TSpcTypedInterp<TEventWatcher>* interp,
 		    shineName, demoName, npc->mPosition.x, npc->mPosition.y,
 		    npc->mPosition.z);
 	} else {
-		TShine* shine
-		    = static_cast<TShine*>(JDrama::TNameRefGen::search(shineName));
+		TShine* shine = (TShine*)JDrama::TNameRefGen::search2(shineName);
 		shine->mInitialPosition = npc->mPosition;
 		shine->mPosition        = npc->mPosition;
 		shine->appearWithTime(1200, -1, -1, -1);
@@ -784,8 +873,7 @@ static void evAppearShine(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 		gpItemManager->makeShineAppearWithDemoOffset(shineName, demoName, 0.0f,
 		                                             0.0f, 0.0f);
 	} else {
-		TShine* shine
-		    = static_cast<TShine*>(JDrama::TNameRefGen::search(shineName));
+		TShine* shine = JDrama::TNameRefGen::search<TShine>(shineName);
 		shine->appearWithTime(1200, -1, -1, -1);
 	}
 	interp->push();
@@ -800,8 +888,7 @@ evAppearShineFromNPCWithoutDemo(TSpcTypedInterp<TEventWatcher>* interp,
 	const char* shineName = interp->pop().getDataString();
 	TBaseNPC* npc         = (TBaseNPC*)getNameRefPtr(npcSlice);
 
-	TShine* shine
-	    = static_cast<TShine*>(JDrama::TNameRefGen::search(shineName));
+	TShine* shine = (TShine*)JDrama::TNameRefGen::search2(shineName);
 	shine->mPosition.set(npc->mPosition);
 	shine->makeObjAppeared();
 
@@ -817,9 +904,8 @@ static void evAppearShineFromKageMario(TSpcTypedInterp<TEventWatcher>* interp,
 	const char* arg2 = interp->pop().getDataString();
 	const char* arg3 = interp->pop().getDataString();
 
-	THitActor* uuuh
-	    = static_cast<THitActor*>(JDrama::TNameRefGen::search(arg2));
-	TShine* shine = static_cast<TShine*>(JDrama::TNameRefGen::search(arg3));
+	THitActor* uuuh = (THitActor*)JDrama::TNameRefGen::search2(arg2);
+	TShine* shine   = (TShine*)JDrama::TNameRefGen::search2(arg3);
 
 	shine->mPosition = uuuh->mPosition;
 	shine->appearSimple(arg1);
@@ -855,7 +941,7 @@ static void evChangeNozzle(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	TWaterGun::TNozzleType id
 	    = (TWaterGun::TNozzleType)interp->pop().getDataInt();
 	if (id == TWaterGun::DivingHelmet)
-		gpMarioOriginal->setDivHelm();
+		SMSGetMarioBound()->setDivHelm();
 	else
 		gpMarioOriginal->mWaterGun->changeNozzle(id, true);
 	interp->push();
@@ -875,6 +961,9 @@ static void evCheckWoodBox(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	int p1 = interp->pop().getDataInt();
 	int p2 = interp->pop().getDataInt();
 
+	// p1 is the upper bound (the loop below runs p2..p1), so the span is
+	// p1 - p2 + 1; retail's `subf r5, r6, r29` has the operands this way
+	// round and the other order was a sign error.
 	int count = p1 - p2 + 1;
 
 	char buffer[] = "ゲーム木箱00";
@@ -886,8 +975,7 @@ static void evCheckWoodBox(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 			buffer[10] = '0' + i / 10;
 			buffer[11] = '0' + i % 10;
 		}
-		TMapObjBase* obj
-		    = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search(buffer));
+		TMapObjBase* obj = (TMapObjBase*)JDrama::TNameRefGen::search2(buffer);
 		if (obj && obj->checkLiveFlag(LIVE_FLAG_DEAD))
 			--count;
 	}
@@ -895,6 +983,13 @@ static void evCheckWoodBox(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	interp->push(count);
 }
 
+// TODO: the three wood-box builtins are each exactly 4 bytes short in the low
+// region (every instruction matches). They differ from the matching builtins
+// only in reaching the actor through `TNameRefGen::search<T>` instead of
+// `getNameRefPtr`. Making `search<T>` delegate to the neighbouring `search2`
+// -- one more inline level, which is the obvious reason for both to exist --
+// was tried in JDRNameRefGen.hpp and is NOT viable: it changes a
+// source-linked object and breaks the DOL SHA-1.
 static void evRefreshWoodBox(TSpcTypedInterp<TEventWatcher>* interp,
                              u32 arg_num)
 {
@@ -911,8 +1006,7 @@ static void evRefreshWoodBox(TSpcTypedInterp<TEventWatcher>* interp,
 			buffer[10] = '0' + i / 10;
 			buffer[11] = '0' + i % 10;
 		}
-		TMapObjBase* obj
-		    = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search(buffer));
+		TMapObjBase* obj = (TMapObjBase*)JDrama::TNameRefGen::search2(buffer);
 		if (obj)
 			obj->appear();
 	}
@@ -935,8 +1029,7 @@ static void evKillWoodBox(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 			buffer[10] = '0' + i / 10;
 			buffer[11] = '0' + i % 10;
 		}
-		TMapObjBase* obj
-		    = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search(buffer));
+		TMapObjBase* obj = (TMapObjBase*)JDrama::TNameRefGen::search2(buffer);
 		if (obj)
 			obj->makeObjDead();
 	}
@@ -948,12 +1041,16 @@ static void evIsInsideCube(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	int cubeId = interp->pop().getDataInt();
+	// Declared ahead of `pos`: the named result takes the slot above it, which
+	// puts `pos` and every temporary below at retail's offsets.
+	int result;
 
 	// TODO: getPos10cmAbove or something like that?
 	JGeometry::TVec3<f32> pos = gpMarioOriginal->mPosition;
 	pos.y += 10.0f;
 
-	interp->push(gpCubeArea->isInCube(pos, cubeId) ? 1 : 0);
+	result = gpCubeArea->isInCube(pos, cubeId) ? 1 : 0;
+	interp->push(result);
 }
 
 static void evSetMarioWaiting(TSpcTypedInterp<TEventWatcher>* interp,
@@ -969,12 +1066,20 @@ static void evStartMareBottleDemo(TSpcTypedInterp<TEventWatcher>* interp,
 {
 	interp->verifyArgNum(0, &arg_num);
 
-	TMapObjBase* obj
-	    = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search("ＥＸビン"));
+	TMapObjBase* obj = (TMapObjBase*)JDrama::TNameRefGen::search2("ＥＸビン");
 	obj->getMActor()->setBck("exbottle_bottle_in");
 
 	// The original keeps Mario in a register across both statements: the
-	// store to mPosition would otherwise force a reload of the global.
+	// store to mPosition would otherwise force a reload of the global
+	// (measured: the bare global adds an `lwz gpMarioOriginal` and 8 bytes of
+	// frame, 98.0% -> 96.9%).
+	// TODO: 98.0%. Two instructions are swapped: retail keeps the position's
+	// x word in r3 and only materialises `this` afterwards, with
+	// `addi r3, r7, 0`, while we emit `mr r3, r7` before the stores. A
+	// `TMario&` local instead of the pointer changes nothing.
+	// Also inert: `mPosition.set(...)`, per-component copies, and
+	// SMSGetMarioOriginal() at either site; c-m14: a const-ref position,
+	// obj->getPosition(), per-component stores, a named status (all 98.0-98.1).
 	TMario* mario    = gpMarioOriginal;
 	mario->mPosition = obj->mPosition;
 	mario->changePlayerStatus(MARIO_STATUS_BOTTLE_IN, 0, true);
@@ -987,8 +1092,7 @@ static void evIsFinishMareBottleDemo(TSpcTypedInterp<TEventWatcher>* interp,
 {
 	interp->verifyArgNum(0, &arg_num);
 
-	TMapObjBase* obj
-	    = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search("ＥＸビン"));
+	TMapObjBase* obj = JDrama::TNameRefGen::search<TMapObjBase>("ＥＸビン");
 
 	int result;
 	if (obj->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
@@ -1042,9 +1146,10 @@ static void evSetTransScale(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	TMapObjBase* obj = (TMapObjBase*)getNameRefPtr(interp->pop());
 
 	obj->makeObjAppeared();
-	obj->changeObjSRT(JGeometry::TVec3<f32>(sx, sy, sz),
-	                  JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f),
-	                  JGeometry::TVec3<f32>(tx, ty, tz));
+	JGeometry::TVec3<f32> scale(sx, sy, sz);
+	JGeometry::TVec3<f32> rot(0.0f, 0.0f, 0.0f);
+	JGeometry::TVec3<f32> trans(tx, ty, tz);
+	obj->changeObjSRT(scale, rot, trans);
 
 	interp->push();
 }
@@ -1076,12 +1181,20 @@ static void evStartBGM(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	interp->push(TSpcSlice());
 }
 
+// A by-value u32 predicate over checkLiveFlag: +4 of pool, retail's slots.
+// The raw flag test, checkLiveFlag() itself and a bool-returning fork are all
+// 4 short; a named bool inside the fork is 8 long.
+static inline u32 EventWatcherIsDead(TLiveActor* actor)
+{
+	return actor->checkLiveFlag(LIVE_FLAG_DEAD);
+}
+
 static void evEggYoshiStartFruit(TSpcTypedInterp<TEventWatcher>* interp,
                                  u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TEggYoshi* egg = (TEggYoshi*)getNameRefPtr(interp->pop());
-	if (!egg->checkLiveFlag(LIVE_FLAG_DEAD))
+	if (!EventWatcherIsDead(egg))
 		egg->startFruit();
 	interp->push();
 }
@@ -1115,13 +1228,20 @@ static void evStartEventSE(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	int se;
 	switch (interp->pop().getDataInt()) {
 	case 0:
-		se = 0x4842;
+		se = 0x485A;
 		break;
 	case 1:
-		se = 0x484f;
+		se = 0x485B;
 		break;
 	}
-	SMSGetMSound()->startSoundSystemSE(se, 0, nullptr, 0);
+	MSound* sound = SMSGetMSoundBound();
+	sound->startSoundSystemSE(se, 0, nullptr, 0);
+	// TODO: 99.9%, all 98 instructions matching at retail's 0x58 frame. The
+	// named receiver through the raw-global binder (as in
+	// evAppearMushroom1up) puts the pushed slice in place; the popped slice
+	// and its fctiwz reads remain 4 high (0x3c vs 0x38). The SMSGetMSound()
+	// binder, the plain accessor and the raw global, named or not, with the
+	// switch on a named int or a u32 `se`, are all 4-8 further off.
 	interp->push();
 }
 
@@ -1136,9 +1256,9 @@ static void evChangeSunglass(TSpcTypedInterp<TEventWatcher>* interp,
                              u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	int arg             = interp->pop().getDataInt();
-	TSunGlass* sunglass = static_cast<TSunGlass*>(
-	    JDrama::TNameRefGen::search("サングラスフェーダ"));
+	int arg = interp->pop().getDataInt();
+	TSunGlass* sunglass
+	    = JDrama::TNameRefGen::search<TSunGlass>("サングラスフェーダ");
 	if (!arg) {
 		sunglass->startFade(2, true);
 		gpMarioOriginal->wearGlass();
@@ -1168,15 +1288,33 @@ static void evSetCollision(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 	interp->push();
 }
 
+// TODO: 99.9%, every instruction matching; our frame is 0xe8 against retail's
+// 0xe0, with the whole 8-byte excess below the conversion temporaries.
+// Measured: naming the vector (`TVec3<f32> pos(x, y, z)`) leaves the frame at
+// 0xe8, and popping into `f32` locals instead of `int` takes it to 0xd8 but
+// rewrites 23 instructions.
 static void evWarpMario(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(4, &arg_num);
-	int arg1 = interp->pop().getDataInt();
-	int z    = interp->pop().getDataInt();
-	int y    = interp->pop().getDataInt();
-	int x    = interp->pop().getDataInt();
+	s32 arg1 = interp->pop().getDataInt();
+	s32 z    = interp->pop().getDataInt();
+	s32 y    = interp->pop().getDataInt();
+	s32 x    = interp->pop().getDataInt();
 	SMS_MarioWarpRequest(JGeometry::TVec3<f32>(x, y, z), arg1);
 	interp->push();
+}
+
+// Binding level worth +8 of low region, landing evStartAppearJetBalloon's
+// frame at 0xa8 (batch 124).
+static inline TGCConsole2* EventWatcherGetConsole(TMarDirector* p)
+{
+	TGCConsole2* console = p->getConsole();
+	return console;
+}
+
+static inline TGCConsole2* EventWatcherConsoleForJet()
+{
+	return SMSGetMarDirector()->getConsole();
 }
 
 static void evStartAppearJetBalloon(TSpcTypedInterp<TEventWatcher>* interp,
@@ -1190,12 +1328,13 @@ static void evStartAppearJetBalloon(TSpcTypedInterp<TEventWatcher>* interp,
 	switch (p2) {
 	case 0:
 		if (p1 == 1)
-			SMSGetMarDirector()->getConsole()->startAppearJetBalloon(0, 8);
+			EventWatcherGetConsole(SMSGetMarDirector())
+			    ->startAppearJetBalloon(0, 8);
 		break;
 
 	case 1:
 		if (p1 == 1)
-			SMSGetMarDirector()->getConsole()->startAppearJetBalloon(1, 10);
+			EventWatcherConsoleForJet()->startAppearJetBalloon(1, 10);
 		break;
 
 	case 2:
@@ -1219,16 +1358,32 @@ static void evSetEventForWaterMelon(TSpcTypedInterp<TEventWatcher>* interp,
 static void evAppearReadyGo(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	SMSGetMarDirector()->getConsole()->unk94->startAppearReady();
+	EventWatcherGetConsole(EventWatcherMarDirector())->unk94->startAppearReady();
 	interp->push();
+}
+
+// Binding level over the console accessor, the evInvalidatePad shape: the
+// director binder chained in the caller kept both of its words above the nil
+// push; binding the console leaves one of them below it.
+static inline TGCConsole2* EventWatcherTimerConsole()
+{
+	TGCConsole2* console = SMSGetMarDirector()->getConsole();
+	return console;
 }
 
 static void evAppear8RedCoinsAndTimer(TSpcTypedInterp<TEventWatcher>* interp,
                                       u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	TRedCoinSwitch* swtch = static_cast<TRedCoinSwitch*>(
-	    JDrama::TNameRefGen::search("赤コイン用スイッチ"));
+
+	// The name has to be its own local. `search<T>` uses it twice, and with
+	// the literal written inline MWCC spends a callee-saved register on a
+	// .rodata base pointer and addresses both the name and the stack-overflow
+	// string through it, which renumbers every register in the function
+	// (92.2% -> 99.9%).
+	const char* switchName = "赤コイン用スイッチ";
+	TRedCoinSwitch* swtch
+	    = JDrama::TNameRefGen::search<TRedCoinSwitch>(switchName);
 
 	int iVar9 = swtch->unk138;
 	for (int i = 0; i < 8; ++i) {
@@ -1243,35 +1398,57 @@ static void evAppear8RedCoinsAndTimer(TSpcTypedInterp<TEventWatcher>* interp,
 		gpMarioParticleManager->emit(PARTICLE_MS_ENM_DISAP_B,
 		                             &coin->getUnk158(), 0, nullptr);
 	}
-	SMSGetMarDirector()->getConsole()->startAppearTimer(1,
-	                                                    iVar9 * 0.008333334f);
+	EventWatcherTimerConsole()->startAppearTimer(1, iVar9 * 0.008333334f);
 	SMSGetMarDirector()->startTimer();
-	SMSGetMarDirector()->getConsole()->startMoveTimer(10);
+	EventWatcherTimerConsole()->startMoveTimer(10);
 	interp->push();
 }
 
-// fabricated and wrong
-JGeometry::TVec3<f32> rotateY(JGeometry::TVec3<f32> vec, s16 angleY)
+// fabricated: mario.MAP keeps no symbol for this helper, so the name is a
+// guess, but the signature is read off evWarpFrontToMario. It rotates its
+// argument in place through a `Vec&` -- retail builds the vector once and
+// rewrites `x` and `z` in it, with no copy for the parameter -- and returns a
+// `TVec3<f32>`, so that the `return` converts through `TVec3<f32>(const Vec&)`
+// and leaves the `bl JGeometry::TVec3<float>::set(const Vec&)` retail calls
+// here. `set(const Vec&)` only wins over the exact `set<TY>(const TVec3<TY>&)`
+// when the source really is a `Vec`, which is what fixes the parameter type.
+//
+// `vec.x` is read into `x` before the first assignment: the store to `vec.x`
+// invalidates every cached load of the struct, which is why retail reloads
+// `vec.z` and both table entries for the second component but keeps the
+// pre-store `-vec.x` in a register.
+//
+// Trials, all measured on evWarpFrontToMario:
+//   Vec& param, TVec3<f32> return, bare gpMarioPos      99.8%  <- kept
+//   Vec& param, TVec3<f32> return, SMS_GetMarioPos()    99.7%  (frame +8)
+//   Vec by value, TVec3<f32> return                     86.0%  (argument copy)
+//   Vec& param, const Vec& return                       76.2%
+//   TVec3<f32> by value, Vec return                     78.5%
+//   TVec3<f32> by value, const Vec& return              84.6%  (set inlined)
+//   TVec3<f32> by value, TVec3<f32> return (original)   84.1%
+static JGeometry::TVec3<f32> rotateY(Vec& vec, s16 angleY)
 {
-	f32 x = vec.x * JMASCos(angleY) + vec.z * JMASSin(angleY);
-	f32 z = -vec.x * JMASSin(angleY) + vec.z * JMASCos(angleY);
-	vec.x = x;
-	vec.z = z;
-	return JGeometry::TVec3<f32>(vec.x, vec.y, vec.z);
+	f32 x = vec.x;
+	vec.x = x * JMASCos(angleY) + vec.z * JMASSin(angleY);
+	vec.z = -x * JMASSin(angleY) + vec.z * JMASCos(angleY);
+	return vec;
 }
 
 static void evWarpFrontToMario(TSpcTypedInterp<TEventWatcher>* interp,
                                u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	TLiveActor* actor = (TLiveActor*)interp->pop().getDataInt();
+	TLiveActor* actor = (TLiveActor*)(u32)interp->pop().getDataInt();
 
 	s16 angleY = SMS_GetMarioAngleY();
 
-	// TODO: codegen very wrong
-	actor->mPosition = SMS_GetMarioPos()
-	                   + rotateY(JGeometry::TVec3<f32>(0.0f, 0.0f, 400.0f),
-	                             SMS_GetMarioAngleY());
+	// TODO: every instruction and the frame size match; the only residue is
+	// the position of operator+'s by-value `fst` temporary, which retail
+	// allocates at the bottom of the low region (0x44) while we place it
+	// third (0x74). Low-region temporaries are laid out in expansion order,
+	// so retail expanded operator+ before the pop and the push.
+	JGeometry::TVec3<f32> front(0.0f, 0.0f, 400.0f);
+	actor->mPosition   = *gpMarioPos + rotateY(front, SMS_GetMarioAngleY());
 	actor->mRotation.y = SHORTANGLE2DEG((s16)(angleY - 0x8000));
 
 	interp->push();
@@ -1285,15 +1462,21 @@ static void evOnNeutralMarioKey(TSpcTypedInterp<TEventWatcher>* interp,
 	interp->push(TSpcSlice());
 }
 
+// Binding level over the pad accessor. With the director binder chained in
+// the caller, its local sits above the pushed slice; binding the pad instead
+// creates the word below it, retail's layout.
+static inline TMarioGamePad* EventWatcherGetGamePad()
+{
+	TMarioGamePad* pad = gpMarDirector->getGamePad();
+	return pad;
+}
+
 static void evInvalidatePad(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-
-	
-	
 	interp->verifyArgNum(1, &arg_num);
 	int frames = interp->pop().getDataInt();
 
-	SMSGetMarDirector()->getGamePad()->mDisabledFrames = frames;
+	EventWatcherGetGamePad()->mDisabledFrames = frames;
 
 	interp->push();
 }
@@ -1302,25 +1485,43 @@ static void evIsWaterMelonIsReached(TSpcTypedInterp<TEventWatcher>* interp,
                                     u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
-	TBigWatermelon* melon = (TBigWatermelon*)interp->pop().getDataInt();
+	TBigWatermelon* melon = (TBigWatermelon*)(u32)interp->pop().getDataInt();
 
+	// The zero y component is real: retail starts the sum of squares from a
+	// 0.0f literal (`fmadds f1, f3, f3, f1` with f1 loaded from the float
+	// pool), which is what `squared()`'s y term folds to. Spelling the test
+	// as `dx * dx + dz * dz` instead gives an `fmuls` and a 0x48 frame
+	// against retail's 0x68.
+	// Naming the two differences before building `diff` gives retail's float
+	// registers.
+	// TODO: 100% of instructions; the pushed slice sits 8 bytes high (0x34
+	// vs retail's 0x2c). Inert: `result` declared after `diff`, a named
+	// dist, `dot(diff)`, a named slice, the pop through an int local.
 	int result = 0;
-	f32 dx     = -4660.0f - melon->mPosition.x;
-	f32 dz     = 12000.0f - melon->mPosition.z;
-	if (dx * dx + dz * dz <= 90000.0f)
+	f32 dx = -4660.0f - melon->mPosition.x;
+	f32 dz = 12000.0f - melon->mPosition.z;
+	JGeometry::TVec3<f32> diff(dx, 0.0f, dz);
+	if (diff.squared() <= 90000.0f)
 		result = 1;
 
 	interp->push(result);
 }
 
-#ifdef VERSION_GMSP01
+// TODO: 99.9%, every instruction matching, slice 4 high (0x18 vs 0x14) at
+// retail's 0x28 frame. A TU-local push wrapper refuses TSpcStack::push
+// (`bl`); raw gpMSound is -8 of frame and slice. The raw-global binder
+// named as in evAppearMushroom1up lands the slice at 0x18 but the frame at
+// 0x30; chained it is 0x30/0x1c. Inert: push(TSpcSlice()), push(0), direct
+// and reference-returning forks, gateCheck spelled out, a named SE id.
 static void evStartMontemanBGM(TSpcTypedInterp<TEventWatcher>* interp,
                                u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
+
 	MSBgm::stopTrackBGM(0, 10);
-	MSBgm::startBGM(MSD_STR_SPACEWORLD);
+	MSBgm::startBGM(MSD_BGM_MONTEMAN_RACE);
 	SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_RACE_START, 0, nullptr, 0);
+
 	interp->push();
 }
 
@@ -1328,10 +1529,11 @@ static void evStartMontemanFanfare(TSpcTypedInterp<TEventWatcher>* interp,
                                    u32 arg_num)
 {
 	interp->verifyArgNum(0, &arg_num);
-	MSBgm::startBGM(MSD_BGM_CAMERA_KAGE);
+
+	MSBgm::startBGM(MSD_BGM_FANFARE_RACE);
+
 	interp->push();
 }
-#endif
 
 template <> void TSpcTypedBinary<TEventWatcher>::initUserBuiltin()
 {
@@ -1413,10 +1615,8 @@ template <> void TSpcTypedBinary<TEventWatcher>::initUserBuiltin()
   bindSystemDataToSymbol("appearReadyGo", (u32)&evAppearReadyGo);
   bindSystemDataToSymbol("onNeutralMarioKey", (u32)&evOnNeutralMarioKey);
   bindSystemDataToSymbol("invalidatePad", (u32)&evInvalidatePad);
-#ifdef VERSION_GMSP01
   bindSystemDataToSymbol("startMontemanBGM", (u32)&evStartMontemanBGM);
   bindSystemDataToSymbol("startMontemanFanfare", (u32)&evStartMontemanFanfare);
-#endif
   bindSystemDataToSymbol("checkWoodBox", (u32)&evCheckWoodBox);
   bindSystemDataToSymbol("refreshWoodBox", (u32)&evRefreshWoodBox);
   bindSystemDataToSymbol("killWoodBox", (u32)&evKillWoodBox);

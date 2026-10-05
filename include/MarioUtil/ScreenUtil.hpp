@@ -21,18 +21,17 @@ public:
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
-	void setGateBlur(u8 type, u8 alpha, f32 scale,
-	                 JGeometry::TVec3<f32> direction)
-	{
-		unk15 = type;
-		unk1C = alpha;
-		unk50 = scale;
-		mBlurDirection = direction;
-	}
 	void setBlurDefaultValue();
 	void calcDashBlurValue();
 
-	BOOL checkFlag(u32 flag) { return unk14 & flag ? TRUE : FALSE; }
+	// if/return, not a ternary: the ternary becomes an optimiser temporary
+	// numbered below perform's `rect`, which then takes r31 from the flag.
+	BOOL checkFlag(u32 flag)
+	{
+		if (unk14 & flag)
+			return TRUE;
+		return FALSE;
+	}
 
 public:
 	/* 0x10 */ JUTTexture* unk10;
@@ -61,7 +60,10 @@ public:
 	/* 0x54 */ f32 unk54;
 	/* 0x58 */ u8 unk58;
 	/* 0x59 */ u8 unk59;
-	/* 0x5C */ JGeometry::TVec3<f32> mBlurDirection;
+	// The radial-blur direction, written as one vector from
+	// TModelGate::screenBlur (three integer lwz/stw, i.e. a TVec3
+	// assignment, not three f32 stores).
+	/* 0x5C */ JGeometry::TVec3<f32> unk5C;
 };
 
 class TScreenTexture;

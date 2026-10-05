@@ -79,6 +79,7 @@ struct J3DCluster {
 		mDeformer         = other.mDeformer;
 	}
 
+	u16 getNrmNum() { return mNrmNum; }
 	J3DDeformer* getDeformer() { return mDeformer; }
 	void setDeformer(J3DDeformer* deformer)
 	{
@@ -118,7 +119,9 @@ public:
 	f32* getVtxPos() { return mVtxPos; }
 	f32* getVtxNrm() { return mVtxNrm; }
 
-private:
+	// J3DClusterLoader_v15::readCluster fills these in place, exactly as
+	// J3DModelLoader does for J3DModelData's public members.
+public:
 	/* 0x00 */ u16 mClusterNum;
 	/* 0x02 */ u16 mClusterKeyNum;
 	/* 0x04 */ u16 mClusterVertexNum;

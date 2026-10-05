@@ -109,8 +109,30 @@ public:
 
 	// Fabricated
 	s16 getUnk2C8() const { return unk2C8; }
+	int getCamMode() const { return mMode; }
+	const TCameraMapTool* getUnk70() const { return unk70; }
 	MtxPtr getUnk1EC() { return unk1EC; }
 	const JGeometry::TVec3<f32>& getUnk124() const { return unk124; }
+
+	// Fabricated name, real accessor: the game reads the camera position
+	// through a `Vec`-typed sibling of getUnk124() as well.  The whole game
+	// calls `JGeometry::TVec3<f32>::set(const Vec&)` out of line at exactly
+	// eight sites (lensflare x3, bosstelesa x2, sunmodel, CameraWarp,
+	// EventWatcher; header round 24), and that overload is only reachable
+	// when the argument is typed `Vec` -- a `const TVec3<f32>&` picks the
+	// `set<TY>` member template instead (see JGVec3.hpp).  Returning the
+	// base is also what makes a `const TVec3<f32>&` parameter take the
+	// converting constructor `TVec3(const Vec&)`, i.e. a stack temporary
+	// plus that out-of-line `set`, which is exactly what retail does at
+	// `TSunModel::moveSun_`'s scaleAdd call.  The TVec3-typed accessor
+	// above has to stay: `TMBindShadowManager::forceRequest` subtracts the
+	// camera position with lazy per-component loads and no temporary, which
+	// only the derived type gives.
+	const Vec& getUnk124Vec() const { return unk124; }
+	// Fabricated name, the lookat point's `Vec`-typed sibling of
+	// getUnk124Vec(): TLensFlare's CLBCalcNearNinePos call reads it through
+	// the `TVec3(const Vec&)` conversion (research c-r26).
+	const Vec& getUnk148Vec() const { return unk148; }
 	s16 getUnk258() const { return unk258; }
 	bool isThing() const
 	{
@@ -145,6 +167,8 @@ public:
 	}
 
 	bool isLButtonCamera() const { return isLButtonCameraSpecifyMode(mMode); }
+	// Fabricated name, analogous to isLButtonCamera.
+	bool isNormalCamera() const { return isNormalCameraSpecifyMode(mMode); }
 	bool isBckDemoCamera() const
 	{
 		return mMode == CAMERA_MODE_REPRODUCE_DEMO ? true : false;
@@ -161,19 +185,6 @@ public:
 	}
 
 private:
-	// fabricated
-	void fabricatedInline2()
-	{
-		CLBCrossToPolar(mTarget, mPosition, &unk256, &unk258);
-
-		unk25C.set(unk148.x - unk124.x, unk148.y - unk124.y,
-		           unk148.z - unk124.z);
-		unk25C.normalize();
-		unk270 = MsClamp(CLBCalcRatio(mCurrentParams->mXAngleMin,
-		                              mCurrentParams->mXAngleMax, unk256),
-		                 0.0f, 1.0f);
-	}
-
 	void calcSecureViewTarget_(s16, f32*, f32*);
 	void execSecureView_(s16, Vec*);
 
@@ -203,7 +214,35 @@ private:
 	void calcPosAndAt_();
 	void calcFinalPosAndAt_();
 	void calcExternalData_();
+
+	// Fabricated name; the body is measured. changeCamModeSub_ restores the
+	// pre-fixed-mode target with a chained assignment whose *inner*
+	// TTargetCamera::operator= the ROM leaves out of line as the weak 0x74
+	// symbol the map lists for CameraChange.cpp, while inlining the outer one
+	// off the returned reference. The inner operator= of a chain sits one
+	// level deeper than the outer, so the eight-statement body is at depth 2
+	// when the statement is written inline in changeCamModeSub_ -- inside the
+	// measured allowance -- and at depth 3 through one wrapper, which is where
+	// it turns into the call (changeCamModeSub_ 88.8 -> 97.1%). Something has
+	// to supply that level; a helper for the restore is the least invented
+	// thing that does.
+	void restoreTargetBeforeFixedMode_()
+	{
+		mPreviousTarget = mCurrentTarget = mTargetBeforeFixedMode;
+	}
+	// Fabricated name. This level is measured, not invented: the ROM reaches
+	// TVec3::set and TVec3::setLength (inside normalize) one step deeper than
+	// calcExternalData_'s own body, while its CLBCrossToPolar and the MsClamp
+	// of the X-rotation ratio sit in that body. Fully inlined at both sites,
+	// so the map carries no symbol for it.
+	void calcLookatPolar_()
+	{
+		unk25C.set(unk148.x - unk124.x, unk148.y - unk124.y,
+		           unk148.z - unk124.z);
+		unk25C.normalize();
+	}
 	void ctrlGameCamera_();
+	void ctrlCamera_(); // fabricated name; see perform in cameragc.cpp
 
 	void drawJetCoasterBalloonMessage_();
 
@@ -215,6 +254,26 @@ private:
 	void ctrlMultiPlayerCamera_();
 	void ctrlTalkCamera_();
 	void calcTowerCenterPos_(Vec* result);
+
+	// The tower half of ctrlNormalOrTowerCamera_'s name. It has to exist and
+	// be inlined: the map makes calcTowerCenterPos_ weak with a
+	// `sPositionNameTable$localstatic0$` static, which only an inline member
+	// gets, and an inline callee has no statement budget at depth 1, so
+	// retail's single `bl calcTowerCenterPos_` can only sit at depth 2 -- one
+	// inlined level above it. An in-class body has no budget at depth 1
+	// either, so this wrapper expands and pushes its callee down one.
+	void ctrlTowerCamera_(f32 stickX)
+	{
+		if (stickX != 0.0f) {
+			rotateY_ByStickX_(stickX);
+			execInvalidAutoChase_();
+			unk64 |= CAMERA_FLAG_UNK80;
+		} else if (!(unk64 & CAMERA_FLAG_UNK80) && !isMarioCrabWalk_()) {
+			Vec v;
+			calcTowerCenterPos_(&v);
+			calcNoticeTargetYrot_(v);
+		}
+	}
 	void ctrlNormalOrTowerCamera_();
 	TLiveActor* getNoticeActor_();
 	void execNoticeOnOffProc_(CPolarSubCamera::EnumNoticeOnOffMode);
@@ -270,6 +329,12 @@ private:
 	s16 getCameraInbetweenFrame_(int);
 	void setUpToLButtonCamera_(int);
 	void setUpFromLButtonCamera_();
+	// Fabricated name; the level is measured. changeCamModeSub_ reaches the
+	// map's local out-of-line MsClamp<f> inside setUpToLButtonCamera_ only
+	// with one inlined level between them, while setUpToLButtonCamera_'s own
+	// standalone copy expands the clamp. Defined in CameraChange.cpp because
+	// Camera.hpp only forward-declares TMarioGamePad.
+	void setUpLButtonCameraChange_(int mode);
 	void changeCamMode_(int mode)
 	{
 		changeCamModeSpecifyFrame_(mode, getCameraInbetweenFrame_(mode));
@@ -281,11 +346,24 @@ private:
 	                                             int tween_frames);
 	void execFrontRotate_();
 	void doLButtonCameraOn_();
+	// Fabricated name; the body and the fact that there is a body are
+	// measured. In execCameraModeChangeProc_ every exit of this block branches
+	// to the join after the whole mode-change if/else rather than to the
+	// epilogue -- the early-return shape of an inlined helper, not a
+	// materialised flag -- and the level it adds is what turns
+	// changeCamModeSpecifyFrame_ into the ROM's `bl` under
+	// doLButtonCameraOn_ (depth 4) while the same helper stays inlined for
+	// the two changeCamMode_ calls at the top of the function (depth 2).
+	// Defined in CameraChange.cpp because Camera.hpp only forward-declares
+	// TMarioGamePad.
+	void execLButtonCameraOnProc_();
 	void doLButtonCameraOff_(bool);
 	bool isChangeToBossGesoCamera_() const;
 	bool isChangeToCancanCamera_() const;
 	bool isChangeToParallelCameraByMoveBG_() const;
 	bool isChangeToParallelCameraCByMoveBG_() const;
+	bool isExMapCamera_() const;
+	void calcNewCameraMode_(int);
 	void execCameraModeChangeProc_(int);
 	void calcInHouseNoSub_();
 	void calcInHouseNo_(bool);
@@ -312,12 +390,21 @@ public:
 			unk8 = new int[unk0];
 		}
 
-		const int& getThing() const
+		int getThing() const
 		{
+			// The two branches share one load, and the map's
+			// codegen needs `unk4 - 1` computed before the shift,
+			// which only this spelling gives: `return unk8[0];` /
+			// `return unk8[unk4 - 1];` folds the -1 into the
+			// displacement, and a named index turns the load into
+			// `lwzx`.
+			const int* p;
 			if (unk4 <= 0)
-				return unk8[0];
+				p = unk8;
+			else
+				p = &unk8[unk4 - 1];
 
-			return unk8[unk4 - 1];
+			return *p;
 		}
 
 		void popThing()
@@ -373,6 +460,19 @@ public:
 	/* 0xE8 */ TTargetCamera mTargetBeforeFixedMode;
 	/* 0x11C */ u32 unk11C;
 	/* 0x120 */ TMarioGamePad* unk120;
+	// Research c-r26: unk124 (position) and unk148 (lookat) are TVec3 in
+	// retail, although the lensflare, sunmodel, bosstelesa and NPC reads copy
+	// them float by float through `TVec3(const Vec&)`. The camera's own TUs
+	// pass both addresses straight to TVec3 parameters (updateDemoCamera_'s
+	// `TCameraBck::updateDemo(TVec3*, TVec3*, ...)`, calcInHouseNo_'s
+	// CLBCalcNearNinePos `const TVec3&`s) and TMirrorCamera and the grass
+	// manager do the same, so the outside `Vec` reads are accessors
+	// (getUnk124Vec, getUnk148Vec). Both members as plain `Vec` (camera TUs
+	// held on TVec3): 0 up, 6 down, exact 12023 -> 12022 (TMapObjGrassManager
+	// ::perform), calcInHouseNo_ 97.31 -> 91.90, TMap::update 99.94 -> 95.91
+	// (99.94 with a `const Vec&` camPos), TMirrorModelManager::perform
+	// 91.33 -> 80.72, TBaseNPC::perform 97.33 -> 93.77 (96.61 with `const
+	// Vec&` at/pos), forceRequest 99.50 -> 93.84.
 	/* 0x124 */ JGeometry::TVec3<f32> unk124;
 	/* 0x130 */ JGeometry::TVec3<f32> unk130;
 	/* 0x13C */ JGeometry::TVec3<f32> unk13C;
@@ -474,5 +574,20 @@ public:
 };
 
 extern CPolarSubCamera* gpCamera;
+
+// Fabricated name, in the SMSGetMarDirector()/SMSGetCameraMario() idiom. The
+// extra global-accessor level is a real +8 of frame where a member-level
+// accessor on the same chain is worth nothing (TSky::perform, whose 0x138
+// frame it completes with instructions already identical).
+inline CPolarSubCamera* SMSGetCamera() { return gpCamera; }
+
+// Fabricated: the camera bound to a named local before it is returned, +8 of
+// low region per expansion over SMSGetCamera. Formerly parked TU-locally in
+// three units.
+inline CPolarSubCamera* SMSGetCameraBound()
+{
+	CPolarSubCamera* camera = gpCamera;
+	return camera;
+}
 
 #endif

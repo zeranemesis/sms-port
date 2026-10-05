@@ -1,136 +1,206 @@
 #include <MoveBG/MapObjFlag.hpp>
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
-#include <JSystem/JUtility/JUTTexture.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <System/MarDirector.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <JSystem/JKernel/JKRHeap.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/JMath.hpp>
 #include <dolphin/gx.h>
-#include <MSound/MSound.hpp>
-#include <System/MarDirector.hpp>
-#include <MarioUtil/MathUtil.hpp>
-#include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 
 // rogue includes needed for matching sinit & bss
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-// The Wii/GC SDK spells its 12-byte copy helper as a JGeometry weak inline.
-namespace JGeometry {
-void gekko_ps_copy12(void*, void*);
+TMapObjFlagManager* gpMapObjFlagManager;
+
+// UNUSED (0x170). TODO: a copy of the base body; nothing in the binary says
+// how a "sail" differs, and the map's size is 0x38 larger than this shape.
+void TMapObjFlagSail::updateVertex()
+{
+	for (int y = 0; y < mNumY; y += mSkip) {
+		f32 rowPhase = (f32)y * mWavePhaseY;
+		for (int z = 0; z < mNumZ; z += mSkip) {
+			f32 rate  = (f32)z / (f32)mNumZ;
+			f32 angle = mWaveAngle + (-z * mWavePhaseZ + rowPhase);
+			angle     = MsWrap(angle, -180.0f, 180.0f);
+			mVertices[y][z].x = mWaveAmplitude * rate * JMASin(angle);
+		}
+	}
 }
 
-TMapObjFlagManager* gpMapObjFlagManager;
+// UNUSED (0x140). TODO: same as above; 8 bytes short of the map's size.
+void TMapObjFlagLower::updateVertex()
+{
+	for (int y = 0; y < mNumY; y += mSkip) {
+		f32 rowPhase = (f32)y * mWavePhaseY;
+		for (int z = 0; z < mNumZ; z += mSkip) {
+			f32 rate  = (f32)z / (f32)mNumZ;
+			f32 angle = mWaveAngle + (-z * mWavePhaseZ + rowPhase);
+			angle     = MsWrap(angle, -180.0f, 180.0f);
+			mVertices[y][z].x = mWaveAmplitude * rate * JMASin(angle);
+		}
+	}
+}
 
 f32 TMapObjFlag::mFlutterSpeed = 4.0f;
 
+// TODO: 98.9%, all instructions match now (closure batch 123: the last
+// column's `mVertices[y][mNumZ - 1]`/`mVertices[y + 1][mNumZ - 1]` writes
+// were each re-deriving the row's last element from three separate
+// `.x`/`.y`/.z` subscripts, computing it as "one past the end, then back up"
+// instead of retail's single "&arr[mNumZ - 1]" pointer; naming
+// `last0`/`last1` pointers took this from 94.0% (122 markers, several
+// structural) to instruction-exact, 63 markers left, all frame/register).
+// What remains is a pure 0x50-byte low-region gap (0x108 vs our 0xb8): batch
+// 128 confirmed every referenced slot is *exactly* 0x50 higher in retail
+// (0xa8/0xac/0xb0/0xb4/0xbc/0xd0..0x100 against our 0x58../0x80..0xb0), LR and
+// save slots included, so all 80 bytes are dead low region below every local
+// -- a missing set of inlined expansions (twelve GX writer sites plus
+// `j3dSys.getViewMtx()`), not a named object.
+// Batch cc33: a vertex-address fork (`&p->mVertices[y][z]`) is a frame knob
+// here (+0x30 over the twelve component reads, +0x48 with both `last` pointers,
+// the named-binder form +0x80/+0xa0), but no fork, a `const TVec3&`
+// GXPosition3f32 wrapper, a GXTexCoord2f32 wrapper or an `mMtx` fork moves
+// the volatile-register differences or retail's MTXConcat argument order
+// (r3, r5, then `mMtx` in r4), so the gap is not only low region.
+// Fixed since: passing the member's raw array `mMtx.mMtx` gives retail's
+// MTXConcat argument order (the conversion operator evaluates first), and
+// naming `s` after the first GXPosition3f32 gives retail's f0/f1. Left: the
+// row offset `y * 4` takes r6 where retail has r5 (and `z * 12` r5 for r6);
+// inert on it: named row pointers (worse), `TVec3&` vertex binders, the
+// vertex/last forks, `(f32)z * invZ`.
 void TMapObjFlag::draw()
 {
-	Mtx mtx;
-	JGeometry::gekko_ps_copy12(&mtx, (void*)j3dSys.getViewMtx());
-	PSMTXConcat(mtx, mMtx, mtx);
-	GXLoadPosMtxImm(mtx, 0);
+	JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > mtx;
+	mtx.set(j3dSys.getViewMtx());
+	MTXConcat(mtx, mMtx.mMtx, mtx);
+	GXLoadPosMtxImm(mtx, GX_PNMTX0);
 
-	// u runs over the vertex columns, v over the rows. The first and the
-	// last column of a row carry a literal 0.0f / 1.0f.
+	// Two rows at a time, so every strip is (columns + 2) * 2 vertices wide.
+	u16 vtxNum = ((mNumZ - mSkip * 2) / mSkip + 2) * 2;
+	f32 invZ   = 1.0f / (f32)(mNumZ - 1);
+	f32 invY   = 1.0f / (f32)(mNumY - 1);
 
-	for (s32 i = 0; i < static_cast<s32>(unk74) - static_cast<s32>(unkBC);
-	     i += static_cast<s32>(unkBC)) {
-		f32 v1 = (static_cast<f32>(unk74) - 1 - i)
-		       / (static_cast<f32>(unk74) - 1);
-		f32 v2 = (static_cast<f32>(unk74) - 2 - i)
-		       / (static_cast<f32>(unk74) - 1);
+	for (int y = 0; y < mNumY - mSkip; y += mSkip) {
+		f32 t0 = invY * (f32)(mNumY - 1 - y);
+		f32 t1 = invY * (f32)(mNumY - 1 - (y + 1));
 
-		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0,
-		        static_cast<u16>(2 * ((unk70 - 2 * static_cast<s32>(unkBC))
-		                             / static_cast<s32>(unkBC)
-		                             + 2)));
+		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vtxNum);
 
-		JGeometry::TVec3<f32>* row = unk78[i];
-		GXPosition3f32(row[0].x, row[0].y, row[0].z);
-		GXTexCoord2f32(0.0f, v1);
-		GXPosition3f32(row[1].x, row[1].y, row[1].z);
-		GXTexCoord2f32(0.0f, v2);
+		GXPosition3f32(mVertices[y][0].x, mVertices[y][0].y,
+		               mVertices[y][0].z);
+		GXTexCoord2f32(0.0f, t0);
+		GXPosition3f32(mVertices[y + 1][0].x, mVertices[y + 1][0].y,
+		               mVertices[y + 1][0].z);
+		GXTexCoord2f32(0.0f, t1);
 
-		for (s32 j = 1; j < static_cast<s32>(unk70) - static_cast<s32>(unkBC);
-		     j += static_cast<s32>(unkBC)) {
-			f32 u = static_cast<f32>(j) / (static_cast<f32>(unk70) - 1);
-			GXPosition3f32(row[j].x, row[j].y, row[j].z);
-			GXTexCoord2f32(u, v1);
-			GXPosition3f32(row[j + 1].x, row[j + 1].y, row[j + 1].z);
-			GXTexCoord2f32(u, v2);
+		for (int z = 1; z < mNumZ - mSkip; z += mSkip) {
+			GXPosition3f32(mVertices[y][z].x, mVertices[y][z].y,
+			               mVertices[y][z].z);
+			f32 s = invZ * (f32)z;
+			GXTexCoord2f32(s, t0);
+			GXPosition3f32(mVertices[y + 1][z].x, mVertices[y + 1][z].y,
+			               mVertices[y + 1][z].z);
+			GXTexCoord2f32(s, t1);
 		}
 
-		s32 last = static_cast<s32>(unk70) - 1;
-		GXPosition3f32(row[last].x, row[last].y, row[last].z);
-		GXTexCoord2f32(1.0f, v1);
-		GXPosition3f32(row[last + 1].x, row[last + 1].y, row[last + 1].z);
-		GXTexCoord2f32(1.0f, v2);
+		JGeometry::TVec3<f32>* last0 = &mVertices[y][mNumZ - 1];
+		GXPosition3f32(last0->x, last0->y, last0->z);
+		GXTexCoord2f32(1.0f, t0);
+		JGeometry::TVec3<f32>* last1 = &mVertices[y + 1][mNumZ - 1];
+		GXPosition3f32(last1->x, last1->y, last1->z);
+		GXTexCoord2f32(1.0f, t1);
+
+		GXEnd();
 	}
+}
+
+// fabricated
+static inline JGeometry::TVec3<f32>* MapObjFlagVertex(TMapObjFlag* p, int y,
+                                                      int z)
+{
+	return &p->mVertices[y][z];
 }
 
 void TMapObjFlag::updateVertex()
 {
-	for (s32 i = 0; i < static_cast<s32>(unk74); i += static_cast<s32>(unkBC)) {
-		f32 rowAngle = static_cast<f32>(i) * unk80;
-		for (s32 j = 0; j < static_cast<s32>(unk70);
-		     j += static_cast<s32>(unkBC)) {
-			f32 ratio = static_cast<f32>(j) / static_cast<f32>(unk70);
-			f32 angle = unk88 + (-j * unk7C + rowAngle);
-			while (angle >= 180.0f)
-				angle -= 360.0f;
-			while (angle < -180.0f)
-				angle += 360.0f;
-
-			s32 sinIndex = static_cast<s32>(182.04445f * angle);
-			sinIndex = static_cast<u16>(sinIndex) >> jmaSinShift;
-			unk78[i][j].x = unk84 * ratio * jmaSinTable[sinIndex];
+	for (int y = 0; y < mNumY; y += mSkip) {
+		f32 rowPhase = (f32)y * mWavePhaseY;
+		for (int z = 0; z < mNumZ; z += mSkip) {
+			f32 rate  = (f32)z / (f32)mNumZ;
+			f32 angle = mWaveAngle + (-z * mWavePhaseZ + rowPhase);
+			angle     = MsWrap(angle, -180.0f, 180.0f);
+			MapObjFlagVertex(this, y, z)->x = mWaveAmplitude * rate * JMASin(angle);
 		}
 	}
 }
 
+// UNUSED (0x114): the per-flag body of TMapObjFlagManager::perform's
+// CUE_CALC_ANIM loop, inlined there.
+void TMapObjFlag::update()
+{
+	MsMtxSetXYZRPH(mMtx.mMtx, getPosition().x, getPosition().y,
+	               getPosition().z, mRotation.x, mRotation.y, mRotation.z);
+	updateVertex();
+
+	mWaveAngle += mFlutterSpeed;
+	if (mWaveAngle > 360.0f)
+		mWaveAngle -= 360.0f;
+
+	// Only the big flags are loud enough to be heard, and Delfino Plaza has
+	// its own ambience.
+	if (mScaling.y > 3.0f && mScaling.z > 3.0f
+	    && SMSGetMarDirector()->getCurrentMap() != 3
+	    && gpMSound->gateCheck(MSD_SE_OBJ_FLAG))
+		MSoundSESystem::MSoundSE::startSoundActor(MSD_SE_OBJ_FLAG, &mPosition,
+		                                          0, nullptr, 0, 4);
+}
+
 void TMapObjFlag::init(const char* name)
 {
-	unk68 = 100.0f * mScaling.z;
-	unk6C = 100.0f * mScaling.y;
-	unk7C = unk7C / mScaling.z;
-	unk80 = unk80 / mScaling.y;
-	unk84 = unk84 * mScaling.z;
+	mLength = 100.0f * getScaling().z;
+	mHeight = 100.0f * getScaling().y;
+	mWavePhaseZ /= mScaling.z;
+	mWavePhaseY /= mScaling.y;
+	mWaveAmplitude *= mScaling.z;
 
-	unk70 = static_cast<s32>(unk68 / 50.0f);
-	unk74 = static_cast<s32>(unk6C / 100.0f);
-	if (unk70 < 2)
-		unk70 = 3;
-	if (unk74 < 2)
-		unk74 = 3;
+	mNumZ = (int)(mLength / 50.0f);
+	mNumY = (int)(mHeight / 100.0f);
+	if (mNumZ < 2)
+		mNumZ = 3;
+	if (mNumY < 2)
+		mNumY = 3;
 
 	MsMtxSetXYZRPH(mMtx, mPosition.x, mPosition.y, mPosition.z, mRotation.x,
 	               mRotation.y, mRotation.z);
 
-	f32 stepX = unk68 / static_cast<f32>(unk70);
-	f32 stepY = unk6C / static_cast<f32>(unk74);
-	JKRHeap::getCurrentHeap()->getTotalFreeSize();
+	f32 stepZ = mLength / (f32)mNumZ;
+	f32 stepY = mHeight / (f32)mNumY;
+	JKRHeap::sCurrentHeap->getTotalFreeSize();
 
-	unk78 = new JGeometry::TVec3<f32>*[unk74];
-	for (s32 i = 0; i < static_cast<s32>(unk74); i++) {
-		unk78[i] = new JGeometry::TVec3<f32>[unk70];
-		for (s32 j = 0; j < static_cast<s32>(unk70); j++) {
-			unk78[i][j].x = 0.0f;
-			unk78[i][j].y = i * stepY;
-			unk78[i][j].z = j * stepX;
+	mVertices = new JGeometry::TVec3<f32>*[mNumY];
+	for (int y = 0; y < mNumY; y++) {
+		mVertices[y] = new JGeometry::TVec3<f32>[mNumZ];
+		for (int z = 0; z < mNumZ; z++) {
+			JGeometry::TVec3<f32>& vertex = mVertices[y][z];
+			vertex.x                      = 0.0f;
+			vertex.y                      = (f32)y * stepY;
+			vertex.z                      = (f32)z * stepZ;
 		}
 	}
 
-	// TODO: the map lists this function-local static as total_use_size$
-	// 2279 with a 1-byte init$2280 guard; the body it guards is unknown.
-	static u32 total_use_size = 0;
-	(void)total_use_size;
-
-	JKRHeap::getCurrentHeap()->getTotalFreeSize();
+	static int total_use_size = 0;
+	JKRHeap::sCurrentHeap->getTotalFreeSize();
 
 	gpMapObjFlagManager->registerObj(this, name);
 	initHitActor(0x4000000D, 1, 0, 0.0f, 0.0f, 0.0f, 0.0f);
@@ -139,38 +209,30 @@ void TMapObjFlag::init(const char* name)
 void TMapObjFlag::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TActor::load(stream);
-	char name[0x40];
-	stream.readString(name, sizeof(name));
-	init(name);
+
+	char textureName[64];
+	stream.readString(textureName, 64);
+	init(textureName);
 }
 
 TMapObjFlag::TMapObjFlag(const char* name)
     : THitActor(name)
+    , mLength(0.0f)
+    , mHeight(0.0f)
+    , mNumZ(0)
+    , mNumY(0)
+    , mVertices(nullptr)
+    , mWavePhaseZ(125.0f)
+    , mWavePhaseY(130.0f)
+    , mWaveAmplitude(20.0f)
+    , mWaveAngle(360.0f * MsRandF())
+    , mSkip(1)
 {
-	unk68 = 0.0f;
-	unk6C = 0.0f;
-	unk70 = 0;
-	unk74 = 0;
-	unk78 = nullptr;
-	unk7C = 125.0f;
-	unk80 = 130.0f;
-	unk84 = 20.0f;
-	// a random starting angle for the wave
-	unk88 = 360.0f * (0.000030517578f * (f32)rand());
-	unkBC = 1;
-	mMtx[2][3] = 0.0f;
-	mMtx[1][3] = 0.0f;
-	mMtx[0][3] = 0.0f;
-	mMtx[1][2] = 0.0f;
-	mMtx[0][2] = 0.0f;
-	mMtx[2][1] = 0.0f;
-	mMtx[0][1] = 0.0f;
-	mMtx[2][0] = 0.0f;
-	mMtx[1][0] = 0.0f;
-	mMtx[2][2] = 1.0f;
-	mMtx[1][1] = 1.0f;
-	mMtx[0][0] = 1.0f;
+	mMtx.identity();
 }
+
+f32 TMapObjFlagManager::mDistNearMiddle = 5000.0f;
+f32 TMapObjFlagManager::mDistMiddleFar  = 10000.0f;
 
 void TMapObjFlagManager::initDraw()
 {
@@ -180,15 +242,18 @@ void TMapObjFlagManager::initDraw()
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
 	GXSetCurrentMtx(GX_PNMTX0);
+
 	GXSetNumChans(0);
-	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0,
-	              GX_DF_NONE, GX_AF_NONE);
-	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0,
-	              GX_DF_NONE, GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
 	GXSetChanMatColor(GX_COLOR0A0, (GXColor) { 0xff, 0xff, 0xff, 0xff });
+
 	GXSetNumTexGens(1);
 	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
 	                  GX_FALSE, GX_PTIDENTITY);
+
 	GXSetNumTevStages(1);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
 	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_ZERO, GX_CC_ZERO,
@@ -199,6 +264,7 @@ void TMapObjFlagManager::initDraw()
 	                GX_CA_ZERO);
 	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 	                GX_TRUE, GX_TEVPREV);
+
 	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
 	GXSetAlphaCompare(GX_GREATER, 0, GX_AOP_AND, GX_GREATER, 0);
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
@@ -206,173 +272,123 @@ void TMapObjFlagManager::initDraw()
 	GXSetCullMode(GX_CULL_NONE);
 }
 
+// Exact since c-k6. The inlined update() passes the matrix as the raw
+// `mMtx.mMtx` array: through TMatrix34's conversion operator the argument
+// needed a binding web (`addi rA; mr r3, rA`) that shifted the pre-RA
+// schedule of the three rotation conversions (retail z, y, x; ours was y
+// first). The low region below the JUTTexture is update()'s getPosition()
+// reads and SMSGetMarDirector()->getCurrentMap().
 void TMapObjFlagManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (cue & 0x4) {
-		for (s32 i = 0; i < 15; i++) {
-			for (s32 j = 0; j < unk10[i].unk0; j++) {
-				TMapObjFlag* flag = unk10[i].unk4[j];
-				MsMtxSetXYZRPH(flag->mMtx, flag->mPosition.x,
-				               flag->mPosition.y, flag->mPosition.z,
-				               flag->mRotation.x, flag->mRotation.y,
-				               flag->mRotation.z);
-				flag->updateVertex();
-				flag->unk88 += TMapObjFlag::mFlutterSpeed;
-				if (flag->unk88 > 360.0f)
-					flag->unk88 -= 360.0f;
-				if (flag->mScaling.y > 3.0f && flag->mScaling.z > 3.0f
-				    && gpMarDirector->mMap != 3)
-					gpMSound->startSoundActor(0x302F, &flag->mPosition, 0,
-					                         nullptr, 0, 4);
-			}
-		}
+	if (cue & CUE_CALC_ANIM) {
+		for (int i = 0; i < FLAG_KIND_NUM; i++)
+			for (int j = 0; j < mInfos[i].mNum; j++)
+				mInfos[i].mFlags[j]->update();
 	}
 
-	if (cue & 0x10) {
+	if (cue & CUE_DRAW) {
 		initDraw();
-		for (s32 i = 0; i < 15; i++) {
-			if (unk10[i].unk0 != 0) {
-				JUTTexture texture(unk10[i].unk54);
+		for (int i = 0; i < FLAG_KIND_NUM; i++) {
+			if (mInfos[i].mNum != 0) {
+				JUTTexture texture(mInfos[i].mTimg);
 				texture.load(GX_TEXMAP0);
-				for (s32 j = 0; j < unk10[i].unk0; j++)
-					unk10[i].unk4[j]->draw();
+				for (int j = 0; j < mInfos[i].mNum; j++)
+					mInfos[i].mFlags[j]->draw();
 			}
 		}
 	}
 }
 
-void TMapObjFlagManager::registerObj(TMapObjFlag* obj, const char* name)
+// UNUSED (0x80): the body every registerObj branch repeats, inlined there.
+void TMapObjFlagManager::loadFlag(TMapObjFlagInfo* info, TMapObjFlag* flag,
+                                  const char* name)
+{
+	if (!info->mTimg) {
+		char path[64];
+		snprintf(path, 64, "/scene/mapObj/%s.bti", name);
+		info->mTimg = (const ResTIMG*)JKRFileLoader::getGlbResource(path);
+	}
+
+	info->mFlags[info->mNum] = flag;
+	info->mNum++;
+}
+
+void TMapObjFlagManager::registerObj(TMapObjFlag* flag, const char* name)
 {
 	if (strcmp(name, "flagSun") == 0) {
-		char path[0x40];
-		if (unk10[0].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[0].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[0].unk4[unk10[0].unk0] = obj;
-		unk10[0].unk0++;
-	} else if (strcmp(name, "flagWhite") == 0) {
-		char path[0x40];
-		if (unk10[1].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[1].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[1].unk4[unk10[1].unk0] = obj;
-		unk10[1].unk0++;
-	} else if (strcmp(name, "flagRedsun") == 0) {
-		char path[0x40];
-		if (unk10[2].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[2].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[2].unk4[unk10[2].unk0] = obj;
-		unk10[2].unk0++;
-	} else if (strcmp(name, "flagMonte") == 0) {
-		char path[0x40];
-		if (unk10[3].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[3].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[3].unk4[unk10[3].unk0] = obj;
-		unk10[3].unk0++;
-	} else if (strcmp(name, "flagBird") == 0) {
-		char path[0x40];
-		if (unk10[4].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[4].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[4].unk4[unk10[4].unk0] = obj;
-		unk10[4].unk0++;
-	} else if (strcmp(name, "flagHigekuri") == 0) {
-		char path[0x40];
-		if (unk10[5].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[5].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[5].unk4[unk10[5].unk0] = obj;
-		unk10[5].unk0++;
-	} else if (strcmp(name, "flagBenvenuto") == 0) {
-		char path[0x40];
-		if (unk10[6].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[6].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[6].unk4[unk10[6].unk0] = obj;
-		unk10[6].unk0++;
-	} else if (strcmp(name, "flagDolpicDolphin") == 0) {
-		char path[0x40];
-		if (unk10[7].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[7].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[7].unk4[unk10[7].unk0] = obj;
-		unk10[7].unk0++;
-	} else if (strcmp(name, "flagDolSun") == 0) {
-		char path[0x40];
-		if (unk10[8].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[8].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[8].unk4[unk10[8].unk0] = obj;
-		unk10[8].unk0++;
-	} else if (strcmp(name, "flagDolSunWelcome") == 0) {
-		char path[0x40];
-		if (unk10[9].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[9].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[9].unk4[unk10[9].unk0] = obj;
-		unk10[9].unk0++;
-	} else if (strcmp(name, "flagBianco") == 0) {
-		char path[0x40];
-		if (unk10[10].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[10].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[10].unk4[unk10[10].unk0] = obj;
-		unk10[10].unk0++;
-	} else if (strcmp(name, "flagRiccoBuoy") == 0) {
-		char path[0x40];
-		if (unk10[11].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[11].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[11].unk4[unk10[11].unk0] = obj;
-		unk10[11].unk0++;
-	} else if (strcmp(name, "flagSailMonte") == 0) {
-		char path[0x40];
-		if (unk10[12].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[12].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[12].unk4[unk10[12].unk0] = obj;
-		unk10[12].unk0++;
-	} else if (strcmp(name, "MammaYacht00") == 0) {
-		char path[0x40];
-		if (unk10[13].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[13].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[13].unk4[unk10[13].unk0] = obj;
-		unk10[13].unk0++;
-	} else if (strcmp(name, "flagMare") == 0) {
-		char path[0x40];
-		if (unk10[14].unk54 == nullptr) {
-			snprintf(path, sizeof(path), "/scene/mapObj/%s.bti", name);
-			unk10[14].unk54 = (ResTIMG*)JKRFileLoader::getGlbResource(path);
-		}
-		unk10[14].unk4[unk10[14].unk0] = obj;
-		unk10[14].unk0++;
+		loadFlag(&mInfos[0], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagWhite") == 0) {
+		loadFlag(&mInfos[1], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagRedsun") == 0) {
+		loadFlag(&mInfos[2], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagMonte") == 0) {
+		loadFlag(&mInfos[3], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagBird") == 0) {
+		loadFlag(&mInfos[4], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagHigekuri") == 0) {
+		loadFlag(&mInfos[5], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagBenvenuto") == 0) {
+		loadFlag(&mInfos[6], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagDolpicDolphin") == 0) {
+		loadFlag(&mInfos[7], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagDolSun") == 0) {
+		loadFlag(&mInfos[8], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagDolSunWelcome") == 0) {
+		loadFlag(&mInfos[9], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagBianco") == 0) {
+		loadFlag(&mInfos[10], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagRiccoBuoy") == 0) {
+		loadFlag(&mInfos[11], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagSailMonte") == 0) {
+		loadFlag(&mInfos[12], flag, name);
+		return;
+	}
+	if (strcmp(name, "MammaYacht00") == 0) {
+		loadFlag(&mInfos[13], flag, name);
+		return;
+	}
+	if (strcmp(name, "flagMare") == 0) {
+		loadFlag(&mInfos[14], flag, name);
+		return;
 	}
 }
 
+// Closure batch 128: the 16 bytes batch 123 could only find as unnamed
+// padding are two named results -- `readString`'s returned buffer pointer
+// (+8) and the current map the switch runs on (+8). Exact.
 void TMapObjFlagManager::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TNameRef::load(stream);
-	char name[0x10];
-	stream.readString(name, 8);
 
-	switch (gpMarDirector->mMap) {
+	char buffer[8];
+	char* name = stream.readString(buffer, 8);
+
+	u8 map = gpMarDirector->getCurrentMap();
+	switch (map) {
 	case 0:
 		TMapObjFlag::mFlutterSpeed = 16.0f;
 		break;
@@ -393,5 +409,3 @@ TMapObjFlagManager::TMapObjFlagManager(const char* name)
 {
 	gpMapObjFlagManager = this;
 }
-
-TMapObjFlagManager::~TMapObjFlagManager() { }

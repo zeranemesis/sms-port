@@ -15,9 +15,6 @@ JPABaseEmitter::JPABaseEmitter()
     : unk0(this)
     , mRng(0)
 {
-
-	
-	
 	MTXIdentity(mGlobalRotation);
 
 	mGlobalDynamicsScale.set(1.0f, 1.0f, 1.0f);
@@ -41,14 +38,14 @@ JPABaseEmitter::JPABaseEmitter()
 
 	initStatus(0);
 	setStatus(STATUS_FIRST_EMIT | STATUS_EMIT_NEXT_FRAME);
-	mRng.setSeed(JPAEmitterInfoObj.unk8.get());
+	mRng.setSeed(JPAEmitterInfoObj.unk8.get_bit32());
 }
 
 f32 JPABaseEmitter::getFovy() { return JPAEmitterInfoObj.mFovy; }
 
 f32 JPABaseEmitter::getAspect() { return JPAEmitterInfoObj.mAspect; }
 
-inline JPABaseParticle* JPABaseEmitter::newParticle()
+JPABaseParticle* JPABaseEmitter::newParticle()
 {
 	JPAParticle* particle
 	    = (JPAParticle*)mManager->unk0.getFirst()->getObject();
@@ -59,7 +56,7 @@ inline JPABaseParticle* JPABaseEmitter::newParticle()
 	return particle;
 }
 
-inline void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
+void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
                                         JSUList<JPABaseParticle>* list)
 {
 	particle->init();
@@ -67,30 +64,51 @@ inline void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
 	mManager->unk0.prepend(particle->getLinkBufferPtr());
 }
 
-inline void JPABaseEmitter::deleteParticle(JPABaseParticle* particle) { }
+// TODO: 0x94 against the map's 0x9c. Child particles carry FLAG_UNK4
+// (createChildParticle); two direct deleteBaseParticle calls give 0xb0, a
+// ternary 0x94, a default-then-override list 0x90.
+void JPABaseEmitter::deleteParticle(JPABaseParticle* particle)
+{
+	JSUList<JPABaseParticle>* list;
+	if (particle->checkStatus(JPABaseParticle::FLAG_UNK4))
+		list = &mChildParticleList;
+	else
+		list = &mParticleList;
+	deleteBaseParticle(particle, list);
+}
 
+// `next` is one function-scope local shared by both loops: a block-scope
+// `next` in each loop costs 8 bytes of frame (0x48).
 void JPABaseEmitter::deleteAllParticle()
 {
 	JSUList<JPABaseParticle>* list;
-	JSULink<JPABaseParticle>* it;
+	JSULink<JPABaseParticle>* link;
+	JSULink<JPABaseParticle>* next;
 
 	list = &mParticleList;
-	it   = list->getFirst();
-	while (it) {
-		JSULink<JPABaseParticle>* next = it->getNext();
-		deleteBaseParticle(it->getObject(), list);
-		it = next;
+	link = list->getFirst();
+	while (link) {
+		next = link->getNext();
+		deleteBaseParticle(link->getObject(), list);
+		link = next;
 	}
 
 	list = &mChildParticleList;
-	it   = list->getFirst();
-	while (it) {
-		JPABaseParticle* particle = it->getObject();
-		it                        = it->getNext();
-		deleteBaseParticle(particle, list);
+	link = list->getFirst();
+	while (link) {
+		next = link->getNext();
+		deleteBaseParticle(link->getObject(), list);
+		link = next;
 	}
 }
 
+// TODO: 98.9%, instruction-exact; frame 0x238 vs 0x258 (local_c0 at 0x178,
+// retail 0x198) and `particle` in r24 where retail has r28, above sweepShape.
+// Inert: function-scope particle pointers (any position), fVel before
+// baseVel, a function-scope rotMtx, a split vec; worse: one pointer without
+// the cast local, copy-constructed parent vectors, parent copies after
+// ignoreFields. A 0x20 deficit with every instruction right points at a
+// missing inline level (no UNUSED candidate in the map).
 void JPABaseEmitter::createChildParticle(JPABaseParticle* parent)
 {
 	JGeometry::TVec3<f32> local_c0(0.0f, 0.0f, 0.0f);
@@ -191,6 +209,12 @@ void JPABaseEmitter::getEmitterGlobalTranslation(JGeometry::TVec3<f32>& vec)
 	local_3c.mult(mTrans, vec);
 }
 
+// TODO: 99.9%, frame-exact.  The emitter axes read eio.unkCC's columns
+// through `ref()` (non-const `f32&`): the `getXDir`/`getYDir`/`getZDir`
+// header shape (`set(at(), at(), at())`) swaps f1/f2 at every site, raw
+// `mMtx` reads fix the registers but drop 0xc of frame per site.  The one
+// remaining swap is `getTrans`: ref() there fixes it but loses 8 of frame,
+// and every per-component ref/at/raw mix was either wrong-framed or off.
 void JPABaseEmitter::calcEmitterGlobalParams()
 {
 	JPAEmitterInfo& eio = JPAEmitterInfoObj;
@@ -233,9 +257,12 @@ void JPABaseEmitter::calcEmitterGlobalParams()
 	MTXConcat(eio.unk9C, emitterMtx, emitterMtx);
 	emitterMtx.getTrans(eio.unk24);
 
-	eio.unkCC.getXDir(eio.mEmitterAxisX);
-	eio.unkCC.getYDir(eio.mEmitterAxisY);
-	eio.unkCC.getZDir(eio.mEmitterAxisZ);
+	eio.mEmitterAxisX.set(eio.unkCC.ref(0, 0), eio.unkCC.ref(1, 0),
+	                      eio.unkCC.ref(2, 0));
+	eio.mEmitterAxisY.set(eio.unkCC.ref(0, 1), eio.unkCC.ref(1, 1),
+	                      eio.unkCC.ref(2, 1));
+	eio.mEmitterAxisZ.set(eio.unkCC.ref(0, 2), eio.unkCC.ref(1, 2),
+	                      eio.unkCC.ref(2, 2));
 
 	JGeometry::TVec3<f32> local_84(0.0f, 0.0f, 1.0f);
 	JGeometry::TVec3<f32> local_90;
@@ -255,8 +282,8 @@ void JPABaseEmitter::loadBaseEmitterBlock(JPADataBlock* block)
 	JGeometry::TVec3<s16> fixVec;
 	JGeometry::TVec3<f32> floatVec;
 
-	JSUMemoryInputStream stream2(block->mRawData,
-	                             *(u32*)((u8*)block->mRawData + 4));
+	JSUMemoryInputStream stream2(block->getRawData(),
+	                             *(u32*)(block->getRawData() + 4));
 
 	JSUInputStream& stream = stream2;
 	stream.skip(0xC);
@@ -308,13 +335,13 @@ void JPABaseEmitter::loadBaseEmitterBlock(JPADataBlock* block)
 	stream >> mKeyAnmTypeMask;
 }
 
-inline void JPABaseEmitter::executeBeforeCallBack()
+void JPABaseEmitter::executeBeforeCallBack()
 {
 	if (unk110)
 		unk110->execute(this);
 }
 
-inline void JPABaseEmitter::executeAfterCallBack()
+void JPABaseEmitter::executeAfterCallBack()
 {
 	if (unk110)
 		unk110->executeAfter(this);
@@ -342,11 +369,24 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 		s16 r26_param164;
 		s32 r27_param168;
 
+		// TODO: this block is 3 instructions long, which shifts the volume
+		// switch's jump table (the only .data mismatch). Retail loads
+		// mVolumeEmitIdx here (`lwz r27`), reads mEmitCount through a fresh
+		// `lis/addi` of JPAEmitterInfoObj (`extsh r0; mr r26, r0`), and
+		// addresses the sphere fields straight off the r30 base; ours hoists
+		// six `addi rX, r30, 0x16c..0x17c` field addresses. Reading the
+		// sphere fields through a non-constant pointer
+		// (`JPAGetEmitterInfoPtr()` bound to a local) removes the hoisting
+		// but ranks that pointer above `this` (retail: this r31, base r30)
+		// and still CSEs the mEmitCount read. Not: a reference/`const`
+		// pointer local, a TU-local sphere helper (with or without an info
+		// parameter), an inline mEmitCount getter, reordered or widened
+		// r24-r27 declarations.
 		if (checkFlag(EMIT_FLAG_FIXED_INTERVAL)) {
 			r27_param168 = JPAEmitterInfoObj.mVolumeEmitIdx;
 			r26_param164 = JPAEmitterInfoObj.mEmitCount;
 
-			if (mVolumeType == VOLUME_TYPE_SPHERE) {
+			if (getVolumeType() == VOLUME_TYPE_SPHERE) {
 				r24_param174 = JPAEmitterInfoObj.mSphereCurrentPitch;
 				r25_param176 = JPAEmitterInfoObj.mSphereCurrentYaw;
 
@@ -382,8 +422,8 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 						    = -JPAEmitterInfoObj.mSphereCurrentPitch;
 						JPAEmitterInfoObj.mHemisphereFlipFlop = true;
 					}
+					JPAEmitterInfoObj.mSphereCurrentYaw = 0;
 				}
-				JPAEmitterInfoObj.mSphereCurrentYaw = 0;
 			}
 		}
 
@@ -394,7 +434,7 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 
 		particle->unk68.zero();
 
-		switch (mVolumeType) {
+		switch (getVolumeType()) {
 		case VOLUME_TYPE_POINT: {
 			local_468.zero();
 			break;
@@ -508,7 +548,7 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 			local_468.y = 0.0f;
 			local_468.z = volumeSize * JMASCos(theta);
 
-			JGeometry::TVec3<f32> local_3C8;
+			Vec local_3C8;
 
 			f32 rad = volumeSize * mVolumeMinRadius;
 			s16 phi = mRng.get();
@@ -524,7 +564,7 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 		}
 		}
 
-		if (mVolumeType != VOLUME_TYPE_TORUS)
+		if (getVolumeType() != VOLUME_TYPE_TORUS)
 			f31_f30_f29.set(local_468.x, 0.0f, local_468.z);
 
 		JGeometry::TVec3<f32> f21_f20_f19;
@@ -541,7 +581,7 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 		JGeometry::TVec3<f32> add3_vec(0.0f, 0.0f, 0.0f);
 
 		if (unk1FC != 0.0f) {
-			if (mVolumeType == VOLUME_TYPE_POINT) {
+			if (getVolumeType() == VOLUME_TYPE_POINT) {
 				f26_f25_f28.set(getRandomSF(), getRandomSF(), getRandomSF());
 				f26_f25_f28.setLength(unk1FC);
 			} else {
@@ -551,14 +591,12 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 		}
 
 		if (unk200 != 0.0f) {
-			if (mVolumeType == VOLUME_TYPE_POINT) {
+			if (getVolumeType() == VOLUME_TYPE_POINT) {
 				if (checkFlag(EMIT_FLAG_FIXED_INTERVAL)) {
 					s16 ang = (s16)((r27_param168 << 16) / r26_param164);
 					f22_f23_f24.set(JMASSin(ang), 0.0f, JMASCos(ang));
 				} else {
-					f22_f23_f24.x = getRandomSF();
-					f22_f23_f24.y = 0.0f;
-					f22_f23_f24.z = getRandomSF();
+					f22_f23_f24.set(getRandomSF(), 0.0f, getRandomSF());
 				}
 				f22_f23_f24.setLength(unk200);
 			} else {
@@ -586,9 +624,9 @@ JPABaseParticle* JPABaseEmitter::createParticle()
 		}
 
 		JGeometry::TVec3<f32> local_35c;
-		local_35c.x = local_398.x + add3_vec.x + f26_f25_f28.x + f22_f23_f24.x;
-		local_35c.y = local_398.y + add3_vec.y + f26_f25_f28.y + f22_f23_f24.y;
-		local_35c.z = local_398.z + add3_vec.z + f26_f25_f28.z + f22_f23_f24.z;
+		local_35c.x = f26_f25_f28.x + f22_f23_f24.x + add3_vec.x + local_398.x;
+		local_35c.y = f26_f25_f28.y + f22_f23_f24.y + add3_vec.y + local_398.y;
+		local_35c.z = f26_f25_f28.z + f22_f23_f24.z + add3_vec.z + local_398.z;
 
 		if (unk1C4 != 0.0f)
 			local_35c *= random_scale;
@@ -645,6 +683,10 @@ void JPABaseEmitter::calcCurrentRateTimerStep()
 	}
 }
 
+// TODO: instruction-exact; get_ufloat_1's `s` slot sits at 0x2c (retail
+// 0x24). Inert: raw mRng read, forks over getRandomRF/mChildSpawnRate,
+// eio as JPAGetEmitterInfoPtr() or declared first, `-=` timer spellings,
+// no eio, getRandomRF spelled out; raw mStatus/mEmitFlags tests are worse.
 int JPABaseEmitter::calcCreateParticle()
 {
 	int numToCreate = 0;
@@ -673,7 +715,7 @@ int JPABaseEmitter::calcCreateParticle()
 				numToCreate = 0;
 			}
 		} else {
-			if (mVolumeType == VOLUME_TYPE_SPHERE) {
+			if (getVolumeType() == VOLUME_TYPE_SPHERE) {
 
 				eio.mSphereParticlesEmittedForCurrentLayer = 0;
 				eio.mSphereCurrentPitch                    = 0;
@@ -694,16 +736,18 @@ int JPABaseEmitter::calcCreateParticle()
 				    = (s16)((s32)(65536.0f * mVolumeYawSweep)
 				            / eio.mSphereParticlesInCurrentLayer);
 				// 90 degrees divided by the number of layers
-				eio.mSpherePitchStep = (s16)(65536 / 4 / mVolumeSubdivision);
-			} else if (mVolumeType == VOLUME_TYPE_CIRCLE
-			           || mVolumeType == VOLUME_TYPE_LINE) {
+				eio.mSpherePitchStep
+				    = (s16)(65536 / 4 / mVolumeSubdivision);
+			} else if (getVolumeType() == VOLUME_TYPE_CIRCLE
+			           || getVolumeType() == VOLUME_TYPE_LINE) {
 				numToCreate = mVolumeSubdivision;
 			}
 		}
 
 		JPAEmitterInfoObj.mEmitCount = (s16)numToCreate;
 
-		if (checkStatus(STATUS_STOP_EMIT))
+		bool stopEmit = checkStatus(STATUS_STOP_EMIT);
+		if (stopEmit)
 			numToCreate = 0;
 
 		if (numToCreate != 0) {
@@ -824,20 +868,32 @@ void JPABaseEmitter::doChildParticle()
 	}
 }
 
-inline f32 JPABaseEmitter::getKeyValue(f32 time, u16 frame_num, f32* frames)
+f32 JPABaseEmitter::getKeyValue(f32 time, u16 frame_num, f32* frames)
 {
 	return JPAGetKeyFrameValue(time, frame_num, frames);
 }
 
+// Direct-return level over a raw member read: retail's key table pointer is
+// an inline temporary of JPABaseEmitter::calcKeyFrameAnime, not a named slot.
+static inline JPADataBlockLinkInfo* JPAEmitterEmitterDataBlockInfo(const JPABaseEmitter* p) { return p->mEmitterDataBlockInfo; }
+
+// Binding level over a raw member read, worth +32 of low region in
+// JPABaseEmitter::calcKeyFrameAnime (batch 127).
+static inline u32 JPAEmitterKeyAnmTypeMask(const JPABaseEmitter* p)
+{
+	u32 keyAnmTypeMask = p->mKeyAnmTypeMask;
+	return keyAnmTypeMask;
+}
+
 void JPABaseEmitter::calcKeyFrameAnime()
 {
-	u32 keyNum = mEmitterDataBlockInfo->getKeyNum();
+	u32 keyNum = JPAEmitterEmitterDataBlockInfo(this)->getKeyNum();
 	if (!keyNum)
 		return;
 
-	u32 mask = mKeyAnmTypeMask;
+	u32 mask = JPAEmitterKeyAnmTypeMask(this);
 
-	JPAKeyFrameAnime** animeFrames = mEmitterDataBlockInfo->getKey();
+	JPAKeyFrameAnime** animeFrames = JPAEmitterEmitterDataBlockInfo(this)->getKey();
 
 	u32 bit    = 1;
 	u32 bitIdx = 0;
@@ -900,36 +956,44 @@ void JPABaseEmitter::calcKeyFrameAnime()
 	}
 }
 
+// Binding level worth +8 of low region, landing JPABaseEmitter::calc's frame
+// at 0x20 (batch 124).
+static inline bool JPAEmitterCheckStatus(const JPABaseEmitter* p, u32 i)
+{
+	bool status = p->checkStatus(i);
+	return status;
+}
+
 void JPABaseEmitter::calc()
 {
-
-	
-	
 	JPAEmitterInfoObj.mEmitCount = 0;
 
-	if (!checkStatus(STATUS_STOP_CALC))
+	if (!JPAEmitterCheckStatus(this, STATUS_STOP_CALC))
 		calcKeyFrameAnime();
 
 	executeBeforeCallBack();
 
-	if (!checkStatus(STATUS_STOP_CALC)) {
+	if (!JPAEmitterCheckStatus(this, STATUS_STOP_CALC)) {
 		calcEmitterGlobalParams();
 		mDraw.calc();
 		mFieldManager.calcFieldParams();
-		if (!checkStatus(STATUS_ENABLE_DELETE))
+		if (!JPAEmitterCheckStatus(this, STATUS_ENABLE_DELETE))
 			calcCreateParticle();
 	}
 
 	executeAfterCallBack();
 
-	if (!checkStatus(STATUS_STOP_CALC)) {
+	if (!JPAEmitterCheckStatus(this, STATUS_STOP_CALC)) {
 		doParticle();
 		doChildParticle();
 		unk10.incFrame();
 	}
 }
 
-inline void JPABaseEmitter::setGlobalRMatrix(MtxPtr) { }
+void JPABaseEmitter::setGlobalRMatrix(MtxPtr param_1)
+{
+	JPAGetRMtxElement(param_1, mGlobalRotation);
+}
 
 void JPABaseEmitter::setGlobalRTMatrix(MtxPtr param_1)
 {
@@ -942,6 +1006,6 @@ void JPABaseEmitter::setGlobalSRTMatrix(MtxPtr param_1)
 	                       getGlobalTranslation());
 }
 
-inline void JPABaseEmitter::getPivotX() { }
+void JPABaseEmitter::getPivotX() { }
 
-inline void JPABaseEmitter::getPivotY() { }
+void JPABaseEmitter::getPivotY() { }

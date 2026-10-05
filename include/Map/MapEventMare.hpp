@@ -20,6 +20,8 @@ public:
 		unk110.set(1.0f, 1.0f, 1.0f);
 		unk11C.zero();
 	}
+	TMareWallRock(const char* name);
+
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -29,6 +31,8 @@ public:
 	void appear();
 	void depress();
 	J3DModel* getMapModel() const;
+
+	void setIndex(u32 index) { unkF8 = index; }
 
 	static f32 mAppearSpeed;
 	static f32 mDepressSpeed;
@@ -51,12 +55,14 @@ public:
 
 class TMareEventWallRock : public JDrama::TViewObj {
 public:
-	TMareEventWallRock(const char* name = "イベント（マーレ壁の岩）");
+	TMareEventWallRock(const char* name);
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics) { }
 
 public:
+	s32 getNumRock() const { return unk10; }
+
 	/* 0x10 */ s32 unk10;
 	/* 0x14 */ TMareWallRock* unk14;
 };
@@ -105,7 +111,7 @@ public:
 
 class TMareEventBumpyWall : public TMapObjBase {
 public:
-	TMareEventBumpyWall(const char* name = "凸凹壁");
+	TMareEventBumpyWall(const char*);
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void control();
@@ -115,6 +121,8 @@ public:
 	void bumpDownX();
 	void bumpUpZ();
 	void bumpDownZ();
+
+	f32 getBumpLimit() const { return unk144; }
 
 public:
 	/* 0x138 */ s32 unk138;

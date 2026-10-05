@@ -20,6 +20,7 @@ public:
 	int worldToTexSize(f32) const;
 	int worldToDepth(f32) const;
 	bool isProhibit(int, int) const;
+	void subtractFromYMap(int, int, f32) const;
 	bool isSame(int, int, f32) const;
 	f32 getDepthWorld(int, int) const;
 	int getEdgeDegree(int, int) const;

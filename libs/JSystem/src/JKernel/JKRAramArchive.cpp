@@ -54,9 +54,20 @@ JKRAramArchive::~JKRAramArchive()
 	}
 }
 
+// UNUSED; JKRMemArchive::fixedInit's body over the same JKRArchive fields
+// with this class's mount mode (0x40: the 2 shares _54's register).
 void JKRAramArchive::fixedInit(s32 entryNum)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
+	mIsMounted  = false;
+	mMountMode  = MOUNT_ARAM;
+	mMountCount = 1;
+	_54         = 2;
+	mHeap       = JKRHeap::sCurrentHeap;
+	mEntryNum   = entryNum;
+	if (sCurrentVolume)
+		return;
+	sCurrentVolume = this;
+	setCurrentDirID(0);
 }
 
 bool JKRAramArchive::mountFixed(s32 entryNum)
@@ -183,34 +194,36 @@ void* JKRAramArchive::fetchResource(void* buffer, u32 bufferSize,
 	return buffer;
 }
 
+// The UNUSED address getters are the fetchResources' `mDataOffset +
+// mBlock->getAddress()` behind a null test (0x24); each lookup is the
+// JKRArchive find that takes its arguments as given (0x4c), and the path one
+// sets one more argument (0x50): a root directory of 0 or getCurrentDirID()
+// compile the same, so the second argument is a guess.
 u32 JKRAramArchive::getAramAddress_Entry(SDIFileEntry* fileEntry)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
-	return 0;
+	if (fileEntry == nullptr)
+		return 0;
+	return fileEntry->mDataOffset + mBlock->getAddress();
 }
 
 u32 JKRAramArchive::getAramAddress(const char* file)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
-	return 0;
+	return getAramAddress_Entry(findFsResource(file, 0));
 }
 
-u32 JKRAramArchive::getAramAddress(u32 param_1, const char* file)
+u32 JKRAramArchive::getAramAddress(u32 type, const char* file)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
-	return 0;
+	return getAramAddress_Entry(findTypeResource(type, file));
 }
 
 u32 JKRAramArchive::getAramAddress(u16 idx)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
-	return 0;
+	return getAramAddress_Entry(findIdResource(idx));
 }
 
 u32 JKRAramArchive::getIdxAramAddress(u32 idx)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
-	return 0;
+	return getAramAddress_Entry(findIdxResource(idx));
 }
 
 u32 JKRAramArchive::fetchResource_subroutine(u32 srcAram, u32 srcLength,

@@ -4,7 +4,7 @@ unsigned long WriteUARTN(void* buf, unsigned long len);
 unsigned long ReadUARTN(void* bytes, unsigned long length);
 unsigned long InitializeUART(unsigned long baudRate);
 
-static inline int __init_uart_console(void);
+static int __init_uart_console(void);
 
 int __read_console(int param_0, unsigned char* data, size_t* size, int param_3)
 {
@@ -43,7 +43,7 @@ int __write_console(int param_0, unsigned char* data, size_t* size, int param_3)
 
 int __close_console() { return 0; }
 
-static inline int __init_uart_console(void)
+static int __init_uart_console(void)
 {
 	static int initialized = 0;
 	int ret                = 0;

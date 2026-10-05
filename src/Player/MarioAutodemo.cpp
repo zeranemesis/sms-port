@@ -14,7 +14,10 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-#pragma dont_inline on
+// Retail calls this from demoMain: the named `landed` result and the empty
+// `default` arm are the two statements over the depth-1 budget (either alone
+// does not tip it). Measured and rejected: naming unk384 (`THitActor* shine`)
+// or the kill radius, both cost bytes.
 BOOL TMario::winDemo()
 {
 	switch (mStatusState) {
@@ -24,7 +27,8 @@ BOOL TMario::winDemo()
 			mHeldObject = nullptr;
 		}
 		gpConductor->killEnemiesWithin(mPosition, 2000.0f);
-		if (jumpProcess(0) == TRUE) {
+		BOOL landed = jumpProcess(0);
+		if (landed == TRUE) {
 			gpMarDirector->fireGetStar((TShine*)unk384);
 			unk384->receiveMessage(this, HIT_MESSAGE_TAKE);
 			mStatusState = 1;
@@ -34,31 +38,35 @@ BOOL TMario::winDemo()
 		setAnimation(ANIM_DEMO_SHINE_GET, 1.0f);
 		stopProcess();
 		break;
+	default:
+		break;
 	}
 
 	return FALSE;
 }
-#pragma dont_inline off
 
 BOOL TMario::readBillboard()
 {
-	// Missing stack space
-	// volatile u32 padding[16];
+	// TODO: instruction-exact; frame 0x30 against retail's 0x70, every slot
+	// 0x40 low (the inlined sqrt temporary is 0x4c there). getPosition() on
+	// the NPC's four reads adds 8 each but forms a +0x18 pointer for .z.
+	// c-k11: `TVec3 diff; diff.sub(mPosition, npc->mPosition)` read by
+	// component is instruction-count exact at 0x40 but swaps f6/f7; the
+	// operator- and `diff -= ` spellings change code.
 
-	TBaseNPC* talkingNpc = gpMarDirector->unkA0;
+	TBaseNPC* talkingNpc = gpMarDirector->getTalkingNPC();
 	switch (mStatusState) {
 	case 0: {
-		const JGeometry::TVec3<f32>& targetPos = talkingNpc->getPosition();
-		f32 dx                                 = mPosition.x - targetPos.x;
-		f32 dz                                 = mPosition.z - targetPos.z;
+		f32 dx = mPosition.x - talkingNpc->mPosition.x;
+		f32 dz = mPosition.z - talkingNpc->mPosition.z;
 		if (dx == 0.0f && dz == 0.0f)
 			dx += 1.0f;
 
 		f32 dist = std::sqrtf(dx * dx + dz * dz);
 		if (dist < 100.0f) {
 			JGeometry::TVec3<f32> moveDist;
-			moveDist.x = dx / dist * 2.0f * 50.0f + mPosition.x;
-			moveDist.z = dz / dist * 2.0f * 50.0f + mPosition.z;
+			moveDist.x = dx / dist * 50.0f * 2.0f + talkingNpc->mPosition.x;
+			moveDist.z = dz / dist * 50.0f * 2.0f + talkingNpc->mPosition.z;
 			moveDist.y = mFloorPosition.y;
 			moveRequest(moveDist);
 		}
@@ -156,8 +164,8 @@ BOOL TMario::downLoser()
 
 BOOL TMario::warpIn()
 {
-	// Missing stack space
-	// volatile u32 padding[10];
+	// TODO: frame 8 bytes short (0xf0 vs 0xf8); retail places the
+	// operator+ argument copy at 0x98, 0x18 above the low temporaries.
 	mStatusTimer += 1;
 	const JGeometry::TVec3<f32>& gatePosOffset = ((TModelGate*)mHolder)->unkAC;
 	JGeometry::TVec3<f32> holderPosOffset(((TModelGate*)mHolder)->unkAC);
@@ -198,7 +206,7 @@ BOOL TMario::warpIn()
 
 		// Possibly TVec3 inaccuracies?
 		JGeometry::TVec3<f32> marioDist = holderPosOffset - mPosition;
-		mPosition                       = marioDist * 0.02f + mPosition;
+		mPosition = mPosition + marioDist * 0.02f;
 
 		f32 dist
 		    = mAutoDemoParams.mWarpInTremble.get() - marioDist.length() * 0.1f;
@@ -221,7 +229,7 @@ BOOL TMario::warpIn()
 			offUnk114(UNK114_FLAG_VISIBLE);
 			rumbleStart(0x15, 0x14);
 		}
-		if (mAutoDemoParams.mWarpInBallsTime.get() > (f32)mStatusTimer) {
+		if ((f32)mStatusTimer > mAutoDemoParams.mWarpInBallsTime.get()) {
 			mStatusTimer = 0;
 			unk468       = mAutoDemoParams.mWarpInVecBase.get();
 			mStatusState = 2;
@@ -249,17 +257,22 @@ BOOL TMario::warpIn()
 	return FALSE;
 }
 
+// Closure batch 226: the two stage reads and the first nozzle change bind
+// their receiver once each, which is exactly the 0x28 of low region this
+// function was missing. The rungs are +0x10 per director site and +8 per
+// water-gun site; every other distribution over- or undershoots.
+static inline TWaterGun* UnUsualGun(const TMario* p)
+{
+	TWaterGun* g = p->mWaterGun;
+	return g;
+}
+
 bool TMario::isUnUsualStageStart()
 {
-	// Keep MWCC's frame at the 0x50 bytes used by the retail function. This is
-	// code-generation padding only; it has no gameplay role.
-	volatile u32 stackPadding[10];
-	(void)stackPadding;
-
 	// Pinna rollercoaster
-	if ((gpMarDirector->getCurrentMap() == 0x3A)
-	    && (gpMarDirector->getCurrentStage() == 0
-	        || gpMarDirector->getCurrentStage() == 1))
+	if ((SMSGetMarDirector()->getCurrentMap() == 0x3A)
+	    && (SMSGetMarDirector()->getCurrentStage() == 0
+	        || SMSGetMarDirectorBound()->getCurrentStage() == 1))
 		return toroccoStart();
 
 	if (SMS_isDivingMap()) {
@@ -272,7 +285,7 @@ bool TMario::isUnUsualStageStart()
 		onFlag(MARIO_FLAG_HAS_FLUDD);
 
 		if (checkFlag(MARIO_FLAG_HAS_FLUDD))
-			mWaterGun->changeNozzle(TWaterGun::Underwater, true);
+			UnUsualGun(this)->changeNozzle(TWaterGun::Underwater, true);
 
 		if (checkFlag(MARIO_FLAG_HAS_FLUDD))
 			mWaterGun->changeNozzle(
@@ -366,20 +379,18 @@ BOOL TMario::toroccoStart()
 	return TRUE;
 }
 
+// Both animation picks in warpOut test the same argument byte; this level
+// and the named camera-flag test give retail's 0x38 frame.
+static inline bool IsWarpOutGet(u32 arg) { return (arg & 0xff) == 2; }
+
 BOOL TMario::warpOut()
 {
-
-	
-	
-	// Missing stack space
-	// volatile u32 padding[4];
-
 	mStatusTimer += 1;
 	onUnk114(UNK114_FLAG_VISIBLE);
 	switch (mStatusState) {
 	case 0:
 		onUnk114(UNK114_FLAG_VISIBLE);
-		if ((mStatusArg & 0xff) == 2) {
+		if (IsWarpOutGet(mStatusArg)) {
 			setAnimation(ANIM_DEMO_GATE_OUT_APPEAR_GET, 1.0f);
 		} else {
 			setAnimation(ANIM_DEMO_GATE_OUT_APPEAR, 1.0f);
@@ -398,7 +409,8 @@ BOOL TMario::warpOut()
 			unkDelay = 0xb4;
 		}
 		if (mStatusTimer >= unkDelay) {
-			if (checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
+			bool follow = checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA);
+			if (follow) {
 				onUnk114(UNK114_FLAG_VISIBLE);
 				return changePlayerStatus(MARIO_STATUS_DIVE, 0, true);
 			}
@@ -407,7 +419,7 @@ BOOL TMario::warpOut()
 		break;
 	case 2:
 		onUnk114(UNK114_FLAG_VISIBLE);
-		if ((mStatusArg & 0xff) == 2) {
+		if (IsWarpOutGet(mStatusArg)) {
 			setAnimation(ANIM_DEMO_GATE_OUT_ROLLING_GET, 1.0f);
 		} else {
 			setAnimation(ANIM_DEMO_GATE_OUT_ROLLING, 1.0f);
@@ -525,16 +537,27 @@ BOOL TMario::disappear()
 	return FALSE;
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TMario::demoMain (batch 127).
+static inline u32 MarioAutodemoStatusL0(const TMario* p)
+{
+	u32 status = p->mStatus;
+	return status;
+}
+
+static inline u32 MarioAutodemoStatus(const TMario* p)
+{
+	u32 status = MarioAutodemoStatusL0(p);
+	return status;
+}
+
 BOOL TMario::demoMain()
 {
-
-	
-	
 	// Missing stack space
 	// volatile u32 padding[10];
 
 	BOOL result = FALSE;
-	switch (mStatus) {
+	switch (MarioAutodemoStatus(this)) {
 	case MARIO_STATUS_WIN_DEMO:
 		result = winDemo();
 		break;

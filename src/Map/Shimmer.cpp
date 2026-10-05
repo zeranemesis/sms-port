@@ -21,14 +21,9 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-static inline void setEffectMtxOnTex1(J3DMaterial* mat, MtxPtr mtx)
-{
-	mat->getTexGenBlock()->getTexMtx(1)->setEffectMtx(mtx);
-}
+void TShimmer::near() { mPosition.set(0.0f, 0.0f, 9600.0f); }
 
-void TShimmer::near() { }
-
-void TShimmer::far() { }
+void TShimmer::far() { mPosition.set(0.0f, 0.0f, 0.0f); }
 
 void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
 {
@@ -38,13 +33,6 @@ void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_MOVE) {
 		unk54->setFrame(unk58->getFrame());
 		unk58->update();
-
-	// Every diff marker of this function is a stack offset sitting 0x28 above
-	// ours (target frame 0x198 against 0x170). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	if (cue & CUE_CALC_VIEW) {
@@ -52,25 +40,25 @@ void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
 		    && !gpMarioOriginal->getGroundPlane()->isShadow()
 		    && !gpMarioOriginal->getGroundPlane()->isIndoors()
 		    && !gpMarioOriginal->getGroundPlane()->isPool()) {
-			mPosition.set(0.0f, 0.0f, 9600.0f);
+			near();
 		} else {
-			mPosition.set(0.0f, 0.0f, 0.0f);
+			far();
 		}
 
-		Mtx effectMtx;
+		Mtx44 effectMtx;
 		SMS_GetLightPerspectiveForEffectMtx(effectMtx);
 
-		unk48->getModelData()
+		getModel()->getModelData()
 		    ->getMaterialNodePointer(0)
 		    ->getTexGenBlock()
 		    ->getTexMtx(1)
 		    ->setEffectMtx(effectMtx);
 
-		MtxPtr viewMtx = graphics->mViewMtx;
+		MtxPtr viewMtx = graphics->getViewMtx();
 
-		Mtx afStack_80;
-		Mtx afStack_b0;
-		Mtx afStack_e0;
+		Mtx inverseView;
+		Mtx translation;
+		Mtx scale;
 		J3DTransformInfo info;
 		info.mScale.x     = 1.0f;
 		info.mScale.y     = 1.0f;
@@ -81,27 +69,27 @@ void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
 		info.mTranslate.x = mPosition.x;
 		info.mTranslate.y = mPosition.y;
 		info.mTranslate.z = mPosition.z;
-		J3DGetTranslateRotateMtx(info, afStack_b0);
-		MTXScale(afStack_e0, mScaling.x, mScaling.y, mScaling.z);
-		MTXInverse(viewMtx, afStack_80);
-		MTXConcat(afStack_80, afStack_b0, afStack_80);
-		MTXConcat(afStack_80, afStack_e0, afStack_80);
-		unk48->setBaseTRMtx(afStack_80);
-		unk48->calc();
-		unk48->viewCalc();
+		J3DGetTranslateRotateMtx(info, translation);
+		MTXScale(scale, mScaling.x, mScaling.y, mScaling.z);
+		MTXInverse(viewMtx, inverseView);
+		MTXConcat(inverseView, translation, inverseView);
+		MTXConcat(inverseView, scale, inverseView);
+		getModel()->setBaseTRMtx(inverseView);
+		getModel()->calc();
+		getModel()->viewCalc();
 	}
 
 	if (cue & CUE_ENTRY) {
-		if (gpMarDirector->mMap == 2 || !(gpCamera->unk124.y < 0.0f))
-			unk48->entry();
+		if (gpMarDirector->getCurrentMap() == 2 || !(gpCamera->getUnk124().y < 0.0f))
+			getModel()->entry();
 	}
 }
 
 void TShimmer::loadAfter()
 {
 	JDrama::TActor::loadAfter();
-	TScreenTexture* ref = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+	TScreenTexture* ref
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
 	unk44->getTexture()->setResTIMG(1, *ref->getTexture()->getTexInfo());
 }
 

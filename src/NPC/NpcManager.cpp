@@ -54,7 +54,8 @@ const char* cMareCommonPollutionBmtName  = "/scene/mareCommon/mare_yogore.bmt";
 
 void TBoardNpcManager::clipActors(JDrama::TGraphics* graphics)
 {
-	clipActorsAux(graphics, *(f32*)((u8*)gpConductor + 0x9C), 200.0f);
+	clipActorsAux(graphics, gpConductor->getCondParams().mEnemyFarClip.get(),
+	              200.0f);
 }
 
 void TBoardNpcManager::createModelData()
@@ -91,8 +92,8 @@ void TMareJellyFishManager::createModelData()
 
 	const ResTIMG* realTex
 	    = (const ResTIMG*)JKRFileLoader::getGlbResource(cJellyFishRealTexName);
-	TScreenTexture* screenTex = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search(cScreenTexViewObjName));
+	TScreenTexture* screenTex
+	    = JDrama::TNameRefGen::search<TScreenTexture>(cScreenTexViewObjName);
 	const ResTIMG* screenTexInfo = screenTex->getTexture()->getTexInfo();
 
 	J3DModelData* modelData;
@@ -103,6 +104,14 @@ void TMareJellyFishManager::createModelData()
 		SMS_ChangeTextureAll(modelData, cJellyFishDummyScreenTexName,
 		                     *screenTexInfo);
 	}
+}
+
+// Parked copy of what TEnemyManager::getObj should be: the cast belongs inside
+// the accessor, not at the call site, and the cast's temporary is what places
+// clipEnemies' locals. Shared headers are off limits in this batch.
+static inline TBaseNPC* NpcManagerGetObj(TNPCManager* manager, int i)
+{
+	return (TBaseNPC*)manager->getObj(i);
 }
 
 TNPCManager::TNPCManager(const char* name)
@@ -166,9 +175,26 @@ void TNPCManager::load(JSUMemoryInputStream& stream)
 	unk3C = 250.0f;
 }
 
+// Binding level over a raw member read: a register lever in
+// TNPCManager::makePartsModelData_ at an unchanged frame (batch 127).
+static inline bool NpcManagerUnk2A(const TNpcModelData* p)
+{
+	bool v2A = p->unk2A;
+	return v2A;
+}
+
 void TNPCManager::makePartsModelData_(u32 npc_type, u32 flags,
                                       TModelDataKeeper* keeper)
 {
+	// TODO: instruction-identical, frame size right (0x150), but `path` sits
+	// at 0x20(r1) in retail and 0x1c(r1) here: the low region is 4 bytes
+	// short and the slack above `path` 4 bytes long. This is the "+4 low /
+	// -4 named" family in docs/catalog/frame-gaps.md. Rejected (no slot
+	// movement): naming the model name, the JKRGetResource result, the
+	// J3DModelData, the keeper folder, a literal 0x100 for sizeof(path).
+	// Rejected (instructions): a named `bool pollution` or an explicit
+	// (bool) cast for getBmt_'s argument (+4/+5 instructions), and moving
+	// `loadFlags` into the outer loop body (99.4%).
 	const TNpcInitInfo* initInfo = SMSGetNpcInitData(npc_type);
 	u32 loadFlags;
 
@@ -178,7 +204,7 @@ void TNPCManager::makePartsModelData_(u32 npc_type, u32 flags,
 			continue;
 
 		loadFlags = flags;
-		if (modelData->unk2A != 0) {
+		if (NpcManagerUnk2A(modelData) != 0) {
 			loadFlags &= ~(0x40000 | 0x20000 | 0x10000);
 			loadFlags |= 0x100000;
 		}
@@ -208,72 +234,6 @@ void TNPCManager::makePartsModelData_(u32 npc_type, u32 flags,
 				changeTextureToPollution_(sdlModel->getModelData());
 		}
 	}
-}
-
-J3DMaterialTable* TNPCManager::getBmt_(bool) { return nullptr; }
-
-SDLModelData* TNPCManager::getPartsSDLModelData(const char* name) const
-{
-	SDLModelData* result = nullptr;
-
-	if (unk5C != nullptr)
-		result = unk5C->getDataByName(name);
-
-	if (result == nullptr && unk60 != nullptr)
-		result = unk60->getDataByName(name);
-
-	return result;
-}
-
-void TNPCManager::clipEnemies(JDrama::TGraphics* graphics)
-{
-	f32 nearClip = unk54;
-	f32 farClip  = *unk58;
-
-	if (gpMarDirector->mMap == 1) {
-		CPolarSubCamera* cam = gpCamera;
-
-		// TODO: figure out these inlines. fabricatedInline3 matches in camera
-		// itself but not here for some reason...
-		if (gpCamera->isDemoCamera() || gpCamera->fabricatedInline3())
-			if (farClip < 15000.0f)
-				farClip = 15000.0f;
-	}
-
-	SetViewFrustumClipCheckPerspective(gpCamera->mAspect, gpCamera->mFovy,
-	                                   nearClip, farClip);
-
-	for (int i = 0, e = mObjNum; i < e; ++i) {
-		TBaseNPC* actor = (TBaseNPC*)unk18[i];
-
-		JGeometry::TVec3<f32> checkPos = actor->mPosition;
-		checkPos.y += 75.0f;
-
-		if (actor->checkLiveFlag(LIVE_FLAG_UNK2000)
-		    && SMS_IsInOtherFastCube(checkPos)) {
-			actor->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
-			continue;
-		}
-
-		if (ViewFrustumClipCheck(graphics, actor->mPosition, unk3C)) {
-			actor->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
-		} else {
-			actor->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
-		}
-	}
-}
-
-void TNPCManager::perform(u32 cue, JDrama::TGraphics* graphics)
-{
-
-	if (cue & CUE_ENTRY) {
-		for (int i = 0, e = mObjNum; i < e; ++i) {
-			TBaseNPC* npc = (TBaseNPC*)unk18[i];
-			npc->onLiveFlag(LIVE_FLAG_UNK1000000);
-		}
-	}
-
-	TEnemyManager::perform(cue, graphics);
 }
 
 void TNPCManager::makeCommonPartsModelDataKeeper_(u32 param_1,
@@ -311,19 +271,88 @@ void TMonteMBaseManager::changeTextureToStraw_(J3DModelData*) { }
 
 void TMonteWBaseManager::changeTextureToStraw_(J3DModelData*) { }
 
-TMareBaseManager::TMareBaseManager(const char* name)
-    : TNPCManager(name)
+J3DMaterialTable* TNPCManager::getBmt_(bool) { return nullptr; }
+
+SDLModelData* TNPCManager::getPartsSDLModelData(const char* name) const
 {
-	if (mStaticBmtNormal == nullptr) {
-		mStaticBmtNormal = J3DModelLoaderDataBase::loadMaterialTable(
-		    JKRGetResource(cMareCommonNormalBmtName));
+	SDLModelData* result = nullptr;
+
+	if (unk5C != nullptr)
+		result = unk5C->getDataByName(name);
+
+	if (result == nullptr && unk60 != nullptr)
+		result = unk60->getDataByName(name);
+
+	return result;
+}
+
+void TNPCManager::clipEnemies(JDrama::TGraphics* graphics)
+{
+	f32 nearClip = getUnk54();
+	f32 farClip  = *getUnk58();
+
+	if (gpMarDirector->getCurrentMap() == 1) {
+		// Spelled out rather than routed through TCamera::fabricatedInline3():
+		// that inline materialises its `result` bool, and retail branches
+		// straight out of each term of one flat `||` chain here. The reload of
+		// gpCamera after isNowInbetween() is the tell that every term reads
+		// the global again.
+		if (gpCamera->isDemoCamera()
+		    || SMSGetCamera()->mMode == CAMERA_MODE_UNDER_GROUND
+		    || (SMSGetCamera()->mPrevMode == CAMERA_MODE_UNDER_GROUND
+		        && (SMSGetCamera()->isNowInbetween()
+		            || gpCamera->mMode == CAMERA_MODE_JUMP_CODE)))
+			if (farClip < 15000.0f)
+				farClip = 15000.0f;
 	}
 
-	if (mStaticBmtPollution == nullptr) {
-		mStaticBmtPollution = J3DModelLoaderDataBase::loadMaterialTable(
-		    JKRGetResource(cMareCommonPollutionBmtName));
+	SetViewFrustumClipCheckPerspective(SMSGetCamera()->getFovy(),
+	                                   SMSGetCamera()->getAspect(), nearClip,
+	                                   farClip);
+
+	// TODO: instruction-identical, uniform 8-byte low-region gap (0x90 vs
+	// 0x88). Seven accessor levels get it from 0x60 to 0x88 and the ladder
+	// then saturates: getPosition() for the copy, gpMarDirector's
+	// getCurrentMap(), getUnk54(), *getUnk58(), the three-level getObj(i) in
+	// NpcManagerGetObj, and SMSGetCamera() over gpCamera for fovy/aspect are
+	// +8 each; an eighth level anywhere (SMSGetMarDirector(), SMSGetCamera()
+	// at the four predicate sites, a getViewClipRadius() for unk3C, a named
+	// ViewFrustumClipCheck result, a named fovy/aspect pair, a `(const Vec&)`
+	// cast on the cube test) is +0. Only a dead 12-byte local lands 0x90, so
+	// this is the "last 8 bytes" family: one 8-byte aggregate with no
+	// evidence for it.
+	int count = getObjNum();
+	for (int i = 0; i < count; ++i) {
+		TBaseNPC* actor = NpcManagerGetObj(this, i);
+
+		JGeometry::TVec3<f32> pos = actor->getPosition();
+		pos.y += 75.0f;
+
+		if (actor->checkLiveFlag(LIVE_FLAG_UNK2000)
+		    && SMS_IsInOtherFastCube(pos)) {
+			actor->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		} else {
+			if (ViewFrustumClipCheck(graphics, &actor->mPosition, unk3C))
+				actor->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+			else
+				actor->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		}
 	}
 }
+
+void TNPCManager::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_ENTRY) {
+		for (int i = 0, e = mObjNum; i < e; ++i) {
+			TBaseNPC* npc = (TBaseNPC*)getObj(i);
+			npc->onLiveFlag(LIVE_FLAG_UNK1000000);
+		}
+	}
+
+	TEnemyManager::perform(cue, graphics);
+}
+
+
 
 TMonteMBaseManager::TMonteMBaseManager(const char* name)
     : TNPCManager(name)
@@ -353,6 +382,19 @@ TMareWBaseManager::TMareWBaseManager(const char* name)
 	                                &mStaticCommonKeeper);
 }
 
+TMareBaseManager::TMareBaseManager(const char* name)
+    : TNPCManager(name)
+{
+	if (mStaticBmtNormal == nullptr) {
+		mStaticBmtNormal = J3DModelLoaderDataBase::loadMaterialTable(
+		    JKRGetResource(cMareCommonNormalBmtName));
+	}
+
+	if (mStaticBmtPollution == nullptr) {
+		mStaticBmtPollution = J3DModelLoaderDataBase::loadMaterialTable(
+		    JKRGetResource(cMareCommonPollutionBmtName));
+	}
+}
 J3DMaterialTable* TMareBaseManager::getBmt_(bool pollution)
 {
 	if (pollution)

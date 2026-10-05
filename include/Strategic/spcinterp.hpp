@@ -77,7 +77,7 @@ public:
 	TSpcSlice(int value)
 	    : mType(TYPE_INT)
 	{
-		(int&)mData = value;
+		mData.asInt = value;
 	}
 
 	TSpcSlice(f32 value)
@@ -133,6 +133,19 @@ public:
 		mType       = TYPE_INT;
 	}
 
+	// The by-value f32 parameter is load-bearing and stays. Header round 13
+	// retried batch 73's `const f32&` proposal: it lets liveinterp.cpp's nine
+	// linGetSRT float arms call setDataFloat() instead of writing mType and
+	// mData directly and still reach the ROM's 486 instructions (the setter's
+	// by-value parameter is the one instruction per site that made the direct
+	// writes necessary), but it breaks the byte-exact spcFloat in this TU,
+	// 100% -> 99.94%: every slot from 0x44 up sits 4 bytes low, because the
+	// by-value parameter reserves a 4-byte slot at that site and a reference
+	// binding does not. Naming the argument there
+	// (`f32 value = interp->pop().getDataFloat(); result.setDataFloat(value);`)
+	// does not give the slot back -- it shifts a second pair (0x34 -> 0x30) as
+	// well. Since linGetSRT is no closer either way, the exact function wins:
+	// keep the by-value setter and keep liveinterp's direct field writes.
 	void setDataFloat(f32 f)
 	{
 		mType         = TYPE_FLOAT;
@@ -432,7 +445,7 @@ public:
 	// result of an opcode in the frame's temporary area instead of giving it a
 	// named local slot.
 	void push(const TSpcSlice& slice) { mProcessStack.push(slice); }
-	void push(int v) { mProcessStack.push(TSpcSlice(v)); }
+	void push(int v) { push(TSpcSlice(v)); }
 	void push(f32 v) { mProcessStack.push(TSpcSlice(v)); }
 	// Unlike the other scalar overloads this one builds the slice with the
 	// default constructor and setDataString, not with TSpcSlice(const char*).
@@ -668,19 +681,33 @@ public:
 	{
 	}
 
+	// Exact. The shape is two nested guards falling through to one shared
+	// `bl TSpcInterp::dispatchBuiltin` at the bottom, with the typed
+	// function pointer named inside the outer guard and the success path
+	// ending in `return`. That is what gives retail's `lwz r0, 0x10(r7);
+	// cmplwi r0, 0; mr r12, r0`: the guard's test takes r0 and the named
+	// local is the second user of the same load, so it needs the move.
+	// An `if (sym && sym->mNativeCall) { ... } else { ... }` collapses the
+	// two users into one register and loses the `mr` (96.3%); casting in
+	// the call expression instead of naming the pointer tests in r0 but
+	// re-loads at the call (86.2%); and the two-early-return form of the
+	// non-template dispatchBuiltinDefault duplicates the tail `bl` (79.3%).
 	virtual void dispatchBuiltin(u32 sym_index, u32 arg_count)
 	{
 		typedef void (*TypedNativeCall)(TSpcTypedInterp<T>*, u32);
 		TSpcSymbol* sym = mBinary->getSymbol(sym_index);
 
-		if (sym && sym->mNativeCall) {
+		if (sym != nullptr) {
 			TypedNativeCall call = (TypedNativeCall)sym->mNativeCall;
-
-			mCurrentlyExecutingBuiltinName = mBinary->getSymbolName(sym);
-			call(this, arg_count);
-		} else {
-			TSpcInterp::dispatchBuiltin(sym_index, arg_count);
+			if (call != nullptr) {
+				mCurrentlyExecutingBuiltinName
+				    = mBinary->getSymbolName(sym);
+				call(this, arg_count);
+				return;
+			}
 		}
+
+		TSpcInterp::dispatchBuiltin(sym_index, arg_count);
 	}
 
 	// fabricated

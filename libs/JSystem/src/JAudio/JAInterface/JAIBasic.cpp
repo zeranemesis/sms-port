@@ -154,7 +154,24 @@ void JAIBasic::setRegisterTrackCallback()
 	JASystem::TrackMgr::registerTrackCallback(&JAIBasic::setParameterSeqSync);
 }
 
-void JAIBasic::bootDSP() { }
+void JAIBasic::initAudioThread(JKRSolidHeap* heap, u32 aram_heap_size,
+                               u8 param2)
+{
+	JKRSolidHeap* rootHeap = heap;
+	s32 uVar1              = 1;
+	if (param2 & 1)
+		uVar1 |= 2;
+
+	JASystem::AudioThread::setPriority(
+	    JAIGlobalParameter::audioSystemThreadPriority,
+	    JAIGlobalParameter::audioDvdThreadPriority);
+	JASystem::AudioThread::start(rootHeap, aram_heap_size, uVar1);
+	JASystem::TrackMgr::init(JAIGlobalParameter::systemTrackMax,
+	                         JAIGlobalParameter::systemRootTrackMax);
+	JASystem::TrackMgr::reset();
+}
+
+void JAIBasic::bootDSP() { JASystem::AudioThread::bootDSP(); }
 
 void JAIBasic::initReadFile()
 {
@@ -318,7 +335,7 @@ void JAIBasic::checkInitDataOnMemory()
 			while (((u32*)mInitDataPointer)[i] != 0) {
 				mBankList[j].mBankData
 				    = (void*)(mInitDataPointer
-				              + (uintptr_t)mBankList[j].mBankData);
+				              + (uintptr_t)(void*)mBankList[j].mBankData);
 				++j;
 				i += 3;
 			}
@@ -340,7 +357,7 @@ void JAIBasic::checkInitDataOnMemory()
 			while (((u32*)mInitDataPointer)[i] != 0) {
 				mWaveBankList[j].mWaveBankData
 				    = (void*)(mInitDataPointer
-				              + (uintptr_t)mWaveBankList[j].mWaveBankData);
+				              + (uintptr_t)(void*)mWaveBankList[j].mWaveBankData);
 				++j;
 				i += 3;
 			}
@@ -385,7 +402,7 @@ void JAIBasic::checkInitDataOnMemory()
 			mSoundSceneList                   = table->mSceneData;
 			for (u32 scene = 0; scene < JAIGlobalParameter::soundSceneMax;
 			     ++scene)
-				((u8**)mSoundSceneList)[scene] += (uintptr_t)table;
+				((PTR32(u8)*)mSoundSceneList)[scene] += (uintptr_t)table;
 			i += 3;
 			break;
 		}
@@ -596,20 +613,8 @@ void JAIBasic::initNullData()
 
 void JAIBasic::initDriver(JKRSolidHeap* heap, u32 aram_heap_size, u8 param_3)
 {
-
-	s32 uVar1        = 1;
-	JKRSolidHeap* pHeap = heap;
-	u32 pAram         = aram_heap_size;
-	if (param_3 & 1)
-		uVar1 |= 2;
-
-	JASystem::AudioThread::setPriority(
-	    JAIGlobalParameter::audioSystemThreadPriority,
-	    JAIGlobalParameter::audioDvdThreadPriority);
-	JASystem::AudioThread::start(pHeap, pAram, uVar1);
-	JASystem::TrackMgr::init(JAIGlobalParameter::systemTrackMax,
-	                         JAIGlobalParameter::systemRootTrackMax);
-	JASystem::TrackMgr::reset();
+	JKRSolidHeap* rootHeap = heap;
+	initAudioThread(rootHeap, aram_heap_size, param_3);
 }
 
 void JAIBasic::initInterface(u8 param)

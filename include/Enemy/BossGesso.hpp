@@ -67,7 +67,11 @@ public:
 
 private:
 	/* 0x70 */ TBossGesso* mOwner;
-	/* 0x74 */ TMtx34f unk74;
+	// TPosition3f, not TMtx34f: retail's init calls the empty
+	// SMatrix34C<f>::SMatrix34C() out of line for this member, which only
+	// happens at the extra derivation level (map: one
+	// __ct__Q29JGeometry64TPosition3<...>Fv reference).
+	/* 0x74 */ TPosition3f unk74;
 	/* 0xA4 */ JGeometry::TVec3<f32> unkA4;
 };
 
@@ -157,7 +161,7 @@ public:
 	void showMessage(u32);
 	void checkTakeMsg();
 	void changeBck(int);
-	bool inSightAngle(f32);
+	BOOL inSightAngle(f32);
 	f32 inSight();
 	BOOL is2ndFightNow() const;
 	void stopIfRoll();
@@ -172,9 +176,9 @@ public:
 	void launchPolDrop();
 	void setEyeDamageBtp(int);
 	BOOL tentacleHeld() const;
-	void tentacleAttack();
+	BOOL tentacleAttack();
 	BOOL beakHeld() const;
-	void tentacleWait();
+	BOOL tentacleWait();
 	void doAttackSingle();
 	void doAttackDouble();
 	void doAttackSkipRope();
@@ -184,8 +188,10 @@ public:
 	void doAttackRoll();
 	void performInContainer(u32, JDrama::TGraphics*);
 
-	// fabricated
-	TBossGessoParams* getSaveParam() const
+	// fabricated; retail dispatches through TSpineEnemy's virtual
+	// getSaveParam() at every site and casts the result, so this must not
+	// override the virtual (that would claim vtable slot 0x108).
+	TBossGessoParams* getSaveParam2() const
 	{
 		return (TBossGessoParams*)getSaveParam();
 	}
@@ -202,16 +208,19 @@ public:
 	int getAttackMode() const { return mAttackMode; }
 
 	// fabricated
+	TBGTentacle* getTentacle(int i) const { return mTentacles[i]; }
+
+	// fabricated
 	f32 getAttackSpeed() const
 	{
 		if (mAttackMode == 2)
-			return getSaveParam()->mSLUnisonAttackSpeed.get();
+			return getSaveParam2()->mSLUnisonAttackSpeed.get();
 
 		if (mAttackMode == 1)
-			return getSaveParam()->mSLDoubleAttackSpeed.get();
+			return getSaveParam2()->mSLDoubleAttackSpeed.get();
 
 		if (mAttackMode == 4)
-			return getSaveParam()->mSLSkipRopeAttackSpeed.get();
+			return getSaveParam2()->mSLSkipRopeAttackSpeed.get();
 
 		return 1.0f;
 	}
@@ -235,8 +244,8 @@ public:
 	/* 0x195 */ s8 unk195;
 	/* 0x196 */ s8 unk196;
 	/* 0x198 */ u32 unk198;
-	/* 0x19C */ u32 unk19C;
-	/* 0x1A0 */ u8 unk1A0;
+	/* 0x19C */ int unk19C;
+	/* 0x1A0 */ s8 unk1A0;
 	/* 0x1A1 */ s8 unk1A1;
 	/* 0x1A4 */ f32 unk1A4;
 	/* 0x1A8 */ int unk1A8;

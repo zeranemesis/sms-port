@@ -72,7 +72,9 @@ public:
 	void matAnmFrameUpdate();
 	void perform(u32 cue, JDrama::TGraphics* graphics);
 	BOOL checkCurAnm(const char* name, int type);
-	bool checkCurAnmFromIndex(int index, int type);
+	// BOOL and not bool: the ROM's callers test the result with `cmpwi r3, 0`
+	// rather than masking it with `clrlwi.` (TNerveBombHeiWaitExplosion).
+	BOOL checkCurAnmFromIndex(int index, int type);
 	bool checkAnmFileExist(const char* name, int type);
 	J3DFrameCtrl* getFrameCtrl(int type);
 	BOOL checkBckPass(f32 pass_frame);
@@ -104,6 +106,11 @@ public:
 	// fabricated
 	MActorAnmBase* getUnk28(int i) { return mAnmByType[i]; }
 	MActorAnmBck* getAnmBck() { return mAnmBck; }
+	// Rejected (header round 20): writing this to bind its result
+	// (`J3DModel* model = mModel; return model;`) is the level
+	// TTalkCursor::associateNPC's parked `TalkCursorModel` stands in for, but
+	// it breaks the DOL -- source-linked TUs read the model through it and
+	// their codegen moves. The binding has to stay per call site.
 	J3DModel* getModel() const { return mModel; }
 	void unmarkUnk40() { unk40 = false; }
 	BOOL curAnmEndsNext() { return curAnmEndsNext(ANM_TYPE_BCK, nullptr); }
@@ -117,6 +124,25 @@ public:
 			return;
 
 		mAnmBck->setCalc(calc);
+	}
+
+	// The map has this as UNUSED 0x1c in bosstelesa.cpp, which is where the
+	// name comes from; the body is still a guess from the call sites, which
+	// read MActorAnmEach::unk24 null-checked before handing it to
+	// setBckOldMotionBlendAnmPtr.
+	// Non-const, as getCurBckAnmPtr__6MActorFv's missing C says. The receiver
+	// has to go through getMActor() for that to work: with the raw mMActor
+	// member on both halves of the statement MWCC CSEs the mAnmBck load and
+	// TChuuHana::setBckAnm drops to 93.2%, where the accessor's extra level
+	// gives retail's two independent `lwz 0xc(r5)` reads and 99.8%
+	// (instruction-exact, 16 bytes of frame short). bosstelesa and tinkoopa
+	// already spelled their sites that way.
+	J3DAnmTransform* getCurBckAnmPtr()
+	{
+		if (!mAnmBck)
+			return nullptr;
+
+		return mAnmBck->unk24;
 	}
 
 	J3DAnmTransform* getBckOldMotionBlendAnmPtr() const

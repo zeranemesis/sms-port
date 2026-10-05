@@ -44,7 +44,7 @@ public:
 	virtual void createEnemies(int);
 	virtual void changeDrawBuffer(u32) { }
 
-	void createEnemy();
+	bool createEnemy();
 	void createSharedMActorSet(const char**);
 	TSharedMActorSet* getSharedMActorSet(int);
 	void setSharedFlags();
@@ -63,6 +63,16 @@ public:
 
 	// fabricated
 	TSpineEnemyParams* getSaveParam() const { return unk38; }
+	// Ruled out (header round 12): casting TObjManager::getObj()'s result
+	// directly, i.e. dropping the TLiveManager::getObj() level. That is what
+	// TAnimalManagerBase::clipEnemies wants (a 4-byte temporary that shifts
+	// all its locals), and it is parked as a TU-local helper there, but
+	// applied here it loses five exact functions --
+	// TEnemyManager::updateAnmSoundShared, killChildrenWithin,
+	// THamuKuriManager::setSearchHamuKuri, checkSerialKill,
+	// TBEelTearsManager::perform -- plus THauntLegManager::initSetEnemies and
+	// TRocketManager::initSetEnemies, for total matched_code -0.02. The
+	// TLiveManager level is the majority spelling.
 	TSpineEnemy* getObj(int i) { return (TSpineEnemy*)TLiveManager::getObj(i); }
 	const TSpineEnemy* getObj(int i) const
 	{
@@ -85,7 +95,7 @@ public:
 	/* 0x3C */ f32 unk3C;
 	/* 0x40 */ TSharedMActorSet* unk40;
 	/* 0x44 */ s32 unk44;
-	/* 0x48 */ Mtx** unk48;
+	/* 0x48 */ TPosition3f** unk48;
 	/* 0x4C */ s32 unk4C;
 	/* 0x50 */ int unk50;
 };

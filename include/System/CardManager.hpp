@@ -2,6 +2,7 @@
 #define GC2D_CARD_MANAGER_HPP
 
 #include <dolphin/card.h>
+#include <stddef.h>
 
 class JSUMemoryInputStream;
 class JSUMemoryOutputStream;
@@ -40,8 +41,16 @@ public:
 		void setEmpty();
 
 		// fabricated
-		TEBlockStat getState() const { return mState; }
-		u32 getWriteCount() const { return mWriteCount; }
+		TEBlockStat getState() const
+		{
+			TEBlockStat state = mState;
+			return state;
+		}
+		u32 getWriteCount() const
+		{
+			u32 writeCount = mWriteCount;
+			return writeCount;
+		}
 		void* getPreviewBytes() { return mPreviewBytes; }
 
 		/* 0x0 */ TEBlockStat mState;
@@ -130,6 +139,34 @@ public:
 	/* 0x46C */ TCardBookmarkInfo* mGetBookmarkInfosArg; // guarded by mMutex
 	/* 0x470 */ char unk470[0x4];
 	/* 0x474 */ u32 mReadWriteBlockArg; // guarded by mMutex
+};
+
+struct HeaderData {
+	/* 0x04 */ char mTitle[0x20];
+	/* 0x24 */ char mComment[0x20];
+	/* 0x40 */ char mBanner[0xE00];
+	/* 0xE40 */ char mIcons[0xA00];
+};
+
+struct TCardSector {
+	void clearData();
+	void setCheckSum(u32 write_count);
+	s32 read(CARDFileInfo* file, s32 index, TCardManager::TCriteria* criteria);
+
+	// fabricated
+	HeaderData* getHeader() { return &mHeader; }
+	void* getData() { return &mHeader; }
+	size_t getDataSize() const
+	{
+		return sizeof(mHeader) + sizeof(mOptionBlock);
+	}
+	s32 getWriteCount() const { return mWriteCount; }
+
+public:
+	/* 0x0 */ s32 mWriteCount;
+	/* 0x4 */ HeaderData mHeader;
+	/* 0x1844 */ char mOptionBlock[0x7B8];
+	/* 0x1FFC */ s32 mCheckSum;
 };
 
 #endif

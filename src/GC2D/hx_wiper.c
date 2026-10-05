@@ -1,115 +1,193 @@
+/**
+ * @file hx_wiper.c
+ *
+ * @brief The screen-wipe library ("Hx"): the shutter, iris, door, sweep and
+ * logo transitions TScrnFader drives.
+ *
+ * TODO: this TU was built with auto-inlining OFF. Nothing here is inlined in
+ * retail -- Hx_Warning (an empty function), Hx_SetVFilter, Hx_CameraInit,
+ * Hx_TimerCountDown and Frb2_InitBlackBox are all called out of line -- while
+ * the MSL header inlines (sqrtf's Newton iterations) still expand. Building
+ * this object with `extra_cflags=["-inline noauto"]` in configure.py takes it
+ * from nine exact functions to sixteen (Hx_UpdateWipe, Hx_ProvideResource,
+ * Hx_ProvideResourceEx, Hx_RemoveResource, Hx_Test1, Frb2_InitGx and
+ * Hx_FrBufferMorf all become byte-exact) and lifts the unit from 50.9% to
+ * roughly 84% fuzzy. The flag change is out of scope for this batch.
+ *
+ * The sqrtf() calls below now inline as retail does (frsqrte plus three Newton
+ * steps, a volatile float and an frsp). math.h used to carry that body only
+ * inside `namespace std`, behind `#ifdef __cplusplus`, so a C TU got a call;
+ * it now defines the same body as a plain global in C mode, which is also how
+ * the map names this TU's copies of its two local statics
+ * (_half$localstatic0$sqrtf__Ff, with no std qualifier). That lifted
+ * Hxs1_Test2 70.7 -> 88.5, Hxs1_Test1 68.6 -> 80.3, Hxs2_Circle 43.4 -> 56.3
+ * and Hxs1_Circle 48.1 -> 50.6.
+ *
+ * @details Everything lives in one file-scope work struct.  TScrnFader calls
+ * Hx_ResetWipe() once with the display size, Hx_ProvideResource() to hand over
+ * a .bti when a wipe needs one, Hx_StartWipe() to pick a pattern, then
+ * Hx_UpdateWipe() every frame until it returns 3.  Each pattern is a handler
+ * in handle_table, driven by hx.step / hx.timer; the handlers render straight
+ * into the frame buffer with immediate-mode GX and, for the morph wipes, copy
+ * the frame buffer back out as a texture.
+ */
 
 #include <GC2D/hx_wiper.h>
 #include <JSystem/ResTIMG.hpp>
-#include <MarioUtil/ReinitGX.hpp>
 #include <dolphin/dvd.h>
 #include <dolphin/gx.h>
 #include <dolphin/mtx.h>
-#include <dolphin/vi.h>
-#include <dolphin/os/OSCache.h>
-#include <fake_tgmath.h>
+#include <dolphin/os.h>
+#include <math.h>
 
-f32 sinf(f32);
-f32 cosf(f32);
+// TODO: MarioUtil/ReinitGX.hpp is C++-only (it uses extern "C"), and this TU
+// is built with -lang=c, so the prototype is repeated here.
+void ReInitializeGX(void);
 
-typedef struct HxMotion {
-	f32 unk0;
-	f32 unk4;
-	f32 unk8;
-	f32 unkC;
-	f32 unk10;
-	f32 unk14;
-	f32 unk18;
-	f32 unk1C;
-	f32 unk20;
-} HxMotion;
+typedef struct ResTIMG ResTIMG;
 
-typedef struct HxWiper {
-	u32 width;
-	u32 height;
-	u32 halfWidth;
-	u32 halfHeight;
-	u8 state;
-	u8 type;
-	u8 direction;
-	u8 _padding13;
-	f32 elapsed;
-	f32 deltaTime;
-	s32 resourceArg;
-	void (*handler)(void);
-	s32 hasResource;
-	s32 hasResourceEx;
-	void* resource;
-	void* resourceEx;
-	u32 resourceSize;
-	s32 animationState;
-	u32 timer;
-	HxMotion motion;
-	u8 isPal;
-} HxWiper;
-
+/// One point of the logo's pen path.
 typedef struct HxDrawPath {
-	f32 x;
-	f32 y;
-	s32 type;
+	/* 0x0 */ f32 x;
+	/* 0x4 */ f32 y;
+	/* 0x8 */ s32 wait;
 } HxDrawPath;
 
-static void Hx_SetVFilter(f32);
-static void __Hx_FrBufferMorf(u32, u32);
-static void Hx_CameraInit(void);
-static void Hx_GxInit(int, int);
-static void Hx_Circle(void);
-static void Hx_Test1(void);
-static void Hx_Test5(void);
-static void Hx_Test4(void);
-static void Hx_Test2R(void);
-static void Hx_Test2(void);
-static void Hx_Door(void);
-static void Hx_Logo(void);
-static void Hx_GameOver(void);
-static void Hxs1_Test1(f32, f32, f32);
-static void Hxs1_Test2(u32, u32, f32, f32, f32, f32);
-static void Hxs1_Circle(f32);
-static void Hxs2_Circle(u8, f32, f32);
-static void Hxs_FrBufferMorf2(f32);
-static void Hxs_FrBufferMorf2B(f32);
-static void Hxs_Logo_TexDraw(f32, f32, f32, f32, f32, f32);
-static void dummy_handler(void);
+/**
+ * @brief A trapezoidal speed profile: accelerate, hold, decelerate.
+ *
+ * @details Hx_MotionSet() solves for the acceleration that covers `distance`
+ * over the three phases; Hx_MotionUpdate() integrates one frame of it and
+ * returns the distance travelled so far.
+ */
+typedef struct HxMotion {
+	/* 0x00 */ f32 accelEnd;
+	/* 0x04 */ f32 holdEnd;
+	/* 0x08 */ f32 decelEnd;
+	/* 0x0C */ f32 accel;
+	/* 0x10 */ f32 unk10;
+	/* 0x14 */ f32 decel;
+	/* 0x18 */ f32 speed;
+	/* 0x1C */ f32 frame;
+	/* 0x20 */ f32 position;
+} HxMotion;
 
-static HxWiper hx;
-static u8 hx_buffer[0x3300] __attribute__((aligned(32)));
+/// The wipe library's whole state.
+typedef struct HxWork {
+	/* 0x00 */ u32 width;
+	/* 0x04 */ u32 height;
+	/* 0x08 */ u32 centerX;
+	/* 0x0C */ u32 centerY;
+	/* 0x10 */ u8 state;
+	/* 0x11 */ u8 wipeNo;
+	/* 0x12 */ u8 dir;
+	/* 0x13 */ u8 pad13;
+	/* 0x14 */ f32 time;
+	/* 0x18 */ f32 rate;
+	/* 0x1C */ s32 param;
+	/* 0x20 */ void (*handler)(void);
+	/* 0x24 */ int hasResource;
+	/* 0x28 */ int hasResourceEx;
+	/* 0x2C */ void* resource;
+	/* 0x30 */ void* resourceEx;
+	/* 0x34 */ u32 resourceSize;
+	/* 0x38 */ u32 step;
+	/* 0x3C */ u32 timer;
+	/* 0x40 */ HxMotion motion;
+} HxWork;
+
+static void Hx_CameraInit(void);
+static void Hx_GxInit(int tex, int blend);
+static void Hgx_DrawCircle(f32 cx, f32 cy, f32 r, u32 color);
+static void Hgx_init_tobj_resource(GXTexObj* obj, const ResTIMG* timg);
+static void Hgx_ReadTexture(char* path, void* buffer);
+static void Hx_GetFrBuffer(void* dest, u32 left, u32 top, u32 wd, u32 ht);
+static void Hx_SetVFilter(f32 rate);
+static void Hx_SetVFilterFade(f32 rate);
+static void __Hx_FrBufferMorf(u32 x, u32 y);
+static void Hx_FrBufferMorf(f32 rate);
+static void Frb2_InitGx(GXTexObj* obj);
+static void Frb2_InitBlackBox(void);
+static void Frb2_RendBox(u32 color, f32 x1, f32 y1, f32 x2, f32 y2);
+static void Hx_Warning(int no);
+static void SetDisplaySize(u32 width, u32 height);
+static void dummy_handler(void);
+static void Hx_TimerCountDownDummy(void);
+static u32 Hx_TimerCountDown(void);
+static void Hx_MotionSet(HxMotion* m, f32 distance, f32 accel_time,
+                         f32 hold_time, f32 decel_time);
+static f32 Hx_MotionUpdate(HxMotion* m);
+static void Hx_Circle(void);
+static void Hxs1_Circle(f32 r);
+static void Hxs2_Circle(u8 alpha, f32 r_in, f32 r_out);
+static void Hxs_FrBufferMorf2(f32 x);
+static void Hxs_FrBufferMorf2B(f32 x);
+static void Hx_Door(void);
+static void Hxs_GameOver(u8 fade, f32 mag, f32 rot);
+static void InitWipe(void);
+static void Hx_GameOver(void);
+static void Hxs_Logo_ExtraDraw();
+static void Hxs_Logo_TexSetup(u8 alpha, u8 fade, const ResTIMG* timg);
+static void Hxs_Logo_TexDraw(f32 x1, f32 y1, f32 x2, f32 y2, f32 wd, f32 ht);
+static void Hxs_Logo_MagDraw(f32 mag, f32 wd, f32 ht);
+static void Hxs_PenDraw(f32 x, f32 y, u32 num, const HxDrawPath* dp);
+static void Hx_Logo(void);
+static void Hx_Test1(void);
+static void Hxs1_Test1(f32 cx, f32 cy, f32 r);
+static void Hx_Test2(void);
+static void Hx_Test2R(void);
+static void Hxs1_Test2(u32 num, u32 dir, f32 cx, f32 cy, f32 r_out, f32 r_in);
+static void Hx_Test4(void);
+static void Hx_Test5(void);
+
 static u16 img_wx;
 static u16 img_wy;
 static u8 vtable[7];
 
+static HxWork hx;
+static u8 hx_buffer[0x3300] __attribute__((aligned(32)));
+
+static void* fbuf        = hx_buffer;
+static u8 vtable_org[7]  = { 0x10, 0x10, 0x00, 0x00, 0x00, 0x10, 0x10 };
+static u8 dec_step[4]    = { 0, 1, 5, 6 };
+static u8 inc_step[3]    = { 2, 3, 4 };
+static void* fbuf2       = hx_buffer;
+static void* gmover_tex_buffer = hx_buffer;
+
+/* ------------------------------------------------------------------------- */
+
+static inline u32 Hx_HalfWidth(void) { return hx.width / 2; }
+
 static void Hx_CameraInit(void)
 {
-	static Vec camLoc = { 320.0f, 240.0f, -30.0f };
-	static Vec objPt  = { 320.0f, 240.0f, 0.0f };
-	static Vec up     = { 0.0f, -10.0f, 0.0f };
-	Mtx44 projection;
-	Mtx view;
-	f32 halfWidth  = (f32)(hx.width >> 1);
-	f32 halfHeight = (f32)(hx.height >> 1);
-	f32 near       = 0.0f;
-	f32 far        = 100.0f;
+	static f32 camLoc[3] = { 320.0f, 240.0f, -30.0f };
+	static f32 objPt[3]  = { 320.0f, 240.0f, 0.0f };
+	static f32 up[3]     = { 0.0f, -10.0f, 0.0f };
 
-	camLoc.x = halfWidth;
-	camLoc.y = halfHeight;
-	objPt.x  = halfWidth;
-	objPt.y  = halfHeight;
-	C_MTXOrtho(projection, halfHeight, -halfHeight, -halfWidth, halfWidth, near,
-	           far);
-	GXSetProjection(projection, GX_ORTHOGRAPHIC);
+	Mtx44 proj;
+	Mtx view;
+	f32 cx = hx.width >> 1;
+	f32 cy = hx.height >> 1;
+	f32 near = 0.0f;
+	f32 far = 100.0f;
+
+	camLoc[0] = cx;
+	camLoc[1] = cy;
+	objPt[0]  = cx;
+	objPt[1]  = cy;
+
+	C_MTXOrtho(proj, cy, -cy, -cx, cx, near, far);
+	GXSetProjection(proj, GX_ORTHOGRAPHIC);
 	GXSetViewport(0.0f, 0.0f, 640.0f, 480.0f, 0.0f, 1.0f);
-	C_MTXLookAt(view, &camLoc, &up, &objPt);
+	C_MTXLookAt(view, (Vec*)camLoc, (Vec*)up, (Vec*)objPt);
 	GXSetCullMode(GX_CULL_NONE);
-	GXSetCoPlanar(GX_DISABLE);
-	GXSetZMode(GX_DISABLE, GX_ALWAYS, GX_DISABLE);
+	GXSetCoPlanar(GX_FALSE);
+	GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
 	GXSetNumTexGens(0);
 	GXSetNumTevStages(1);
 	GXSetNumIndStages(0);
-	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL,
+	              GX_COLOR0A0);
 	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -125,24 +203,9 @@ static void Hx_CameraInit(void)
 	GXSetNumChans(1);
 }
 
-static void (*handle_table[15])(void) = {
-	dummy_handler, Hx_Circle, Hx_Circle, Hx_Test1,    Hx_Test1,
-	Hx_Test5,      Hx_Test5,  Hx_Test4,  Hx_Test4,    Hx_Test2R,
-	Hx_Test2,      Hx_Door,   Hx_Logo,   Hx_GameOver, dummy_handler,
-};
-static u8 handle_type[15] = {
-	0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
-};
-static void* fbuf              = hx_buffer;
-static u8 vtable_org[7]        = { 0x10, 0x10, 0, 0, 0, 0x10, 0x10 };
-static u8 dec_step[4]          = { 0, 1, 5, 6 };
-static u8 inc_step[3]          = { 2, 3, 4 };
-static void* fbuf2             = hx_buffer;
-static void* gmover_tex_buffer = hx_buffer;
-
-static void Hx_GxInit(int texture, int blend)
+static void Hx_GxInit(int tex, int blend)
 {
-	switch (texture) {
+	switch (tex) {
 	case 0:
 		GXSetNumTexGens(0);
 		GXSetNumTevStages(1);
@@ -150,6 +213,7 @@ static void Hx_GxInit(int texture, int blend)
 		              GX_COLOR0A0);
 		GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
 		break;
+
 	case 1:
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
 		                  GX_FALSE, GX_PTIDENTITY);
@@ -170,83 +234,111 @@ static void Hx_GxInit(int texture, int blend)
 	case 1:
 		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
 		               GX_LO_CLEAR);
-		return;
+		break;
+
 	case 0:
 		GXSetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
-		return;
+		break;
 	}
 }
 
-static void Hgx_DrawCircle(void) { }
-
-static void Hgx_init_tobj_resource(GXTexObj* texObj, struct ResTIMG* resource)
+// TODO: dead code, and nothing in the TU resembles it, so the shape below is
+// a guess from the name alone; the map says 0x1c8 bytes.
+static void Hgx_DrawCircle(f32 cx, f32 cy, f32 r, u32 color)
 {
-	u8* imageData = (u8*)resource;
-	u8 format     = resource->format;
-	u8 wrapS      = resource->wrapS;
-	u8 wrapT      = resource->wrapT;
-	u8 minFilter  = resource->minFilter;
-	u8 magFilter  = resource->magFilter;
+	int i;
 
-	imageData += resource->imageDataOffset;
-
-	img_wx = resource->width;
-	img_wy = resource->height;
-	GXInitTexObj(texObj, imageData, img_wx, img_wy, (GXTexFmt)format,
-	             (GXTexWrapMode)wrapS, (GXTexWrapMode)wrapT, GX_FALSE);
-	GXInitTexObjLOD(texObj, (GXTexFilter)minFilter, (GXTexFilter)magFilter,
-	                0.0f, 0.0f, 0.0f, GX_DISABLE, GX_DISABLE, GX_ANISO_1);
+	GXBegin(GX_LINESTRIP, GX_VTXFMT0, 17);
+	for (i = 0; i <= 16; i++) {
+		f32 a = 3.1415927f * (2.0f * (f32)i) / 16.0f;
+		GXPosition3f32(cx + (r * sinf(a)), cy + (r * cosf(a)), 0.0f);
+		GXColor1u32(color);
+	}
 }
 
-static void Hgx_ReadTexture(const char* path, void* destination)
+static void Hgx_init_tobj_resource(GXTexObj* obj, const ResTIMG* timg)
+{
+	GXTexFmt format = (GXTexFmt)timg->format;
+	GXTexWrapMode wrapS = (GXTexWrapMode)timg->wrapS;
+	GXTexWrapMode wrapT = (GXTexWrapMode)timg->wrapT;
+	u8* data = (u8*)timg + timg->imageDataOffset;
+	GXTexFilter minFilter = (GXTexFilter)timg->minFilter;
+	GXTexFilter magFilter = (GXTexFilter)timg->magFilter;
+
+	img_wx = timg->width;
+	img_wy = timg->height;
+
+	GXInitTexObj(obj, data, img_wx, img_wy, format, wrapS, wrapT, GX_FALSE);
+	GXInitTexObjLOD(obj, minFilter, magFilter, 0.0f,
+	                0.0f, 0.0f, GX_FALSE, GX_FALSE, GX_ANISO_1);
+}
+
+static void Hgx_ReadTexture(char* path, void* buffer)
 {
 	DVDFileInfo fileInfo;
-	s32 readSize;
 
 	switch (hx.hasResource) {
 	case 0:
-		if (DVDOpen(path, &fileInfo) != 0) {
-			readSize
-			    = DVDReadPrio(&fileInfo, destination, fileInfo.length, 0, 2);
+		if (DVDOpen(path, &fileInfo)) {
+			s32 read = DVDReadPrio(&fileInfo, buffer, fileInfo.length, 0, 2);
 			DVDClose(&fileInfo);
-			DCStoreRange(destination, readSize);
+			DCStoreRange(buffer, read);
 		}
+		break;
 	}
 }
 
-static void Hx_GetFrBuffer(void* buffer, u32 left, u32 top, u32 width,
-                           u32 height)
+static void Hx_GetFrBuffer(void* dest, u32 left, u32 top, u32 wd, u32 ht)
 {
-	GXColor clear = { 0, 0, 0, 0 };
+	GXColor black = { 0, 0, 0, 0 };
 
-	GXSetTexCopySrc((u16)left, (u16)top, (u16)width, (u16)height);
-	GXSetTexCopyDst((u16)width, (u16)height, GX_TF_RGB565, GX_FALSE);
-	GXGetTexBufferSize((u16)width, (u16)height, GX_TF_RGB565, GX_FALSE, 0);
-	GXSetCopyClear(clear, 0xFFFFFF);
-	GXCopyTex(buffer, GX_TRUE);
+	GXSetTexCopySrc(left, top, wd, ht);
+	GXSetTexCopyDst(wd, ht, GX_TF_RGB565, GX_FALSE);
+	GXGetTexBufferSize(wd, ht, GX_TF_RGB565, GX_FALSE, 0);
+	GXSetCopyClear(black, GX_MAX_Z24);
+	GXCopyTex(dest, GX_TRUE);
 	GXPixModeSync();
 }
 
-static void Hx_SetVFilter(f32 strength)
+static void Hx_SetVFilter(f32 rate)
 {
-	u8 count;
 	u32 i;
+	u8 num;
 
-	count = 64.0f * strength;
-	for (i = 0; i < 7; ++i)
+	num = 64.0f * rate;
+	for (i = 0; i < 7; i++)
 		vtable[i] = vtable_org[i];
-	for (i = 0; i < count; ++i) {
-		vtable[dec_step[i % 4]]--;
+
+	for (i = 0; i < num; i++) {
+		vtable[dec_step[i & 3]]--;
 		vtable[inc_step[i % 3]]++;
 	}
+
 	GXSetCopyFilter(GX_FALSE, NULL, GX_TRUE, vtable);
 }
 
-void Hx_SetVFilterFade(void) { }
-
-static void __Hx_FrBufferMorf(u32 left, u32 top)
+// TODO: dead code; the map says 0x358 bytes, so the original is close to
+// Hx_SetVFilter with a second pass. Reconstruction pending.
+static void Hx_SetVFilterFade(f32 rate)
 {
-	GXTexObj texObj;
+	u32 i;
+	u8 num;
+
+	for (i = 0; i < 7; i++)
+		vtable[i] = vtable_org[i];
+
+	num = 64.0f * rate;
+	for (i = 0; i < num; i++) {
+		vtable[dec_step[i & 3]]--;
+		vtable[inc_step[i % 3]]++;
+	}
+
+	GXSetCopyFilter(GX_FALSE, NULL, GX_TRUE, vtable);
+}
+
+static void __Hx_FrBufferMorf(u32 x, u32 y)
+{
+	GXTexObj obj;
 
 	Hx_CameraInit();
 	GXClearVtxDesc();
@@ -256,41 +348,41 @@ static void __Hx_FrBufferMorf(u32 left, u32 top)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
-	Hx_GetFrBuffer(fbuf, left, top, 48, 48);
+	Hx_GetFrBuffer(fbuf, x, y, 0x30, 0x30);
 	GXInvalidateTexAll();
 	GXSetNumTexGens(1);
 	GXSetNumTevStages(1);
 	GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
 	GXSetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
-	GXInitTexObj(&texObj, fbuf, 48, 48, GX_TF_RGB565, GX_CLAMP, GX_CLAMP,
+	GXInitTexObj(&obj, fbuf, 0x30, 0x30, GX_TF_RGB565, GX_CLAMP, GX_CLAMP,
 	             GX_FALSE);
-	GXInitTexObjLOD(&texObj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f,
-	                GX_DISABLE, GX_ENABLE, GX_ANISO_1);
-	GXLoadTexObj(&texObj, GX_TEXMAP0);
+	GXInitTexObjLOD(&obj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f, GX_FALSE,
+	                GX_TRUE, GX_ANISO_1);
+	GXLoadTexObj(&obj, GX_TEXMAP0);
+
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-	GXPosition3f32(left, top, 0.0f);
+	GXPosition3f32(x, y, 0.0f);
 	GXColor1u32(0);
 	GXTexCoord2f32(0.0f, 0.0f);
-	GXPosition3f32(left + 48, top, 0.0f);
+	GXPosition3f32(x + 0x30, y, 0.0f);
 	GXColor1u32(0);
 	GXTexCoord2f32(1.0f, 0.0f);
-	GXPosition3f32(left + 48, top + 48, 0.0f);
+	GXPosition3f32(x + 0x30, y + 0x30, 0.0f);
 	GXColor1u32(0);
 	GXTexCoord2f32(1.0f, 1.0f);
-	GXPosition3f32(left, top + 48, 0.0f);
+	GXPosition3f32(x, y + 0x30, 0.0f);
 	GXColor1u32(0);
 	GXTexCoord2f32(0.0f, 1.0f);
-	GXEnd();
 }
 
-static void Hx_FrBufferMorf(f32 strength)
+static void Hx_FrBufferMorf(f32 rate)
 {
-	Hx_SetVFilter(strength);
-	__Hx_FrBufferMorf(hx.halfWidth - 24, hx.halfHeight - 24);
+	Hx_SetVFilter(rate);
+	__Hx_FrBufferMorf(hx.centerX - 0x18, hx.centerY - 0x18);
 }
 
-static void Frb2_InitGx(GXTexObj* texObj)
+static void Frb2_InitGx(GXTexObj* obj)
 {
 	Hx_CameraInit();
 	GXClearVtxDesc();
@@ -306,11 +398,11 @@ static void Frb2_InitGx(GXTexObj* texObj)
 	GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
 	GXSetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
-	GXInitTexObj(texObj, fbuf2, 160, 16, GX_TF_RGB565, GX_CLAMP, GX_CLAMP,
+	GXInitTexObj(obj, fbuf2, 0xA0, 0x10, GX_TF_RGB565, GX_CLAMP, GX_CLAMP,
 	             GX_FALSE);
-	GXInitTexObjLOD(texObj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f, GX_DISABLE,
-	                GX_ENABLE, GX_ANISO_1);
-	GXLoadTexObj(texObj, GX_TEXMAP0);
+	GXInitTexObjLOD(obj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f, GX_FALSE,
+	                GX_TRUE, GX_ANISO_1);
+	GXLoadTexObj(obj, GX_TEXMAP0);
 }
 
 static void Frb2_InitBlackBox(void)
@@ -321,36 +413,42 @@ static void Frb2_InitBlackBox(void)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
-	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEX_DISABLE, GX_COLOR0A0);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEX_DISABLE,
+	              GX_COLOR0A0);
 }
 
-static void Frb2_RendBox(u32 color, f32 left, f32 top, f32 right, f32 bottom)
+static void Frb2_RendBox(u32 color, f32 x1, f32 y1, f32 x2, f32 y2)
 {
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-	GXPosition3f32(left, top, 0.0f);
+	GXPosition3f32(x1, y1, 0.0f);
 	GXColor1u32(color);
-	GXPosition3f32(right, top, 0.0f);
+	GXPosition3f32(x2, y1, 0.0f);
 	GXColor1u32(color);
-	GXPosition3f32(right, bottom, 0.0f);
+	GXPosition3f32(x2, y2, 0.0f);
 	GXColor1u32(color);
-	GXPosition3f32(left, bottom, 0.0f);
+	GXPosition3f32(x1, y2, 0.0f);
 	GXColor1u32(color);
-	GXEnd();
 }
 
-static void Hx_Warning(int warning) { }
+static void Hx_Warning(int no) { }
 
-void SetDisplaySize(void) { }
+// TODO: dead code; the map says 0x18 bytes, which is two stores plus the
+// prologue, so only the size is fixed.
+static void SetDisplaySize(u32 width, u32 height)
+{
+	hx.width  = width;
+	hx.height = height;
+}
 
 void Hx_ResetWipe(u32 width, u32 height)
 {
-	hx.state         = 0;
-	hx.width         = width;
-	hx.height        = height;
-	hx.halfWidth     = hx.width >> 1;
-	hx.halfHeight    = hx.height >> 1;
-	hx.hasResource   = 0;
-	hx.hasResourceEx = 0;
+	hx.state          = 0;
+	hx.width          = width;
+	hx.height         = height;
+	hx.centerX        = hx.width >> 1;
+	hx.centerY        = hx.height >> 1;
+	hx.hasResource    = 0;
+	hx.hasResourceEx  = 0;
 }
 
 void Hx_ProvideResource(void* resource, int size)
@@ -359,6 +457,7 @@ void Hx_ProvideResource(void* resource, int size)
 		Hx_Warning(1);
 	if (hx.hasResource != 0)
 		Hx_Warning(3);
+
 	hx.hasResource  = 1;
 	hx.resource     = resource;
 	hx.resourceSize = size;
@@ -368,6 +467,7 @@ void Hx_ProvideResourceEx(void* resource)
 {
 	if (hx.state == 2)
 		Hx_Warning(1);
+
 	hx.hasResourceEx = 1;
 	hx.resourceEx    = resource;
 }
@@ -378,63 +478,80 @@ void Hx_RemoveResource(void)
 		Hx_Warning(1);
 	if (hx.hasResource == 0)
 		Hx_Warning(2);
+
 	hx.hasResource   = 0;
 	hx.hasResourceEx = 0;
 }
 
-void Hx_StartWipe(int type, int resourceArg)
+void Hx_StartWipe(int wipe_no, int param)
 {
-	if (VIGetTvFormat() == VI_PAL)
-		hx.isPal = 1;
-	else
-		hx.isPal = 0;
-
 	if (hx.hasResource == 0) {
 		hx.resource     = hx_buffer;
 		hx.resourceSize = sizeof(hx_buffer);
 	}
+
+	// A one-case switch: its signed compare and unfused `beq body; b skip`
+	// are what retail has (a plain `if` gives cmplwi and fuses to `bne`).
 	switch (hx.state) {
 	case 2:
 		Hx_Warning(1);
+		break;
 	}
-	hx.state       = 1;
-	hx.type        = type;
-	hx.elapsed     = 0.0f;
-	hx.resourceArg = resourceArg;
+
+	hx.state  = 1;
+	hx.wipeNo = wipe_no;
+	hx.time   = 0.0f;
+	hx.param  = param;
 }
 
 static void dummy_handler(void) { }
 
-int Hx_GetWipeType(int type) { return handle_type[type]; }
+static void (*handle_table[15])(void) = {
+	dummy_handler, Hx_Circle, Hx_Circle,  Hx_Test1, Hx_Test1,
+	Hx_Test5,      Hx_Test5,  Hx_Test4,   Hx_Test4, Hx_Test2R,
+	Hx_Test2,      Hx_Door,   Hx_Logo,    Hx_GameOver, dummy_handler,
+};
 
-u32 Hx_UpdateWipe(f32 deltaTime)
+/// Which half of the transition each wipe number plays: 0 closes, 1 opens.
+static u8 handle_type[15] = {
+	0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0,
+};
+
+int Hx_GetWipeType(int wipe_no) { return handle_type[wipe_no]; }
+
+u32 Hx_UpdateWipe(f32 rate)
 {
 	ReInitializeGX();
+
 	switch (hx.state) {
 	case 0:
 		break;
+
 	case 3:
-		if (hx.direction != 1) {
+		if (hx.dir != 1) {
 			Hx_CameraInit();
 			Hx_GxInit(0, 0);
 			Frb2_InitBlackBox();
-			Frb2_RendBox(0xFF, 0.0f, 0.0f, (f32)hx.width, (f32)hx.height);
+			Frb2_RendBox(0xFF, 0.0f, 0.0f, hx.width, hx.height);
 		}
 		break;
+
 	case 1:
-		hx.handler        = handle_table[hx.type];
-		hx.direction      = handle_type[hx.type];
-		hx.state          = 2;
-		hx.animationState = 0;
+		hx.handler = handle_table[hx.wipeNo];
+		hx.dir     = handle_type[hx.wipeNo];
+		hx.state   = 2;
+		hx.step    = 0;
 		/* fall through */
+
 	case 2:
-		hx.deltaTime = deltaTime;
+		hx.rate = rate;
 		GXDrawDone();
 		hx.handler();
 		GXDrawDone();
-		hx.elapsed += deltaTime;
+		hx.time += rate;
 		break;
 	}
+
 	return hx.state;
 }
 
@@ -442,41 +559,49 @@ static u32 Hx_TimerCountDown(void)
 {
 	if (hx.timer != 0)
 		hx.timer--;
+
 	return hx.timer;
 }
 
-static void Hx_MotionSet(HxMotion* motion, f32 distance, f32 time1, f32 time2,
-                         f32 time3)
+static void Hx_MotionSet(HxMotion* m, f32 distance, f32 accel_time,
+                         f32 hold_time, f32 decel_time)
 {
-	f32 velocity;
+	f32 speed;
 
-	motion->unk0 = time1;
-	motion->unk4 = motion->unk0 + time2;
-	motion->unk8 = motion->unk4 + time3;
-	velocity     = (2.0f * distance) / (time3 + (time2 + (time1 + time2)));
-	if (time1 != 0.0f)
-		motion->unkC = velocity / time1;
-	if (time3 != 0.0f)
-		motion->unk14 = -velocity / time3;
-	motion->unk10 = 0.0f;
-	motion->unk18 = 0.0f;
-	motion->unk20 = 0.0f;
-	motion->unk1C = 0.0f;
+	m->accelEnd = accel_time;
+	m->holdEnd  = m->accelEnd + hold_time;
+	m->decelEnd = m->holdEnd + decel_time;
+
+	speed = (2.0f * distance)
+	        / (decel_time + (hold_time + (accel_time + hold_time)));
+
+	if (accel_time != 0.0f)
+		m->accel = speed / accel_time;
+	if (decel_time != 0.0f)
+		m->decel = -speed / decel_time;
+
+	m->unk10    = 0.0f;
+	m->speed    = 0.0f;
+	m->position = 0.0f;
+	m->frame    = 0.0f;
 }
 
-static f32 Hx_MotionUpdate(HxMotion* motion)
+static f32 Hx_MotionUpdate(HxMotion* m)
 {
-	if (motion->unk0 > motion->unk1C)
-		motion->unk18 += motion->unkC;
-	else if (motion->unk4 <= motion->unk1C)
-		motion->unk18 += motion->unk14;
-	motion->unk1C += 1.0f;
-	motion->unk20 += motion->unk18;
-	return motion->unk20;
+	if (m->accelEnd > m->frame) {
+		m->speed += m->accel;
+	} else if (m->holdEnd <= m->frame) {
+		m->speed += m->decel;
+	}
+
+	m->frame += 1.0f;
+	m->position += m->speed;
+
+	return m->position;
 }
 
-static u32 HX_CIRCLE_STATE1_TIME;
-static u32 HX_CIRCLE_STATE1_TIME2;
+/* ------------------------------------------------------------------------- */
+/* Iris wipe: a ring of expanding circles. */
 
 static void Hx_Circle(void)
 {
@@ -489,41 +614,35 @@ static void Hx_Circle(void)
 	static u16 a3;
 	static f32 boke;
 
-	switch (hx.isPal) {
-	case 1:
-		HX_CIRCLE_STATE1_TIME  = 25;
-		HX_CIRCLE_STATE1_TIME2 = 20;
-		break;
-	default:
-		HX_CIRCLE_STATE1_TIME  = 30;
-		HX_CIRCLE_STATE1_TIME2 = 25;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
-		p1 = p2 = p3 = 0.0f;
-		a1 = a2 = a3 = 0;
+		p3   = 0.0f;
+		p2   = 0.0f;
+		p1   = 0.0f;
+		a3   = 0;
+		a2   = 0;
+		a1   = 0;
 		r    = 1.0f;
 		boke = 0.0f;
-		switch (hx.direction) {
+
+		switch (hx.dir) {
 		case 0:
-			Hx_MotionSet(&hx.motion, 400.0f, 2.0f,
-			             HX_CIRCLE_STATE1_TIME2 - 12, 10.0f);
-			hx.timer = HX_CIRCLE_STATE1_TIME2;
+			Hx_MotionSet(&hx.motion, 400.0f, 2.0f, 13.0f, 10.0f);
+			hx.timer = 25;
 			break;
 		case 1:
-			Hx_MotionSet(&hx.motion, 400.0f, 5.0f,
-			             HX_CIRCLE_STATE1_TIME - 20, 15.0f);
-			hx.timer = HX_CIRCLE_STATE1_TIME;
+			Hx_MotionSet(&hx.motion, 400.0f, 5.0f, 10.0f, 15.0f);
+			hx.timer = 30;
 			break;
 		}
-		hx.animationState++;
+		hx.step++;
+		/* fall through */
+
 	case 1:
 		r = Hx_MotionUpdate(&hx.motion);
-		switch (hx.direction) {
+		switch (hx.dir) {
 		case 1:
-			boke += 2.0f / HX_CIRCLE_STATE1_TIME;
+			boke += 0.06666667f;
 			if (boke > 1.0f)
 				boke = 1.0f;
 			Hx_FrBufferMorf(boke);
@@ -536,16 +655,18 @@ static void Hx_Circle(void)
 			break;
 		}
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			hx.state = 3;
 		}
 		break;
+
 	default:
 		hx.state = 3;
 		break;
 	}
 
 	Hxs1_Circle(r);
+
 	if (r > 22.0f) {
 		Hxs2_Circle(a1 >> 8, (r - 20.0f) + p1, r);
 		p1 += 0.05f;
@@ -566,281 +687,300 @@ static void Hx_Circle(void)
 	}
 }
 
-static void Hxs1_Circle(f32 radius)
+/// One vertex of a line: position, then colour.
+// The circles' vertex writes go through this level: an inline's own nested
+// expansions get their stack slots after every first-level one, which is
+// what puts retail's sqrtf slots directly under the named locals.
+static inline void Hx_LineVtx(Vec* v, u32 color)
 {
-	f32 x1;
-	f32 y1;
-	f32 x2;
-	f32 y2;
-	f32 radiusSquared;
-	f32 distance;
-	u32 i;
+	GXPosition3f32(v->x, v->y, v->z);
+	GXColor1u32(color);
+}
+
+/// The black field outside the iris, drawn as a stack of horizontal lines.
+// The (f32) cast on sqrtf's result gives it its own 4-byte temporary above
+// the sqrtf slot, which is what puts that slot at retail's 0xa4.
+static void Hxs1_Circle(f32 r)
+{
+	u32 y;
+	f32 rr;
+	Vec p[2];
+	Vec d;
 
 	Hx_CameraInit();
 	Hx_GxInit(0, 1);
-	radiusSquared = radius * radius;
-	for (i = 0; i <= hx.halfHeight; ++i) {
-		distance = hx.halfHeight - i;
-		y1       = i;
-		y2       = i;
-		if (hx.halfHeight - i >= radius) {
-			GXBegin(GX_LINES, GX_VTXFMT0, 4);
-			x1 = 0.0f;
-			x2 = hx.width;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			y1 = hx.height - i;
-			y2 = hx.height - i;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			GXEnd();
-		} else {
-			f32 offset = sqrtf(radiusSquared - distance * distance);
+	rr = r * r;
 
+	for (y = 0; y <= hx.centerY; y++) {
+		f32 dy = hx.centerY - y;
+
+		p[0].z = 1.0f;
+		p[1].z = 1.0f;
+		p[0].y = y;
+		p[1].y = y;
+
+		if ((f32)(hx.centerY - y) >= r) {
+			GXBegin(GX_LINES, GX_VTXFMT0, 4);
+			p[0].x = 0.0f;
+			p[1].x = hx.width;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
+			p[0].y = hx.height - y;
+			p[1].y = hx.height - y;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
+		} else {
+			d.x = (f32)sqrtf(rr - (dy * dy));
 			GXBegin(GX_LINES, GX_VTXFMT0, 8);
-			x1 = 0.0f;
-			x2 = hx.halfWidth - offset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			x1 = hx.halfWidth + offset;
-			x2 = hx.width;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			y1 = hx.height - i;
-			y2 = hx.height - i;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			x1 = 0.0f;
-			x2 = hx.halfWidth - offset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(0xFF);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(0xFF);
-			GXEnd();
+			p[0].x = 0.0f;
+			p[1].x = hx.centerX - d.x;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
+			p[0].x = hx.centerX + d.x;
+			p[1].x = hx.width;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
+			p[0].y = hx.height - y;
+			p[1].y = hx.height - y;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
+			p[0].x = 0.0f;
+			p[1].x = hx.centerX - d.x;
+			Hx_LineVtx(&p[0], 0xFF);
+			Hx_LineVtx(&p[1], 0xFF);
 		}
 	}
 }
 
-// TODO: 91% - FRAME ONLY. Measured with tools-style slot analysis:
-//   ROM   frame 0x198, local block 0x08..0x11c (69 slots), 18 slots touched,
-//         51 never touched.
-//   ours  frame 0x0e8, local block 0x08..0x06c (25 slots), 18 slots touched,
-//          7 never touched.
-// The 18 touched slots are the SAME 9 int->float conversion temporaries in the
-// same arrangement (2 at the bottom, then 16 contiguous) - so the live set is
-// right and the deficit is 44 slots of *dead* named-local space, not live
-// temporaries and not an outgoing-args area (no call here has >7 args).
-// Measured cost of closing it: 12 dead f32 locals buy +48 B, but 12 *used*
-// (scalar-replaced) per-vertex locals buy only +24 B, so the slot count is not
-// a linear function of the local count and the original's declaration cannot
-// be recovered by counting. Same shape in Hxs1_Circle (+46), Hxs1_Test2 (+16)
-// and Hxs1_Test1 (+16).
-static void Hxs2_Circle(u8 color, f32 innerRadius, f32 outerRadius)
+/// One translucent ring of the iris.
+// TODO: GPR colouring (retail: colour r28, &centerY r26, &centerX r27; ours
+// colour r26); instructions and stack slots are otherwise exact. Passing
+// alpha (or a u8 colour) to Hx_LineVtx gets r28 but sinks the clrlwi past
+// the loop setup and moves alpha to r27; the colour/ri2 order is inert.
+// c-k27: naming the mirrored row (`u32 yb = hx.height - y`) or the centre
+// (`u32 cx = hx.centerX`) only renames IRO temps: colour keeps degree 28 and
+// 27 left at its turn. Chained stores and an Hx_Line pair helper are worse.
+static void Hxs2_Circle(u8 alpha, f32 r_in, f32 r_out)
 {
-	f32 x1;
-	f32 y1;
-	f32 x2;
-	f32 y2;
-	f32 outerOffset;
-	f32 innerOffset;
-	f32 distance;
-	u32 i;
+	u32 color;
+	u32 y;
+	f32 ri2;
+	f32 ro2;
+	Vec p[2];
+	f32 d0;
+	f32 d1;
 
 	Hx_CameraInit();
 	Hx_GxInit(0, 1);
-	for (i = hx.halfHeight - outerRadius; i <= hx.halfHeight; ++i) {
-		distance    = hx.halfHeight - i;
-		outerOffset = sqrtf(outerRadius * outerRadius - distance * distance);
-		y1          = i;
-		y2          = i;
-		if (distance >= innerRadius) {
+
+	ri2 = r_in * r_in;
+	color = alpha;
+	ro2 = r_out * r_out;
+
+	for (y = hx.centerY - r_out; y <= hx.centerY; y++) {
+		f32 dy = hx.centerY - y;
+
+		d0 = sqrtf(ro2 - dy * dy);
+		p[0].z = 1.0f;
+		p[1].z = 1.0f;
+		p[0].y = y;
+		p[1].y = y;
+
+		if (dy >= r_in) {
 			GXBegin(GX_LINES, GX_VTXFMT0, 4);
-			x1 = hx.halfWidth - outerOffset;
-			x2 = hx.halfWidth + outerOffset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			y1 = hx.height - i;
-			y2 = hx.height - i;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			GXEnd();
+			p[0].x = hx.centerX - d0;
+			p[1].x = hx.centerX + d0;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
+			p[0].y = hx.height - y;
+			p[1].y = hx.height - y;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
 		} else {
-			innerOffset
-			    = sqrtf(innerRadius * innerRadius - distance * distance);
+			d1 = sqrtf(ri2 - dy * dy);
 			GXBegin(GX_LINES, GX_VTXFMT0, 8);
-			x1 = hx.halfWidth - outerOffset;
-			x2 = hx.halfWidth - innerOffset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			x1 = hx.halfWidth + innerOffset;
-			x2 = hx.halfWidth + outerOffset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			y1 = hx.height - i;
-			y2 = hx.height - i;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			x1 = hx.halfWidth - outerOffset;
-			x2 = hx.halfWidth - innerOffset;
-			GXPosition3f32(x1, y1, 1.0f);
-			GXColor1u32(color);
-			GXPosition3f32(x2, y2, 1.0f);
-			GXColor1u32(color);
-			GXEnd();
+			p[0].x = hx.centerX - d0;
+			p[1].x = hx.centerX - d1;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
+			p[0].x = hx.centerX + d1;
+			p[1].x = hx.centerX + d0;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
+			p[0].y = hx.height - y;
+			p[1].y = hx.height - y;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
+			p[0].x = hx.centerX - d0;
+			p[1].x = hx.centerX - d1;
+			Hx_LineVtx(&p[0], color);
+			Hx_LineVtx(&p[1], color);
 		}
 	}
 }
 
-static void Hxs_FrBufferMorf2(f32 amount)
+/* ------------------------------------------------------------------------- */
+/* Door wipe: the two halves of the screen slide together, smeared by a
+   frame-buffer copy. */
+
+static void Hxs_FrBufferMorf2(f32 x)
 {
-	GXTexObj texObj;
+	GXTexObj obj;
 	f32 y;
 
-	Frb2_InitGx(&texObj);
-	if (amount < (f32)(hx.width >> 2)) {
-		for (y = 0.0f; y < (f32)hx.height; y += 16.0f) {
-			Hx_GetFrBuffer(fbuf2, 0, (u32)y, 160, 16);
+	Frb2_InitGx(&obj);
+
+	if (x < (f32)(hx.width >> 2)) {
+		for (y = 0.0f; y < hx.height; y += 16.0f) {
+			Hx_GetFrBuffer(fbuf2, 0, y, 0xA0, 0x10);
 			GXInvalidateTexAll();
-			GXLoadTexObj(&texObj, GX_TEXMAP0);
+			GXLoadTexObj(&obj, GX_TEXMAP0);
+
 			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-			GXPosition3f32(amount, y, 0.0f);
+			GXPosition3f32(x, y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(0.0f, 0.0f);
-			GXPosition3f32((f32)(hx.width >> 2), y, 0.0f);
+			GXPosition3f32(hx.width >> 2, y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(1.0f, 0.0f);
-			GXPosition3f32((f32)(hx.width >> 2), y + 16.0f, 0.0f);
+			GXPosition3f32(hx.width >> 2, 16.0f + y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(1.0f, 1.0f);
-			GXPosition3f32(amount, y + 16.0f, 0.0f);
+			GXPosition3f32(x, 16.0f + y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(0.0f, 1.0f);
-			GXEnd();
 			GXDrawDone();
 		}
 	}
+
 	Frb2_InitBlackBox();
-	Frb2_RendBox(0xFF, 0.0f, 0.0f, amount, (f32)hx.height);
+	Frb2_RendBox(0xFF, 0.0f, 0.0f, x, hx.height);
+
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 	GXPosition3f32(0.0f, 0.0f, 0.0f);
 	GXColor1u32(0xFF);
-	GXPosition3f32(amount, 0.0f, 0.0f);
+	GXPosition3f32(x, 0.0f, 0.0f);
 	GXColor1u32(0xFF);
-	GXPosition3f32(amount, (f32)hx.height, 0.0f);
+	GXPosition3f32(x, hx.height, 0.0f);
 	GXColor1u32(0xFF);
-	GXPosition3f32(0.0f, (f32)hx.height, 0.0f);
+	GXPosition3f32(0.0f, hx.height, 0.0f);
 	GXColor1u32(0xFF);
-	GXEnd();
 }
 
-static void Hxs_FrBufferMorf2B(f32 amount)
+static void Hxs_FrBufferMorf2B(f32 x)
 {
-	GXTexObj texObj;
-	s32 captureX = (hx.width >> 1) + (hx.width >> 2);
+	GXTexObj obj;
+	s32 left = hx.width / 2 + hx.width / 4;
 	f32 right;
 	f32 y;
 
-	Frb2_InitGx(&texObj);
-	right = (f32)hx.width - amount;
-	if (amount < (f32)(hx.width >> 2)) {
-		for (y = 0.0f; y < (f32)hx.height; y += 16.0f) {
-			Hx_GetFrBuffer(fbuf2, captureX, (u32)y, 160, 16);
+	Frb2_InitGx(&obj);
+	right = hx.width - x;
+
+	if (x < (f32)(hx.width >> 2)) {
+		for (y = 0.0f; y < hx.height; y += 16.0f) {
+			Hx_GetFrBuffer(fbuf2, left, y, 0xA0, 0x10);
 			GXInvalidateTexAll();
-			GXLoadTexObj(&texObj, GX_TEXMAP0);
+			GXLoadTexObj(&obj, GX_TEXMAP0);
+
 			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-			GXPosition3f32((f32)captureX, y, 0.0f);
+			GXPosition3f32(left, y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(0.0f, 0.0f);
 			GXPosition3f32(right, y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(1.0f, 0.0f);
-			GXPosition3f32(right, y + 16.0f, 0.0f);
+			GXPosition3f32(right, 16.0f + y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(1.0f, 1.0f);
-			GXPosition3f32((f32)captureX, y + 16.0f, 0.0f);
+			GXPosition3f32(left, 16.0f + y, 0.0f);
 			GXColor1u32(0);
 			GXTexCoord2f32(0.0f, 1.0f);
-			GXEnd();
 			GXDrawDone();
 		}
 	}
+
 	Frb2_InitBlackBox();
-	Frb2_RendBox(0xFF, right, 0.0f, (f32)hx.width, (f32)hx.height);
+	Frb2_RendBox(0xFF, right, 0.0f, hx.width, hx.height);
 }
 
+// The end-of-travel tests go through an inline: its expansion is what gives
+// retail's frame the extra 8 bytes below the conversion slots.
 static void Hx_Door(void)
 {
-	s32 position;
+	s32 x;
 
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
-		hx.animationState++;
-		Hx_MotionSet(&hx.motion, (f32)(hx.width >> 1), 5.0f, 6.0f, 5.0f);
+		hx.step++;
+		Hx_MotionSet(&hx.motion, hx.width / 2, 5.0f, 6.0f, 5.0f);
 		break;
+
 	case 1:
-		position = (s32)Hx_MotionUpdate(&hx.motion);
-		Hxs_FrBufferMorf2((f32)position);
-		if ((u32)position >= (hx.width >> 1)) {
-			hx.animationState++;
-			Hx_MotionSet(&hx.motion, (f32)(hx.width >> 1), 5.0f, 6.0f, 5.0f);
+		x = Hx_MotionUpdate(&hx.motion);
+		Hxs_FrBufferMorf2(x);
+		if ((u32)x >= Hx_HalfWidth()) {
+			hx.step++;
+			Hx_MotionSet(&hx.motion, hx.width / 2, 5.0f, 6.0f, 5.0f);
 		}
 		break;
+
 	case 2:
-		Hxs_FrBufferMorf2((f32)(hx.width >> 1));
-		position = (s32)Hx_MotionUpdate(&hx.motion);
-		Hxs_FrBufferMorf2B((f32)position);
-		if ((u32)position >= (hx.width >> 1))
-			hx.animationState++;
+		Hxs_FrBufferMorf2(hx.width / 2);
+		x = Hx_MotionUpdate(&hx.motion);
+		Hxs_FrBufferMorf2B(x);
+		if ((u32)x >= Hx_HalfWidth())
+			hx.step++;
 		break;
+
 	case 3:
-		Hxs_FrBufferMorf2((f32)(hx.width >> 1));
-		Hxs_FrBufferMorf2B((f32)(hx.width >> 1));
+		Hxs_FrBufferMorf2(hx.width / 2);
+		Hxs_FrBufferMorf2B(hx.width / 2);
 		hx.state = 3;
 		break;
 	}
 }
 
-static void Hxs_GameOver(u8 alpha, f32 mag, f32 rot)
+/* ------------------------------------------------------------------------- */
+/* Game-over wipe: the "GAME OVER" texture zooms in, bounces, then fades out
+   behind a white panel. */
+
+// TODO: every instruction matches; the frame is 0x18 short (0x170 vs
+// 0x188) with the texcoords in a Vec[4]. Retail's fadeColor sits in the named
+// block (0xac, between st at 0xb0 and axis at 0xa0), not low: declaring
+// `GXColor fadeColor = {0}` at function scope in the order obj, st, fadeColor,
+// axis, rotMtx gives the 0x188 frame and retail's slot order (named -4, low
+// -0xc) but hoists the initialiser to the top; C89 forbids declaring it at
+// its use, a nested block sends it low, and a static const source changes
+// the pool and the sqrtf colouring.
+// Slot map (retail): rotMtx 0x58, a 0x18 hole 0x88-0xa0, axis 0xa0,
+// fadeColor 0xac, 0x30 reserved for st (never stored) 0xb0, obj 0xe0; the
+// low sqrtf slots sit 0xc higher than ours. A static inline fade helper,
+// field-wise assignment of an uninitialised fadeColor, a block reaching to
+// the end of the function (with or without the other locals inside) and a
+// non-constant initialiser at function scope are inert or worse.
+// c-k27 (debugger, c-k26's two-block lead): ours has 9 dead GX argument
+// bindings under the fourth sqrtf's volatile slot, retail 12. The vertex 2
+// and 3 (f32)hx.height bindings stay in registers because their load cannot
+// be forward-substituted past the volatile FIFO store of x; Hx_TexVtx with a
+// `Vec*` texcoord gives vertex 0's st[0].x a binding (10), and the four-float
+// Hx_TexVtx or u32 positions are inert or worse.
+static void Hxs_GameOver(u8 fade_alpha, f32 scale, f32 rotation)
 {
-	GXTexObj texObj;
-	Vec dir;
-	Mtx rotation;
+	GXTexObj obj;
+	Mtx rotMtx;
+	Vec axis;
+	f32 aspect;
+	f32 texAspect;
+	f32 u;
+	Vec st[4];
+	f32 r;
 	f32 cx;
 	f32 cy;
-	f32 len;
-	f32 u0;
-	f32 v0;
-	f32 u1;
-	f32 v1;
-	f32 u2;
-	f32 v2;
-	f32 u3;
-	f32 v3;
-	f32 aspect;
 
 	Hx_CameraInit();
 	gmover_tex_buffer = hx.resource;
-	Hgx_init_tobj_resource(&texObj, (struct ResTIMG*)gmover_tex_buffer);
+	Hgx_init_tobj_resource(&obj, gmover_tex_buffer);
 	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
 	                  GX_FALSE, GX_PTIDENTITY);
 	GXSetNumTexGens(1);
@@ -854,7 +994,12 @@ static void Hxs_GameOver(u8 alpha, f32 mag, f32 rot)
 	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 	                GX_TRUE, GX_TEVPREV);
 	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
-	GXSetTevColor(GX_TEVREG0, (GXColor) { 0, 0, 0, alpha });
+
+	{
+		GXColor fadeColor = { 0, 0, 0, 0 };
+		fadeColor.a = fade_alpha;
+		GXSetTevColor(GX_TEVREG0, fadeColor);
+	}
 	GXSetTevColorIn(GX_TEVSTAGE1, GX_CC_ZERO, GX_CC_ZERO, GX_CC_ZERO,
 	                GX_CC_ZERO);
 	GXSetTevAlphaIn(GX_TEVSTAGE1, GX_CA_ZERO, GX_CA_A0, GX_CA_APREV,
@@ -865,7 +1010,7 @@ static void Hxs_GameOver(u8 alpha, f32 mag, f32 rot)
 	                GX_TRUE, GX_TEVPREV);
 	GXSetTevOrder(GX_TEVSTAGE1, GX_TEXCOORD_NULL, GX_TEXMAP_NULL,
 	              GX_COLOR_NULL);
-	GXLoadTexObj(&texObj, GX_TEXMAP0);
+	GXLoadTexObj(&obj, GX_TEXMAP0);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
@@ -873,777 +1018,749 @@ static void Hxs_GameOver(u8 alpha, f32 mag, f32 rot)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
-	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_CLEAR);
-	aspect = (f32)(hx.width / hx.height) / ((f32)img_wx / (f32)img_wy);
-	dir.x  = 0.5f;
-	dir.y  = 0.5f;
-	dir.z  = 0.0f;
-	VECNormalize(&dir, &dir);
-	MTXRotRad(rotation, 'Z', rot);
-	MTXMultVec(rotation, &dir, &dir);
-	cx  = 0.5f;
-	cy  = 0.5f;
-	len = mag * sqrtf(cx * cx + cy * cy);
-	u0  = aspect * (-dir.x * len) + cx;
-	v0  = -dir.y * len + cy;
-	len = mag * sqrtf(cx * cx + cy * cy);
-	u1  = aspect * (dir.y * len) + cx;
-	v1  = -dir.x * len + cy;
-	len = mag * sqrtf(cx * cx + cy * cy);
-	u2  = aspect * (dir.x * len) + cx;
-	v2  = dir.y * len + cy;
-	len = mag * sqrtf(cx * cx + cy * cy);
-	u3  = aspect * (-dir.y * len) + cx;
-	v3  = dir.x * len + cy;
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
+	               GX_LO_CLEAR);
+
+	aspect    = hx.width / hx.height;
+	texAspect = (f32)img_wx / (f32)img_wy;
+	u         = aspect / texAspect;
+	axis.x    = 0.5f;
+	axis.y    = 0.5f;
+	axis.z    = 0.0f;
+
+	VECNormalize(&axis, &axis);
+	MTXRotRad(rotMtx, 'Z', rotation);
+	MTXMultVec(rotMtx, &axis, &axis);
+
+	cx = 0.5f;
+	cy = 0.5f;
+	r = scale * sqrtf((cx * cx) + (cy * cy));
+	st[0].x = (u * (-axis.x * r)) + 0.5f;
+	st[0].y = (-axis.y * r) + 0.5f;
+	r = scale * sqrtf((cx * cx) + (cy * cy));
+	st[1].x = (u * (axis.y * r)) + 0.5f;
+	st[1].y = (-axis.x * r) + 0.5f;
+	r = scale * sqrtf((cx * cx) + (cy * cy));
+	st[2].x = (u * (axis.x * r)) + 0.5f;
+	st[2].y = (axis.y * r) + 0.5f;
+	r = scale * sqrtf((cx * cx) + (cy * cy));
+	st[3].x = (u * (-axis.y * r)) + 0.5f;
+	st[3].y = (axis.x * r) + 0.5f;
+
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 	GXPosition3f32(0.0f, 0.0f, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(u0, v0);
-	GXPosition3f32((f32)hx.width, 0.0f, 0.0f);
+	GXTexCoord2f32(st[0].x, st[0].y);
+	GXPosition3f32(hx.width, 0.0f, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(u1, v1);
-	GXPosition3f32((f32)hx.width, (f32)hx.height, 0.0f);
+	GXTexCoord2f32(st[1].x, st[1].y);
+	GXPosition3f32(hx.width, hx.height, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(u2, v2);
-	GXPosition3f32(0.0f, (f32)hx.height, 0.0f);
+	GXTexCoord2f32(st[2].x, st[2].y);
+	GXPosition3f32(0.0f, hx.height, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(u3, v3);
-	GXEnd();
+	GXTexCoord2f32(st[3].x, st[3].y);
+
 	GXSetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
 }
 
-void InitWipe(void) { }
-
-// The original keeps the per-state frame counts in mutable file-scope
-// variables (they live in .sbss) and re-seeds them from hx.isPal on every
-// call, even though both branches currently store the same values.
-// They are `u32`, not `s32`: the values are fed to (f32) casts and to
-// `Hx_MotionSet`, and MWCC only omits the `xoris` sign fix-up of its
-// int->float conversion idiom for an unsigned source.
-static u32 STATE1_TIME;
-static u32 STATE1_TIME1;
-static u32 STATE1_TIME2;
-static u32 STATE1_TIME3;
-static u32 STATE2_TIME;
-static u32 STATE3_TIME;
+// TODO: dead code; the map says 0xc bytes, i.e. a single store.
+static void InitWipe(void) { hx.state = 0; }
 
 static void Hx_GameOver(void)
 {
 	static f32 mag = 1.0f;
 	static f32 rot;
 	static f32 fade;
-	static f32 boundtable[] = {
-		-0.13f, 6.0f,   0.13f, 6.0f,  -0.12f, 8.0f, 0.12f,
-		-8.0f,  -0.11f, 12.0f, 0.11f, 12.0f,  0.0f, 0.0f,
+	/// Alternating scale deltas and hold times for the post-zoom bounce; a
+	/// zero hold time ends the sequence.
+	static f32 boundtable[14] = {
+		-0.13f, 6.0f, 0.13f, 6.0f, -0.12f, 8.0f, 0.12f,
+		-8.0f, -0.11f, 12.0f, 0.11f, 12.0f, 0.0f, 0.0f,
 	};
 	static s32 boundstate;
 	static u32 boundtimer;
 	static f32 bounddelta;
 	static u8 alpha;
 
-	switch (hx.isPal) {
-	case 1:
-		STATE1_TIME1 = 10;
-		STATE1_TIME  = 50;
-		STATE1_TIME2 = 15;
-		STATE1_TIME3 = 25;
-		STATE2_TIME  = 10;
-		STATE3_TIME  = 32;
-		break;
-	default:
-		STATE1_TIME1 = 10;
-		STATE1_TIME  = 50;
-		STATE1_TIME2 = 15;
-		STATE1_TIME3 = 25;
-		STATE2_TIME  = 10;
-		STATE3_TIME  = 32;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
 		Hgx_ReadTexture("/data/wipe_gameover.bti", gmover_tex_buffer);
 		mag  = 0.3f;
 		rot  = 0.0f;
 		fade = 0.0f;
-		hx.animationState++;
-		hx.timer = STATE1_TIME;
-		Hx_MotionSet(&hx.motion, -12.566371f, (f32)STATE1_TIME1,
-		             (f32)STATE1_TIME2, (f32)STATE1_TIME3);
+		hx.step++;
+		hx.timer = 50;
+		Hx_MotionSet(&hx.motion, -12.566371f, 10.0f, 15.0f, 25.0f);
 		break;
+
 	case 1:
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = STATE2_TIME;
+			hx.step++;
+			hx.timer = 10;
 		}
-		mag  = 3.7f / (f32)STATE1_TIME + mag;
-		rot  = Hx_MotionUpdate(&hx.motion);
-		fade = 255.0f / (f32)STATE1_TIME + fade;
+		mag = mag + 0.074f;
+		rot = Hx_MotionUpdate(&hx.motion);
+		fade = fade + 5.1f;
 		break;
+
 	case 2:
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			bounddelta = boundtable[0];
 			boundtimer = boundtable[1];
 			boundstate = 2;
 		}
 		mag -= 0.1f;
 		break;
+
 	case 3:
 		if (boundtimer != 0)
 			boundtimer--;
+
 		if (boundtimer == 0) {
 			bounddelta = boundtable[boundstate++];
 			boundtimer = boundtable[boundstate++];
 			if (boundtimer == 0) {
-				hx.animationState++;
-				hx.timer = STATE3_TIME;
-				alpha    = 255;
+				hx.step++;
+				hx.timer = 0x20;
+				alpha    = 0xFF;
 				break;
 			}
 		}
 		mag += bounddelta;
 		break;
-	case 4:
+
+	case 4: {
+		u32 color;
+		f32 x2;
+		f32 y2;
+
 		if (Hx_TimerCountDown() == 0) {
 			hx.timer = 100;
-			hx.animationState++;
+			hx.step++;
 		}
+
 		alpha += 8;
 		Hx_CameraInit();
 		Hx_GxInit(0, 1);
-		{
-			f32 right;
-			f32 bottom;
-			u32 color;
+		color = alpha | 0xFF000000;
+		y2 = hx.height - 100;
+		x2 = hx.width - 100;
 
-			color  = 0xFF000000 | alpha;
-			bottom = hx.height - 100;
-			right  = hx.width - 100;
-
-			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-			GXPosition3f32(100.0f, 100.0f, 0.0f);
-			GXColor1u32(color);
-			GXPosition3f32(right, 100.0f, 0.0f);
-			GXColor1u32(color);
-			GXPosition3f32(right, bottom, 0.0f);
-			GXColor1u32(color);
-			GXPosition3f32(100.0f, bottom, 0.0f);
-			GXColor1u32(color);
-			GXEnd();
-		}
+		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+		GXPosition3f32(100.0f, 100.0f, 0.0f);
+		GXColor1u32(color);
+		GXPosition3f32(x2, 100.0f, 0.0f);
+		GXColor1u32(color);
+		GXPosition3f32(x2, y2, 0.0f);
+		GXColor1u32(color);
+		GXPosition3f32(100.0f, y2, 0.0f);
+		GXColor1u32(color);
 		break;
-	case 5:
+	}
+
+	case 5: {
+		f32 x2;
+		f32 y2;
+
 		Hx_CameraInit();
 		Hx_GxInit(0, 1);
-		{
-			f32 right;
-			f32 bottom;
+		y2 = hx.height - 100;
+		x2 = hx.width - 100;
 
-			bottom = hx.height - 100;
-			right  = hx.width - 100;
-			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-			GXPosition3f32(100.0f, 100.0f, 0.0f);
-			GXColor1u32(0xFF0000FF);
-			GXPosition3f32(right, 100.0f, 0.0f);
-			GXColor1u32(0xFF0000FF);
-			GXPosition3f32(right, bottom, 0.0f);
-			GXColor1u32(0xFF0000FF);
-			GXPosition3f32(100.0f, bottom, 0.0f);
-			GXColor1u32(0xFF0000FF);
-			GXEnd();
-		}
+		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+		GXPosition3f32(100.0f, 100.0f, 0.0f);
+		GXColor1u32(0xFF0000FF);
+		GXPosition3f32(x2, 100.0f, 0.0f);
+		GXColor1u32(0xFF0000FF);
+		GXPosition3f32(x2, y2, 0.0f);
+		GXColor1u32(0xFF0000FF);
+		GXPosition3f32(100.0f, y2, 0.0f);
+		GXColor1u32(0xFF0000FF);
+
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			hx.state = 3;
 		}
 		break;
+	}
+
 	default:
 		hx.state = 3;
 		break;
 	}
 
-	if ((u32)hx.animationState >= 2)
-		Hxs_GameOver(255, 2.0f * mag, rot);
-	else
-		Hxs_GameOver(fade, 2.0f * mag, rot);
+	if (hx.step >= 2) {
+		Hxs_GameOver(-1, 2.0f * mag, rot);
+	} else {
+		f32 scale = 2.0f * mag;
+		Hxs_GameOver(fade, scale, rot);
+	}
 }
 
-// `u32` (not `s32`) - see the note on STATE1_TIME above.
-static u32 HX_LOGO_TIMER1;
-static u32 HX_LOGO_TIMER2;
-static s32 hxs_logo_resetflag;
-static s32 hxs_logodraw_resetflag;
+/* ------------------------------------------------------------------------- */
+/* Logo wipe: the Mario emblem drawn with a pen stroke, then zoomed out. */
 
-// The original picks one of two stroke-length tables up front and keeps the
-// choice in a file-scope pointer (it lives in .sbss, uninitialised).
-static HxDrawPath* drawpath_table;
-
-static HxDrawPath drawpath_table_NTSC[] = {
-	{ 49.0f, 277.0f, 0 },  { 20.0f, 294.0f, 1 },  { 22.0f, 234.0f, 1 },
-	{ 50.0f, 175.0f, 1 },  { 110.0f, 112.0f, 1 }, { 128.0f, 106.0f, 1 },
-	{ 138.0f, 110.0f, 1 }, { 134.0f, 113.0f, 1 }, { 135.0f, 128.0f, 1 },
-	{ 117.0f, 166.0f, 1 }, { 119.0f, 201.0f, 1 }, { 129.0f, 229.0f, 1 },
-	{ 140.0f, 219.0f, 1 }, { 149.0f, 172.0f, 1 }, { 178.0f, 137.0f, 1 },
-	{ 192.0f, 114.0f, 1 }, { 216.0f, 104.0f, 1 }, { 227.0f, 109.0f, 1 },
-	{ 224.0f, 130.0f, 1 }, { 183.0f, 265.0f, 3 }, { 161.0f, 18.0f, 0 },
-	{ 161.0f, 18.01f, 8 }, { 141.0f, 79.0f, 3 },  { 255.0f, 3.0f, 0 },
-	{ 255.0f, 3.01f, 8 },  { 220.0f, 71.0f, 4 },  { -1.0f, -1.0f, -1 },
+static HxDrawPath drawpath_table[] = {
+	{ 49.0f, 277.0f, 0 },    { 20.0f, 294.0f, 1 },  { 22.0f, 234.0f, 1 },
+	{ 50.0f, 175.0f, 1 },    { 110.0f, 112.0f, 1 }, { 128.0f, 106.0f, 1 },
+	{ 138.0f, 110.0f, 1 },   { 134.0f, 113.0f, 1 }, { 135.0f, 128.0f, 1 },
+	{ 117.0f, 166.0f, 1 },   { 119.0f, 201.0f, 1 }, { 129.0f, 229.0f, 1 },
+	{ 140.0f, 219.0f, 1 },   { 149.0f, 172.0f, 1 }, { 178.0f, 137.0f, 1 },
+	{ 192.0f, 114.0f, 1 },   { 216.0f, 104.0f, 1 }, { 227.0f, 109.0f, 1 },
+	{ 224.0f, 130.0f, 1 },   { 183.0f, 265.0f, 3 }, { 161.0f, 18.0f, 0 },
+	{ 161.0f, 18.01f, 8 },   { 141.0f, 79.0f, 3 },  { 255.0f, 3.0f, 0 },
+	{ 255.0f, 3.01f, 8 },    { 220.0f, 71.0f, 4 },  { -1.0f, -1.0f, -1 },
 };
 
-static HxDrawPath drawpath_table_PAL[] = {
-	{ 49.0f, 277.0f, 0 },  { 20.0f, 294.0f, 1 },  { 22.0f, 234.0f, 2 },
-	{ 50.0f, 175.0f, 2 },  { 110.0f, 112.0f, 1 }, { 128.0f, 106.0f, 2 },
-	{ 138.0f, 110.0f, 2 }, { 134.0f, 113.0f, 1 }, { 135.0f, 128.0f, 2 },
-	{ 117.0f, 166.0f, 2 }, { 119.0f, 201.0f, 1 }, { 129.0f, 229.0f, 2 },
-	{ 140.0f, 219.0f, 2 }, { 149.0f, 172.0f, 1 }, { 178.0f, 137.0f, 2 },
-	{ 192.0f, 114.0f, 2 }, { 216.0f, 104.0f, 1 }, { 227.0f, 109.0f, 2 },
-	{ 224.0f, 130.0f, 2 }, { 183.0f, 265.0f, 5 }, { 161.0f, 18.0f, 0 },
-	{ 161.0f, 18.01f, 13 }, { 141.0f, 79.0f, 5 },  { 255.0f, 3.0f, 0 },
-	{ 255.0f, 3.01f, 13 }, { 220.0f, 71.0f, 6 },  { -1.0f, -1.0f, -1 },
-};
+static int hxs_logo_resetflag;
+static int hxs_logodraw_resetflag;
 
-static void Hxs_Logo_ExtraDraw(u8 alpha, struct ResTIMG* resource)
+/// Defined without a prototype. Hx_Logo passes `buffer` as the texture: retail
+/// computes it into r4 at the top of Hx_Logo and keeps it there, so no call
+/// site needs to load r4 before the `bl`.
+static void Hxs_Logo_ExtraDraw(alpha_in, timg)
+u8 alpha_in;
+const ResTIMG* timg;
 {
-	GXTexObj texObj;
+	GXTexObj obj;
 
 	Hx_CameraInit();
 	Hx_GxInit(1, 1);
-	Hgx_init_tobj_resource(&texObj, resource);
+	Hgx_init_tobj_resource(&obj, timg);
+
 	{
 		GXColor color = { 0xFF, 0xFF, 0xFF, 0xFF };
-
-		color.a = alpha;
+		color.a       = alpha_in;
 		GXSetTevColor(GX_TEVREG0, color);
-		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_C0, GX_CC_ZERO, GX_CC_ZERO,
-		                GX_CC_ZERO);
-		GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_A0, GX_CA_TEXA,
-		                GX_CA_ZERO);
-		GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
-		                GX_TRUE, GX_TEVPREV);
-		GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
-		                GX_TRUE, GX_TEVPREV);
-		GXLoadTexObj(&texObj, GX_TEXMAP0);
-		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
-		               GX_LO_CLEAR);
-		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-		GXPosition3f32(160.0f, 205.0f, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(0.0f, 0.0f);
-		GXPosition3f32(480.0f, 205.0f, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(1.0f, 0.0f);
-		GXPosition3f32(480.0f, 237.0f, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(1.0f, 1.0f);
-		GXPosition3f32(160.0f, 237.0f, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(0.0f, 1.0f);
-		GXEnd();
 	}
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_C0, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_ZERO, GX_CA_A0, GX_CA_TEXA,
+	                GX_CA_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXLoadTexObj(&obj, GX_TEXMAP0);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
+	               GX_LO_CLEAR);
+
+	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	GXPosition3f32(160.0f, 205.0f, 0.0f);
+	GXColor1u32(0);
+	GXTexCoord2f32(0.0f, 0.0f);
+	GXPosition3f32(480.0f, 205.0f, 0.0f);
+	GXColor1u32(0);
+	GXTexCoord2f32(1.0f, 0.0f);
+	GXPosition3f32(480.0f, 237.0f, 0.0f);
+	GXColor1u32(0);
+	GXTexCoord2f32(1.0f, 1.0f);
+	GXPosition3f32(160.0f, 237.0f, 0.0f);
+	GXColor1u32(0);
+	GXTexCoord2f32(0.0f, 1.0f);
 }
 
-static void Hxs_Logo_TexSetup(u8 red, u8 alpha, struct ResTIMG* resource)
+static void Hxs_Logo_TexSetup(u8 alpha_in, u8 fade_in, const ResTIMG* timg)
 {
-	GXTexObj texObj;
+	GXTexObj obj;
 
 	Hx_CameraInit();
 	Hx_GxInit(1, 1);
-	Hgx_init_tobj_resource(&texObj, resource);
+	Hgx_init_tobj_resource(&obj, timg);
+
 	{
 		GXColor color = { 0xFF, 0, 0, 0 };
-
-		color.r = red;
-		color.a = alpha;
-		if (alpha > 192)
-			color.a = 255;
+		color.r       = alpha_in;
+		color.a       = fade_in;
+		if (fade_in > 0xC0)
+			color.a = 0xFF;
 		else
-			color.a = (u8)(1.328 * alpha);
+			color.a = 1.328 * (f64)fade_in;
 		GXSetTevColor(GX_TEVREG0, color);
-		if (alpha > 192)
-			color.a = (255 - alpha) * 4;
+
+		if (fade_in > 0xC0)
+			color.a = ((0xFF - fade_in) * 4) & 0xFC;
 		else
-			color.a = 255;
+			color.a = 0xFF;
 		GXSetTevColor(GX_TEVREG1, color);
-		GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_C0, GX_CC_TEXA,
-		                GX_CC_ZERO);
-		GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_A1, GX_CA_A0, GX_CA_TEXA,
-		                GX_CA_ZERO);
-		GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
-		                GX_TRUE, GX_TEVPREV);
-		GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
-		                GX_TRUE, GX_TEVPREV);
-		GXLoadTexObj(&texObj, GX_TEXMAP0);
-		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
-		               GX_LO_CLEAR);
 	}
+
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_ZERO, GX_CC_C0, GX_CC_TEXA,
+	                GX_CC_ZERO);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_A1, GX_CA_A0, GX_CA_TEXA, GX_CA_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXLoadTexObj(&obj, GX_TEXMAP0);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
+	               GX_LO_CLEAR);
 }
 
-// TODO: still 71% - the frame is 0xc8 where the ROM uses 0xb8 (four extra
-// 4-byte stack objects we have not identified) and the division/left/top
-// computations are scheduled differently. The math and the call sites match.
-static void Hxs_Logo_TexDraw(f32 x1, f32 y1, f32 x2, f32 y2, f32 width,
-                             f32 height)
+// Declaring d first puts it at retail's 0x38, and halving by 2.0f gives the
+// fnmsubs retail's operand order.
+/// One textured vertex of the pen stroke.
+static inline void Hx_TexVtx(f32 x, f32 y, f32 u, f32 v)
 {
-	Vec direction;
-	f32 left;
-	f32 top;
-	f32 posX0;
-	f32 posY0;
-	f32 posX1;
-	f32 posY1;
-	f32 posX2;
-	f32 posY2;
-	f32 posX3;
-	f32 posY3;
+	GXPosition3f32(x, y, 0.0f);
+	GXColor1u32(0);
+	GXTexCoord2f32(u, v);
+}
 
-	height = height / 1.924138f;
-	width  = width / 1.9230769f;
-	y1     = y1 / height;
-	y2     = y2 / height;
-	x1     = x1 / width;
-	x2     = x2 / width;
-	left   = (f32)(hx.width >> 1) - width * 0.5f;
-	top    = (f32)(hx.height >> 1) - height * 0.5f - 32.0f;
+// Dividing the corner arguments in place gives retail's saved-FPR colouring:
+// arguments colour last, last-declared first, so y2/x2/y1/x1 take f25-f22
+// below the named dx, dy, ox, oy, sy, sx (f31-f26) in declaration order.
+// The single-use w, h, du and dv are copy-propagated away but each keeps a
+// 4-byte slot, which is retail's 0x10 of low region under d; sx computed
+// before sy and py declared before px give the volatile registers.
+static void Hxs_Logo_TexDraw(f32 x1, f32 y1, f32 x2, f32 y2, f32 wd, f32 ht)
+{
+	Vec d;
+	f32 dx;
+	f32 dy;
+	f32 ox;
+	f32 oy;
+	f32 sy;
+	f32 sx;
+	f32 cx;
+	f32 cy;
+	f32 py;
+	f32 px;
+	f32 du;
+	f32 dv;
+	u32 w;
+	u32 h;
 
-	direction.x = -(y2 - y1);
-	direction.y = x2 - x1;
-	direction.z = 0.0f;
-	if (direction.y != 0.0f || direction.x != 0.0f) {
-		VECNormalize(&direction, &direction);
-		VECScale(&direction, &direction, 0.08f);
-		posX0 = width * (x1 + direction.x) + left;
-		posY0 = height * (y1 + direction.y) + top;
-		posX1 = width * (x2 + direction.x) + left;
-		posY1 = height * (y2 + direction.y) + top;
-		posX2 = width * (x2 - direction.x) + left;
-		posY2 = height * (y2 - direction.y) + top;
-		posX3 = width * (x1 - direction.x) + left;
-		posY3 = height * (y1 - direction.y) + top;
+	sx = wd / 1.9230769f;
+	sy = ht / 1.924138f;
+	y1 /= sy;
+	y2 /= sy;
+	x1 /= sx;
+	x2 /= sx;
+	w = hx.width;
+	h = hx.height;
+	cx = w >> 1;
+	cy = h >> 1;
+	ox = cx - (sx / 2.0f);
+	oy = (cy - (sy / 2.0f)) - 32.0f;
+
+	// The pen stroke is a quad two units wide around the segment, so the
+	// offset is the segment's normal: (-dv, du).
+	du = x2 - x1;
+	dv = y2 - y1;
+	d.y = du;
+	d.x = -dv;
+	d.z = 0.0f;
+
+	if ((0.0f != d.y) || (0.0f != d.x)) {
+		VECNormalize(&d, &d);
+		VECScale(&d, &d, 0.08f);
+		dx = d.x;
+		dy = d.y;
+		px = x1 + dx;
+		py = y1 + dy;
+		px = (sx * px) + ox;
+		py = (sy * py) + oy;
+
 		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-		GXPosition3f32(posX0, posY0, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(x1 + direction.x, y1 + direction.y);
-		GXPosition3f32(posX1, posY1, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(x2 + direction.x, y2 + direction.y);
-		GXPosition3f32(posX2, posY2, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(x2 - direction.x, y2 - direction.y);
-		GXPosition3f32(posX3, posY3, 0.0f);
-		GXColor1u32(0);
-		GXTexCoord2f32(x1 - direction.x, y1 - direction.y);
-		GXEnd();
+		Hx_TexVtx(px, py, x1 + d.x, y1 + d.y);
+		Hx_TexVtx((sx * (x2 + dx)) + ox, (sy * (y2 + dy)) + oy, x2 + d.x, y2 + d.y);
+		Hx_TexVtx((sx * (x2 - dx)) + ox, (sy * (y2 - dy)) + oy, x2 - d.x, y2 - d.y);
+		Hx_TexVtx((sx * (x1 - dx)) + ox, (sy * (y1 - dy)) + oy, x1 - d.x, y1 - d.y);
 	}
 }
 
-// TODO: 92% - identical instruction stream to the ROM, but the 2^52 and 0.5
-// constants land in different registers, so the whole block is offset.
-static void Hxs_Logo_MagDraw(f32 scale, f32 width, f32 height)
+// Halving by 2.0f keeps the product ahead of the constant, and declaring cx/cy
+// after the corners gives them retail's volatile FPRs.
+static void Hxs_Logo_MagDraw(f32 mag_scale, f32 wd, f32 ht)
 {
-	f32 scaledHalfWidth;
-	f32 scaledHalfHeight;
-	f32 halfWidth;
-	f32 halfHeight;
-	f32 left;
-	f32 top;
-	f32 texLeft;
-	f32 texTop;
-	f32 texRight;
-	f32 texBottom;
-	f32 right;
-	f32 bottom;
+	f32 sx;
+	f32 sy;
+	f32 hw;
+	f32 hh;
+	f32 x1;
+	f32 y1;
+	f32 u1;
+	f32 v1;
+	f32 cx;
+	f32 cy;
 
-	halfWidth        = (f32)(hx.width >> 1);
-	halfHeight       = (f32)(hx.height >> 1);
-	scaledHalfWidth  = (width / 1.9230769f) * scale;
-	scaledHalfHeight = (height / 1.924138f) * scale;
-	scaledHalfWidth  = scaledHalfWidth * 0.5f;
-	scaledHalfHeight = scaledHalfHeight * 0.5f;
-	left             = halfWidth - scaledHalfWidth;
-	right            = halfWidth + scaledHalfWidth;
-	top              = halfHeight - scaledHalfHeight;
-	bottom           = halfHeight + scaledHalfHeight;
-	texLeft          = left / (left - right);
-	texTop           = top / (top - bottom);
+	sx = wd / 1.9230769f;
+	sy = ht / 1.924138f;
+	cx = hx.width >> 1;
+	cy = hx.height >> 1;
+	hw = sx * mag_scale / 2.0f;
+	hh = sy * mag_scale / 2.0f;
+	x1 = cx - hw;
+	y1 = cy - hh;
+	u1 = x1 / (x1 - (cx + hw));
+	v1 = y1 / (y1 - (cy + hh));
+
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-	texRight  = 1.0f - texLeft;
-	texBottom = 1.0f - texTop;
 	GXPosition3f32(0.0f, -32.0f, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(texLeft, texTop);
-	GXPosition3f32((f32)hx.width, -32.0f, 0.0f);
+	GXTexCoord2f32(u1, v1);
+	GXPosition3f32(hx.width, -32.0f, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(texRight, texTop);
-	GXPosition3f32((f32)hx.width, (f32)(hx.height - 32), 0.0f);
+	GXTexCoord2f32((1.0f - u1), v1);
+	GXPosition3f32(hx.width, hx.height - 32, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(texRight, texBottom);
-	GXPosition3f32(0.0f, (f32)(hx.height - 32), 0.0f);
+	GXTexCoord2f32((1.0f - u1), (1.0f - v1));
+	GXPosition3f32(0.0f, hx.height - 32, 0.0f);
 	GXColor1u32(0);
-	GXTexCoord2f32(texLeft, texBottom);
-	GXEnd();
+	GXTexCoord2f32(u1, (1.0f - v1));
 }
 
-// TODO: 88% - the arithmetic is right, but the compiler schedules
-// `target->x - startX` and the img_wx/img_wy conversions earlier than the
-// ROM does in the tail `Hxs_Logo_TexDraw` call.
-static void Hxs_PenDraw(u32 count, HxDrawPath* target, f32 startX, f32 startY)
+static void Hxs_PenDraw(f32 x, f32 y, u32 num, const HxDrawPath* dp)
 {
-	Vec direction;
-	f32 prevX;
-	f32 nextX;
-	f32 prevY;
-	f32 nextY;
-	f32 progress;
 	u32 i;
+	f32 px;
+	f32 nx;
+	f32 py;
+	f32 ny;
 
-	if (count != 0) {
-		prevX = drawpath_table[0].x;
-		prevY = drawpath_table[0].y;
-		for (i = 0; i < count - 1; ++i) {
-			if (drawpath_table[i + 1].type == -1)
+	if (num != 0) {
+		px = drawpath_table[0].x;
+		py = drawpath_table[0].y;
+
+		for (i = 0; i < num - 1; i++) {
+			const HxDrawPath* p = &drawpath_table[i];
+
+			if (p[1].wait == -1)
 				break;
-			nextX = drawpath_table[i + 1].x;
-			nextY = drawpath_table[i + 1].y;
-			if (drawpath_table[i + 1].type != 0) {
-				direction.x = nextX - prevX;
-				direction.y = nextY - prevY;
-				VECNormalize(&direction, &direction);
-				VECScale(&direction, &direction, 6.0f);
-				Hxs_Logo_TexDraw(prevX - direction.x, prevY - direction.y,
-				                 nextX + direction.x, nextY + direction.y,
-				                 (f32)img_wx, (f32)img_wy);
+
+			nx = p[1].x;
+			ny = p[1].y;
+			if (p[1].wait != 0) {
+				Vec d;
+				d.x = nx - px;
+				d.y = ny - py;
+				VECNormalize(&d, &d);
+				VECScale(&d, &d, 6.0f);
+				Hxs_Logo_TexDraw(px - d.x, py - d.y, nx + d.x, ny + d.y,
+				                 img_wx, img_wy);
 			}
-			prevX = nextX;
-			prevY = nextY;
+
+			px = nx;
+			py = ny;
 		}
 	}
-	progress = (f32)(target->type - hx.timer) / (f32)target->type;
-	Hxs_Logo_TexDraw(startX, startY, progress * (target->x - startX) + startX,
-	                 progress * (target->y - startY) + startY, (f32)img_wx,
-	                 (f32)img_wy);
+
+	{
+		f32 t = (f32)(dp->wait - hx.timer) / (f32)dp->wait;
+		f32 x2 = (t * (dp->x - x)) + x;
+		f32 y2 = (t * (dp->y - y)) + y;
+		Hxs_Logo_TexDraw(x, y, x2, y2, img_wx, img_wy);
+	}
 }
 
-// TODO: 95% - frame is 0x30 where the ROM uses 0x38, and the three
-// `Hxs_PenDraw(count, dp, bx, by)` call sites load bx/by before count/dp in
-// the ROM and after them here.
+static inline u32 Hx_GetTimer(void) { return hx.timer; }
+
+// The fade-in test reads the timer through an inline, which gives the frame
+// retail's extra 8 bytes (as in Hx_Door).
+// Every Hxs_Logo_ExtraDraw call passes `buffer`, which keeps it live in r4
+// through case 2 (dp in r6, dp+1 in r5, as retail).
 static void Hx_Logo(void)
 {
 	static HxDrawPath* dp;
 	static f32 bx;
 	static f32 by;
-	static u32 count;
-	struct ResTIMG* resource;
-	struct ResTIMG* extraResource;
-	u32 i;
-	u32 count2;
+	static s32 count;
 
-	switch (hx.isPal) {
-	case 1:
-		drawpath_table = drawpath_table_PAL;
-		HX_LOGO_TIMER1 = 8;
-		HX_LOGO_TIMER2 = 42;
-		break;
-	default:
-		drawpath_table = drawpath_table_NTSC;
-		HX_LOGO_TIMER1 = 5;
-		HX_LOGO_TIMER2 = 25;
-		break;
-	}
+	void* buffer;
+	const ResTIMG* timg = hx.resource;
 
-	resource = (struct ResTIMG*)hx.resource;
 	if (hx.hasResourceEx != 0)
-		extraResource = (struct ResTIMG*)hx.resourceEx;
+		buffer = hx.resourceEx;
 	else
-		extraResource = (struct ResTIMG*)hx_buffer;
+		buffer = hx_buffer;
 
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
 		if (hx.hasResourceEx == 0)
-			Hgx_ReadTexture("/data/title_mini.bti", extraResource);
-		hx.animationState++;
-		count                  = 0;
-		dp                     = drawpath_table;
-		hx.timer               = 256;
-		hxs_logo_resetflag     = 1;
+			Hgx_ReadTexture("/data/title_mini.bti", buffer);
+
+		hx.step++;
+		dp                    = drawpath_table;
+		count                 = 0;
+		hx.timer              = 0x100;
+		hxs_logo_resetflag    = 1;
 		hxs_logodraw_resetflag = 1;
 		break;
+
 	case 1:
-		if (hx.timer <= 192)
-			Hxs_Logo_ExtraDraw(255, extraResource);
+		if (Hx_GetTimer() <= 0xC0)
+			Hxs_Logo_ExtraDraw(0xFF, buffer);
 		else
-			Hxs_Logo_ExtraDraw((u8)((256 - hx.timer) * 4), extraResource);
-		if (hx.isPal == 0)
-			Hx_TimerCountDown();
+			Hxs_Logo_ExtraDraw(((0x100 - hx.timer) * 4) & 0xFC, buffer);
+
+		Hx_TimerCountDown();
 		Hx_TimerCountDown();
 		Hx_TimerCountDown();
 		if (Hx_TimerCountDown() == 0)
-			hx.animationState++;
+			hx.step++;
 		break;
+
 	case 2:
-		if (dp->type == -1) {
-			hx.animationState = 3;
-			goto begin_fade;
-		} else {
-			if (dp->type == 0) {
-				bx = dp->x;
-				by = dp->y;
-				dp++;
-				count++;
-			}
-			hx.timer = dp->type;
-			hx.animationState++;
+		if (dp->wait == -1) {
+			hx.step = 3;
+			goto board;
 		}
+		if (dp->wait == 0) {
+			bx = dp->x;
+			by = dp->y;
+			dp++;
+			count++;
+		}
+		hx.timer = dp->wait;
+		hx.step++;
 		/* fall through */
+
 	case 3:
-		Hxs_Logo_ExtraDraw(255, extraResource);
-		Hxs_Logo_TexSetup(255, 255, resource);
-		Hxs_PenDraw(count, dp, bx, by);
+		Hxs_Logo_ExtraDraw(0xFF, buffer);
+		Hxs_Logo_TexSetup(0xFF, 0xFF, timg);
+		Hxs_PenDraw(bx, by, count, dp);
 		if (Hx_TimerCountDown() == 0) {
 			bx = dp->x;
 			by = dp->y;
 			dp++;
-			hx.animationState = 2;
+			hx.step = 2;
 			count++;
 		}
 		break;
+
 	case 4:
-	begin_fade:
-		hx.timer = HX_LOGO_TIMER1;
-		hx.animationState++;
+	board:
+		hx.timer = 5;
+		hx.step++;
 		/* fall through */
+
 	case 5:
-		Hxs_Logo_ExtraDraw(255, extraResource);
-		Hxs_Logo_TexSetup(255, 255, resource);
-		Hxs_PenDraw(count, dp, bx, by);
+		Hxs_Logo_ExtraDraw(0xFF, buffer);
+		Hxs_Logo_TexSetup(0xFF, 0xFF, timg);
+		Hxs_PenDraw(bx, by, count, dp);
 		if (Hx_TimerCountDown() == 0) {
-			hx.timer = 255;
-			hx.animationState++;
+			hx.timer = 0xFF;
+			hx.step++;
 		}
 		break;
-	case 6:
-		if (hx.timer >= 192) {
-			Hxs_Logo_ExtraDraw(255, extraResource);
-			Hxs_Logo_TexSetup((u8)hx.timer, (u8)hx.timer, resource);
-			if (hx.timer > 248)
-				Hxs_PenDraw(count, dp, bx, by);
+
+	case 6: {
+		u32 i;
+
+		if (hx.timer >= 0xC0) {
+			Hxs_Logo_ExtraDraw(0xFF, buffer);
+			Hxs_Logo_TexSetup(hx.timer, hx.timer, timg);
+			if (hx.timer > 0xF8)
+				Hxs_PenDraw(bx, by, count, dp);
 			else
-				Hxs_Logo_MagDraw(1.0f, (f32)img_wx, (f32)img_wy);
+				Hxs_Logo_MagDraw(1.0f, img_wx, img_wy);
 		} else {
-			Hxs_Logo_TexSetup((u8)hx.timer, (u8)hx.timer, resource);
-			Hxs_Logo_MagDraw(1.0f, (f32)img_wx, (f32)img_wy);
+			Hxs_Logo_TexSetup(hx.timer, hx.timer, timg);
+			Hxs_Logo_MagDraw(1.0f, img_wx, img_wy);
 		}
-		count2 = hx.isPal ? 2 : 3;
-		for (i = 0; i < count2; ++i)
+
+		for (i = 0; i < 3; i++)
 			Hx_TimerCountDown();
+
 		if (Hx_TimerCountDown() == 0) {
-			hx.timer = HX_LOGO_TIMER2;
-			Hx_MotionSet(&hx.motion, 30.0f, 12.0f, (f32)(HX_LOGO_TIMER2 - 17),
-			             5.0f);
-			hx.animationState++;
+			hx.timer = 25;
+			Hx_MotionSet(&hx.motion, 30.0f, 12.0f, 8.0f, 5.0f);
+			hx.step++;
 		}
 		break;
+	}
+
 	case 7:
-		Hxs_Logo_TexSetup(0, 0, resource);
-		Hxs_Logo_MagDraw(1.0f + Hx_MotionUpdate(&hx.motion), (f32)img_wx,
-		                 (f32)img_wy);
+		Hxs_Logo_TexSetup(0, 0, timg);
+		Hxs_Logo_MagDraw(1.0f + Hx_MotionUpdate(&hx.motion), img_wx, img_wy);
 		if (Hx_TimerCountDown() == 0)
-			hx.animationState++;
+			hx.step++;
 		break;
+
 	case 8:
 		hx.state = 3;
 		break;
 	}
 }
 
-void Hx_MovieStartSync(void) { }
+// TODO: dead code; the map says 0x70 bytes. Hx_MovieStartSyncEx below is the
+// surviving variant, so this is presumably it without the logo-draw phase.
+void Hx_MovieStartSync(void)
+{
+	if (hx.wipeNo != 0xC)
+		return;
+	if (hx.step >= 6)
+		hxs_logo_resetflag = 0;
+}
 
 int Hx_MovieStartSyncEx(void)
 {
-	if (hx.type != 12)
+	if (hx.wipeNo != 0xC)
 		return 0;
-	if ((u32)hx.animationState >= 2 && (u32)hx.animationState <= 5) {
+
+	if (hx.step >= 2 && hx.step <= 5) {
 		if (hxs_logodraw_resetflag == 0)
 			return 0;
 		hxs_logodraw_resetflag = 0;
 		return 1;
 	}
-	if ((u32)hx.animationState >= 6) {
+
+	if (hx.step >= 6) {
 		if (hxs_logo_resetflag == 0)
 			return 0;
-		if ((u32)hx.animationState == 6 && hx.timer > 192)
+		if (hx.step == 6 && hx.timer > 0xC0)
 			return 0;
 		hxs_logo_resetflag = 0;
 		return 2;
 	}
+
 	return 0;
 }
 
-// `u32` (not `s32`) - see the note on STATE1_TIME above.
-static u32 HX_TEST1_TIMER;
-static u32 HX_TEST1_TIMER2;
+/* ------------------------------------------------------------------------- */
+/* Corner-circle wipes. */
 
 static void Hx_Test1(void)
 {
 	static f32 r;
 
-	switch (hx.isPal) {
-	case 1:
-		HX_TEST1_TIMER  = 25;
-		HX_TEST1_TIMER2 = 30;
-		break;
-	default:
-		HX_TEST1_TIMER  = 25;
-		HX_TEST1_TIMER2 = 30;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
-		if (hx.direction == 1) {
+		if (hx.dir == 1) {
 			r = 400.0f;
-			Hx_MotionSet(&hx.motion, 400.0f, 10.0f, HX_TEST1_TIMER2 - 18,
-			             8.0f);
+			Hx_MotionSet(&hx.motion, 400.0f, 10.0f, 12.0f, 8.0f);
 		} else {
 			r = 1.0f;
-			Hx_MotionSet(&hx.motion, 400.0f, 5.0f, HX_TEST1_TIMER - 15,
-			             10.0f);
+			Hx_MotionSet(&hx.motion, 400.0f, 5.0f, 10.0f, 10.0f);
 		}
-		hx.animationState++;
-		hx.timer = HX_TEST1_TIMER;
+		hx.step++;
+		hx.timer = 25;
 		break;
+
 	case 1:
 		if (Hx_TimerCountDown() == 0)
-			hx.animationState++;
+			hx.step++;
 		r = Hx_MotionUpdate(&hx.motion);
-		if (hx.direction == 1)
+		if (hx.dir == 1)
 			r = 400.0f - r;
 		break;
+
 	default:
 		hx.state = 3;
 		break;
 	}
+
 	Hxs1_Test1(0.0f, 0.0f, r);
-	Hxs1_Test1((f32)hx.width, 0.0f, r);
-	Hxs1_Test1((f32)hx.width, (f32)hx.height, r);
-	Hxs1_Test1(0.0f, (f32)hx.height, r);
+	Hxs1_Test1(hx.width, 0.0f, r);
+	Hxs1_Test1(hx.width, hx.height, r);
+	Hxs1_Test1(0.0f, hx.height, r);
 }
 
-// TODO: 98% - FRAME ONLY, same shape as Hxs2_Circle. ROM frame 0x0c0 / local
-// block 24 slots / 3 touched / 21 dead; ours 0x080 / 8 / 3 / 5.
-static void Hxs1_Test1(f32 centerX, f32 centerY, f32 radius)
+static void Hxs1_Test1(f32 cx, f32 cy, f32 r)
 {
-	f32 radiusSquared;
 	u32 i;
+	f32 rr;
+	Vec p[2];
+	Vec d;
 
 	Hx_CameraInit();
 	Hx_GxInit(0, 1);
 	GXSetLineWidth(7, GX_TO_ZERO);
-	radiusSquared = radius * radius;
-	GXBegin(GX_LINES, GX_VTXFMT0, (u32)radius * 2 + 2);
-	for (i = 0; i <= (u32)radius; ++i) {
-		f32 offset = sqrtf(radiusSquared - (f32)(i * i));
-		f32 y;
-		f32 x1;
-		f32 x2;
+	rr = r * r;
+	GXBegin(GX_LINES, GX_VTXFMT0, ((u32)r * 2) + 2);
 
-		if (centerY < (f32)hx.halfHeight)
-			y = centerY + (f32)i;
-		else
-			y = centerY - (f32)i;
+	for (i = 0; i <= (u32)r; i++) {
+		p[0].z = 1.0f;
+		p[1].z = 1.0f;
+		d.x = sqrtf(rr - (f32)(i * i));
 
-		if (centerX < (f32)hx.halfWidth) {
-			x1 = centerX;
-			x2 = centerX + offset;
+		if (cy < hx.centerY) {
+			p[0].y = cy + i;
+			p[1].y = p[0].y;
 		} else {
-			x1 = centerX - offset;
-			x2 = centerX;
+			p[0].y = cy - i;
+			p[1].y = p[0].y;
 		}
 
-		GXPosition3f32(x1, y, 1.0f);
+		if (cx < hx.centerX) {
+			p[0].x = cx;
+			p[1].x = cx + d.x;
+		} else {
+			p[0].x = cx - d.x;
+			p[1].x = cx;
+		}
+
+		GXPosition3f32(p[0].x, p[0].y, p[0].z);
 		GXColor1u32(0xFF);
-		GXPosition3f32(x2, y, 1.0f);
+		GXPosition3f32(p[1].x, p[1].y, p[1].z);
 		GXColor1u32(0xFF);
 	}
-	GXEnd();
 }
 
-// `u32` (not `s32`) - see the note on STATE1_TIME above.
-static u32 HX_Test2_STATE1_TIME;
-static u32 HX_Test2_STATE2_TIME;
-static u32 HX_Test2_STATE3_TIME;
-static u32 HX_Test2_STATE4_TIME;
+/* ------------------------------------------------------------------------- */
+/* Sweeping-arc wipes. */
 
 static void Hx_Test2(void)
 {
 	static f32 r;
 
-	switch (hx.isPal) {
-	case 1:
-		HX_Test2_STATE1_TIME = 8;
-		HX_Test2_STATE2_TIME = 8;
-		HX_Test2_STATE3_TIME = 7;
-		HX_Test2_STATE4_TIME = 9;
-		break;
-	default:
-		HX_Test2_STATE1_TIME = 8;
-		HX_Test2_STATE2_TIME = 8;
-		HX_Test2_STATE3_TIME = 7;
-		HX_Test2_STATE4_TIME = 9;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
 		r = 1.0f;
-		Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f, HX_Test2_STATE1_TIME);
-		hx.animationState++;
-		hx.timer = HX_Test2_STATE1_TIME + 3;
-		break;
+		Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 8.0f, 1.0f);
+		hx.step++;
+		hx.timer = 11;
+		return;
+
 	case 1:
 		r = Hx_MotionUpdate(&hx.motion);
-		Hxs1_Test2((u32)r, 1, (f32)(hx.width + 200), 300.0f, 900.0f, 650.0f);
+		Hxs1_Test2(r, 1, hx.width + 200, 300.0f, 900.0f, 650.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE2_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE2_TIME);
+			hx.step++;
+			hx.timer = 11;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 8.0f, 1.0f);
 		}
-		break;
+		return;
+
 	case 2:
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 300.0f, 900.0f, 650.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 300.0f, 900.0f, 650.0f);
 		r = Hx_MotionUpdate(&hx.motion);
-		Hxs1_Test2((u32)r, 0, (f32)(hx.width + 200), 150.0f, 700.0f, 450.0f);
+		Hxs1_Test2(r, 0, hx.width + 200, 150.0f, 700.0f, 450.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE3_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE3_TIME);
+			hx.step++;
+			hx.timer = 10;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 7.0f, 1.0f);
 		}
 		break;
+
 	case 3:
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 300.0f, 900.0f, 650.0f);
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 150.0f, 700.0f, 450.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 300.0f, 900.0f, 650.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 150.0f, 700.0f, 450.0f);
 		r = Hx_MotionUpdate(&hx.motion);
-		Hxs1_Test2((u32)r, 1, (f32)(hx.width + 250), 370.0f, 650.0f, 400.0f);
+		Hxs1_Test2(r, 1, hx.width + 250, 370.0f, 650.0f, 400.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE4_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE4_TIME);
+			hx.step++;
+			hx.timer = 12;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 9.0f, 1.0f);
 		}
 		break;
+
 	case 4:
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 300.0f, 900.0f, 650.0f);
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 150.0f, 700.0f, 450.0f);
-		Hxs1_Test2(600, 1, (f32)(hx.width + 250), 370.0f, 650.0f, 400.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 300.0f, 900.0f, 650.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 150.0f, 700.0f, 450.0f);
+		Hxs1_Test2(600, 1, hx.width + 250, 370.0f, 650.0f, 400.0f);
 		r = Hx_MotionUpdate(&hx.motion);
-		Hxs1_Test2((u32)r, 0, (f32)(hx.width + 250), 300.0f, 420.0f, 200.0f);
+		Hxs1_Test2(r, 0, hx.width + 250, 300.0f, 420.0f, 200.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			hx.state = 3;
+			return;
 		}
 		break;
+
 	default:
 		hx.state = 3;
 		break;
@@ -1654,269 +1771,262 @@ static void Hx_Test2R(void)
 {
 	static f32 r;
 
-	switch (hx.isPal) {
-	case 1:
-		HX_Test2_STATE1_TIME = 8;
-		HX_Test2_STATE2_TIME = 8;
-		HX_Test2_STATE3_TIME = 7;
-		HX_Test2_STATE4_TIME = 9;
-		break;
-	default:
-		HX_Test2_STATE1_TIME = 8;
-		HX_Test2_STATE2_TIME = 8;
-		HX_Test2_STATE3_TIME = 7;
-		HX_Test2_STATE4_TIME = 9;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
 		r = 1.0f;
-		Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f, HX_Test2_STATE1_TIME);
-		hx.animationState++;
-		hx.timer = HX_Test2_STATE1_TIME + 3;
+		Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 8.0f, 1.0f);
+		hx.step++;
+		hx.timer = 11;
+		/* fall through */
+
 	case 1:
-		Hxs1_Test2(600, 0, (f32)(hx.width + 200), 150.0f, 700.0f, 450.0f);
-		Hxs1_Test2(600, 1, (f32)(hx.width + 250), 370.0f, 650.0f, 400.0f);
-		Hxs1_Test2(600, 0, (f32)(hx.width + 250), 300.0f, 420.0f, 200.0f);
+		Hxs1_Test2(600, 0, hx.width + 200, 150.0f, 700.0f, 450.0f);
+		Hxs1_Test2(600, 1, hx.width + 250, 370.0f, 650.0f, 400.0f);
+		Hxs1_Test2(600, 0, hx.width + 250, 300.0f, 420.0f, 200.0f);
 		r = Hx_MotionUpdate(&hx.motion);
 		r = 500.0f - r;
-		Hxs1_Test2((u32)r, 0, (f32)(hx.width + 200), 300.0f, 900.0f, 650.0f);
+		Hxs1_Test2(r, 0, hx.width + 200, 300.0f, 900.0f, 650.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE2_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE2_TIME);
+			hx.step++;
+			hx.timer = 11;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 8.0f, 1.0f);
 		}
-		break;
+		return;
+
 	case 2:
-		Hxs1_Test2(600, 1, (f32)(hx.width + 250), 370.0f, 650.0f, 400.0f);
-		Hxs1_Test2(600, 0, (f32)(hx.width + 250), 300.0f, 420.0f, 200.0f);
+		Hxs1_Test2(600, 1, hx.width + 250, 370.0f, 650.0f, 400.0f);
+		Hxs1_Test2(600, 0, hx.width + 250, 300.0f, 420.0f, 200.0f);
 		r = Hx_MotionUpdate(&hx.motion);
 		r = 500.0f - r;
-		Hxs1_Test2((u32)r, 1, (f32)(hx.width + 200), 150.0f, 700.0f, 450.0f);
+		Hxs1_Test2(r, 1, hx.width + 200, 150.0f, 700.0f, 450.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE3_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE3_TIME);
+			hx.step++;
+			hx.timer = 10;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 7.0f, 1.0f);
 		}
 		break;
+
 	case 3:
-		Hxs1_Test2(600, 0, (f32)(hx.width + 250), 300.0f, 420.0f, 200.0f);
+		Hxs1_Test2(600, 0, hx.width + 250, 300.0f, 420.0f, 200.0f);
 		r = Hx_MotionUpdate(&hx.motion);
 		r = 500.0f - r;
-		Hxs1_Test2((u32)r, 0, (f32)(hx.width + 250), 370.0f, 650.0f, 400.0f);
+		Hxs1_Test2(r, 0, hx.width + 250, 370.0f, 650.0f, 400.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
-			hx.timer = HX_Test2_STATE4_TIME + 3;
-			Hx_MotionSet(&hx.motion, 500.0f, 1.0f, 2.0f,
-			             HX_Test2_STATE4_TIME);
+			hx.step++;
+			hx.timer = 12;
+			Hx_MotionSet(&hx.motion, 500.0f, 2.0f, 9.0f, 1.0f);
 		}
 		break;
+
 	case 4:
 		r = Hx_MotionUpdate(&hx.motion);
 		r = 500.0f - r;
-		Hxs1_Test2((u32)r, 1, (f32)(hx.width + 250), 300.0f, 420.0f, 200.0f);
+		Hxs1_Test2(r, 1, hx.width + 250, 300.0f, 420.0f, 200.0f);
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			hx.state = 3;
+			return;
 		}
 		break;
+
 	default:
 		hx.state = 3;
 		break;
 	}
 }
 
-// TODO: 93% - FRAME ONLY, same shape as Hxs2_Circle. ROM frame 0x108 / local
-// block 31 slots / 6 touched / 25 dead; ours 0x0c8 / 15 / 6 / 9. The 6 touched
-// slots are the same 3 int->float temporaries in both.
-static void Hxs1_Test2(u32 count, u32 direction, f32 centerX, f32 centerY,
-                       f32 outerRadius, f32 innerRadius)
+static void Hxs1_Test2(u32 num, u32 dir, f32 cx, f32 cy, f32 r_out, f32 r_in)
 {
-	f32 outerRadiusSquared;
-	f32 innerRadiusSquared;
-	f32 y;
-	f32 outerOffset;
-	f32 innerOffset;
-	s32 end;
 	s32 i;
+	s32 start;
+	s32 end;
+	s32 step;
+	f32 ro2;
+	f32 ri2;
+	Vec p[2];
 
 	Hx_CameraInit();
 	Hx_GxInit(0, 1);
-	outerRadiusSquared = outerRadius * outerRadius;
-	innerRadiusSquared = innerRadius * innerRadius;
-	if (direction == 0) {
-		direction = 1;
-		end       = outerRadius;
-		i         = -centerY;
+
+	ro2 = r_out * r_out;
+	ri2 = r_in * r_in;
+
+	if (dir == 0) {
+		step  = 1;
+		start = -cy;
+		end   = r_out;
 	} else {
-		direction = -1;
-		i         = outerRadius;
-		end       = -centerY;
+		step  = -1;
+		start = r_out;
+		end   = -cy;
 	}
 
-	for (; i != end; i += direction) {
-		y = centerY + i;
+	for (i = start; i != end; i += step) {
+		f32 y = cy + (f32)i;
+		f32 dx_out;
+		f32 dx_in;
+
 		if (y < 0.0f || y > hx.height)
 			continue;
-		if (count == 0)
+		if (num == 0)
 			break;
-		count--;
-		outerOffset = sqrtf(outerRadiusSquared - i * i);
-		innerOffset = sqrtf(innerRadiusSquared - i * i);
-		if (centerX < hx.halfWidth) {
-			outerRadius = centerX + outerOffset;
-			innerRadius = centerX + innerOffset;
-			if (outerRadius < 0.0f)
+		num--;
+
+		dx_out = sqrtf(ro2 - (f32)(i * i));
+		dx_in = sqrtf(ri2 - (f32)(i * i));
+
+		if (cx < hx.centerX) {
+			p[1].x = cx + dx_out;
+			p[0].x = cx + dx_in;
+			if (p[1].x < 0.0f)
 				continue;
 		} else {
-			innerRadius = centerX - outerOffset;
-			outerRadius = centerX - innerOffset;
-			if (innerRadius > hx.width)
+			p[0].x = cx - dx_out;
+			p[1].x = cx - dx_in;
+			if (p[0].x > hx.width)
 				continue;
 		}
+
+		p[0].y = y;
+		p[0].z = 1.0f;
+		p[1].y = y;
+		p[1].z = 1.0f;
 		GXBegin(GX_LINES, GX_VTXFMT0, 2);
-		GXPosition3f32(innerRadius, y, 1.0f);
+		GXPosition3f32(p[0].x, p[0].y, p[0].z);
 		GXColor1u32(0xFF);
-		GXPosition3f32(outerRadius, y, 1.0f);
+		GXPosition3f32(p[1].x, p[1].y, p[1].z);
 		GXColor1u32(0xFF);
-		GXEnd();
 	}
 }
 
-// `u32` (not `s32`) - see the note on STATE1_TIME above.
-static u32 HX_TEST4_TIME;
+/* ------------------------------------------------------------------------- */
+/* Spiral wipe. */
 
+// The finished step 2 is an explicit empty case: it is what leaves retail's
+// second `b` to the epilogue ahead of case 0.
 static void Hx_Test4(void)
 {
 	static f32 thin;
 	static u32 rstep;
 	static f32 thin_d;
 	static f32 rstep_d;
-	f32 angle;
-	f32 startAngle;
-	f32 outerX;
-	f32 outerY;
-	f32 innerX;
-	f32 innerY;
-	f32 nextOuterX;
-	f32 nextOuterY;
-	f32 nextInnerX;
-	f32 nextInnerY;
-	f32 radius;
-	f32 outerRadius;
-	f32 innerRadius;
+
+	f32 a;
+	f32 x1;
+	f32 y1;
+	f32 x2;
+	f32 y2;
+	f32 nx1;
+	f32 ny1;
+	f32 nx2;
+	f32 ny2;
+	f32 r;
+	f32 ro;
+	f32 ri;
 	u32 i;
 
-	switch (hx.isPal) {
-	case 1:
-		HX_TEST4_TIME = 31;
-		break;
-	default:
-		HX_TEST4_TIME = 38;
-		break;
-	}
-
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
-		switch (hx.direction) {
+		switch (hx.dir) {
 		case 0:
 			rstep   = 0;
-			thin    = 130.0f - 0.15f * (f32)HX_TEST4_TIME;
+			thin    = 124.3f;
+			rstep_d = 5.0f;
 			thin_d  = 0.15f;
-			rstep_d = 200.0f / (f32)HX_TEST4_TIME;
 			break;
 		case 1:
 			rstep   = 230;
 			thin    = 100.0f;
-			rstep_d = -200.0f / (f32)HX_TEST4_TIME;
+			rstep_d = -5.0f;
 			thin_d  = -0.15f;
 			break;
 		}
-		hx.timer = HX_TEST4_TIME;
-		hx.animationState++;
+		hx.timer = 38;
+		hx.step++;
+		/* fall through */
+
 	case 1:
-		rstep = rstep + rstep_d;
+		rstep += rstep_d;
 		thin += thin_d;
-		radius      = (hx.width >> 1) + 200;
-		startAngle  = 0.0f;
-		outerRadius = radius + thin;
-		outerX      = outerRadius * sinf(startAngle) + hx.halfWidth;
-		outerY      = outerRadius * cosf(startAngle) + hx.halfHeight;
-		innerRadius = radius - thin;
-		innerX      = innerRadius * sinf(startAngle) + hx.halfWidth;
-		innerY      = innerRadius * cosf(startAngle) + hx.halfHeight;
-		angle       = 0.0f;
+
+		r  = Hx_HalfWidth() + 200;
+		a  = 0.0f;
+		ro = r + thin;
+		x1 = (ro * sinf(a)) + hx.centerX;
+		y1 = (ro * cosf(a)) + hx.centerY;
+		ri = r - thin;
+		x2 = (ri * sinf(a)) + hx.centerX;
+		y2 = (ri * cosf(a)) + hx.centerY;
+
+		a = 0.0f;
 		Hx_CameraInit();
 		Hx_GxInit(0, 1);
-		for (i = 0; i < rstep; ++i) {
-			radius -= 2.4f;
-			outerRadius = radius + thin;
-			if (radius < thin)
-				innerRadius = 0.0f;
+
+		for (i = 0; i < rstep; i++) {
+			r -= 2.4f;
+			ro = r + thin;
+			if (r < thin)
+				ri = 0.0f;
 			else
-				innerRadius = radius - thin;
-			angle += 0.12f;
-			nextOuterX = outerRadius * sinf(angle) + hx.halfWidth;
-			nextOuterY = outerRadius * cosf(angle) + hx.halfHeight;
-			nextInnerX = innerRadius * sinf(angle) + hx.halfWidth;
-			nextInnerY = innerRadius * cosf(angle) + hx.halfHeight;
+				ri = r - thin;
+			a += 0.12f;
+
+			nx1 = (ro * sinf(a)) + hx.centerX;
+			ny1 = (ro * cosf(a)) + hx.centerY;
+			nx2 = (ri * sinf(a)) + hx.centerX;
+			ny2 = (ri * cosf(a)) + hx.centerY;
+
 			GXBegin(GX_QUADS, GX_VTXFMT0, 4);
-			GXPosition3f32(outerX, outerY, 0.0f);
+			GXPosition3f32(x1, y1, 0.0f);
 			GXColor1u32(0xFF);
-			GXPosition3f32(nextOuterX, nextOuterY, 0.0f);
+			GXPosition3f32(nx1, ny1, 0.0f);
 			GXColor1u32(0xFF);
-			GXPosition3f32(nextInnerX, nextInnerY, 0.0f);
+			GXPosition3f32(nx2, ny2, 0.0f);
 			GXColor1u32(0xFF);
-			GXPosition3f32(innerX, innerY, 0.0f);
+			GXPosition3f32(x2, y2, 0.0f);
 			GXColor1u32(0xFF);
-			GXEnd();
-			outerX = nextOuterX;
-			outerY = nextOuterY;
-			innerX = nextInnerX;
-			innerY = nextInnerY;
+
+			x1 = nx1;
+			y1 = ny1;
+			x2 = nx2;
+			y2 = ny2;
 		}
+
 		if (Hx_TimerCountDown() == 0) {
 			hx.state = 3;
-			hx.animationState++;
+			hx.step++;
 		}
-		break;
-	default:
+		return;
+	case 2:
 		break;
 	}
 }
 
-// `u32` (not `s32`) - see the note on STATE1_TIME above.
-static u32 HX_TEST5_FADETIME;
+/* ------------------------------------------------------------------------- */
+/* Mosaic wipe: every 64x64 tile of the frame buffer is redrawn as a
+   ring-shaped fan that closes up. */
 
+// The finished step 2 shares the default's body (retail's second `b` ahead of
+// case 0), and the timer read through Hx_GetTimer puts GXTexObj at 0xc.
+// The timer and its 0..1 rate are named at function scope ahead of obj: both
+// are single-use, so copy propagation removes them but each keeps the 4-byte
+// slot retail has above obj. mag_out/mag_in declared first put their spill
+// slots above the first-vertex block, as in retail.
 static void Hx_Test5(void)
 {
-	u8* buffer = hx_buffer;
-	GXTexObj texObj;
-	f32 outScale;
-	f32 inScale;
-	f32 scale;
-	f32 twist;
-	f32 centerX;
-	f32 centerY;
-	f32 firstX;
-	f32 firstY;
+	u32 timer;
+	f32 rate;
+	GXTexObj obj;
+	f32 mag_out;
+	f32 mag_in;
 	f32 firstU;
 	f32 firstV;
+	f32 firstX;
+	f32 firstY;
 	u32 x;
 	u32 y;
 	u32 i;
-
-	switch (hx.isPal) {
-	case 1:
-		HX_TEST5_FADETIME = 16;
-		break;
-	default:
-		HX_TEST5_FADETIME = 20;
-		break;
-	}
+	void* buffer = hx_buffer;
 
 	Hx_CameraInit();
 	Hx_GxInit(1, 0);
@@ -1928,11 +2038,15 @@ static void Hx_Test5(void)
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGBA, GX_RGBA8, 0);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
 
-	switch (hx.animationState) {
+	switch (hx.step) {
 	case 0:
-		hx.timer = HX_TEST5_FADETIME;
-		hx.animationState++;
-	case 1:
+		hx.timer = 20;
+		hx.step++;
+		/* fall through */
+
+	case 1: {
+		f32 t;
+
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
 		                  GX_FALSE, GX_PTIDENTITY);
 		GXSetNumTexGens(1);
@@ -1940,91 +2054,113 @@ static void Hx_Test5(void)
 		GXSetTevOp(GX_TEVSTAGE0, GX_REPLACE);
 		GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
 		GXSetBlendMode(GX_BM_NONE, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_CLEAR);
-		GXInitTexObj(&texObj, buffer, 64, 64, GX_TF_RGB565, GX_CLAMP, GX_CLAMP,
-		             GX_FALSE);
-		GXInitTexObjLOD(&texObj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f,
-		                GX_DISABLE, GX_ENABLE, GX_ANISO_1);
-		outScale = 1.41f - 1.41f * ((f32)hx.timer / (f32)HX_TEST5_FADETIME);
-		inScale  = 0.1f + 1.41f * ((f32)hx.timer / (f32)HX_TEST5_FADETIME);
-		for (y = 0; y < hx.height; y += 64) {
-			for (x = 0; x < hx.width; x += 64) {
-				centerX = x;
-				centerY = y;
-				Hx_GetFrBuffer(buffer, x, y, 64, 64);
+		GXInitTexObj(&obj, buffer, 0x40, 0x40, GX_TF_RGB565, GX_CLAMP,
+		             GX_CLAMP, GX_FALSE);
+		GXInitTexObjLOD(&obj, GX_LINEAR, GX_LINEAR, 0.0f, 10.0f, 0.0f,
+		                GX_FALSE, GX_TRUE, GX_ANISO_1);
+
+		timer   = Hx_GetTimer();
+		rate    = (f32)timer / 20.0f;
+		t       = 1.41f * rate;
+		mag_out = 1.41f - t;
+		mag_in  = 0.1f + t;
+
+		for (y = 0; y < hx.height; y += 0x40) {
+			for (x = 0; x < hx.width; x += 0x40) {
+				f32 cx;
+				f32 cy;
+				f32 mag_use;
+				f32 twist;
+
+				cx = x;
+				cy = y;
+				Hx_GetFrBuffer(buffer, x, y, 0x40, 0x40);
 				GXInvalidateTexAll();
-				GXLoadTexObj(&texObj, GX_TEXMAP0);
-				if (hx.direction != 0)
-					scale = outScale;
+				GXLoadTexObj(&obj, GX_TEXMAP0);
+
+				if (hx.dir != 0)
+					mag_use = mag_out;
 				else
-					scale = inScale;
-				if (scale < 1.0f)
-					twist = 3.1415927f * (1.0f - scale);
+					mag_use = mag_in;
+
+				if (mag_use < 1.0f)
+					twist = 3.1415927f * (1.0f - mag_use);
 				else
 					twist = 0.0f;
-				centerX = 32.0f + centerX;
-				centerY = 32.0f + centerY;
+
+				cx = 32.0f + cx;
+				cy = 32.0f + cy;
+
 				GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, 18);
-				GXPosition3f32(centerX, centerY, 0.0f);
+				GXPosition3f32(cx, cy, 0.0f);
 				GXColor1u32(0);
 				GXTexCoord2f32(0.5f, 0.5f);
-				for (i = 0; i < 16; i++) {
-					f32 angle = 3.1415927f * (2.0f * i) / 16.0f;
-					f32 u     = 0.5f * sinf(angle) + 0.5f;
-					f32 v     = 0.5f * cosf(angle) + 0.5f;
-					f32 px    = scale * sinf(angle + twist);
-					f32 py    = scale * cosf(angle + twist);
 
-					if (scale >= 1.0f) {
-						u = scale * sinf(angle) * 0.5f + 0.5f;
-						v = scale * cosf(angle) * 0.5f + 0.5f;
+				for (i = 0; i < 16; i++) {
+					f32 a = 3.1415927f * (2.0f * (f32)i) / 16.0f;
+					f32 u = (0.5f * sinf(a)) + 0.5f;
+					f32 v = (0.5f * cosf(a)) + 0.5f;
+					f32 px = mag_use * sinf(a + twist);
+					f32 py = mag_use * cosf(a + twist);
+
+					if (mag_use >= 1.0f) {
+						u = (mag_use * sinf(a) / 2.0f) + 0.5f;
+						v = (mag_use * cosf(a) / 2.0f) + 0.5f;
 					}
 					if (px < -1.0f) {
 						u  = 0.0f;
 						py = -py / px;
 						px = -1.0f;
-						v  = 0.5f * py + 0.5f;
+						v  = (0.5f * py) + 0.5f;
 					}
 					if (px > 1.0f) {
-						py = py / px;
+						py /= px;
 						px = 1.0f;
 						u  = 1.0f;
-						v  = 0.5f * py + 0.5f;
+						v  = (0.5f * py) + 0.5f;
 					}
 					if (py < -1.0f) {
 						v  = 0.0f;
 						px = -px / py;
 						py = -1.0f;
-						u  = 0.5f * px + 0.5f;
+						u  = (0.5f * px) + 0.5f;
 					}
 					if (py > 1.0f) {
-						px = px / py;
+						px /= py;
 						py = 1.0f;
 						v  = 1.0f;
-						u  = 0.5f * px + 0.5f;
+						u  = (0.5f * px) + 0.5f;
 					}
+
 					px *= 32.0f;
 					py *= 32.0f;
+
 					if (i == 0) {
 						firstX = px;
 						firstY = py;
 						firstU = u;
 						firstV = v;
 					}
-					GXPosition3f32(px + centerX, py + centerY, 0.0f);
+
+					GXPosition3f32(px + cx, py + cy, 0.0f);
 					GXColor1u32(0);
 					GXTexCoord2f32(u, v);
 				}
-				GXPosition3f32(firstX + centerX, firstY + centerY, 0.0f);
+
+				GXPosition3f32(firstX + cx, firstY + cy, 0.0f);
 				GXColor1u32(0);
 				GXTexCoord2f32(firstU, firstV);
-				GXEnd();
 			}
 		}
+
 		if (Hx_TimerCountDown() == 0) {
-			hx.animationState++;
+			hx.step++;
 			hx.state = 3;
 		}
-		break;
+		return;
+	}
+
+	case 2:
 	default:
 		hx.state = 3;
 		break;

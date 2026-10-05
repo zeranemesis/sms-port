@@ -2,9 +2,11 @@
 #define MOVE_BG_MAP_OBJ_RAIL_BLOCK_HPP
 
 #include <MoveBG/MapObjBase.hpp>
+#include <Enemy/Graph.hpp>
 
 class TGraphWeb;
 class TGraphTracer;
+class TGraphNode;
 
 class TRailMapObj : public TMapObjBase {
 public:
@@ -28,10 +30,32 @@ public:
 	// fabricated
 	void onRailFlag(u32 flag) { unk140 |= flag; }
 	void offRailFlag(u32 flag) { unk140 &= ~flag; }
+	// Rejected (header round 20): binding the result inside this body
+	// (`bool set = unk140 & flag ? TRUE : FALSE; return set;`) is not the same
+	// as the inline level *above* it that TRideCloud::control's parked
+	// `RideCloudRailFlag` supplies -- it costs TRailMapObj::control
+	// (100 -> 99.85) and moves TRideCloud::control the wrong way
+	// (99.87 -> 99.80). The extra level stays parked in the .cpp.
 	bool checkRailFlag(u32 flag) { return unk140 & flag ? TRUE : FALSE; }
 	f32 getUnk144() const { return unk144; }
 
+	// fabricated. The named locals are the bindings closure batch 110
+	// measured at TRideCloud::control.
+	TGraphWeb* getGraph()
+	{
+		TGraphWeb* graph = unk138->getGraph();
+		return graph;
+	}
+	TGraphNode& getCurrentNode()
+	{
+		TGraphNode& node = unk138->getCurrent();
+		return node;
+	}
+
 public:
+	// fabricated: header round 20 accessor candidates
+	TGraphTracer* getTracer() const { return unk138; }
+
 	/* 0x138 */ TGraphTracer* unk138;
 	/* 0x13C */ int unk13C;
 	/* 0x140 */ u32 unk140;
@@ -44,13 +68,13 @@ public:
 class TNormalLift : public TRailMapObj {
 public:
 	TNormalLift(const char* name = "ノーマルリフト");
-	void resetPosition();
-	void load(JSUMemoryInputStream&);
-	void readRailFlag();
-	void initMapObj();
-	void control();
-	void setGroundCollision();
-	void perform(u32 cue, JDrama::TGraphics* graphics);
+	virtual void resetPosition();
+	virtual void load(JSUMemoryInputStream&);
+	virtual void readRailFlag();
+	virtual void initMapObj();
+	virtual void control();
+	virtual void setGroundCollision();
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
 public:
 	/* 0x150 */ u16 unk150;
@@ -62,10 +86,10 @@ public:
 class TRailBlock : public TRailMapObj {
 public:
 	TRailBlock(const char* name = "移動板");
-	void initMapObj();
-	Mtx* getRootJointMtx() const;
-	void calcRootMatrix();
-	void control();
+	virtual void initMapObj();
+	virtual Mtx* getRootJointMtx() const;
+	virtual void calcRootMatrix();
+	virtual void control();
 
 public:
 	/* 0x150 */ f32 unk150;
@@ -79,11 +103,11 @@ public:
 class TRollBlock : public TMapObjBase {
 public:
 	TRollBlock(const char* name = "回転板");
-	void load(JSUMemoryInputStream&);
-	void setGroundCollision();
-	Mtx* getRootJointMtx() const;
-	void calcRootMatrix();
-	void control();
+	virtual void load(JSUMemoryInputStream&);
+	virtual void setGroundCollision();
+	virtual Mtx* getRootJointMtx() const;
+	virtual void calcRootMatrix();
+	virtual void control();
 
 public:
 	/* 0x138 */ f32 unk138;
@@ -93,8 +117,8 @@ public:
 class TWoodBlock : public TNormalLift {
 public:
 	TWoodBlock(const char* name = "木のブロック");
-	BOOL calcRecycle();
-	void load(JSUMemoryInputStream&);
+	virtual BOOL calcRecycle();
+	virtual void load(JSUMemoryInputStream&);
 
 public:
 	/* 0x15C */ GXColorS10 unk15C;

@@ -30,6 +30,12 @@ bool TMario::canSleep()
 	f32 height = mDeParams.mSleepingCheckHeight.get();
 	f32 groundY;
 	const TBGCheckData* gnd;
+	// Dead, and positional evidence only: the last 4 bytes of retail's 0x38
+	// frame sit below `gnd`, which is where a scalar declared after it in a
+	// C-style block lands (the same dead-scalar idiom as
+	// TMapWireManager::load and TAreaCylinder::load). The wall radius is the
+	// one quantity this function uses as a bare literal, below.
+	f32 wallRadius;
 
 	groundY = gpMap->checkGround(mPosition.x - dist, mPosition.y + 30.0f,
 	                             mPosition.z, &gnd);
@@ -59,13 +65,6 @@ bool TMario::canSleep()
 	                            80.0f))
 		return false;
 
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	return true;
 }
 
@@ -82,6 +81,8 @@ BOOL TMario::canPut()
 		return 0;
 	return 1;
 }
+
+void TMario::checkPutStart() { }
 
 BOOL TMario::waitingCommonEvents()
 {
@@ -101,9 +102,9 @@ BOOL TMario::waitingCommonEvents()
 	if (mInput & 0x1) {
 		s16 diff      = mIntendedYaw - mFaceAngle.y;
 		s16 rotSp     = mDeParams.mWaitingRotSp.get();
-		int converged = IConverge(diff, 0, rotSp, rotSp);
-		mFaceAngle.y  = mIntendedYaw - converged;
-		if (mIntendedMag > mControllerParams.mStartToWalkLevel.get()) {
+		mFaceAngle.y  = mIntendedYaw - IConverge(diff, 0, rotSp, rotSp);
+		f32 mag = getIntendedMag();
+		if (mag > mControllerParams.mStartToWalkLevel.get()) {
 			emitSmoke(mFaceAngle.y);
 			return changePlayerStatus(MARIO_STATUS_RUN, 0, false);
 		}
@@ -121,8 +122,8 @@ BOOL TMario::waitingCommonEvents()
 		return changePlayerStatus(MARIO_STATUS_TAKE_POSE, 0, false);
 
 	if (rocketCheck()) {
-		unk314
-		    = mFloorPosition.y + mWaterGun->mWatergunParams.mHoverHeight.get();
+		unk314 = mFloorPosition.y
+		    + getFludd()->mWatergunParams.mHHoverHeight.get();
 		return changePlayerStatus(MARIO_STATUS_ROCKET, 0, false);
 	}
 
@@ -131,14 +132,19 @@ BOOL TMario::waitingCommonEvents()
 	return 0;
 }
 
+// TODO: frame 0x28 vs 0x30 with no referenced stack slot at all -- the "last
+// 8 bytes" family. Every callee (waitProcess, setAnimation, onYoshi,
+// curAnmEndsNext, isLast1AnimeFrame, changePlayerStatus) is a real `bl`, so
+// there is no inlined callee to carry a dead 8-byte local and no positional
+// evidence for one in the body. An accessor level for `mYoshi` in front of
+// `mActor` is +0 here.
 void TMario::stopCommon(int anim_id, int status_on_end)
 {
-
-	
-	
 	waitProcess();
 	setAnimation(anim_id, 1.0f);
-	if (onYoshi() && mYoshi->mActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+	if (onYoshi()
+	    && getYoshi()->mActor->curAnmEndsNext(ANM_TYPE_BCK,
+	                                                       nullptr)) {
 		changePlayerStatus(status_on_end, 0, false);
 	} else if (isLast1AnimeFrame()) {
 		changePlayerStatus(status_on_end, 0, false);
@@ -152,17 +158,23 @@ void TMario::changeMontemanWaitingAnim()
 	mStatusState |= 0x2;
 }
 
+// TODO: frame 0x38 vs 0x40 with no referenced stack slot -- the "last 8
+// bytes" family. Accessor temporaries saturate at two here: any single one of
+// getIntendedMag(), getHealth(), getPreviousStatus(), SMSGetMarDirector() or
+// getGroundPlane() is worth 8, any pair of them 16, and a third adds nothing
+// (getHealth() at the `mHealth <= 3` test on top of the two already applied is
+// +0). getM3UModel() for the frame-controller read is +0, and isUpperState()
+// at the second upper-state test costs five instructions. The last 8 bytes
+// need an aggregate or address-taken local, for which there is no evidence.
 BOOL TMario::waiting()
 {
-
-	
-	
 	if (waitingCommonEvents())
 		return 1;
 
 	if (isMario() && isUpperState(UPPER_STATE_IDLE) && canSleep()
 	    && mAnimationId == ANIM_WAIT && isAnimeLoopOrStop()
-	    && mGroundPlane != nullptr && mGroundPlane->getNormal().y > 0.99f) {
+	    && getGroundPlane() != nullptr
+	    && getGroundPlane()->getNormal().y > 0.99f) {
 		mStatusTimer += 1;
 		if (mStatusTimer >= 10)
 			return changePlayerStatus(MARIO_STATUS_SLEEPY, 0, false);
@@ -175,15 +187,15 @@ BOOL TMario::waiting()
 	} else if (isSinking()) {
 		setAnimation(ANIM_SINKING, 1.0f);
 	} else if (mUpperState == UPPER_STATE_IDLE
-	           && (mPrevStatus == MARIO_STATUS_BRAKE_END
+	           && (getPreviousStatus() == MARIO_STATUS_BRAKE_END
 	               || checkFlag(MARIO_FLAG_UNK_20))
 	           && !(mStatusState & 0x1)) {
 		setAnimation(ANIM_HOT_WAIT, 1.0f);
-		if (mModel->getFrameCtrl(0).checkPass(138.0f))
+		if (getM3UModel()->getFrameCtrl(0).checkPass(138.0f))
 			emitSweat(mFaceAngle.y - 0x4000);
 		if (isLast1AnimeFrame())
 			mStatusState |= 0x1;
-	} else if (mHealth <= 3) {
+	} else if (getHealth() <= 3) {
 		if (mAnimationId != ANIM_DAMAGE_WAIT
 		    && mAnimationId != ANIM_DAMAGE_WAIT_START) {
 			setAnimation(ANIM_DAMAGE_WAIT_START, 1.0f);
@@ -191,7 +203,7 @@ BOOL TMario::waiting()
 			if (mAnimationId == ANIM_DAMAGE_WAIT_START && isLast1AnimeFrame())
 				setAnimation(ANIM_DAMAGE_WAIT, 1.0f);
 		}
-	} else if (mIntendedMag == 0.0f) {
+	} else if (getIntendedMag() == 0.0f) {
 		setAnimation(ANIM_WAIT, 1.0f);
 	} else {
 		setAnimation(ANIM_PIVOT, 1.0f);
@@ -268,7 +280,7 @@ BOOL TMario::sleeping()
 	return 0;
 }
 
-inline BOOL TMario::wakeup()
+BOOL TMario::wakeup()
 {
 	if (mInput & 0x4) {
 		sleepingEffectKill();
@@ -318,6 +330,16 @@ void TMario::getSideWalkValues(E_SIDEWALK_TYPE* type, f32* val1, f32* val2)
 
 BOOL TMario::squating()
 {
+	// TODO: every instruction matches and every referenced slot is a uniform
+	// 0x30 below retail's, so the whole residue is low region (48 bytes).
+	// Measured from the raw-member baseline 0x70 (target 0xa0):
+	// getFludd() at every mWaterGun site +16, getCurrentNozzleIndex() +8,
+	// checkMeaning() at the three mMeaning tests +8 -- all applied here for
+	// 0x90. checkCurrentNozzleRocketType(1) over the spelled-out nozzle
+	// param read is +0. The last 16 bytes have no lever left in this TU:
+	// mInput, mFloorPosition, mFaceAngle, the three params classes and
+	// getGamePad()->mCompSPos have no accessor, and getSideWalkValues is a real
+	// out-of-line call, so it cannot carry them.
 	if (mInput & 0x4)
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
 
@@ -330,28 +352,28 @@ BOOL TMario::squating()
 	if (!(mInput & 0x4000) && !(mInput & 0x200))
 		return changePlayerStatus(MARIO_STATUS_SQUAT_STANDUP, 0, false);
 
-	if (mWaterGun == nullptr || !checkFlag(MARIO_FLAG_HAS_FLUDD))
+	if (getFludd() == nullptr || !checkFlag(MARIO_FLAG_HAS_FLUDD))
 		return changePlayerStatus(MARIO_STATUS_SQUAT_STANDUP, 0, false);
 
 	if (mInput & 0x2) {
-		if ((mGamePad->checkMeaning(TMarioGamePad::MEANING_R))
-		    && mWaterGun != nullptr && (int)mWaterGun->mCurrentNozzle == 0) {
+		if (mGamePad->checkMeaning(TMarioGamePad::MEANING_0x400)
+		    && getFludd() != nullptr && getFludd()->getCurrentNozzleIndex() == 0) {
 			rumbleStart(0x15, mMotorParams.mMotorHipDrop.get());
 			return changePlayerStatus(MARIO_STATUS_BACK_JUMP, 0, false);
 		}
 	}
 
-	if (((const TWaterGun*)mWaterGun)
+	if (((const TWaterGun*)getFludd())
 	            ->getCurrentNozzle()
 	            ->mEmitParams.mRocketType.get()
 	        == 1
-	    && mWaterGun->isEmitting()) {
-		unk314
-		    = mFloorPosition.y + mWaterGun->mWatergunParams.mHoverHeight.get();
+	    && getFludd()->isEmitting()) {
+		unk314 = mFloorPosition.y
+		    + getFludd()->mWatergunParams.mHHoverHeight.get();
 		return changePlayerStatus(MARIO_STATUS_ROCKET, 0, false);
 	}
 
-	if (mGamePad->checkMeaning(TMarioGamePad::MEANING_L)) {
+	if (getGamePad()->checkMeaning(TMarioGamePad::MEANING_0x2000)) {
 		E_SIDEWALK_TYPE type;
 		f32 v1, v2;
 		getSideWalkValues(&type, &v1, &v2);
@@ -369,10 +391,10 @@ BOOL TMario::squating()
 
 		mPosition.x += v2 * JMASCos(mFaceAngle.y);
 		mPosition.z -= v2 * JMASSin(mFaceAngle.y);
-	} else if (mGamePad->checkMeaning(TMarioGamePad::MEANING_R)) {
-		f32 absH      = fabsf(mGamePad->mCompSPos[0]);
+	} else if (getGamePad()->checkMeaning(TMarioGamePad::MEANING_0x400)) {
+		f32 absH      = fabsf(getGamePad()->mCompSPos[0]);
 		bool positive = true;
-		if (mGamePad->mCompSPos[0] < 0.0f)
+		if (getGamePad()->mCompSPos[0] < 0.0f)
 			positive = false;
 
 		f32 mid    = mControllerParams.mSquatRotMidAnalog.get();
@@ -393,7 +415,7 @@ BOOL TMario::squating()
 	return 0;
 }
 
-inline BOOL TMario::squatStart() { return 0; }
+BOOL TMario::squatStart() { return 0; }
 
 BOOL TMario::squatStandup()
 {
@@ -418,7 +440,7 @@ BOOL TMario::squatStandup()
 	return 0;
 }
 
-inline BOOL TMario::pullEnd()
+BOOL TMario::pullEnd()
 {
 	if (mInput & 0x4)
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
@@ -457,7 +479,7 @@ BOOL TMario::jumpEndEvents(u32 param_1)
 	return 0;
 }
 
-inline BOOL TMario::jumpEnd()
+BOOL TMario::jumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -466,7 +488,7 @@ inline BOOL TMario::jumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::secJumpEnd()
+BOOL TMario::secJumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -475,7 +497,7 @@ inline BOOL TMario::secJumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::landEnd()
+BOOL TMario::landEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -484,7 +506,7 @@ inline BOOL TMario::landEnd()
 	return 0;
 }
 
-inline BOOL TMario::ultraJumpEnd()
+BOOL TMario::ultraJumpEnd()
 {
 	if (jumpEndEvents(MARIO_STATUS_JUMP))
 		return 1;
@@ -493,7 +515,7 @@ inline BOOL TMario::ultraJumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::uTurnJumpEnd()
+BOOL TMario::uTurnJumpEnd()
 {
 	if (jumpEndEvents(0))
 		return 1;
@@ -505,14 +527,14 @@ inline BOOL TMario::uTurnJumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::jumpThrowEnd()
+BOOL TMario::jumpThrowEnd()
 {
 	checkThrowObject();
 	jumpEndCommon(ANIM_THROW, MARIO_STATUS_WAIT);
 	return 0;
 }
 
-inline BOOL TMario::fireJumpEnd()
+BOOL TMario::fireJumpEnd()
 {
 	mInput &= ~0x2010;
 	if (jumpEndEvents(0))
@@ -522,7 +544,7 @@ inline BOOL TMario::fireJumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::broadJumpEnd()
+BOOL TMario::broadJumpEnd()
 {
 	mInput &= ~0x2000;
 	if (jumpEndEvents(MARIO_STATUS_JUMP)) {
@@ -536,7 +558,7 @@ inline BOOL TMario::broadJumpEnd()
 	return 0;
 }
 
-inline BOOL TMario::hipAttackEnd()
+BOOL TMario::hipAttackEnd()
 {
 	mStatusState = 1;
 	if (mInput & 0x4) {
@@ -549,7 +571,7 @@ inline BOOL TMario::hipAttackEnd()
 	return 0;
 }
 
-inline BOOL TMario::brakeEnd()
+BOOL TMario::brakeEnd()
 {
 	if ((mInput & 0x10) == 0 && (mInput & 0xF))
 		return checkAllMotions();
@@ -558,7 +580,7 @@ inline BOOL TMario::brakeEnd()
 	return 0;
 }
 
-inline BOOL TMario::slipEnd()
+BOOL TMario::slipEnd()
 {
 	if (mInput & 0xF)
 		return checkAllMotions();
@@ -575,8 +597,8 @@ BOOL TMario::waitMain()
 	checkReturn();
 	setNormalAttackArea();
 
-	if (mHeldObject != nullptr && (mInput & 0x2000 ? true : false)) {
-		switch (mHeldObject->getActorType()) {
+	if (getHeldObject() != nullptr && (mInput & 0x2000 ? true : false)) {
+		switch (getHeldObject()->getActorType()) {
 		case 0x80000001:
 			changePlayerStatus(MARIO_STATUS_PITCHING, 0, false);
 			break;

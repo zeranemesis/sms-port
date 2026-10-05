@@ -5,15 +5,13 @@
 #include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/J2D/J2DTextBox.hpp>
-#include <JSystem/J2D/J2DWindow.hpp>
-#include <JSystem/J2D/J2DPrint.hpp>
 #include <JSystem/J2D/J2DOrthoGraph.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <JSystem/JParticle/JPAEmitterManager.hpp>
 #include <JSystem/JParticle/JPAEmitter.hpp>
 #include <System/MarioGamePad.hpp>
 #include <System/Application.hpp>
-#include <System/StageUtil.hpp>
+#include <GC2D/ShineTable.hpp>
 #include <System/MarDirector.hpp>
 #include <System/FlagManager.hpp>
 #include <MSound/MSound.hpp>
@@ -34,6 +32,42 @@ TCardLoad* gpCardLoad;
 // TODO: where should this go?
 extern JPAEmitterManager* gpEmitterManager4D2;
 
+// Some sites spell the centred-size computation with the width read before
+// the height; ExPane.hpp's setCenteredSize has the other order, which is the
+// one TConsoleStr::processReady matches. The order is per site: each named or
+// accessor-read bound is one more frame slot, and no single spelling serves
+// every site in CardLoad, CardSave, ConsoleStr and Guide (research batch
+// c-sh1 in docs/catalog/frame-gaps.md).
+static inline void setCenteredSizeWr(TExPane* pane, s32 time, s32 target_w,
+                                     s32 target_h, s32 initial_w,
+                                     s32 initial_h)
+{
+	pane->setPaneSize(time, target_w, target_h, initial_w, initial_h);
+	s32 initH = pane->mInitialBounds.getHeight();
+	pane->setPaneOffset(
+	    time,
+	    (pane->mInitialBounds.x2 - pane->mInitialBounds.x1 - target_w) * 0.5f,
+	    (initH - target_h) * 0.5f,
+	    (pane->mInitialBounds.x2 - pane->mInitialBounds.x1 - initial_w) * 0.5f,
+	    (initH - initial_h) * 0.5f);
+}
+
+// Every bound read raw, upstream's ExPane.hpp body: waitForStart's four sites
+// want it (frame 0x1c0 -> retail's 0x1a8); every other mix of the spellings
+// here leaves it 8 to 0x40 long, and it costs the Wr sites 8 bytes each.
+static inline void setCenteredSizeRr(TExPane* pane, s32 time, s32 target_w,
+                                     s32 target_h, s32 initial_w,
+                                     s32 initial_h)
+{
+	pane->setPaneSize(time, target_w, target_h, initial_w, initial_h);
+	pane->setPaneOffset(
+	    time,
+	    (pane->mInitialBounds.x2 - pane->mInitialBounds.x1 - target_w) * 0.5f,
+	    (pane->mInitialBounds.y2 - pane->mInitialBounds.y1 - target_h) * 0.5f,
+	    (pane->mInitialBounds.x2 - pane->mInitialBounds.x1 - initial_w) * 0.5f,
+	    (pane->mInitialBounds.y2 - pane->mInitialBounds.y1 - initial_h) * 0.5f);
+}
+
 static void clearBookmark(u32 bm)
 {
 	JSUMemoryOutputStream stream;
@@ -48,44 +82,16 @@ static void loadBookmark()
 	TFlagManager::getInstance()->load(stream);
 }
 
-#if defined(VERSION_GMSP01)
 u32 TCardLoad::cMessageID[] = {
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00010010, 0x00010014, 0x00010015,
-	0x00010005, 0x00010006, 0x00010007, 0x0001001A, 0x00010023, 0x00010019,
-	0x00010013, 0x00010011, 0x00010002, 0x0001000B, 0x00010012, 0x00010021,
-	0x00010017, 0x0001001E, 0xFFFFFFFF, 0x00010009, 0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0x00010008, 0xFFFFFFFF, 0x0001001F, 0x00010004,
-	0x00010003, 0x0001000C, 0x00010022, 0x00010018, 0x00010001, 0xFFFFFFFF,
-	0x0001000A, 0x0001000A, 0x00010016, 0x00010020, 0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0001000F, 0xFFFFFFFF, 0x0001001D,
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x0001000E,
-};
-#else
-u32 TCardLoad::cMessageID[] = {
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000E,    0x10012,    0x10013,
-	0x10004,    0x10005,    0x10006,    0x10018,    0x1001F,    0x10017,
-	0x10011,    0x1000F,    0x10001,    0x1000A,    0x10010,    0x1001D,
-	0x10015,    0x1001A,    0xFFFFFFFF, 0x10008,    0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0x10007,    0xFFFFFFFF, 0x1001B,    0x10003,
-	0x10002,    0x1000B,    0x1001E,    0x10016,    0x10000,    0xFFFFFFFF,
-	0x10009,    0x10009,    0x10014,    0x1001C,    0xFFFFFFFF, 0xFFFFFFFF,
-	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000D,    0xFFFFFFFF, 0x10019,
-	0x0,        0x0,        0x0,        0x0,        0x0,
-};
-#endif
-
-const char* TCardLoad::cToOptionFileName = "select_options.bti";
-const char* TCardLoad::cBMarkNewFileName = "select_new.bti";
-const char* TCardLoad::cWindowYesFileName = "select_yes.bti";
-const char* TCardLoad::cWindowNoFileName = "select_no.bti";
-const char* TCardLoad::cScoreTotalFileName = "select_total.bti";
-const char* TCardLoad::cBMarkMenuFileName[4] = {
-	"select_start.bti", "select_copy.bti", "select_erase.bti", "select_score.bti",
-};
-const char* TCardLoad::cScoreStageFileName[9] = {
-	"stage_bianco.bti", "stage_ricco.bti", "stage_mamma.bti",
-	"stage_pinna.bti",  "stage_sirena.bti", "stage_monte.bti",
-	"stage_mare.bti",   "stage_dolpicTown.bti", "stage_airport.bti",
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x10010,    0x10014,    0x10015,
+	0x10005,    0x10006,    0x10007,    0x1001A,    0x10022,    0x10019,
+	0x10013,    0x10011,    0x10002,    0x1000B,    0x10012,    0x10020,
+	0x10017,    0x1001D,    0xFFFFFFFF, 0x10009,    0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0x10008,    0xFFFFFFFF, 0x1001E,    0x10004,
+	0x10003,    0x1000C,    0x10021,    0x10018,    0x10001,    0xFFFFFFFF,
+	0x1000A,    0x1000A,    0x10016,    0x1001F,    0xFFFFFFFF, 0xFFFFFFFF,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000F,    0xFFFFFFFF, 0x1001C,
+	0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x1000E,
 };
 
 TCardLoad::TCardLoad(const char* name)
@@ -116,56 +122,45 @@ TCardLoad::TCardLoad(const char* name)
 	gpCardLoad = this;
 }
 
-void TCardLoad::changePattern(J2DPicture*, s16, u32) { }
+// UNUSED (0xc8): the same blink as TGuide::changePattern, which is 0xc8 in
+// the map too.
+void TCardLoad::changePattern(J2DPicture* pane, s16 timer, u32 period)
+{
+	u16 t = timer;
+	if (t % period == 0) {
+		if ((t / period) % 2 == 0) {
+			pane->setBlendKonstColor(0.0f, 1.0f, 0.0f, 0.0f);
+			pane->setBlendKonstAlpha(0.0f, 1.0f, 0.0f, 0.0f);
+		} else {
+			pane->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
+			pane->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
+		}
+	}
+}
 
+// TODO: frame 0x228 vs retail 0x240 (0x220 before getCurrentMap()): the low
+// temporary region is short (buffer and local_90 sit adjacent in both);
+// callee-saved GPRs are colored one off in most loops. Function-scope loop
+// counters are worse.
 void TCardLoad::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TViewObj::load(stream);
 
-	if (gpMarDirector->mMap != 15)
+	if (gpMarDirector->getCurrentMap() != 15)
 		return;
 
 	JKRArchive* optionVolume = (JKRArchive*)JKRFileLoader::getVolume("option");
 
-	unk7D8[0] = JKRGetResource("/option/loadmessage_en.bmg");
-	unk7D8[1] = JKRGetResource("/option/loadmessage_ge.bmg");
-	unk7D8[2] = JKRGetResource("/option/loadmessage_fr.bmg");
-	unk7D8[3] = JKRGetResource("/option/loadmessage_sp.bmg");
-	unk7D8[4] = JKRGetResource("/option/loadmessage_it.bmg");
+	unkA0 = JKRGetResource("/option/loadmessage.bmg");
 
 	unk28 = new J2DSetScreen("load.blo", optionVolume);
 	unk28->setCullBack(GX_CULL_BACK);
-	unk7EC[0] = new J2DSetScreen("load_score_en.blo", optionVolume);
-	unk7EC[1] = new J2DSetScreen("load_score_ge.blo", optionVolume);
-	unk7EC[2] = new J2DSetScreen("load_score_fr.blo", optionVolume);
-	unk7EC[3] = new J2DSetScreen("load_score_sp.blo", optionVolume);
-	unk7EC[4] = new J2DSetScreen("load_score_it.blo", optionVolume);
-	unk2C = unk7EC[0];
+	unk2C = new J2DSetScreen("load_score.blo", optionVolume);
 	unk2C->setCullBack(GX_CULL_BACK);
 	unk754 = new TOptionControl;
 	unk754->load();
 
-	int language = TFlagManager::getInstance()->getFlag(0xA0001);
-	const char* titleFile;
-	switch (language) {
-	case 0:
-	default:
-		titleFile = "title_1.blo";
-		break;
-	case 1:
-		titleFile = "title_1_ge.blo";
-		break;
-	case 2:
-		titleFile = "title_1_fr.blo";
-		break;
-	case 3:
-		titleFile = "title_1_sp.blo";
-		break;
-	case 4:
-		titleFile = "title_1_it.blo";
-		break;
-	}
-	unk34 = new J2DSetScreen(titleFile, optionVolume);
+	unk34 = new J2DSetScreen("title_1.blo", optionVolume);
 	unk34->setCullBack(GX_CULL_BACK);
 
 	for (int i = 0; i < 10; ++i) {
@@ -174,32 +169,41 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 		unkC8[i] = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
 	}
 
-	setupTitleScreen();
-	changeTitleTexture(language);
+	for (int i = 0; i < 11; ++i) {
+		unk20C[i] = 25 * i + 150;
+		if (i > 4)
+			unk20C[i] += 20;
+		unk222[i] = 4;
+	}
+
+	for (int i = 0; i < TITLE_PANE_COUNT; ++i) {
+		unk22E[i] = 400 * i;
+		unk248[i] = 4;
+	}
 
 	unk208 = unk34->search('ROOT');
 
 	unkF0 = new TExPane(unk34, 'titl');
 	unkF4 = new TExPane(unk34, 'nint');
 
-	for (int i = 0; i < unk7D4; ++i) {
+	for (int i = 0; i < 11; ++i) {
 		int key;
 		if (i < 9)
 			key = 's_01' + i;
 		else
-			key = ((i + 1) / 10) * 0x100 + 's_00' + (i + 1) % 10;
+			key = 's_00' + ((i + 1) / 10 << 8) + (i + 1) % 10;
 
 		unkF8[i] = new TExPane(unk34, key);
 		unkF8[i]->getPane()->setAlpha(0);
 		unk124[i] = unkF8[i]->getPane()->getBounds();
 	}
 
-	for (int i = 0; i < 18; ++i) {
+	for (int i = 0; i < TITLE_PANE_COUNT; ++i) {
 		int key;
 		if (i < 9)
 			key = 'p_01' + i;
 		else
-			key = ((i + 1) / 10) * 0x100 + 'p_00' + (i + 1) % 10;
+			key = 'p_00' + ((i + 1) / 10 << 8) + (i + 1) % 10;
 
 		unk1D4[i] = new TExPane(unk34, key);
 
@@ -292,13 +296,10 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	for (int i = 0; i < 2; ++i) {
 		unk4D8[i] = new TExPane(unk28, 's_6b' + i * 0x100);
 		unk4E0[i] = unk4D8[i]->getPane()->getBounds();
-		unk4D8[i]->getPane()->hide();
 	}
 
 	unk500 = unk28->search('f_sh');
 	unk510 = unk28->search('f_si');
-	unk500->hide();
-	unk510->hide();
 
 	for (int i = 0; i < 3; ++i)
 		unk504[i] = (J2DPicture*)unk28->search('n_3a' + i);
@@ -344,36 +345,29 @@ void TCardLoad::load(JSUMemoryInputStream& stream)
 	unk580 = (J2DTextBox*)unk28->search('m_6b');
 	makeBuffer(unk580, 0x400);
 
-	loadLangTexture();
-	changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
-}
-
-void TCardLoad::resetScoreScreenObjects()
-{
-	int shineAreas[] = { 2, 3, 4, 5, 6, 8, 7 };
+	int local_90[] = { 2, 3, 4, 5, 6, 8, 7 };
 
 	for (int i = 0; i < 7; ++i) {
 		unk584[i].unk0 = (J2DPicture*)unk2C->search('st_0' + i);
-
 		for (int j = 0; j < 3; ++j)
 			unk584[i].unk4[j]
 			    = (J2DPicture*)unk2C->search('n_0a' + i * 0x100 + j);
 
-		for (int j = 0; j < 8; ++j) {
-			J2DPane* pane = unk2C->search('sh0a' + i * 0x100 + j);
-			unk584[i].unk10[j] = pane;
+		int tmp = local_90[i];
 
-			if (!SMS_isGetShine(shineAreas[i], j, false))
-				pane->hide();
+		for (int j = 0; j < 8; ++j) {
+			unk584[i].unk10[j] = unk2C->search('sh0a' + i * 0x100 + j);
+
+			if (!SMS_isGetShine(tmp, j, false))
+				unk584[i].unk10[j]->hide();
 		}
 
 		for (int j = 0; j < 2; ++j) {
-			J2DPane* pane = unk2C->search('sh0i' + i * 0x100 + j);
-			unk584[i].unk30[j] = pane;
-			pane->hide();
+			unk584[i].unk30[j] = unk2C->search('sh0i' + i * 0x100 + j);
+			unk584[i].unk30[j]->hide();
 		}
 
-		unk584[i].unk38 = unk2C->search('sh0k' + i);
+		unk584[i].unk38 = unk2C->search('sh0k' + i * 0x100);
 		unk584[i].unk38->hide();
 	}
 
@@ -389,108 +383,11 @@ void TCardLoad::resetScoreScreenObjects()
 	unk750 = (J2DPicture*)unk2C->search('\0n_c');
 }
 
-void TCardLoad::changeTitleTexture(int language)
-{
-	const char* directories[5] = {
-		"/option/timg/", "/option/timg/ge/", "/option/timg/fr/",
-		"/option/timg/sp/", "/option/timg/it/",
-	};
-	const char* directory = directories[language];
-	for (int i = 0; i < unk7D4; ++i) {
-		char buffer[0xFF];
-		snprintf(buffer, 0xFF, "%stitle_start_%02d.bti", directory, i + 1);
-		JUTTexture* texture = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
-		J2DPicture* picture = (J2DPicture*)unk34->search(
-		    's_00' + (i + 1) % 10 + (((i + 1) / 10) << 8));
-		picture->changeTexture(texture->getTexInfo(), 0);
-	}
-
-}
-
-void TCardLoad::loadLangTexture()
-{
-	loadTextureFile(unk800, cToOptionFileName);
-	for (int row = 0; row < 4; ++row)
-		loadTextureFile(unk814[row], cBMarkMenuFileName[row]);
-	loadTextureFile(unk864, cBMarkNewFileName);
-	loadTextureFile(unk878, cWindowYesFileName);
-	loadTextureFile(unk88C, cWindowNoFileName);
-	for (int row = 0; row < 9; ++row)
-		loadTextureFile(unk8A0[row], cScoreStageFileName[row]);
-	loadTextureFile(unk954, cScoreTotalFileName);
-}
-
-void TCardLoad::loadTextureFile(JUTTexture** textures, const char* fileName)
-{
-	static const char* directories[5] = { "", "ge/", "fr/", "sp/", "it/" };
-	for (int lang = 0; lang < 5; ++lang) {
-		char path[0x100];
-		snprintf(path, 0xFF, "/option/timg/%s%s", directories[lang], fileName);
-		textures[lang] = new JUTTexture((const ResTIMG*)JKRGetResource(path));
-	}
-}
-
-void TCardLoad::replaceTexture(u32 tag, JUTTexture* texture, J2DScreen* screen)
-{
-	J2DPicture* picture = (J2DPicture*)screen->search(tag);
-	picture->changeTexture(texture->getTexInfo(), 0);
-}
-
-void TCardLoad::changeLanguage(int lang)
-{
-	unkA0 = unk7D8[lang];
-	unk2C = unk7EC[lang];
-	resetScoreScreenObjects();
-	replaceTexture('\0s_1', unk800[lang], unk28);
-	replaceTexture('s_6a', unk878[lang], unk28);
-	replaceTexture('s_7a', unk88C[lang], unk28);
-	replaceTexture('s_6b', unk878[lang], unk28);
-	replaceTexture('s_7b', unk88C[lang], unk28);
-	for (int i = 0; i < 3; ++i) {
-		replaceTexture('s_0a' + i, unk864[lang], unk28);
-		for (int row = 0; row < 4; ++row)
-			replaceTexture('s_2a' + row * 0x100 + i, unk814[row][lang], unk28);
-	}
-	for (int i = 0; i < 9; ++i)
-		replaceTexture('st_0' + i, unk8A0[i][lang], unk2C);
-	replaceTexture('s_tl', unk954[lang], unk2C);
-}
-
-void TCardLoad::setupTitleScreen()
-{
-	switch (TFlagManager::getInstance()->getFlag(0xA0001)) {
-	case 0:
-	default:
-		unk7D4 = 11;
-		break;
-	case 1:
-		unk7D4 = 11;
-		break;
-	case 2:
-		unk7D4 = 15;
-		break;
-	case 3:
-		unk7D4 = 12;
-		break;
-	case 4:
-		unk7D4 = 10;
-		break;
-	}
-
-	const int titleLetterCount = unk7D4;
-	for (int i = 0; i < titleLetterCount; ++i) {
-		unk20C[i] = 25 * i + 150;
-		unk222[i] = 4;
-	}
-
-	for (int i = 0; i < 18; ++i) {
-		unk22E[i] = 400 * i;
-		unk248[i] = 4;
-	}
-}
+void TCardLoad::setupTitleScreen() { }
 
 void TCardLoad::setupScoreScreen()
 {
+	const ResTIMG* tens;
 	int iVar2 = TFlagManager::getInstance()->getFlag(0x40000);
 	if (iVar2 < 100) {
 		unk748->changeTexture(unkC8[iVar2 / 10]->getTexInfo(), 0);
@@ -507,7 +404,7 @@ void TCardLoad::setupScoreScreen()
 	int local_90[] = { 2, 3, 4, 5, 6, 7, 8 };
 
 	for (int i = 0; i < 7; ++i) {
-		u8 shineCount = 0;
+		int shineCount = 0;
 
 		if (TFlagManager::getInstance()->getBool(0x103A5 + local_90[i]))
 			unk584[i].unk0->show();
@@ -518,14 +415,15 @@ void TCardLoad::setupScoreScreen()
 			if (SMS_isGetShine(local_90[i], j, false))
 				++shineCount;
 
-		iVar8 += shineCount;
+		u8 count = shineCount;
+		iVar8 += count;
 
 		for (int j = 0; j < 8; ++j) {
 			J2DPane* pane = unk584[i].unk10[j];
 			if (!pane)
 				continue;
 
-			if (j < shineCount)
+			if (j < count)
 				pane->show();
 			else
 				pane->hide();
@@ -578,8 +476,8 @@ void TCardLoad::setupScoreScreen()
 	iVar8 += asdf;
 	if (asdf > 9)
 		asdf = 9;
-	const ResTIMG* pRVar4 = unkC8[asdf % 10]->getTexInfo();
-	((J2DPicture*)unk2C->search('\0n_f'))->changeTexture(pRVar4, 0);
+	((J2DPicture*)unk2C->search('\0n_f'))
+	    ->changeTexture(unkC8[asdf % 10]->getTexInfo(), 0);
 
 	if (TFlagManager::getInstance()->getBool(0x103a6))
 		unk2C->search('st_7')->show();
@@ -619,8 +517,8 @@ void TCardLoad::setupScoreScreen()
 		asdf2 = 99;
 	if (asdf2 < 0)
 		asdf2 = 0;
-	((J2DPicture*)unk2C->search('\0n_d'))
-	    ->changeTexture(unkC8[asdf2 / 10]->getTexInfo(), 0);
+	tens = unkC8[asdf2 / 10]->getTexInfo();
+	((J2DPicture*)unk2C->search('\0n_d'))->changeTexture(tens, 0);
 	((J2DPicture*)unk2C->search('\0n_e'))
 	    ->changeTexture(unkC8[asdf2 % 10]->getTexInfo(), 0);
 
@@ -631,14 +529,176 @@ void TCardLoad::setupScoreScreen()
 void TCardLoad::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	unk278[0] = static_cast<TFileLoadBlock*>(
-	    JDrama::TNameRefGen::search("ロードブロックＡ"));
-	unk278[1] = static_cast<TFileLoadBlock*>(
-	    JDrama::TNameRefGen::search("ロードブロックＢ"));
-	unk278[2] = static_cast<TFileLoadBlock*>(
-	    JDrama::TNameRefGen::search("ロードブロックＣ"));
-	unk284 = static_cast<TMapObjOptionWall*>(
-	    JDrama::TNameRefGen::search("オプション用壁"));
+	unk278[0] = JDrama::TNameRefGen::search<TFileLoadBlock>("ロードブロックＡ");
+	unk278[1] = JDrama::TNameRefGen::search<TFileLoadBlock>("ロードブロックＢ");
+	unk278[2] = JDrama::TNameRefGen::search<TFileLoadBlock>("ロードブロックＣ");
+	unk284 = JDrama::TNameRefGen::search<TMapObjOptionWall>("オプション用壁");
+}
+
+// TODO: 98.2%. Two residues. Retail folds the alpha field's address into
+// `lbzu` where we emit `lbz` plus an `addi`, and retail calls
+// JSUInputStream::JSUInputStream() out of line inside the inlined
+// loadBookmark() while we expand it (the map's one MISSING symbol for this
+// TU).
+//
+// Diagnosed, not fixed: the TU has three `JSUMemoryInputStream stream;`
+// sites and retail cuts the implicit base-constructor chain at a different
+// place in each, which pins the depth of every one of them.
+//   * changeScene, PROGRESS_UNK31 (the stream declared in changeScene
+//     itself): everything inlined, JSUIosBase's constructor included. So
+//     Memory ctor 1, Random 2, Input 3, IosBase 4 (allowance 2, body = vptr
+//     store + mState store = 2 -> inlines).
+//   * changeScene, PROGRESS_UNK28 (through loadBookmark): `bl
+//     __ct__10JSUIosBaseFv`. Memory 2, Random 3, Input 4, IosBase 5, and
+//     nothing inlines at 5.
+//   * this function, case 4 (also through loadBookmark): `bl
+//     __ct__14JSUInputStreamFv`, i.e. one level deeper again -- Memory 3,
+//     Random 4, Input 5. The destructors ladder the same way: the first two
+//     sites reach the out-of-line `~JSUInputStream` with Random's weak
+//     destructor expanded, this one calls `~JSURandomInputStream`.
+// So retail's case 4 sits one inline level below `perform`. A helper that is
+// always expanded leaves no symbol, so the map's silence does not rule one
+// out: the level is CardLoadFadeInScore below (possibly an in-class TCardLoad
+// method in the original; the codegen is the same). It also gives retail's
+// `li r28, 1` shared by `done` and the `unkB8`/`unk10` stores. Cases 0 and 5
+// are helpers of the same kind: the arrow blink as a helper is what fuses
+// retail's `lbzu`, and with all three the two `.data` jump tables (@7718,
+// @7721) match. Remaining: frame 0x318 vs 0x380 (the JUTRect temporary and
+// the stream sit lower than retail's); every instruction but the frame
+// offsets matches. TODO: frame 0x68 short (structural).
+static inline void CardLoadBlinkArrow(TCardLoad* p)
+{
+	int alpha = p->unk25C->getAlpha();
+	if (p->unk275 && alpha < 255) {
+		alpha += 8;
+		if (alpha > 255)
+			alpha = 255;
+		p->unk25C->setAlpha(alpha);
+	}
+
+	if (!p->unk275 && alpha > 0) {
+		alpha -= 8;
+		if (alpha < 0)
+			alpha = 0;
+		p->unk25C->setAlpha(alpha);
+	}
+
+	if (alpha != 0) {
+		// Same expression as TArrowControl::calcMoveX (Option.cpp).
+		int iVar9 = p->unk274;
+		int iVar3 = p->unk274 < 50 ? iVar9 : 100 - iVar9;
+		f32 fVar1 = iVar3 / 50.0f;
+		f32 fVar2 = 1.0f - fVar1;
+		s16 iVar8 = fVar2 * -8.0f * fVar2 + fVar1 * fVar2
+		            + fVar1 * 8.0f * fVar1;
+		p->unk25C->setBounds(JUTRect(p->unk260.x1, p->unk260.y1,
+		                          p->unk260.x2 + iVar8, p->unk260.y2));
+		p->unk274 += 1;
+		if (p->unk274 > 100)
+			p->unk274 = 0;
+	}
+}
+
+static inline void CardLoadFadeOutScore(TCardLoad* p)
+{
+	// The mirror of case 4: the score screen fades out while the
+	// bookmark screen fades back in.
+	bool done      = true;
+	J2DPane* root1 = p->unk2C->search('ROOT');
+	J2DPane* root2 = p->unk28->search('ROOT');
+
+	int alpha1 = root1->getAlpha();
+	alpha1 -= 4;
+	if (alpha1 < 0)
+		alpha1 = 0;
+	else
+		done = false;
+	root1->setAlpha(alpha1);
+	for (int i = 0; i < 7; ++i)
+		p->unk584[i].unk0->setAlpha(alpha1);
+	p->unk744->setAlpha(alpha1);
+	p->unk740->setAlpha(alpha1);
+
+	int alpha2 = root2->getAlpha();
+	alpha2 += 4;
+	if (alpha2 > 255)
+		alpha2 = 255;
+	else
+		done = false;
+	root2->setAlpha(alpha2);
+
+	if (done) {
+		if (p->unkB8) {
+			gpCameraOption->moveToDown();
+			p->unkB8 = 0;
+		} else if (gpCameraOption->unk16 == 0) {
+			p->unk14 = 0;
+			p->unk1C = PROGRESS_UNK2;
+			gpCardManager->getBookmarkInfos(p->unk40);
+			p->unk10 = 0;
+		}
+	}
+}
+
+static inline void CardLoadFadeInScore(TCardLoad* p)
+{
+	bool done = true;
+	int rc    = gpCardManager->getLastStatus();
+	if (rc != CARD_RESULT_BUSY) {
+		if (rc == CARD_RESULT_READY) {
+			if (p->unkB8 == 0) {
+				loadBookmark();
+				p->setupScoreScreen();
+				p->unkB8 = 1;
+			}
+		} else {
+			p->unk14 = 0;
+			p->unk1C = PROGRESS_UNK3;
+			p->unk10 = 1;
+		}
+	}
+
+	if (gpCameraOption->unk16 != 0)
+		p->unkB8 = 0;
+
+	if (p->unkB8 != 0) {
+		J2DPane* root1 = p->unk2C->search('ROOT');
+		J2DPane* root2 = p->unk28->search('ROOT');
+
+		int alpha1 = root1->getAlpha();
+		alpha1 += 4;
+		if (alpha1 > 255)
+			alpha1 = 255;
+		else
+			done = false;
+		root1->setAlpha(alpha1);
+		for (int i = 0; i < 7; ++i)
+			p->unk584[i].unk0->setAlpha(alpha1);
+		p->unk744->setAlpha(alpha1);
+		p->unk740->setAlpha(alpha1);
+
+		int alpha2 = root2->getAlpha();
+		alpha2 -= 4;
+		if (alpha2 < 0)
+			alpha2 = 0;
+		else
+			done = false;
+		root2->setAlpha(alpha2);
+
+		if (done)
+			p->unk14 = 1;
+	}
+}
+
+// Cases 3 and 9 skip the title fade the same way; as one helper the
+// two TExPane pointers and the pane loop counter take retail's registers.
+static inline void CardLoadSkipTitle(TCardLoad* p)
+{
+	p->unkF0->setPaneAlpha(10, 255, p->unkF0->getPane()->getAlpha());
+	p->unkF4->setPaneAlpha(10, 255, p->unkF4->getPane()->getAlpha());
+	for (int i = 0; i < TCardLoad::TITLE_PANE_COUNT; ++i)
+		p->unk1D4[i]->getPane()->setAlpha(0);
+	p->unk258 = 0;
 }
 
 void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -647,38 +707,11 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 		switch (unk14) {
 		case 0: {
 			changeScene();
-			int alpha = unk25C->getAlpha();
-			if (unk275 && alpha < 255) {
-				alpha += 8;
-				if (alpha > 255)
-					alpha = 255;
-				unk25C->setAlpha(alpha);
-			}
-
-			if (!unk275 && alpha > 0) {
-				alpha -= 8;
-				if (alpha < 0)
-					alpha = 0;
-				unk25C->setAlpha(alpha);
-			}
-
-			if (alpha != 0) {
-				// TODO: copy-pasta from TArrowControl::calcMoveX? inline?
-				int iVar9 = unk274;
-				int iVar3 = unk274 < 50 ? iVar9 : 100 - iVar9;
-				f32 fVar1 = iVar3 / 50.0f;
-				f32 fVar2 = 1.0f - fVar1;
-				s16 iVar8 = fVar1 * 8.0f * fVar1 + fVar2 * -8.0f * fVar2
-				            + fVar1 * fVar2;
-				unk25C->setBounds(JUTRect(unk260.x1, unk260.y1,
-				                          unk260.x2 + iVar8, unk260.y2));
-				unk274 += 1;
-				if (unk274 > 100)
-					unk274 = 0;
-			}
+			CardLoadBlinkArrow(this);
 
 			if (unk1C == 19 || unk1C == 12 || unk1C == 13 || unk1C == 3
-			    || unk1C == 4 || unk1C == 5 || unk1C == 45 || unk1C == 16) {
+			    || unk1C == 4 || unk1C == 5 || unk1C == 45 || unk1C == 16
+			    || unk1C == 53) {
 				unk284->offCollision();
 				if (!(gpCameraOption->unk0 & 1)) {
 					if (unk10 == 2)
@@ -689,92 +722,16 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 		} break;
 
-		case 4: {
-			int rc = gpCardManager->getLastStatus();
-			if (rc != CARD_RESULT_BUSY) {
-				if (rc == CARD_RESULT_READY) {
-					if (unkB8 == 0) {
-						loadBookmark();
-						setupScoreScreen();
-						unkB8 = 1;
-					}
-				} else {
-					unk14 = 0;
-					unk1C = PROGRESS_UNK3;
-					unk10 = 1;
-				}
-			}
+		case 4:
+			CardLoadFadeInScore(this);
+			break;
 
-			if (gpCameraOption->unk16 != 0)
-				unkB8 = 0;
-
-			if (unkB8 != 0) {
-				J2DPane* root1 = unk2C->search('ROOT');
-				J2DPane* root2 = unk28->search('ROOT');
-
-				bool done  = true;
-				int alpha1 = root1->getAlpha() + 4;
-				if (alpha1 > 255)
-					alpha1 = 255;
-				else
-					done = false;
-				root1->setAlpha(alpha1);
-				for (int i = 0; i < 7; ++i)
-					unk584[i].unk0->setAlpha(alpha1);
-				unk744->setAlpha(alpha1);
-				unk740->setAlpha(alpha1);
-
-				int alpha2 = root2->getAlpha() - 4;
-				if (alpha2 < 0)
-					alpha2 = 0;
-				else
-					done = false;
-				root2->setAlpha(alpha2);
-
-				if (done)
-					unk14 = 1;
-			}
-		} break;
-
-		case 5: {
-			J2DPane* root1 = unk2C->search('ROOT');
-			J2DPane* root2 = unk28->search('ROOT');
-
-			bool done = true;
-
-			int alpha1 = root1->getAlpha() + 4;
-			if (alpha1 > 255)
-				alpha1 = 255;
-			else
-				done = false;
-			root1->setAlpha(alpha1);
-			for (int i = 0; i < 7; ++i)
-				unk584[i].unk0->setAlpha(alpha1);
-			unk744->setAlpha(alpha1);
-			unk740->setAlpha(alpha1);
-
-			int alpha2 = root2->getAlpha() - 4;
-			if (alpha2 < 0)
-				alpha2 = 0;
-			else
-				done = false;
-			root2->setAlpha(alpha2);
-
-			if (done) {
-				if (unkB8) {
-					gpCameraOption->moveToDown();
-					unkB8 = 0;
-				} else if (gpCameraOption->unk16 == 0) {
-					unk14 = 0;
-					unk1C = PROGRESS_UNK2;
-					gpCardManager->getBookmarkInfos(unk40);
-					unk10 = 0;
-				}
-			}
-		} break;
+		case 5: 
+			CardLoadFadeOutScore(this);
+			break;
 		case 1:
-			if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
-			    || unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_B)) {
+			if (unk38->checkFrameMeaning(0x20)
+			    || unk38->checkFrameMeaning(0x40)) {
 				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CANCEL_COMMON, 0,
 				                                   nullptr, 0);
 				unkB8 = 1;
@@ -784,7 +741,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 
 		case 6:
 			if (unk754->movementCard2Option()) {
-				unk38->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+				unk38->offFlag(0x1);
 				unk14 = 2;
 			} else if (gpCameraOption->unk0 & 1) {
 				unk14 = 7;
@@ -792,10 +749,8 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			break;
 
 		case 2:
-			if (unk754->movementOption()) {
-				changeLanguage(TFlagManager::getInstance()->getFlag(0xA0001));
+			if (unk754->movementOption())
 				unk14 = 7;
-			}
 			break;
 
 		case 7:
@@ -805,7 +760,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 				if (unk754->movementOption2Card()) {
 					unk284->onCollision();
 					unk14 = 0;
-					unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+					unk38->onFlag(0x1);
 					if (unk754->isChangedSetting()) {
 						gpCardManager->getBookmarkInfos(unk40);
 						unk1C = PROGRESS_UNK32;
@@ -821,12 +776,13 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			break;
 
 		case 8: {
-			int alpha = (s16)(unk208->getAlpha() - 4);
+			s16 alpha = unk208->getAlpha();
+			alpha -= 4;
 			if (alpha < 0)
 				alpha = 0;
 			unk208->setAlpha(alpha);
 			if (gpCameraOption->unkE == 0) {
-				MSBgm::startBGM(MSD_BGM_BOSSPAKU_DEMO);
+				MSBgm::startBGM(MSD_BGM_MAP_SELECT);
 				unk1C = PROGRESS_UNK30;
 				unk14 = 0;
 			}
@@ -836,7 +792,7 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			titleDraw();
 			if (unk18 >= 4) {
 				if (unk18 >= 4 && unkBC >= 100 && gpCameraOption->unkA == 0
-				    && (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
+				    && (unk38->checkFrameMeaning(0x20)
 				        || unk38->getTrigger() & 0x1000)) {
 					SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_DECIDE, 0,
 					                                   nullptr, 0);
@@ -847,13 +803,9 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 				unkF0->update();
 				unkF4->update();
 				unkBC += 1;
-			} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
+			} else if (unk38->checkFrameMeaning(0x20)
 			           || unk38->getTrigger() & 0x1000) {
-				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
-				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 18; ++i)
-					unk1D4[i]->getPane()->setAlpha(0);
-				unk258 = 0;
+				CardLoadSkipTitle(this);
 				if (unk18 < 4)
 					unk18 = 4;
 			}
@@ -875,13 +827,9 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			if (gpCameraOption->unkA == 0)
 				unk14 = 3;
 
-			if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
+			if (unk38->checkFrameMeaning(0x20)
 			    || unk38->getTrigger() & 0x1000) {
-				unkF0->setPaneAlpha(10, 255, unkF0->getPane()->getAlpha());
-				unkF4->setPaneAlpha(10, 255, unkF4->getPane()->getAlpha());
-				for (int i = 0; i < 18; ++i)
-					unk1D4[i]->getPane()->setAlpha(0);
-				unk258 = 0;
+				CardLoadSkipTitle(this);
 				unkBC  = 0;
 				unk18  = 4;
 				unk14  = 3;
@@ -890,9 +838,9 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 			break;
 
 		case 10:
-			MSBgm::startBGM(MSD_BGM_CHUBOSS2);
-			unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
-			gpMarioOriginal->offFlag(MARIO_FLAG_GAME_OVER);
+			MSBgm::startBGM(MSD_BGM_MAIN_TITLE);
+			unk38->onFlag(0x1);
+			gpMarioOriginal->offFlag(MARIO_FLAG_HAS_FLUDD);
 			unk14 = 9;
 			unk18 = 1;
 			unkF0->getPane()->setAlpha(0);
@@ -938,23 +886,38 @@ void TCardLoad::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
-// TODO: retail compiles this switch to an eight entry jump table, with the
-// slots for cases 5 through 7 pointing at the default, while we get a compare
-// chain. That one difference accounts for nearly all of the remaining diff --
-// the rest is register allocation downstream of it. The case set matches
-// retail (our chain does range-check 5 through 7, so they are not being
-// pruned), the body layout order matches, and the frame is 0x20 bytes smaller
-// than retail's. Typing the state as an enum spanning 0-7, moving the empty
-// cases to the front, and making the field unsigned all fail to flip it.
+// Binding level over a raw member read: a register lever in
+// TCardLoad::titleDraw at an unchanged frame (batch 130).
+static inline int CardLoadUnk18(const TCardLoad* p)
+{
+	int v18 = p->unk18;
+	return v18;
+}
+
+// By-value black-colour accessors (J2DPicture has none in its header): the
+// getter's return copy and the setter's parameter are the two low-region
+// TColor temporaries retail keeps eight bytes apart in TCardLoad::titleDraw.
+static inline JUtility::TColor CardLoadBlack(const J2DPicture* p)
+{
+	return p->mBlack;
+}
+
+static inline void CardLoadSetBlack(J2DPicture* p, JUtility::TColor c)
+{
+	p->mBlack = c;
+}
+
+// `u16 r = ...; r += 7;` and the same split on alpha are the clamp shape.
+// CardLoadUnk18 must stay: dropping it shrinks the frame by 8.
 bool TCardLoad::titleDraw()
 {
-	switch ((u32)unk18) {
+	switch (CardLoadUnk18(this)) {
 	case 0:
 		unk18 = 1;
 		break;
 
 	case 1:
-		for (int i = 0; i < 18; ++i) {
+		for (int i = 0; i < TITLE_PANE_COUNT; ++i) {
 			switch (unk248[i]) {
 			case 4:
 				if (unk258 > unk22E[i]) {
@@ -973,9 +936,9 @@ bool TCardLoad::titleDraw()
 				break;
 
 			case 1:
-				if (i == 17) {
+				if (i == TITLE_PANE_COUNT - 1) {
 					unk258 = 0;
-					for (int j = 0; j < 18; ++j)
+					for (int j = 0; j < TITLE_PANE_COUNT; ++j)
 						unk1D4[j]->setPaneAlpha(40, 255, 180);
 					unk18 = 3;
 				}
@@ -989,20 +952,19 @@ bool TCardLoad::titleDraw()
 	case 3:
 		if (unk258 > 160) {
 			bool any = true;
-			for (int i = 0; i < 18; ++i) {
+			for (int i = 0; i < TITLE_PANE_COUNT; ++i) {
 				any &= unk1D4[i]->update();
-				JUtility::TColor col
-				    = ((J2DPicture*)unk1D4[i]->getPane())->mBlack;
-				u16 r = col.r + 7;
+				u16 r = CardLoadBlack((J2DPicture*)unk1D4[i]->getPane()).r;
+				r += 7;
 				if (r > 255)
 					r = 255;
 
-				((J2DPicture*)unk1D4[i]->getPane())->mBlack
-				    = (r << 24) + 0xFFFF00;
+				CardLoadSetBlack((J2DPicture*)unk1D4[i]->getPane(),
+				                 (r << 24) + 0xFFFF00);
 			}
 
 			if (any) {
-				for (int i = 0; i < 18; ++i)
+				for (int i = 0; i < TITLE_PANE_COUNT; ++i)
 					unk1D4[i]->setPaneAlpha(140, 0, 255);
 				unk258 = 0;
 				unk18  = 2;
@@ -1012,10 +974,12 @@ bool TCardLoad::titleDraw()
 		break;
 
 	case 2: {
-		u16 alpha = unkF0->getPane()->getAlpha() + 1;
+		u16 alpha = unkF0->getPane()->getAlpha();
+		alpha += 1;
 		if (alpha > 255) {
 			bool any = true;
-			for (int i = 0; i < 18; ++i)
+			alpha    = 255;
+			for (int i = 0; i < TITLE_PANE_COUNT; ++i)
 				any &= unk1D4[i]->update();
 			if (any) {
 				unkBC = 0;
@@ -1041,7 +1005,7 @@ bool TCardLoad::titleDraw()
 				if (unk20C[i] > 500) {
 					JUTRect bounds = unkF8[i]->getPane()->getBounds();
 					unkF8[i]->setPaneAlpha(25, 0, 255);
-					unk222[i] = 3;
+					unk222[i] = 2;
 				}
 				break;
 
@@ -1058,8 +1022,9 @@ bool TCardLoad::titleDraw()
 					JUTRect local_124 = unkF8[i]->getPane()->getBounds();
 
 					unkF8[i]->setCenteredSize(
-					    25, local_124.getWidth() * 2, local_124.getHeight() * 2,
-					    local_124.getWidth(), local_124.getHeight());
+					    25, local_124.getWidth(), local_124.getHeight(),
+					    local_124.getWidth() * 2,
+					    local_124.getHeight() * 2);
 
 					unkF8[i]->setPaneAlpha(25, 255, 0);
 					unk222[i] = 0;
@@ -1082,7 +1047,12 @@ bool TCardLoad::titleDraw()
 		++unk258;
 	} break;
 
-	default:
+	// The ROM dispatches this switch through an 8-entry jump table, which
+	// MWCC only emits when the label set has a gap: a contiguous
+	// `case 5: case 6: case 7:` group folds into the default's range test
+	// and gives a compare tree instead. Whether 5 and 6 carried labels of
+	// their own is unknowable -- they reach the same block as the default.
+	case 7:
 		break;
 	}
 
@@ -1138,32 +1108,9 @@ void TCardLoad::setMessage(J2DTextBox* text_box, s32 param_2, int param_3)
 	        param_2);
 }
 
-#pragma dont_inline on
-void TCardLoad::resizeBox(J2DWindow* window, J2DTextBox* text,
-                          J2DTextBox* shadow)
-{
-	const char* textString = text->getStringPtr();
-	const JUTRect& windowBounds = window->getBounds();
-	JUTRect originalBounds = windowBounds;
-	J2DPrint printer((JUTFont*)gpSystemFont, 0);
-	J2DPrint::TSize textSize;
-	printer.getSize(textSize, textString);
-
-	JUTRect contentsBounds = JUTRect(window->getContentsBounds());
-	const s32 frameWidth = originalBounds.getWidth() - contentsBounds.getWidth();
-	const s32 frameHeight = originalBounds.getHeight() - contentsBounds.getHeight();
-	window->resize(textSize.unk0 + frameWidth + 10.0f,
-	               textSize.unk4 + frameHeight + 10.0f);
-
-	JUTRect resizedBounds = windowBounds;
-	const s32 moveX = (originalBounds.x2 - resizedBounds.x2) / 2;
-	const s32 moveY = (originalBounds.y2 - resizedBounds.y2) / 2;
-	text->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
-	shadow->resize(textSize.unk0 + 10.0f, textSize.unk4 + 10.0f);
-	window->add(moveX, moveY);
-}
-#pragma dont_inline off
-
+// TODO: frame 0x368 vs retail 0x3a8 (first used slot 0x218 vs 0x24c, a dead
+// low region); this/old swap r31/r29 and bounds-conversion scheduling remain.
+// Declaring old at function scope or as int is inert or worse.
 s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 {
 	s8 result = -1;
@@ -1176,11 +1123,11 @@ s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 		unk468->getPane()->show();
 
 		if (param_3 == 1) {
-			((J2DPicture*)unk484[0]->getPane())->mWhite = 0xFFFFFFFF;
-			((J2DPicture*)unk484[1]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk484[0]->getPane())->setWhite(0xFFFFFFFF);
+			((J2DPicture*)unk484[1]->getPane())->setWhite(0x00FF00FF);
 		} else {
-			((J2DPicture*)unk484[1]->getPane())->mWhite = 0xFFFFFFFF;
-			((J2DPicture*)unk484[0]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk484[1]->getPane())->setWhite(0xFFFFFFFF);
+			((J2DPicture*)unk484[0]->getPane())->setWhite(0x00FF00FF);
 		}
 		unk480->hide();
 		unk484[0]->getPane()->hide();
@@ -1204,12 +1151,11 @@ s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 
 	case 2: {
 		s8 old = unkB7;
-		if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_LEFT)) {
+		if (unk38->checkFrameMeaning(0x8)) {
 			unkB7 = 0;
-		} else if (unk38->checkFrameMeaning(
-		               TMarioGamePad::MEANING_MENU_RIGHT)) {
+		} else if (unk38->checkFrameMeaning(0x10)) {
 			unkB7 = 1;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)) {
+		} else if (unk38->checkFrameMeaning(0x20)) {
 			if (old == 0)
 				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_COMMON, 0,
 				                                   nullptr, 0);
@@ -1217,7 +1163,7 @@ s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CANCEL_COMMON, 0,
 				                                   nullptr, 0);
 			unk10 = 3;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_B)) {
+		} else if (unk38->checkFrameMeaning(0x40)) {
 			unkB7 = 1;
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CANCEL_COMMON, 0,
 			                                   nullptr, 0);
@@ -1225,31 +1171,32 @@ s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 		}
 
 		if (unkC4 == 4) {
-			unk484[unkB7]->setCenteredSize(20, unk48C[unkB7].getWidth() * 0.5f,
-			                               unk48C[unkB7].getHeight() * 0.5f,
+			unk484[unkB7]->setCenteredSize(40, unk48C[unkB7].getWidth() * 1.5f,
+			                               unk48C[unkB7].getHeight() * 1.5f,
 			                               unk48C[unkB7].getWidth(),
 			                               unk48C[unkB7].getHeight());
-			JUTRect bounds = unk484[unkB7]->getPane()->mGlobalBounds;
-			JGeometry::TVec3<f32> local_108;
-			local_108.x = bounds.x1 + bounds.getWidth() * 0.5f;
-			local_108.y = bounds.y1 + bounds.getHeight() * 0.5f;
-			local_108.z = 0.0f;
-			gpEmitterManager4D2->createEmitter(local_108, 0x1FA, nullptr,
-			                                   nullptr);
+			JUTRect bounds = unk484[unkB7]->getPane()->getGlobalBounds();
+			// TODO: instructions exact; the frame is the open residue (below every
+			// accessed slot). A named manager gives retail's early `li r5, 0x1FA`
+			// and x1/y1 registers with the named TVec3 pos (Vec pos: 0x10 more frame,
+			// but the li misschedules).
+			JGeometry::TVec3<f32> local_108(bounds.x1 + bounds.getWidth() * 0.5f,
+			                                bounds.y1 + bounds.getHeight() * 0.5f, 0.0f);
+			JPAEmitterManager* manager = gpEmitterManager4D2;
+			manager->createEmitter(local_108, 0x1FA, nullptr, nullptr);
 			unkAC = gpEmitterManager4D2->unkC8[0][0];
 			unkAC->setRotation(0, 0, DEG2SHORTANGLE(12));
 			unkAC->setEmitterScale(JGeometry::TVec3<f32>(0.9f, 1.0f, 0.1f));
 		} else if (unkC4 == 44) {
-			unk484[unkB7]->setCenteredSize(20, unk48C[unkB7].getWidth(),
+			unk484[unkB7]->setCenteredSize(40, unk48C[unkB7].getWidth(),
 			                               unk48C[unkB7].getHeight(),
-			                               unk48C[unkB7].getWidth() * 0.5f,
-			                               unk48C[unkB7].getHeight() * 0.5f);
+			                               unk48C[unkB7].getWidth() * 1.5f,
+			                               unk48C[unkB7].getHeight() * 1.5f);
 		}
 
 		int thing = unkC4 < 40 ? unkC4 : 80 - unkC4;
 		thing     = (thing * 255.0f) / 40.0f;
-		((J2DPicture*)unk484[unkB7]->getPane())->mWhite
-		    = (thing << 24) + 0xFF00FF;
+		((J2DPicture*)unk484[unkB7]->getPane())->setWhite((thing << 24) + 0xFF00FF);
 		unk484[unkB7]->update();
 		unkC4 += 1;
 		if (unkC4 > 80)
@@ -1263,8 +1210,8 @@ s8 TCardLoad::waitForChoice(TEProgress param_1, TEProgress param_2, int param_3)
 			unk484[old]->getPane()->mBounds = unk48C[old];
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_E3_MENU_CURSOR, 0,
 			                                   nullptr, 0);
-			((J2DPicture*)unk484[old]->getPane())->mWhite   = 0xFFFFFFFF;
-			((J2DPicture*)unk484[unkB7]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk484[old]->getPane())->setWhite(0xFFFFFFFF);
+			((J2DPicture*)unk484[unkB7]->getPane())->setWhite(0x00FF00FF);
 		}
 	} break;
 
@@ -1314,14 +1261,14 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 		unk4AC->getPane()->show();
 
 		if (param_3 == 1) {
-			((J2DPicture*)unk4D8[0]->getPane())->mWhite = 0xFFFFFFFF;
+			((J2DPicture*)unk4D8[0]->getPane())->setWhite(0xFFFFFFFF);
 			unk4D8[0]->getPane()->hide();
-			((J2DPicture*)unk4D8[1]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk4D8[1]->getPane())->setWhite(0x00FF00FF);
 			unk4D8[1]->getPane()->hide();
 		} else {
-			((J2DPicture*)unk4D8[1]->getPane())->mWhite = 0xFFFFFFFF;
+			((J2DPicture*)unk4D8[1]->getPane())->setWhite(0xFFFFFFFF);
 			unk4D8[1]->getPane()->hide();
-			((J2DPicture*)unk4D8[0]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk4D8[0]->getPane())->setWhite(0x00FF00FF);
 			unk4D8[0]->getPane()->hide();
 		}
 		unk500->hide();
@@ -1347,22 +1294,21 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 			unk4CC[unkB0]->show();
 			TCardBookmarkInfo& info = unk40[unkB0];
 			if (info.unk0 == 1) {
-				const char* message = SMSGetMessageData(unkA0, 0);
-				strncpy(unk51C->getStringPtr(), message, 0x14);
-				strncpy(unk520->getStringPtr(), message, 0x14);
+				setMessage(unk51C, 0x14, 0);
+				setMessage(unk520, 0x14, 0);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else if (info.unk18 == 0) {
-				const char* message = SMSGetMessageData(unkA0, 0x1B);
-				strncpy(unk51C->getStringPtr(), message, 0x14);
-				strncpy(unk520->getStringPtr(), message, 0x14);
+				setMessage(unk51C, 0x14, 0x1B);
+				setMessage(unk520, 0x14, 0x1B);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else {
 				unk520->hide();
-				u16 score = unk40[unkB0].unk1C;
+				TCardBookmarkInfo* bm = &unk40[unkB0];
+				u16 score = bm->unk1C;
 				if (score > 999)
 					score = 999;
 				if (score < 100) {
@@ -1377,10 +1323,10 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 					unk510->hide();
 					unk504[0]->changeTexture(unkC8[score / 100]->getTexInfo(),
 					                         0);
-					score -= int(score * 0.01f) * 100;
-					unk504[1]->changeTexture(unkC8[score / 10]->getTexInfo(),
+					u16 rest = score - int(score * 0.01f) * 100;
+					unk504[1]->changeTexture(unkC8[rest / 10]->getTexInfo(),
 					                         0);
-					unk504[2]->changeTexture(unkC8[score % 10]->getTexInfo(),
+					unk504[2]->changeTexture(unkC8[rest % 10]->getTexInfo(),
 					                         0);
 				}
 			}
@@ -1391,16 +1337,15 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 
 	case 2: {
 		s8 old = unkB7;
-		if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_LEFT)) {
+		if (unk38->checkFrameMeaning(0x8)) {
 			unkB7 = 0;
-		} else if (unk38->checkFrameMeaning(
-		               TMarioGamePad::MEANING_MENU_RIGHT)) {
+		} else if (unk38->checkFrameMeaning(0x10)) {
 			unkB7 = 1;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)) {
+		} else if (unk38->checkFrameMeaning(0x20)) {
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_COMMON, 0,
 			                                   nullptr, 0);
 			unk10 = 3;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_B)) {
+		} else if (unk38->checkFrameMeaning(0x40)) {
 			unkB7 = 1;
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CANCEL_COMMON, 0,
 			                                   nullptr, 0);
@@ -1412,13 +1357,12 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 			                               unk4E0[unkB7].getHeight() * 1.5f,
 			                               unk4E0[unkB7].getWidth(),
 			                               unk4E0[unkB7].getHeight());
-			JUTRect bounds = unk4D8[unkB7]->getPane()->mGlobalBounds;
-			JGeometry::TVec3<f32> local_108;
-			local_108.x = bounds.x1 + bounds.getWidth() * 0.5f;
-			local_108.y = bounds.y1 + bounds.getHeight() * 0.5f;
-			local_108.z = 0.0f;
-			gpEmitterManager4D2->createEmitter(local_108, 0x1FA, nullptr,
-			                                   nullptr);
+			JUTRect bounds = unk4D8[unkB7]->getPane()->getGlobalBounds();
+			// TODO: frame only; see the first 0x1FA site.
+			JGeometry::TVec3<f32> local_108(bounds.x1 + bounds.getWidth() * 0.5f,
+			                                bounds.y1 + bounds.getHeight() * 0.5f, 0.0f);
+			JPAEmitterManager* manager = gpEmitterManager4D2;
+			manager->createEmitter(local_108, 0x1FA, nullptr, nullptr);
 			unkAC = gpEmitterManager4D2->unkC8[0][0];
 			unkAC->setRotation(0, 0, DEG2SHORTANGLE(12));
 			unkAC->setEmitterScale(JGeometry::TVec3<f32>(0.9f, 1.0f, 0.1f));
@@ -1431,8 +1375,7 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 
 		int thing = unkC4 < 40 ? unkC4 : 80 - unkC4;
 		thing     = (thing * 255.0f) / 40.0f;
-		((J2DPicture*)unk4D8[unkB7]->getPane())->mWhite
-		    = (thing << 24) + 0xFF00FF;
+		((J2DPicture*)unk4D8[unkB7]->getPane())->setWhite((thing << 24) + 0xFF00FF);
 		unk4D8[unkB7]->update();
 		unkC4 += 1;
 		if (unkC4 > 80)
@@ -1446,8 +1389,8 @@ s8 TCardLoad::waitForChoiceBM(TEProgress param_1, TEProgress param_2,
 			unk4D8[old]->getPane()->mBounds = unk4E0[old];
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_E3_MENU_CURSOR, 0,
 			                                   nullptr, 0);
-			((J2DPicture*)unk4D8[old]->getPane())->mWhite   = 0xFFFFFFFF;
-			((J2DPicture*)unk4D8[unkB7]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk4D8[old]->getPane())->setWhite(0xFFFFFFFF);
+			((J2DPicture*)unk4D8[unkB7]->getPane())->setWhite(0x00FF00FF);
 		}
 	} break;
 
@@ -1494,7 +1437,6 @@ s8 TCardLoad::waitForAnyKey(TEProgress progress)
 	case 0: {
 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
-		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
 
 		unk580->hide();
 		unk568->getPane()->show();
@@ -1511,21 +1453,20 @@ s8 TCardLoad::waitForAnyKey(TEProgress progress)
 		}
 		break;
 
-	case 2:
-		if (unkB4 > 600
-		    || unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A
-		                                | TMarioGamePad::MEANING_MENU_B)) {
+	case 2: {
+		s16 timer = unkB4;
+		if (timer > 600 || unk38->checkFrameMeaning(0x60)) {
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_COMMON, 0,
 			                                   nullptr, 0);
 			unk10 = 3;
 		} else {
-			++unkB4;
+			unkB4 = timer + 1;
 		}
-		break;
+	} break;
 
 	case 3: {
-		unk568->setCenteredSize(20, 0, 0, unk56C.getWidth(),
-		                        unk56C.getHeight());
+		setCenteredSizeWr(unk568, 20, 0, 0, unk56C.getWidth(),
+		                  unk56C.getHeight());
 		unk580->hide();
 		unkB4 = 0;
 		unk10 = 4;
@@ -1533,7 +1474,7 @@ s8 TCardLoad::waitForAnyKey(TEProgress progress)
 
 	case 4:
 		if (unk568->update()) {
-			unk568->getPane()->hide();
+			unk568->mPane->hide();
 			unk10 = 5;
 		}
 		break;
@@ -1547,6 +1488,15 @@ s8 TCardLoad::waitForAnyKey(TEProgress progress)
 	return result;
 }
 
+static inline int CardLoadGetHeight(const JUTRect* p)
+{
+	int height = p->getHeight();
+	return height;
+}
+
+// TODO: `this` and `result` swap r30/r31 throughout; frame and every other
+// instruction match (int/char result types are inert). regalloc.py (c-m1):
+// no single move fixes it; `u16 rest = score - ...` changes code (<1 >1).
 s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 {
 	s8 result = -1;
@@ -1565,7 +1515,7 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 		for (int i = 0; i < 3; ++i)
 			unk4CC[i]->hide();
 
-		unk4AC->setCenteredSize(20, unk4B0.getWidth(), unk4B0.getHeight(), 0,
+		unk4AC->setCenteredSize(20, unk4B0.getWidth(), CardLoadGetHeight(&unk4B0), 0,
 		                        0);
 		unk10 = 1;
 		break;
@@ -1579,31 +1529,25 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 				unkB0 = unkB1;
 			TCardBookmarkInfo& info = unk40[unkB0];
 			if (info.unk0 == 1) {
-			J2DTextBox* text = unk51C;
-			const char* message = SMSGetMessageData(unkA0, 0);
-			strncpy(text->getStringPtr(), message, 0x14);
-			text    = unk520;
-			message = SMSGetMessageData(unkA0, 0);
-			strncpy(text->getStringPtr(), message, 0x14);
+				setMessage(unk51C, 0x14, 0);
+				setMessage(unk520, 0x14, 0);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else if (info.unk18 == 0) {
-			J2DTextBox* text = unk51C;
-			const char* message = SMSGetMessageData(unkA0, 0x1B);
-			strncpy(text->getStringPtr(), message, 0x14);
-			text    = unk520;
-			message = SMSGetMessageData(unkA0, 0x1B);
-			strncpy(text->getStringPtr(), message, 0x14);
+				setMessage(unk51C, 0x14, 0x1B);
+				setMessage(unk520, 0x14, 0x1B);
 				unk520->show();
 				unk500->hide();
 				unk510->hide();
 			} else {
 				unk500->show();
 				unk520->hide();
-				u16 score = unk40[unkB0].unk1C;
-				if (score > 999)
-					score = 999;
+				TCardBookmarkInfo* bm = &unk40[unkB0];
+				u32 raw = bm->unk1C;
+				if (raw > 999)
+					raw = 999;
+				u16 score = raw;
 				if (score < 100) {
 					unk500->hide();
 					unk510->show();
@@ -1614,12 +1558,12 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 				} else {
 					unk500->show();
 					unk510->hide();
-					unk514[0]->changeTexture(unkC8[score / 100]->getTexInfo(),
+					unk504[0]->changeTexture(unkC8[score / 100]->getTexInfo(),
 					                         0);
 					score -= int(score * 0.01f) * 100;
 					unk504[1]->changeTexture(unkC8[score / 10]->getTexInfo(),
 					                         0);
-					unk514[2]->changeTexture(unkC8[score % 10]->getTexInfo(),
+					unk504[2]->changeTexture(unkC8[score % 10]->getTexInfo(),
 					                         0);
 				}
 			}
@@ -1630,9 +1574,7 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 
 	case 2: {
 		int b4 = unkB4;
-		if (b4 <= 600
-		    && unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A
-		                                | TMarioGamePad::MEANING_MENU_B)) {
+		if (b4 > 600 || unk38->checkFrameMeaning(0x60)) {
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_COMMON, 0,
 			                                   nullptr, 0);
 			unk10 = 3;
@@ -1669,6 +1611,11 @@ s8 TCardLoad::waitForAnyKeyBM(TEProgress param_1)
 	return result;
 }
 
+// TODO: instruction-identical and the frame exact (0x1a8) with
+// setCenteredSizeRr at all four sites, but `this`/`result` take r30/r31 where
+// retail gives them r26/r27 below the setMessage temporaries. Dropping the cMessageID setMessage pair alone
+// restores retail's order, but no spelling of that pair (mask, local,
+// pointer, scope) moves it; case helpers and brace scopes are inert too.
 s8 TCardLoad::waitForStart(TEProgress param_1)
 {
 	s8 result = -1;
@@ -1679,16 +1626,15 @@ s8 TCardLoad::waitForStart(TEProgress param_1)
 		setMessage(unk53C, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk560, 0x400, 13);
 		setMessage(unk564, 0x400, 13);
-		resizeBox((J2DWindow*)unk524->getPane(), unk53C, unk538);
 
 		unk524->getPane()->show();
-		unk524->setCenteredSize(20, unk528.getWidth(), unk528.getHeight(), 0,
-		                        0);
+		setCenteredSizeRr(unk524, 20, unk528.getWidth(), unk528.getHeight(), 0,
+		                  0);
 		unk564->hide();
 		if (unk1C == 12 || unk1C == 13) {
 			unk54C->getPane()->show();
-			unk568->setCenteredSize(20, unk550.getWidth(), unk550.getHeight(),
-			                        0, 0);
+			setCenteredSizeRr(unk54C, 20, unk550.getWidth(), unk550.getHeight(),
+			                  0, 0);
 		}
 		unk10 = 1;
 		break;
@@ -1708,8 +1654,7 @@ s8 TCardLoad::waitForStart(TEProgress param_1)
 	} break;
 
 	case 2:
-		if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
-		    || unkB0 != -1)
+		if (unk38->checkFrameMeaning(0x20) || unkB0 != -1)
 			unk10 = 3;
 		break;
 
@@ -1717,11 +1662,11 @@ s8 TCardLoad::waitForStart(TEProgress param_1)
 		unk53C->hide();
 		for (int i = 0; i < 3; ++i)
 			unk540[i]->hide();
-		unk524->setCenteredSize(20, 0, 0, unk528.getWidth(),
-		                        unk528.getHeight());
+		setCenteredSizeRr(unk524, 20, 0, 0, unk528.getWidth(),
+		                  unk528.getHeight());
 		unk564->hide();
-		unk54C->setCenteredSize(20, 0, 0, unk550.getWidth(),
-		                        unk550.getHeight());
+		setCenteredSizeRr(unk54C, 20, 0, 0, unk550.getWidth(),
+		                  unk550.getHeight());
 		unk10 = 4;
 		break;
 
@@ -1751,7 +1696,6 @@ s8 TCardLoad::drawMessage(TEProgress param_1)
 	case 0:
 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
-		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
 
 		unk568->getPane()->show();
 		unk580->hide();
@@ -1770,8 +1714,8 @@ s8 TCardLoad::drawMessage(TEProgress param_1)
 
 	case 3:
 		if (unkB4 > 180) {
-			unk568->setCenteredSize(20, 0, 0, unk56C.getWidth(),
-			                        unk56C.getHeight());
+			setCenteredSizeWr(unk568, 20, 0, 0, unk56C.getWidth(),
+			                   unk56C.getHeight());
 			unk580->hide();
 			unk10 = 4;
 		}
@@ -1779,7 +1723,10 @@ s8 TCardLoad::drawMessage(TEProgress param_1)
 
 	case 4:
 		if (unk568->update()) {
-			unk568->getPane()->hide();
+			// Not getPane(): the accessor's dead temporary is what puts our
+			// frame 16 bytes over retail's 0xd8 here, while the show() above
+			// does go through it.
+			unk568->mPane->hide();
 			unk10 = 5;
 		}
 		break;
@@ -1794,6 +1741,8 @@ s8 TCardLoad::drawMessage(TEProgress param_1)
 	return -1;
 }
 
+// Binding level worth +8 of low region, landing TCardLoad::drawMessageBM's
+// frame at 0x178 (batch 124).
 s8 TCardLoad::drawMessageBM(TEProgress param_1)
 {
 	s8 result = -1;
@@ -1812,7 +1761,8 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 		unk4CC[1]->hide();
 		unk4CC[2]->hide();
 
-		unk4AC->setCenteredSize(20, unk4B0.getWidth(), unk4B0.getHeight(), 0,
+		unk4AC->setCenteredSize(20, unk4B0.getWidth(),
+		                        CardLoadGetHeight(&unk4B0), 0,
 		                        0);
 		unk10 = 1;
 		break;
@@ -1824,21 +1774,13 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 			unk4CC[unkB0]->show();
 			TCardBookmarkInfo* bm = &unk40[unkB0];
 			if (bm->unk0 == 1) {
-			J2DTextBox* text = unk51C;
-			const char* message = SMSGetMessageData(unkA0, 0);
-			strncpy(text->getStringPtr(), message, 20);
-			text    = unk520;
-			message = SMSGetMessageData(unkA0, 0);
-			strncpy(text->getStringPtr(), message, 20);
+				setMessage(unk51C, 0x14, 0);
+				setMessage(unk520, 0x14, 0);
 				unk520->show();
 				unk500->hide();
 			} else if (bm->unk18 == 0) {
-			J2DTextBox* text = unk51C;
-			const char* message = SMSGetMessageData(unkA0, 0x1B);
-			strncpy(text->getStringPtr(), message, 20);
-			text    = unk520;
-			message = SMSGetMessageData(unkA0, 0x1B);
-			strncpy(text->getStringPtr(), message, 20);
+				setMessage(unk51C, 0x14, 0x1B);
+				setMessage(unk520, 0x14, 0x1B);
 				unk520->show();
 				unk500->hide();
 			} else {
@@ -1860,7 +1802,7 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 					unk510->hide();
 					unk504[0]->changeTexture(unkC8[score / 100]->getTexInfo(),
 					                         0);
-					score -= int(score * 0.01f) * 100;
+					score = score - int(score * 0.01f) * 100;
 					unk504[1]->changeTexture(unkC8[score / 10]->getTexInfo(),
 					                         0);
 					unk504[2]->changeTexture(unkC8[score % 10]->getTexInfo(),
@@ -1874,8 +1816,8 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 
 	case 3:
 		if (unkB4 > 180) {
-			unk4AC->setCenteredSize(20, 0, 0, unk4B0.getWidth(),
-			                        unk4B0.getHeight());
+			setCenteredSizeWr(unk4AC, 20, 0, 0, unk4B0.getWidth(),
+			                  unk4B0.getHeight());
 
 			unk4C8->hide();
 			unk500->hide();
@@ -1904,6 +1846,8 @@ s8 TCardLoad::drawMessageBM(TEProgress param_1)
 	return result;
 }
 
+// TODO: `result` lands in r24 (retail r28) and rotates r24-r28; frame and
+// every other instruction match.
 s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
                              bool param_3)
 {
@@ -1914,15 +1858,25 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 		unk338 = 0;
 		unk2A0->hide();
 		unk288->getPane()->show();
-		unk288->setCenteredSize(30, unk28C.getWidth(), unk28C.getHeight(), 0,
+		unk288->setCenteredSize(30, unk28C.getWidth(), CardLoadGetHeight(&unk28C), 0,
 		                        0);
 		if (unk1C == PROGRESS_UNK1C) {
 			unk278[unkB1]->makeBlockRock();
-			setMessage(unk29C, 0xFF, 0x1F);
-			setMessage(unk2A0, 0xFF, 0x1F);
-		} else {
+#if defined(VERSION_GMSE01)
 			setMessage(unk29C, 0xFF, 0x1E);
 			setMessage(unk2A0, 0xFF, 0x1E);
+#else
+			setMessage(unk29C, 30, 0x1B);
+			setMessage(unk2A0, 30, 0x1B);
+#endif
+		} else {
+#if defined(VERSION_GMSE01)
+			setMessage(unk29C, 0xFF, 0x1D);
+			setMessage(unk2A0, 0xFF, 0x1D);
+#else
+			setMessage(unk29C, 30, 0x1A);
+			setMessage(unk2A0, 30, 0x1A);
+#endif
 		}
 
 		for (int i = 0; i < 3; ++i) {
@@ -1950,17 +1904,13 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 			unk2A0->show();
 			for (int i = 0; i < 3; ++i) {
 				if (unk40[i].unk0 == 1) {
-					strncpy(unk2C0[i]->getStringPtr(),
-					        SMSGetMessageData(unkA0, 0), 20);
-					strncpy(unk2CC[i]->getStringPtr(),
-					        SMSGetMessageData(unkA0, 0), 20);
+					setMessage(unk2C0[i], 0x14, 0);
+					setMessage(unk2CC[i], 0x14, 0);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else if (unk40[i].unk18 == 0) {
-					strncpy(unk2C0[i]->getStringPtr(),
-					        SMSGetMessageData(unkA0, 0x1B), 20);
-					strncpy(unk2CC[i]->getStringPtr(),
-					        SMSGetMessageData(unkA0, 0x1B), 20);
+					setMessage(unk2C0[i], 0x14, 0x1B);
+					setMessage(unk2CC[i], 0x14, 0x1B);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else {
@@ -2003,7 +1953,7 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 		break;
 
 	case 3:
-		unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+		unk38->onFlag(0x1);
 		unk2A0->hide();
 		unk288->setCenteredSize(30, 0, 0, unk28C.getWidth(),
 		                        unk28C.getHeight());
@@ -2032,7 +1982,7 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 			if (param_3) {
 				for (int i = 0; i < 3; ++i)
 					if (i != unkB0 || unk1C == PROGRESS_UNK1C
-					    || unk40[i].unk0 == 1)
+					    || unk40[unkB0].unk0 == 1)
 						unk2A4[i]->getPane()->hide();
 			}
 			unk10 = 5;
@@ -2044,7 +1994,7 @@ s8 TCardLoad::selectBookmark(TEProgress param_1, TEProgress param_2,
 			unk278[unkB1]->makeBlockNormal();
 		result = unkB0;
 		if (unk14 == 0)
-			unk38->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+			unk38->offFlag(0x1);
 		if (unkB0 != -1)
 			unk1C = param_1;
 		else
@@ -2113,41 +2063,31 @@ s8 TCardLoad::selectFunction()
 			for (int i = 0; i < 4; ++i) {
 				unk378[unkB0][i]->getPane()->show();
 
-				unk378[unkB0][i]->setCenteredSize(
+				unk378[unkB0][i]->updateCenteredSize(
 				    1, unk3A8[unkB0][i].getWidth(),
-				    unk3A8[unkB0][i].getHeight(),
-				    unk378[unkB0][i]->mOffsetInterpolator.getCurrentX(),
-				    unk378[unkB0][i]->mOffsetInterpolator.getCurrentY());
+				    unk3A8[unkB0][i].getHeight());
 
 				unk378[unkB0][i]->update();
 				if (unk40[unkB0].unk18 == 0) {
 					if (i > 0)
-						((J2DPicture*)unk378[unkB0][i]->getPane())->mWhite
-						    = 0xFFFFFF7F;
+						((J2DPicture*)unk378[unkB0][i]->getPane())->setWhite(0xFFFFFF7F);
 				} else {
-					((J2DPicture*)unk378[unkB0][i]->getPane())->mWhite
-					    = 0xFFFFFFFF;
+					((J2DPicture*)unk378[unkB0][i]->getPane())->setWhite(0xFFFFFFFF);
 				}
 			}
 
-			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->setWhite(0x00FF00FF);
 			for (int i = 0; i < 3; ++i) {
 				if (unk40[i].unk0 == 1) {
-				J2DTextBox* text = unk51C;
-				const char* message = SMSGetMessageData(unkA0, 0);
-				strncpy(text->getStringPtr(), message, 20);
-				text    = unk520;
-				message = SMSGetMessageData(unkA0, 0);
-				strncpy(text->getStringPtr(), message, 20);
+					// The ROM writes the shared caption pair here, not the
+					// per-slot boxes the surrounding show()/hide() use.
+					setMessage(unk51C, 0x14, 0);
+					setMessage(unk520, 0x14, 0);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else if (unk40[i].unk18 == 0) {
-				J2DTextBox* text = unk51C;
-				const char* message = SMSGetMessageData(unkA0, 0x1B);
-				strncpy(text->getStringPtr(), message, 20);
-				text    = unk520;
-				message = SMSGetMessageData(unkA0, 0x1B);
-				strncpy(text->getStringPtr(), message, 20);
+					setMessage(unk51C, 0x14, 0x1B);
+					setMessage(unk520, 0x14, 0x1B);
 					unk2CC[i]->show();
 					unk2D8[i]->hide();
 				} else {
@@ -2173,7 +2113,7 @@ s8 TCardLoad::selectFunction()
 	} break;
 
 	case 2:
-		if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)) {
+		if (unk38->checkFrameMeaning(0x20)) {
 			if (bVar1 == 0)
 				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_DECIDE_COMMON, 0,
 				                                   nullptr, 0);
@@ -2181,7 +2121,7 @@ s8 TCardLoad::selectFunction()
 				SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_SELECT_COMMON, 0,
 				                                   nullptr, 0);
 			unk10 = 3;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_DOWN)) {
+		} else if (unk38->checkFrameMeaning(0x4)) {
 			TCardBookmarkInfo* bm = &unk40[unkB0];
 			if (bm->unk18 == 0)
 				unkB6 = 0;
@@ -2189,7 +2129,7 @@ s8 TCardLoad::selectFunction()
 				unkB6 = bVar1 + 1;
 			if (unkB6 > 3)
 				unkB6 = 0;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_UP)) {
+		} else if (unk38->checkFrameMeaning(0x2)) {
 			TCardBookmarkInfo* bm = &unk40[unkB0];
 			if (bm->unk18 == 0)
 				unkB6 = 0;
@@ -2197,7 +2137,7 @@ s8 TCardLoad::selectFunction()
 				unkB6 = bVar1 - 1;
 			if (unkB6 < 0)
 				unkB6 = 3;
-		} else if (unk38->checkFrameMeaning(TMarioGamePad::MEANING_MENU_B)) {
+		} else if (unk38->checkFrameMeaning(0x40)) {
 			unkB6 = -1;
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CANCEL_COMMON, 0,
 			                                   nullptr, 0);
@@ -2214,11 +2154,11 @@ s8 TCardLoad::selectFunction()
 
 				JUTRect rect
 				    = unk378[unkB0][unkB6]->getPane()->getGlobalBounds();
-				JGeometry::TVec3<f32> pos(0.5f * rect.getWidth() + rect.x1,
-				                          0.5f * rect.getHeight() + rect.y1,
-				                          0.0f);
-				gpEmitterManager4D2->createEmitter(pos, 0x1FA, nullptr,
-				                                   nullptr);
+				// TODO: frame only; see the first 0x1FA site.
+				JGeometry::TVec3<f32> pos(rect.x1 + rect.getWidth() * 0.5f,
+				                          rect.y1 + rect.getHeight() * 0.5f, 0.0f);
+				JPAEmitterManager* manager = gpEmitterManager4D2;
+				manager->createEmitter(pos, 0x1FA, nullptr, nullptr);
 				unkAC = gpEmitterManager4D2->unkC8[0][0];
 				unkAC->setRotation(0, 0, DEG2SHORTANGLE(12));
 				unkAC->setEmitterScale(JGeometry::TVec3<f32>(0.9f, 1.0f, 0.1f));
@@ -2233,8 +2173,7 @@ s8 TCardLoad::selectFunction()
 			int r = unkC4;
 			r     = r < 40 ? r : 80 - r;
 			r     = (r * 255.0f) / 40.0f;
-			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->mWhite
-			    = (r << 24) + 0xFF00FF;
+			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->setWhite((r << 24) + 0xFF00FF);
 			unk378[unkB0][unkB6]->update();
 			unkC4 += 1;
 			if (unkC4 > 80)
@@ -2251,8 +2190,8 @@ s8 TCardLoad::selectFunction()
 
 			unk378[unkB0][bVar1]->getPane()->setBounds(unk3A8[unkB0][bVar1]);
 
-			((J2DPicture*)unk378[unkB0][bVar1]->getPane())->mWhite = 0xFFFFFFFF;
-			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->mWhite = 0x00FF00FF;
+			((J2DPicture*)unk378[unkB0][bVar1]->getPane())->setWhite(0xFFFFFFFF);
+			((J2DPicture*)unk378[unkB0][unkB6]->getPane())->setWhite(0x00FF00FF);
 		}
 		break;
 
@@ -2283,7 +2222,7 @@ s8 TCardLoad::selectFunction()
 		if (done) {
 			unk33C[unkB0]->getPane()->hide();
 			for (int i = 0; i < 3; ++i)
-				if (i == unkB0 && unkB6 != -1 && unkB6 != 1)
+				if (unkB0 == i && unkB6 != -1 && unkB6 != 1)
 					unk2A4[i]->getPane()->hide();
 			unk10 = 5;
 		}
@@ -2312,6 +2251,11 @@ void TCardLoad::setSelected(u8 param_1)
 	}
 }
 
+// TODO: every instruction matches; only the frame differs (0x178 vs retail's
+// 0x1e0). The gap is not one block: measured against retail's slots it is
+// +92 bytes below the lowest referenced local, +4 above it, +16 more above
+// the third stream object, and -8 above the fourth, which is four separate
+// causes rather than one missing local. Left for the bulk frame-gap pass.
 void TCardLoad::changeScene()
 {
 	TEProgress prevUnk1C = unk1C;
@@ -2339,7 +2283,7 @@ void TCardLoad::changeScene()
 	} break;
 
 	case PROGRESS_UNK0:
-		unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+		unk38->onFlag(0x1);
 		gpCardManager->getBookmarkInfos(unk40);
 		unk1C = PROGRESS_UNK2;
 		break;
@@ -2427,7 +2371,7 @@ void TCardLoad::changeScene()
 		if (rc != CARD_RESULT_BUSY) {
 			if (rc == CARD_RESULT_READY) {
 				if (unk10 == 2)
-					unk10 = 3;
+					unk10 = 4;
 				drawMessage(PROGRESS_UNKA);
 				gpCardManager->probe();
 				if (unk10 == 5)
@@ -2534,12 +2478,8 @@ void TCardLoad::changeScene()
 				unkB2 = choice;
 
 				TCardBookmarkInfo* bm = &unk40[unkB2];
-				if (bm->unk0 == 1) {
+				if (bm->unk0 == 1)
 					unk1C = PROGRESS_UNK22;
-				} else if (bm->unk18 == 0) {
-					gpCardManager->readBlock(unkB1);
-					unk1C = PROGRESS_UNK24;
-				}
 			}
 			if (unk1C == PROGRESS_UNK2)
 				gpCardManager->getBookmarkInfos(unk40);
@@ -2597,7 +2537,8 @@ void TCardLoad::changeScene()
 					unk378[unkB0][i]->getPane()->hide();
 				JUTRect local_6c = unk348[unkB0];
 				unk33C[unkB0]->updatePaneSize(30, local_6c.getWidth(), 0);
-				unk33C[unkB0]->updatePaneOffset(30, 0, local_6c.getHeight());
+				unk33C[unkB0]->updatePaneOffset(30, 0,
+				                                local_6c.getHeight());
 				unk10 = 4;
 			}
 
@@ -2652,7 +2593,7 @@ void TCardLoad::changeScene()
 		break;
 
 	case PROGRESS_UNK21:
-		if (waitForAnyKey(PROGRESS_UNK2) != -1)
+		if (waitForAnyKeyBM(PROGRESS_UNK2) != -1)
 			unk1C = changeMode(gpCardManager->getLastStatus());
 		break;
 
@@ -2759,6 +2700,8 @@ void TCardLoad::changeScene()
 		}
 	} break;
 
+	// The ROM really does compile both arms of this to the same code; the
+	// duplication is in the original source, not a reconstruction artefact.
 	case PROGRESS_UNK26: {
 		int rc = gpCardManager->getLastStatus();
 		if (rc == CARD_RESULT_READY) {
@@ -2828,9 +2771,6 @@ void TCardLoad::changeScene()
 			drawMessage(PROGRESS_UNK0);
 		}
 	} break;
-	case PROGRESS_UNK33:
-	case PROGRESS_UNK34:
-		break;
 	}
 
 	if (prevUnk1C != unk1C) {
@@ -2851,7 +2791,7 @@ void TCardLoad::changeScene()
 		case PROGRESS_UNK10:
 		case PROGRESS_UNK2D:
 		case PROGRESS_UNK35:
-			unk38->onFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+			unk38->onFlag(0x1);
 			unk275 = 0;
 			break;
 		}
@@ -2860,7 +2800,7 @@ void TCardLoad::changeScene()
 		case PROGRESS_UNK1C:
 			unk284->onCollision();
 			unk275 = 0;
-			unk38->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+			unk38->offFlag(0x1);
 			break;
 
 		case PROGRESS_UNK13:
@@ -2873,7 +2813,7 @@ void TCardLoad::changeScene()
 		case PROGRESS_UNK2D:
 		case PROGRESS_UNK35:
 			unk275 = 1;
-			unk38->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+			unk38->offFlag(0x1);
 			break;
 		}
 

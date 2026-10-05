@@ -55,8 +55,8 @@ class TMapObjBillboard : public THideObjBase {
 public:
 	TMapObjBillboard(const char* name = "看板")
 	    : THideObjBase(name)
-	    , unk150(0)
 	{
+		unk150 = nullptr;
 	}
 
 	virtual void touchActor(THitActor*);
@@ -99,8 +99,8 @@ class TMapObjStartDemo : public TMapObjBase {
 public:
 	TMapObjStartDemo(const char* name = "デモ開始オブジェ")
 	    : TMapObjBase(name)
-	    , unk138(0)
 	{
+		unk138 = 0;
 	}
 
 	virtual void load(JSUMemoryInputStream&);
@@ -123,9 +123,9 @@ public:
 	void init(u32);
 };
 
-class TShadowObj {
+class TShadowObj : public THitActor {
 public:
-	void load(JSUMemoryInputStream&);
+	virtual void load(JSUMemoryInputStream&);
 };
 
 class TMapObjWaterSpray : public TMapObjBase {

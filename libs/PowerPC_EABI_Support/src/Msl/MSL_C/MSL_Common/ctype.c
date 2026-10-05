@@ -1,3 +1,4 @@
+#define _MSL_CTYPE_C
 #include "ctype.h"
 
 #define ctrl __control_char
@@ -66,6 +67,28 @@ const unsigned char __upper_map[256] = {
 	0xF0, 0xF1, 0xF2, 0xF3, 0xF4, 0xF5, 0xF6, 0xF7, 0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
 	// clang-format on
 };
+
+int isalnum(int c) { return (int)(__ctype_map[(unsigned char)c] & __alphanumeric); }
+
+int isalpha(int c) { return (int)(__ctype_map[(unsigned char)c] & __letter); }
+
+int iscntrl(int c) { return (int)(__ctype_map[(unsigned char)c] & __control); }
+
+int isdigit(int c) { return (int)(__ctype_map[(unsigned char)c] & __digit); }
+
+int isgraph(int c) { return (int)(__ctype_map[(unsigned char)c] & __graphic); }
+
+int islower(int c) { return (int)(__ctype_map[(unsigned char)c] & __lower_case); }
+
+int isprint(int c) { return (int)(__ctype_map[(unsigned char)c] & __printable); }
+
+int ispunct(int c) { return (int)(__ctype_map[(unsigned char)c] & __punctuation); }
+
+int isspace(int c) { return (int)(__ctype_map[(unsigned char)c] & __whitespace); }
+
+int isupper(int c) { return (int)(__ctype_map[(unsigned char)c] & __upper_case); }
+
+int isxdigit(int c) { return (int)(__ctype_map[(unsigned char)c] & __hex_digit); }
 
 int tolower(int __c)
 {

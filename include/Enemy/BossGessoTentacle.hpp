@@ -37,7 +37,7 @@ public:
 public:
 	/* 0x70 */ TBGTentacle* mOwner;
 	/* 0x74 */ JGeometry::TVec3<f32> unk74;
-	/* 0x80 */ TMtx34f unk80;
+	/* 0x80 */ TPosition3f unk80;
 };
 
 class TBGAttackHit : public THitActor {
@@ -109,7 +109,7 @@ public:
 		void setVelocity(const JGeometry::TVec3<f32>& v) { mVelocity = v; }
 
 		// fabricated
-		void setUnk18(const JGeometry::TVec3<f32>& v) { unk18 = v; }
+		void setUnk18(const Vec& v) { unk18 = v; }
 		void addVelocity(const JGeometry::TVec3<f32>& v) { mVelocity += v; }
 
 		void onUnk24() { unk24 = true; }
@@ -129,7 +129,7 @@ public:
 
 	void incDamage();
 	void throwMario(THitActor*, THitActor*);
-	BOOL isAttacking() const;
+	bool isAttacking() const;
 	bool canTake() const;
 	f32 getNodeLen() const;
 	void continuousRumble();
@@ -161,23 +161,6 @@ public:
 			return true;
 		return false;
 	}
-
-	// fabricated
-	bool isThing3()
-	{
-		if (mState == 10)
-			return false;
-		if (mState == 4)
-			return false;
-		if (mState == 6)
-			return false;
-		return true;
-	}
-
-	// fabricated
-	// fabricated; defined in bgtentacle.cpp because it needs TBossGesso
-	// to be a complete type.
-	bool isAttackable();
 
 	TNode* getFirstNode() { return &mNodes[0]; }
 	TNode* getLastNode() { return &mNodes[mNodeNum - 1]; }

@@ -1,4 +1,4 @@
-#include "Enemy/bosstelesa.hpp"
+#include "Enemy/BossTelesaObj.hpp"
 #include "Map/MapStaticObject.hpp"
 #include "Map/MapWireManager.hpp"
 #include "MoveBG/Item.hpp"
@@ -40,11 +40,43 @@
 #include "MoveBG/Pool.hpp"
 #include "MoveBG/WoodBarrel.hpp"
 #include <System/MarNameRefGen.hpp>
-
-// rogue include: puts the dummy string pair and the MActor mtx-calc names in
-// .rodata ahead of the real name table, which is what the original TU did
 #include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionManager.hpp>
 
+// TODO (header round 20): 98.89%. The constructor-body residues closure batch
+// 114 enumerated are all applied now (they were edits to other units' headers,
+// which is why they waited for a header batch); zero regressions tree-wide and
+// getNameRef_MapObj 97.35 -> 98.89. What landed, for the record:
+//
+// Missing member initialisations, added to the in-class constructor bodies
+// (the ROM's store order is descending, i.e. the batch-89 assignment chain
+// `m.x = m.y = m.z = v;`, not an initialiser list):
+//   TMapObjStartDemo `unk138`, TMapObjBillboard `unk150`,
+//   TTurboNozzleDoor `unk138` (one TVec3, chain), TBigWindmill
+//   `mSoundHandle`, TMapObjRootPakkun `mTrembleEffect`, TMapObjPuncher
+//   `mThrowSpeed`, TMareCork `mCannon` + `mIsBlownOut`, TMareEventPoint
+//   `mDepressWall`, TPictureTelesa `unk174`.
+// Extra initialisations removed: TCraneUpDown `mRotXMax`/`mRotXMin`,
+//   TFruitLauncher `mCurrentSwitch` and both `mSwitches` entries, and --
+//   correcting batch 114's reading -- TAmiKing's `mEffectPos`, which the ROM
+//   does not initialise at all (only `mFlying`).
+// Initialiser list -> ctor-body chain: TBalloonKoopaJr's `mCenterPos` (the
+//   list emits `bl TVec3::set<f>`, the chain the ROM's three descending
+//   `stfs`); TAmiKing wanted the initialiser *dropped*, not converted.
+// TSandBlock's constructor had a declaration with no definition anywhere; the
+//   map has no out-of-line copy and the factory expands it, so it is now
+//   defined in the class.
+// Two real bugs the diff exposed: the "HideObj" branch built a THideObjBase
+//   (the ROM stores `__vt__8THideObj`), and the "PalmNatume" branch passed an
+//   explicit "地形オブジェ基底" where the ROM uses TMapObjTree's own default
+//   "木" (batch 114 read this as a TMapObjSteam small-data placement; the
+//   .sdata2-vs-.rodata difference was just the wrong string).
+//
+// The last loss (~250 instructions of r30/r29 renaming from 0x25a4 on, plus
+// the 0x50-vs-0x60 frame and the extra `stw r29`) was one cascade from the
+// missing TTelesaSlot::TTelesaSlot(const char*), and it is closed: the ROM
+// leaves that constructor's name argument defaulted, which is the one inline
+// level that makes MWCC call it. getNameRef_MapObj is byte-exact.
 JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 {
 	if (strcmp(name, "MapObjBase") == 0)
@@ -473,8 +505,16 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_MapObj(const char* name) const
 	if (strcmp(name, "ItemSlotDrum") == 0)
 		return new TItemSlotDrum;
 
+	// The name is the constructor's default argument, and that one
+	// codegen-neutral inline level is the whole of batch 104's open item: the
+	// map keeps TTelesaSlot's in-class constructor as a weak out-of-line copy
+	// (0x98) and `bl`s it here, and spelling the argument out expands it
+	// instead, which renamed the object pointer for the ~250 instructions of
+	// this function's tail. Every shape batch 104 probed kept the argument at
+	// the call site, so the level was never there. Identical to what the ROM
+	// does at TIgaigaManager/TPakkunManager::createEnemyInstance.
 	if (strcmp(name, "TelesaSlot") == 0)
-		return new TTelesaSlot("btelesaSlot");
+		return new TTelesaSlot;
 
 	if (strcmp(name, "CasinoPanelGate") == 0)
 		return new TCasinoPanelGate;

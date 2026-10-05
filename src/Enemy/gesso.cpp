@@ -140,7 +140,7 @@ void TGessoManager::clipEnemies(JDrama::TGraphics* param_1)
 		else
 			gesso->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 
-		if (!gesso->getPolluteObj()->isState(0)) {
+		if (!gesso->getPolluteObj()->isUnk150Zero()) {
 			if (ViewFrustumClipCheck(
 			        param_1, &gesso->getPolluteObj()->mPosition, radius))
 				gesso->getPolluteObj()->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
@@ -162,8 +162,17 @@ void TGessoManager::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TGessoManager::initSetEnemies()
 {
-	unk60 = new TGessoPolluteModelManager;
-	unk60->init((TLiveActor*)unk18[0]);
+	// The name is spelled out rather than left to TGessoPolluteModelManager's
+	// default argument: the defaulted argument is one inline level, and with
+	// it the JDrama::TViewObj constructor lands at depth 3 and is called
+	// instead of expanded (81.21 -> 99.83).
+	// TODO: frame 0xe8 vs 0x30, every instruction matches (getObj(0) +0x10,
+	// c-hs6). The map's UNUSED
+	// TMsRange<s32> dtor right after this function says retail had dead code
+	// here with a TMsRange<s32> local (27 words above the new binding, 23
+	// below); dead random-graph placement loops tried reach only 0x68..0x90.
+	unk60 = new TGessoPolluteModelManager("ゲッソーモデル汚染");
+	unk60->init(getObj(0));
 }
 
 void TGessoManager::createModelData()
@@ -184,39 +193,72 @@ void TGessoManager::requestPolluteModel(JGeometry::TVec3<float>& position,
 static int GessoBodyCallback(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
-		if (gpCurGesso == nullptr || !gpCurGesso->isNotWandering())
+		if (gpCurGesso == nullptr || !gpCurGesso->isUseBodyCallBack())
 			return true;
 
 		J3DJoint* joint = (J3DJoint*)param_1;
 		MtxPtr anmMtx   = gpCurGesso->getModel()->getAnmMtx(joint->getJntNo());
 
-		f32 scale = gpCurGesso->getBodyScale();
+		// The ROM zeroes the translation column first and only then reads
+		// the body scale (`stfs f1, 0x80(r1)` three times, then `lfs f2,
+		// 0x148(r4)`), so the scale local is declared after those three
+		// stores rather than above the matrix: 85.6 -> 91.9%.
 		Mtx local_44;
+		local_44[0][3] = 0.0f;
+		local_44[1][3] = 0.0f;
+		local_44[2][3] = 0.0f;
+
+		f32 scale      = gpCurGesso->getBodyScale();
 		local_44[0][0] = scale;
 		local_44[0][1] = 0.0f;
 		local_44[0][2] = 0.0f;
-		local_44[0][3] = 0.0f;
 
 		local_44[1][0] = 0.0f;
 		local_44[1][1] = scale;
 		local_44[1][2] = 0.0f;
-		local_44[1][3] = 0.0f;
 
 		local_44[2][0] = 0.0f;
 		local_44[2][1] = 0.0f;
 		local_44[2][2] = scale;
-		local_44[2][3] = 0.0f;
 
 		f32 maxAngle = gpCurGesso->getSaveParams()->mSLBodyAngMax.get();
 		f32 angle = MsClamp(gpCurGesso->mBodyTrackingAngle - 90.0f, -maxAngle,
 		                    maxAngle);
 
-		Mtx local_74;
-		MsMtxSetRotX(local_74, angle);
+		f32 s = JMASin(angle);
+		f32 c = JMACos(angle);
 
-		MTXConcat(anmMtx, local_74, anmMtx);
+		Mtx local_74;
+		local_74[0][0] = 1.0f;
+		local_74[0][1] = 0.0f;
+		local_74[0][2] = 0.0f;
+		local_74[0][3] = 0.0f;
+
+		local_74[1][0] = 0.0f;
+		local_74[1][1] = c;
+		local_74[1][2] = -s;
+		local_74[1][3] = 0.0f;
+
+		local_74[2][0] = 0.0f;
+		local_74[2][1] = s;
+		local_74[2][2] = c;
+		local_74[2][3] = 0.0f;
+
+		// Park &local_74 in a callee-saved register so both MTXConcat
+		// sites reuse it (retail r30). 91.9 -> 97.5. Residue is 0x10 of
+		// frame (scale mtx 0x10 high) and the 1.0/0.0 preload vs
+		// store-then-reload; named jntNo and .value both moved the rot
+		// mtx off 0x44. Also inert or worse (cc48): both matrices declared
+		// at the top in either order, rotMtx declared first and assigned
+		// later, .value, JMASSin/JMASCos over a named s16, cos before sin.
+		// Also inert (c-mix3): MsMtxSetRotX for the rotation (97.4, same
+		// 0x10), raw mBodyScale (-0x10, 0xb0), .value (-8), both (0xb0).
+		// Also inert (c-ident): the rows written through rotMtx, as Mtx or
+		// TMtx34f, with s/c before or after the pointer (97.4-97.5).
+		MtxPtr rotMtx = local_74;
+		MTXConcat(anmMtx, rotMtx, anmMtx);
 		MTXConcat(anmMtx, local_44, anmMtx);
-		MTXConcat(J3DSys::mCurrentMtx, local_74, J3DSys::mCurrentMtx);
+		MTXConcat(J3DSys::mCurrentMtx, rotMtx, J3DSys::mCurrentMtx);
 		MTXConcat(J3DSys::mCurrentMtx, local_44, J3DSys::mCurrentMtx);
 	}
 	return true;
@@ -431,29 +473,34 @@ void TGesso::attackToMario()
 		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 }
 
+// Binding level worth +16 of low region, landing TGesso::setBehavior's frame
+// at 0x50 (batch 121).
+static inline bool GessoIsAirborne(const TGesso* p)
+{
+	bool airborne = p->isAirborne();
+	return airborne;
+}
+
 void TGesso::setBehavior()
 {
-
-	
-	
 	if (mAttackCooldown > 0)
 		mAttackCooldown += 1;
 
 	if (mAttackCooldown > 200)
 		mAttackCooldown = 0;
 
-	if (isAirborne() && mPosition.y > mGroundHeight + 250.0f
+	if (GessoIsAirborne(this) && mPosition.y > mGroundHeight + 250.0f
 	    && mSpine->getCurrentNerve() != &TNerveWalkerGenerate::theNerve()) {
 		mNeedsLanding = true;
 	}
 
-	if (!isAirborne() && mNeedsLanding
+	if (!GessoIsAirborne(this) && mNeedsLanding
 	    && (mSpine->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()
 	        || mSpine->getCurrentNerve() == &TNerveWalkerAttack::theNerve())) {
 		mSpine->pushNerve(&TNerveGessoLand::theNerve());
 	}
 
-	if (!isAirborne())
+	if (!GessoIsAirborne(this))
 		mNeedsLanding = false;
 }
 
@@ -467,6 +514,9 @@ void TGesso::polluteBehavior()
 	if (mSpine->getCurrentNerve() == &TNerveGessoPollute::theNerve())
 		return;
 
+	// `cmpw r3, r0; ble` -- the ROM needs the timer strictly greater than
+	// the interval, so the pollution actually fires one frame later than a
+	// `<` reading of this test would.
 	if (mPollutionTimer <= unk1E8->mSLPollutionInterval.get())
 		return;
 
@@ -482,38 +532,54 @@ void TGesso::polluteBehavior()
 
 void TGesso::setPolluteGoal()
 {
-	f32 polluteObjGravity = unk1E8->mSLPolluteObjGravity.get();
-	f32 polluteObjSpeed   = unk1E8->mSLPolluteObjSpeed.get();
+	// All three param reads through getSaveParams() (not raw unk1E8)
+	// land the frame at 0xa8. Two sites left it 8 short.
+	f32 polluteObjGravity = getSaveParams()->mSLPolluteObjGravity.get();
+	f32 polluteObjSpeed   = getSaveParams()->mSLPolluteObjSpeed.get();
 
 	if (!mIsRightSideUp)
 		polluteObjSpeed = 0.0f;
 
 	if (unk1D8 == 0) {
 		TMsRange<f32> range(-100.0f, 100.0f);
-		(void)&range; // TODO: due to range.rand() being wrong
 		mPolluteVelocity.set(SMS_GetMarioPos().x + range.rand(),
 		                     SMS_GetMarioPos().y,
 		                     SMS_GetMarioPos().z + range.rand());
 
-		JGeometry::TVec3<f32> local;
-		calcVelocityToJumpToY(local, polluteObjSpeed, polluteObjGravity);
-		mPolluteVelocity = local;
+		mPolluteVelocity = calcVelocityToJumpToY(
+		    mPolluteVelocity, polluteObjSpeed, polluteObjGravity);
 	} else {
 		mPolluteVelocity = SMS_GetMarioPos();
 		mPolluteVelocity.x -= mPosition.x;
 		mPolluteVelocity.y = 0.0f;
 		mPolluteVelocity.z -= mPosition.z;
 		MsVECNormalize(&mPolluteVelocity, &mPolluteVelocity);
-		f32 polluteObjLinerSp = unk1E8->mSLPolluteObjLinerSp.get();
+		f32 polluteObjLinerSp = getSaveParams()->mSLPolluteObjLinerSp.value;
 		mPolluteVelocity.x *= polluteObjLinerSp;
 		mPolluteVelocity.y = 0.0f;
 		mPolluteVelocity.z *= polluteObjLinerSp;
 	}
 }
 
+// Binding level worth +16 of low region, landing TGesso::pollute's frame at
+// 0x98 (batch 121).
+static inline MActor* GessoGetMActor(const TGesso* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
+// Binding level over a raw member read: a register lever in TGesso::pollute
+// at an unchanged frame (batch 127).
+static inline bool GessoIsRightSideUp(const TGesso* p)
+{
+	bool isRightSideUp = p->mIsRightSideUp;
+	return isRightSideUp;
+}
+
 void TGesso::pollute()
 {
-	if (mState != STATE_WANDERING && !mIsRightSideUp)
+	if (mState != STATE_WANDERING && !GessoIsRightSideUp(this))
 		mPolluteVelocity.y = -3.0f;
 
 	mPolluteObj->setVelocity(mPolluteVelocity);
@@ -524,7 +590,7 @@ void TGesso::pollute()
 	tmp.y                    = 0.0f;
 	mPolluteObj->mRotation.y = MsGetRotFromZaxisY(tmp);
 
-	MtxPtr mtx = getMActor()->getModel()->getAnmMtx(mMouthJntIndex);
+	MtxPtr mtx = GessoGetMActor(this)->getModel()->getAnmMtx(mMouthJntIndex);
 
 	JGeometry::TVec3<f32> local_2c(0.0f, 0.0f, 100.0f);
 	Mtx afStack_5c;
@@ -539,7 +605,12 @@ void TGesso::pollute()
 	mPolluteObj->mPosition.z = mtx[2][3] + local_2c.z;
 }
 
-void TGesso::isUseBodyCallBack() const { }
+bool TGesso::isUseBodyCallBack() const
+{
+	if (mState == STATE_WANDERING)
+		return false;
+	return true;
+}
 
 void TGesso::setAfterDeadEffect()
 {
@@ -596,7 +667,8 @@ void TGesso::bind()
 		mVelocity.y -= getGravityY();
 		if (mVelocity.y < mVelocityMinY)
 			mVelocity.y = mVelocityMinY;
-		if (isBckAnm(18)) // geso_turn_hit1.bas
+		bool turnHit = isBckAnm(18);
+		if (turnHit) // geso_turn_hit1.bas
 			mState = 4;
 		else if (mThroughHoseiDistY * 0.5f + mPosition.y < unk1A4)
 			mState = 4;
@@ -611,6 +683,7 @@ void TGesso::bind()
 	}
 
 	if (isNotWandering()) {
+		f32 angle;
 		JGeometry::TVec3<f32> var1;
 		f32 f1 = 1.0f;
 
@@ -629,13 +702,17 @@ void TGesso::bind()
 				var1.set(f1, 0.0f, 0.0f);
 		}
 
-		f32 fVar3 = SMS_GetMarioPos().x - mPosition.x;
-		f32 fVar4 = SMS_GetMarioPos().z - mPosition.z;
+		// TODO: local_48 sits at 0x40, retail 0x38. Raw gpMarioPos at both
+		// sites lands it (-8 of pool) but drops the conversion slot to 0x60
+		// (frame 0x78); no +8 above local_48 found (local_48/var2 declared
+		// early, named magnitude, named s16 matan, f1 as if/else) (cc48).
+		f32 fVar3 = (*gpMarioPos).x - mPosition.x;
+		f32 fVar4 = (*gpMarioPos).z - mPosition.z;
 		JGeometry::TVec3<f32> var2(fVar3, 0.0f, fVar4);
 		JGeometry::TVec3<f32> local_48;
 		local_48.cross(var1, var2);
 		f32 cos   = var1.dot(var2);
-		f32 angle = MsAtan2(cos, MsVECMag2(&local_48));
+		angle = MsAtan2(cos, MsVECMag2(&local_48));
 		if (mBodyTrackingAngle != angle) {
 			if (mBodyTrackingAngle < angle) {
 				mBodyTrackingAngle += mBodyRotSpeed;
@@ -665,24 +742,36 @@ void TGesso::calcRootMatrix()
 	if (mState == STATE_WANDERING) {
 		TSpineEnemy::calcRootMatrix();
 		return;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	if (!isEaten()) {
-		J3DModel* model = mMActor->getModel();
+		// getMActor()->mModel (not mMActor->getModel()) plus getPosition().x
+		// (not mPosition.x) land the yaw matrix at 0x28 and the frame at
+		// 0x90. Raw mModel is 8 short / 4 low; getModel() is 8 long.
+		J3DModel* model = getMActor()->mModel;
 		MtxPtr mA       = model->getBaseTRMtx();
 
-		MsMtxSetXYZRPH(mA, mPosition.x, mPosition.y + unk1D0, mPosition.z,
+		MsMtxSetXYZRPH(mA, getPosition().x, mPosition.y + unk1D0, mPosition.z,
 		               mRotation.x, mRotation.y, mRotation.z);
 
+		f32 s = JMASin(mStayYaw);
+		f32 c = JMACos(mStayYaw);
 		Mtx local_68;
-		MsMtxSetRotY(local_68, mStayYaw);
+
+		local_68[0][0] = c;
+		local_68[0][1] = 0.0f;
+		local_68[0][2] = s;
+		local_68[0][3] = 0.0f;
+
+		local_68[1][0] = 0.0f;
+		local_68[1][1] = 1.0f;
+		local_68[1][2] = 0.0f;
+		local_68[1][3] = 0.0f;
+
+		local_68[2][0] = -s;
+		local_68[2][1] = 0.0f;
+		local_68[2][2] = c;
+		local_68[2][3] = 0.0f;
 
 		MTXConcat(mA, local_68, mA);
 
@@ -711,7 +800,7 @@ void TGesso::behaveToFindMario()
 		mSpine->pushAfterCurrent(&TNerveWalkerEscape::theNerve());
 		mSpine->pushAfterCurrent(&TNerveSmallEnemyJump::theNerve());
 	} else {
-		setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		setGoalPathMario();
 		mSpine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
 		mSpine->pushAfterCurrent(&TNerveWalkerAttack::theNerve());
 		if (unk1B4 == 0) {
@@ -723,9 +812,6 @@ void TGesso::behaveToFindMario()
 
 void TGesso::rollCheck()
 {
-
-	
-	
 	if (mAttackCooldown != 0)
 		return;
 
@@ -733,8 +819,9 @@ void TGesso::rollCheck()
 	if (MsIsInSight(mPosition, getSightDirection(), SMS_GetMarioPos(),
 	                unk1E8->mSLSearchLengthOnObj.get(),
 	                unk1E8->mSLSearchAngleOnObj.get(), aware)) {
-		if ((mIsRightSideUp && mPosition.y > SMS_GetMarioPos().y + 10.0f)
-		    || (!mIsRightSideUp && mPosition.y < SMS_GetMarioPos().y - 10.0f)) {
+		if ((mIsRightSideUp && getPosition().y > SMS_GetMarioPos().y + 10.0f)
+		    || (!mIsRightSideUp
+		        && getPosition().y < SMS_GetMarioPos().y - 10.0f)) {
 			onHitFlag(HIT_FLAG_NO_COLLISION);
 			mState = STATE_ROLLING;
 			mSpine->pushNerve(&TNerveGessoRolling::theNerve());
@@ -784,10 +871,12 @@ void TGesso::turnIn()
 
 bool TGesso::turning()
 {
-	if (mTurnAngle + 7.2f <= 180.0f) {
+	f32 step  = 7.2f;
+	f32 angle = mTurnAngle + step;
+	if (angle <= 180.0f) {
 		mBodyTrackingAngle = 90.0f;
-		mRotation.y += 7.2f;
-		mTurnAngle += 7.2f;
+		mRotation.y += step;
+		mTurnAngle += step;
 		return false;
 	}
 
@@ -806,12 +895,6 @@ void TGesso::turnOut()
 }
 
 // TODO: the size & logic matches but it won't inline =(
-// Kept `inline` on purpose: the ROM has no live call to this (the link map
-// lists checkDropInWater__6TGessoFv as UNUSED, i.e. it was emitted but fully
-// dead-stripped), so the call site was inlined. Defining it out of line to
-// measure it against the map's 0x144 size confirms the body is byte-for-byte
-// the right one -- but it turns the call site into a real `bl` and costs match
-// quality, so the inline form is the correct reconstruction.
 inline bool TGesso::checkDropInWater()
 {
 	// Don't skip your calculus class, kids.
@@ -877,9 +960,9 @@ void TGessoPolluteObj::loadInit(TSpineEnemy* param_1, const char* param_2)
 	TEnemyAttachment::loadInit(param_1, param_2);
 
 	unk16C = (TGesso*)unk160;
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
-	    ->getChildren()
-	    .push_back(this);
+	TIdxGroupObj* group
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
+	group->getChildren().push_back(this);
 
 	THitActor::initHitActor(0x10000006, 1, -0x80000000, 10.0f, 10.0f, 10.0f,
 	                        10.0f);
@@ -890,11 +973,12 @@ void TGessoPolluteObj::loadInit(TSpineEnemy* param_1, const char* param_2)
 
 f32 TGessoPolluteObj::getNowGravity()
 {
-	f32 gravity = unk16C->getSaveParams()->mSLPolluteObjGravity.get();
-	if (unk16C->unk1D8 == 0)
+	TGesso* gesso = unk16C;
+	f32 gravity   = gesso->getSaveParams()->mSLPolluteObjGravity.get();
+	if (gesso->unk1D8 == 0)
 		return gravity;
 
-	return unk16C->getSaveParams()->mSLPolluteObjLinerG.get();
+	return gesso->getSaveParams()->mSLPolluteObjLinerG.get();
 }
 
 void TGessoPolluteObj::pollute()
@@ -917,16 +1001,15 @@ void TGessoPolluteObj::rebirth()
 		                             nullptr);
 		gpMarioParticleManager->emit(PARTICLE_MS_GESO_OSENHIT_B, &mPosition, 0,
 		                             nullptr);
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_GESO_GERO_LAND, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_GESO_GERO_LAND, &mPosition);
 	}
 
 	unk158 += 1;
 
 	if (unk158 == 10) {
 		mVelocity.y = -15.0f;
-		gpPollution->stamp(1, mPosition.x, mPosition.y, mPosition.z,
-		                   TGesso::mPollRange * 32.0f * 0.5f);
+		gpPollution->pollute(mPosition.x, mPosition.y, mPosition.z,
+		                     TGesso::mPollRange * 32.0f * 0.5f);
 
 		((TGesso*)unk160)
 		    ->getManager()
@@ -945,35 +1028,45 @@ void TGessoPolluteObj::rebirth()
 	}
 }
 
+// Direct-return level over a raw member read (a named local here is +0 of
+// frame but orders TGessoPolluteObj::set's slots worse).
+static inline TSpineEnemy* GessoUnk160(const TGessoPolluteObj* p) { return p->unk160; }
+
 void TGessoPolluteObj::set()
 {
 	TEnemyAttachment::set();
 
-	if (unk160->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-		mPosition.x = unk160->mPosition.x;
+	if (GessoUnk160(this)->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		mPosition.x = GessoUnk160(this)->mPosition.x;
 		mPosition.y = unk160->mPosition.y + 200.0f;
 		mPosition.z = unk160->mPosition.z;
 	} else {
 		MtxPtr mtx = unk16C->getModel()->getAnmMtx(TGesso::mMouthJntIndex);
 
-		JGeometry::TVec3<f32> local_54 = getVelocity();
+		JGeometry::TVec3<f32> local_54 = mVelocity;
 
-		// TODO: awful things happening with the stack frame here
-		JGeometry::TVec3<f32> local_C = getVelocity();
-		if (JGeometry::TVec3<f32>(local_C).x != 0.0f
-		    || JGeometry::TVec3<f32>(local_C).z != 0.0f)
+		// Retail tests two fresh copies of the velocity (the same
+		// `TVec3(getVelocity())` shape as TMapObjBianco's wall test).
+		// The raw mVelocity copy and GessoUnk160 on the x read land the
+		// 0x70 frame and local_54's slot.
+		// TODO: both test copies sit 0xc high (0x48/0x3c vs 0x3c/0x30):
+		// retail has a 12-byte hole under local_54. A named copy tested
+		// twice is 84.5%; local_54 assigned later, or built from an explicit
+		// TVec3 temporary, or declared above mtx is worse.
+		// mwcc-stack (c-k10): the hole is the three depth-1 words of the
+		// GessoUnk160/getAnmMtx sites (0x38/0x34/0x30 here), so retail
+		// creates the two copies after them, as depth-1 inline objects, in
+		// source order. The test as a TU-local predicate gets the depth but
+		// reverses the copies and materialises a bool (94%); a by-value
+		// velocity getter (`TVec3 f(p) { return p->mVelocity; }`) is 99.7
+		// with a 0x68 frame.
+		if (JGeometry::TVec3<f32>(getVelocity()).x != 0.0f
+		    || JGeometry::TVec3<f32>(getVelocity()).z != 0.0f)
 			MsVECNormalize(&local_54, &local_54);
 
 		mPosition.x = local_54.x * 100.0f + mtx[0][3];
 		mPosition.y = mtx[1][3];
 		mPosition.z = local_54.z * 100.0f + mtx[2][3];
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x70 against 0x68). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	mMActor->setBck("gero_run_loop1");
@@ -981,15 +1074,11 @@ void TGessoPolluteObj::set()
 
 void TGessoPolluteObj::calcRootMatrix()
 {
-
-	
-	
 	TEnemyAttachment::calcRootMatrix();
 	if (unk168 != 0)
 		return;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_EN_GESO_GERO_FLY, &mPosition, 0,
-	                                nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_GESO_GERO_FLY, &mPosition);
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_GESO_KISEKI,
 	                                            &mPosition, 1, this);
 }
@@ -1004,9 +1093,15 @@ void TGessoPolluteObj::sendMessage()
 	}
 }
 
+static inline TGesso* GessoGetBody(TSpineBase<TLiveActor>* spine)
+{
+	TGesso* body = (TGesso*)spine->getBody();
+	return body;
+}
+
 DEFINE_NERVE(TNerveGessoStay, TLiveActor)
 {
-	TGesso* self = (TGesso*)spine->getBody();
+	TGesso* self = GessoGetBody(spine);
 	if (spine->getTime() == 0)
 		self->setWaitAnm();
 
@@ -1044,15 +1139,17 @@ DEFINE_NERVE(TNerveGessoFreeze, TLiveActor)
 		if (self->isBckAnm(10)) {
 			self->setBckAnm(9);
 		} else if (self->isBckAnm(9)) {
-			if (spine->getTime() > self->unk1E8->mSLFreezeWait.get()) {
-				u8 tmp = self->unk165;
-				if (tmp != 0)
-					self->unk165 = 0;
-
-				if (tmp == 0)
-					self->setBckAnm(8);
-			}
-			self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
+			// Retail's operator- copy of the position sits at 0x44, below
+			// checkDropInWater's locals: expanding the subtraction from a
+			// TU-local helper lands the 0xa8 frame but calls operator-=
+			// out of line (depth 3). getSaveParams() is +8 (0x98 -> 0xa0);
+			// target 0xa8. A named params local dropped it back; a second body binder scrambled
+			// GPRs. Remaining: TVec3::sub slots (frame only).
+			if (spine->getTime() > self->getSaveParams()->mSLFreezeWait.get()
+			    && !self->unsetUnk165())
+				self->setBckAnm(8);
+			else
+				self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
 		} else if (self->isBckAnm(8)) {
 			return true;
 		}
@@ -1129,8 +1226,12 @@ DEFINE_NERVE(TNerveGessoFall, TLiveActor)
 		self->setGoalPath(TPathNode(SMS_GetMarioPos()));
 
 		if (self->isWandering()) {
+			// The two Mario reads are raw (SMS_GetMarioPos() returns a
+			// reference and reserves 8 bytes per site) but only the second
+			// position read is: the frame is exact at three raw reads of the
+			// four, and four is 8 under.
 			JGeometry::TVec3<f32> local_80
-			    = self->getPosition() - SMS_GetMarioPos();
+			    = self->getPosition() - *gpMarioPos;
 			local_80.y = 0.0f;
 			if (local_80.x == 0.0f && local_80.z == 0.0f)
 				local_80.z = 1.0f;
@@ -1155,7 +1256,7 @@ DEFINE_NERVE(TNerveGessoFall, TLiveActor)
 		if (self->checkCurAnmEnd(0)) {
 			if (self->isBckAnm(6)) {
 				JGeometry::TVec3<f32> local_8C
-				    = self->getPosition() - SMS_GetMarioPos();
+				    = self->mPosition - *gpMarioPos;
 				local_8C.y = 0.0f;
 				if (local_8C.x == 0.0f && local_8C.z == 0.0f)
 					local_8C.z = 1.0f;

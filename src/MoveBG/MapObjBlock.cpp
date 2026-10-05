@@ -73,8 +73,8 @@ void TSandBlock::control()
 		break;
 	case STATE_FALLING: {
 		mScaling.y -= mSandScaleDown;
-		gpMSound->startSoundActor(MSD_SE_OBJ_SANDBLOCK_BREAK, &mPosition, 0,
-		                          nullptr, 0, 0x4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_SANDBLOCK_BREAK,
+		                                &mPosition);
 		JGeometry::TVec3<f32> particleScale(mScaling.x, mInitialScaling.y,
 		                                    mScaling.z);
 		emitAndScale(0x147, 0x1, &mPosition, particleScale);
@@ -164,8 +164,11 @@ void TLeanBlock::initMapObj()
 	unk140 = 0.01f;
 	unk144 = 0.005f;
 	unk148 = 1.0f;
-	unk138 = (mScaling.x * 100.0f) / 2.0f;
-	unk13C = (mScaling.z * 100.0f) / 2.0f;
+	// The halving is a division, not a `* 0.5f`: MWCC folds `/ 2.0f` into an
+	// `fmuls` that keeps the dividend as the left operand, which is how the
+	// ROM spells it here.
+	unk138 = mScaling.x * 100.0f / 2.0f;
+	unk13C = mScaling.z * 100.0f / 2.0f;
 	calcDefaultMtx();
 }
 
@@ -200,9 +203,6 @@ u32 TIceBlock::getSDLModelFlag() const { return 0; }
 
 u32 TIceBlock::touchWater(THitActor* param_1)
 {
-
-	
-	
 	const JGeometry::TVec3<f32>& speed = getWaterSpeed(param_1);
 
 	int id = getWaterID(param_1);
@@ -211,14 +211,13 @@ u32 TIceBlock::touchWater(THitActor* param_1)
 		                             &param_1->getPosition(), 0, nullptr);
 		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0, 0.0f,
 		                        0, 0, 4);
-		gpMSound->startSoundActor(MSD_SE_OBJ_ICE_BLOCK_MELT, &mPosition, 0,
-		                          nullptr, 0, 4);
+		gpMSound->startSoundActor(MSD_SE_OBJ_ICE_BLOCK_MELT, &mPosition);
 
 		mScaling.x -= mMeltSpeedWater;
 		mScaling.y -= mMeltSpeedWater;
 		mScaling.z -= mMeltSpeedWater;
-		mScaledBodyRadius = mScaling.x * mMapObjData->unk30;
-		mScaling.y        = MsClamp(mScaling.y, 0.01f, mInitialScaling.y);
+		mScaledBodyRadius = mScaling.x * getMapObjData()->unk30;
+		mScaling.y        = MsClamp(mScaling.y, 0.01f, getInitialScaling().y);
 		if (mScaling.x < 0.0f) {
 			makeObjDead();
 		}
@@ -230,19 +229,16 @@ u32 TIceBlock::touchWater(THitActor* param_1)
 
 void TIceBlock::control()
 {
-
-	
-	
 	JPABaseEmitter* emitter
 	    = gpMarioParticleManager->emit(MAPOBJ_ICEBLOCKA, &mPosition, 1, this);
 	if (emitter != nullptr) {
-		emitter->setGlobalDynamicsScale(mScaling);
+		emitter->setGlobalDynamicsScale(getScaling());
 	}
 
 	emitter
 	    = gpMarioParticleManager->emit(MAPOBJ_ICEBLOCKB, &mPosition, 1, this);
 	if (emitter != nullptr) {
-		emitter->setGlobalDynamicsScale(mScaling);
+		emitter->setGlobalDynamicsScale(getScaling());
 	}
 
 	offHitFlag(HIT_FLAG_NO_COLLISION);
@@ -257,8 +253,7 @@ void TIceBlock::control()
 
 		mScaledBodyRadius = mScaling.x * mMapObjData->unk30;
 
-		gpMSound->startSoundActor(MSD_SE_OBJ_ICE_BLOCK_MELT, &mPosition, 0,
-		                          nullptr, 0, 4);
+		gpMSound->startSoundActor(MSD_SE_OBJ_ICE_BLOCK_MELT, &mPosition);
 
 		setObjHitData(0);
 		onHitFlag(HIT_FLAG_NO_COLLISION);
@@ -271,6 +266,8 @@ void TIceBlock::control()
 
 void TIceBlock::calc()
 {
+	// SMS_GetLightPerspectiveForEffectMtx writes row 3 as well, so its
+	// scratch buffer is a 4x4; that is the last 16 bytes of the frame.
 	Mtx44 mtx;
 	SMS_GetLightPerspectiveForEffectMtx(mtx);
 	getModel()
@@ -289,15 +286,11 @@ void TIceBlock::initMapObj()
 
 void TBrickBlock::kill()
 {
-
-	
-	
 	makeObjDead();
 	emitAndScale(0x60, 0, &mPosition);
 	emitAndScale(0x61, 0, &mPosition);
 	emitAndScale(0x62, 0, &mPosition);
-	gpMSound->startSoundActor(MSD_SE_OBJ_CLASSIC_BLOCK_B, &mPosition, 0,
-	                          nullptr, 0, 4);
+	gpMSound->startSoundActor(MSD_SE_OBJ_CLASSIC_BLOCK_B, &mPosition);
 	SMSRumbleMgr->start(0x15, 0x14, &mPosition);
 	appearObj(100.0f);
 }
@@ -344,9 +337,11 @@ void TJuiceBlock::kill()
 	makeObjDead();
 }
 
-#ifdef VERSION_GMSP01
+#if defined(VERSION_GMSP01) || defined(VERSION_GMSE01)
 void TJuiceBlock::touchActor(THitActor* actor)
 {
+	// 0x400002C6 is the juice block's own MapObjInit type word, so a block
+	// only dies to another map object that is not a second juice block.
 	if (actor->checkActorType(ACTOR_TYPE_UNK40000000)
 	    && !actor->isActorType(0x400002C6))
 		kill();
@@ -357,8 +352,8 @@ void TTelesaBlock::initMapObj() { TMapObjBase::initMapObj(); }
 
 void TTelesaBlock::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	mLiveFlag &= ~LIVE_FLAG_UNK200;
-	if (!gpMarDirector->isTalkModeNow()) {
+	offLiveFlag(LIVE_FLAG_UNK200);
+	if (!SMSGetMarDirector()->isTalkModeNow()) {
 		TMapObjBase::perform(cue, graphics);
 	} else {
 		if (cue & CUE_MOVE) {
@@ -369,24 +364,19 @@ void TTelesaBlock::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_CALC_ANIM) {
 
-		// TODO: Possibly more TRotation3f inlines?
+		// The second scale really re-reads the member: routing it through
+		// `scale` too costs an instruction and four points.
 		TRotation3f mtx;
 		mtx.ref(0, 3) = 0.0f;
 		mtx.ref(1, 3) = 0.0f;
 		mtx.ref(2, 3) = 0.0f;
-		mtx.setScale(unk140.x, unk140.y, unk140.z);
-		MTXConcat(getModel()->getAnmMtx(1), mtx, getModel()->getAnmMtx(1));
+		const JGeometry::TVec3<f32>& scale = getUnk140();
+		mtx.setScale(scale.x, scale.y, scale.z);
+		PSMTXConcat(getModel()->getAnmMtx(1), mtx, getModel()->getAnmMtx(1));
 
 		mtx.setScale(unk140.y, unk140.y, unk140.z);
-		MTXConcat(getModel()->getAnmMtx(0), mtx, getModel()->getAnmMtx(0));
+		PSMTXConcat(getModel()->getAnmMtx(0), mtx, getModel()->getAnmMtx(0));
 	}
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
 void TTelesaBlock::setGroundCollision()
@@ -402,16 +392,12 @@ void TTelesaBlock::setGroundCollision()
 
 BOOL TSuperHipDropBlock::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	if (message == HIT_MESSAGE_SUPER_HIP_DROP) {
 		kill();
 		if (mMonteBlockBroken)
 			TFlagManager::getInstance()->setBool(true, 0x1038C);
 
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_SUPERBLOCK_BREAK, &mPosition,
-		                                0, nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_SUPERBLOCK_BREAK, &mPosition);
 		return TRUE;
 	}
 	return FALSE;

@@ -1,6 +1,8 @@
 #ifndef JUT_RECT_HPP
 #define JUT_RECT_HPP
 
+class JUTPoint;
+
 class JUTRect {
 public:
 	JUTRect() { set(0, 0, 0, 0); }
@@ -10,8 +12,10 @@ public:
 
 	void set(int, int, int, int);
 	void copy(const JUTRect&);
+	void add(const JUTPoint&);
 	void add(int, int);
 	bool intersect(const JUTRect&);
+	void move(const JUTPoint&);
 	void move(int, int);
 	void resize(int, int);
 	void reform(int, int, int, int);

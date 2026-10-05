@@ -15,7 +15,11 @@
 
 extern void InitMetroTRK();
 
-#ifdef VERSION_GMSP01
+// Linker-computed and therefore region-specific; marioUS.MAP gives
+// _stack_addr 0x804277e8 for GMSE01.
+#if defined(VERSION_GMSE01)
+__declspec(section ".init") extern char _stack_addr[] AT_ADDRESS(0x804277e8);
+#elif defined(VERSION_GMSP01)
 __declspec(section ".init") extern char _stack_addr[] AT_ADDRESS(0x8041ED48);
 #else
 __declspec(section ".init") extern char _stack_addr[] AT_ADDRESS(0x80424008);

@@ -58,21 +58,18 @@ TRoulette::TRoulette(const char* name)
     , unk144(0.2f)
     , unk150(nullptr)
 {
-
-	
-	
-	unk148.r = 0;
-	unk148.g = 0;
-	unk148.b = 0;
-	unk148.a = 255;
-	if (SMSGetApplication()->mCurrArea.getStage() == 14
-	    && gpMarDirector->getCurrentStage() == 1) {
-		unk141   = 1;
-		unk148.b = 255;
+	unk148 = 0;
+	unk14A = 0;
+	unk14C = 0;
+	unk14E = 255;
+	if (gpApplication.mCurrArea.getStage() == 14
+	    && SMSGetMarDirectorBound()->getCurrentStage() == 1) {
+		unk141 = 1;
+		unk14C = 255;
 	}
-	if (SMSGetApplication()->mCurrArea.getStage() == 56) {
-		unk148.b = 255;
-		unk142   = 1;
+	if (gpApplication.mCurrArea.getStage() == 56) {
+		unk14C = 255;
+		unk142 = 1;
 	}
 }
 
@@ -85,18 +82,18 @@ void TRoulette::initMapObj()
 		           "_switch")
 		    != nullptr) {
 			SMS_InitPacket_OneTevColor(getMActor()->getModel(), i, GX_TEVREG0,
-			                           &unk148);
+			                           (GXColorS10*)&unk148);
 		}
 	}
 
 	unk150 = new TRouletteSw(this, "ルーレットスイッチ");
 
-	TIdxGroupObj* objGroup = static_cast<TIdxGroupObj*>(
-	    JDrama::TNameRefGen::search("オブジェクトグループ"));
-	objGroup->getChildren().push_back(unk150);
+	TIdxGroupObj* group = JDrama::TNameRefGen::search<TIdxGroupObj>("オブジェクトグループ");
+	group->getChildren()
+	    .push_back(unk150);
 	f32 attackR = 500.0f;
 	f32 attackH = 100.0f;
-	if (SMSGetApplication()->mCurrArea.getStage() == 14) {
+	if (gpApplication.mCurrArea.getStage() == 14) {
 		attackR = 40.0f;
 		attackH = 80.0f;
 	}
@@ -109,6 +106,13 @@ void TRoulette::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TMapObjBase::perform(cue, graphics);
 	unk150->perform(cue, graphics);
+}
+
+/// Binds the roulette's model before the hit box is pinned to its joint.
+static inline MActor* bindMActor(TRoulette* obj)
+{
+	MActor* actor = obj->mMActor;
+	return actor;
 }
 
 void TRoulette::moveObject()
@@ -125,8 +129,10 @@ void TRoulette::moveObject()
 		mPosition.y -= 1.0f;
 	}
 
-	MtxPtr jnt = mMActor->getModel()->getAnmMtx(1);
-	unk150->mPosition.set(jnt[0][3], mPosition.y - 100.0f, jnt[2][3]);
+	MtxPtr jnt = bindMActor(this)->getModel()->getAnmMtx(1);
+	JGeometry::TVec3<f32> hitPos;
+	hitPos.set(jnt[0][3], mPosition.y - 100.0f, jnt[2][3]);
+	unk150->mPosition.set(hitPos);
 }
 
 void TRoulette::calcRootMatrix()
@@ -140,33 +146,38 @@ void TRoulette::calcRootMatrix()
 void TRoulette::setRollSp(f32 sp)
 {
 	unk13C        = sp;
-	unk148.r      = 0;
-	unk148.g      = 0;
-	unk148.b      = 255;
+	unk148        = 0;
+	unk14A        = 0;
+	unk14C        = 255;
 	unk150->unk6C = 0;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TRoulette::switchStop (batch 127).
+static inline TRouletteSw* MapObjSirenaUnk150(const TRoulette* p)
+{
+	TRouletteSw* v150 = p->unk150;
+	return v150;
 }
 
 void TRoulette::switchStop()
 {
-
-	
-	
-	if (unk150->unk6C != 0) {
+	if (MapObjSirenaUnk150(this)->unk6C != 0) {
 		if (SMS_GetMarioPos().y < 20.0f + SMS_GetMarioGrLevel()
 		    && unk13C != 0.0f) {
 			unk150->unk6C = 0;
 			unk13C        = 0.0f;
-			unk148.r      = 0;
-			unk148.g      = 0;
-			unk148.b      = 0;
+			unk148        = 0;
+			unk14A        = 0;
+			unk14C        = 0;
 			SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_RLT_STOP,
 			                                &mPosition, 0, nullptr, 0, 4);
 		}
 		if (unk150->unk6C != 0 && unk141 != 0) {
 			unk150->unk6C = 0;
-			unk148.r      = 0;
-			unk148.g      = 0;
-			unk148.b      = 0;
+			unk148        = 0;
+			unk14A        = 0;
+			unk14C        = 0;
 			SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_RLT_STOP,
 			                                &mPosition, 0, nullptr, 0, 4);
 			unk140 = 1;
@@ -174,13 +185,24 @@ void TRoulette::switchStop()
 	}
 }
 
+// TODO: 99.3%. The named model pointer is retail's 4-byte named slot above the
+// two matrices; the one residue is `mr r4, r31` in retail against our
+// `addi r4, r31, 0` for the decremented joint index. Tried: s32/u32/u16/s16
+// index, `jntNo--`, `-= 1`, `= jntNo - 1`, `jntNo - 1` at each call, a
+// separate `int idx`, a named J3DJoint*, a named gpCurObject receiver, a
+// second getJntNo() read; all equal or worse.
+// c-k8: the `addi` is the post-RA peephole's respelling of a `mr` followed
+// (pre-RA schedule) by an integer add, here the jntMtx `add r30,r5,r0`; the
+// two later `mr r4, r31` follow an `fmr` and stay `mr`. Moving `--jntNo`
+// after setTrans, after setScale or before the TPosition3f is inert.
 static int partsRollCallback(J3DNode* node, int flag)
 {
 	if (flag == 0) {
 		if (gpCurObject == nullptr)
 			return 1;
-		int jntNo     = ((J3DJoint*)node)->getJntNo();
-		MtxPtr jntMtx = gpCurObject->getModel()->getAnmMtx(jntNo);
+		int jntNo       = ((J3DJoint*)node)->getJntNo();
+		J3DModel* model = gpCurObject->getModel();
+		MtxPtr jntMtx   = model->getAnmMtx(jntNo);
 
 		--jntNo;
 
@@ -225,12 +247,9 @@ TSlotDrum::TSlotDrum(const char* name)
 
 void TSlotDrum::initMapObj()
 {
-
-	
-	
 	unk148 = 3;
 	unk14C = 400.0f;
-	unk150 = mPosition.y;
+	unk150 = getPosition().y;
 	unk194 = false;
 	unk154 = 2.0f;
 	unk158 = 10.0f;
@@ -252,10 +271,10 @@ void TSlotDrum::initMapObj()
 		; // assert?
 
 	for (int i = 1; i <= unk148; ++i)
-		mMActor->setJointCallback(i, partsRollCallback);
+		getMActor()->setJointCallback(i, partsRollCallback);
 
-	unk140 = mDamageRadius / 3.0f;
-	unk144 = mDamageHeight;
+	unk140 = getDamageRadius() / 3.0f;
+	unk144 = getDamageHeight();
 	initNeonMatColor();
 }
 
@@ -268,11 +287,18 @@ void TSlotDrum::initNeonMatColor()
 		unk170[i].b = 255;
 		unk170[i].a = 255;
 		SMS_InitPacket_OneTevColor(
-		    mMActor->getModel(),
+		    getMActor()->getModel(),
 		    getModel()->getModelData()->getMaterialName()->getIndex(
 		        matNames[i]),
 		    GX_TEVREG0, &unk170[i]);
 	}
+}
+
+/// Binding level over the sound singleton (batch 370: +8 of low frame per site).
+static inline MSound* MapObjSirenaSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
 }
 
 void TSlotDrum::moveObject()
@@ -282,23 +308,15 @@ void TSlotDrum::moveObject()
 	for (int i = 0; i < unk148; ++i) {
 		if (unk138[i] != 0.0f) {
 			unk188[i] += fabsf(unk138[i]);
-			// TODO: 80.9%. The ROM does NOT divide here. It builds the
-			// int-to-double idiom 2^52+unk168 on the stack and subtracts a
-			// double constant (lfd f30, used exactly once in the function),
-			// then compares with cror eq,gt,eq. Both objects carry identical
-			// .sdata2 constants (360/180/2.5/...), so the operands agree and
-			// only the expression shape differs. The exact double could not
-			// be resolved (objdump shows 0(0); the sda21 reloc is unapplied),
-			// so the formula is left as-is rather than guessed.
-			if (unk188[i] > 360.0f / (f32)unk168) {
+			if (unk188[i] >= (f32)unk168) {
 				unk188[i] = 0.0f;
 				switch (i) {
 				case 0:
-					SMSGetMSound()->startSoundActor(
+					MapObjSirenaSound()->startSoundActor(
 					    MSD_SE_OBJ_SLOT_INC_L, &mPosition, 0, nullptr, 0, 4);
 					break;
 				case 1:
-					SMSGetMSound()->startSoundActor(
+					MapObjSirenaSound()->startSoundActor(
 					    MSD_SE_OBJ_SLOT_INC_C, &mPosition, 0, nullptr, 0, 4);
 					break;
 				case 2:
@@ -325,6 +343,29 @@ void TSlotDrum::moveObject()
 					unk13C[i] += 360.0f;
 				if ((int)fabsf(unk13C[i]) % unk168 == 0) {
 					unk138[i] = 0.0f;
+					// The drum stops mid-click: the ROM plays the tick
+					// once more and clears the accumulator before it
+					// recolours the reel.
+					if (unk188[i] != 0.0f) {
+						switch (i) {
+						case 0:
+							SMSGetMSound()->startSoundActor(
+							    MSD_SE_OBJ_SLOT_INC_L, &mPosition, 0,
+							    nullptr, 0, 4);
+							break;
+						case 1:
+							SMSGetMSound()->startSoundActor(
+							    MSD_SE_OBJ_SLOT_INC_C, &mPosition, 0,
+							    nullptr, 0, 4);
+							break;
+						case 2:
+							SMSGetMSound()->startSoundActor(
+							    MSD_SE_OBJ_SLOT_INC_R, &mPosition, 0,
+							    nullptr, 0, 4);
+							break;
+						}
+						unk188[i] = 0.0f;
+					}
 					if (unk13C[i] < (f32)unk168) {
 						unk170[i].r = 255;
 						unk170[i].g = 255;
@@ -341,13 +382,15 @@ void TSlotDrum::moveObject()
 						for (int j = 0; j < unk148; ++j) {
 							if (i == j)
 								continue;
-							if (unk138[j] != 0.0f)
-								return;
-							if ((unk13C[j] >= (f32)unk168
-							     && unk13C[j] > 360.0f))
+							// One `||` with the reel-range test as its last
+							// term: that is what leaves retail's unfused
+							// `bge next; b epilogue` pair.
+							if (unk138[j] != 0.0f
+							    || (unk13C[j] >= (f32)unk168
+							        && unk13C[j] < 360.0f))
 								return;
 						}
-						MSBgm::startBGM(MSD_BGM_FANFARE_RACE);
+						MSBgm::startBGM(MSD_BGM_FANFARE_CASINO);
 						unk194 = true;
 					}
 				}
@@ -412,6 +455,23 @@ void TItemSlotDrum::loadAfter()
 		TMapObjBaseManager::newAndRegisterObj("coin");
 }
 
+/// Reads one drum's roll speed; retail re-reads the array base at every site.
+static inline f32 drumRollSpeed(const TSirenaRollMapObj* drum, int idx)
+{
+	f32 speed = drum->unk138[idx];
+	return speed;
+}
+
+// TODO: 99.97%, slot-only. Retail parks each of the three TMsRange
+// temporaries with a 4-byte word above it (s32 range 0x54, f32(0,100) 0x48,
+// f32(0,1) 0x3c); ours packs them (0x50/0x48/0x40) with 8 of slack under the
+// 0x60 conversion buffer. A `static inline bool` that names the (0,1) draw and
+// returns the `<= 0.9f` test lands the two float ranges; a void helper for
+// the `unk19C[...] = true` store lands the s32 range; no combination lands
+// all three (the (0,100) range stays 4 high). Inert: named/`int`/`u8`/`s32`
+// index, `f32 v` declared early, direct-return and named-result rand forks,
+// a TMsRange taken by `const&`, forks over unk1A4/unk1A8, the if/else chain in
+// a helper, alternative TMsRange::rand() bodies (header, measured only).
 void TItemSlotDrum::moveObject()
 {
 	TLiveActor::moveObject();
@@ -465,15 +525,17 @@ void TItemSlotDrum::moveObject()
 					SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_SLT_STOP,
 					                                &mPosition, 0, nullptr, 0,
 					                                4);
-					bool allStopped = 0.0f == unk138[0] && 0.0f == unk138[1]
-					                  && 0.0f == unk138[2];
+					bool allStopped = true;
+					for (int k = 0; k < 3; ++k)
+						if (0.0f != drumRollSpeed(this, k))
+							allStopped = false;
 					if (allStopped) {
 						unk1A2 = true;
 						generateItem();
 					}
 					for (int j = 0; j < unk148; ++j) {
 						if (unk19F[j]) {
-							if (TMsRange<f32>(0.0f, 1.0f).rand() < 0.9f)
+							if (TMsRange<f32>(0.0f, 1.0f).rand() <= 0.9f)
 								unk19C[j] = true;
 							else
 								unk19F[j] = false;
@@ -514,9 +576,17 @@ void TItemSlotDrum::calcRootMatrix()
 	model->setBaseScale(mScaling);
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TItemSlotDrum::touchWater (batch 127).
+static inline bool MapObjSirenaUnk194(const TItemSlotDrum* p)
+{
+	bool v194 = p->unk194;
+	return v194;
+}
+
 u32 TItemSlotDrum::touchWater(THitActor* water)
 {
-	if (unk194 || !unk1A2)
+	if (MapObjSirenaUnk194(this) || !unk1A2)
 		return 1;
 
 	unk1A4 = TMsRange<s32>(100, 150).rand();
@@ -530,21 +600,34 @@ u32 TItemSlotDrum::touchWater(THitActor* water)
 	return 1;
 }
 
+// TODO: 96.1%, frame size agrees. Left: the Telesa arm's MsMtxSetRotY loads
+// its 0.0f/1.0f/300.0f literals late in retail (the MathUtil.hpp header note);
+// the GPR colouring differs
+// (retail: this r29, getSlotResult's temps r25/r26/r30, coin-loop &m r25).
+// Both rotations go through a named MtxPtr for MsMtxSetRotY and MTXMultVec
+// (94.5 -> 96.0); either site alone is 95.6/94.9, and a TMtx34f or passing
+// the array to MTXMultVec is inert.
+// getDrumResult naming the angle keeps getResultFromAng a `bl` here and in
+// getSlotResult (both now at their map sizes), as in retail.
+// The named `pos` reference for makeOneEnemyAppear puts every stack slot at
+// retail's offset (they sat 4 low with `getPosition()` in the call; c-t6).
 void TItemSlotDrum::generateItem()
 {
 	if (getSlotResult() == 0) {
-		MSBgm::startBGM(MSD_BGM_FANFARE_RACE);
+		MSBgm::startBGM(MSD_BGM_FANFARE_CASINO);
 		unk194 = true;
 		return;
 	}
 	if (getSlotResult() == 1) {
+		const JGeometry::TVec3<f32>& pos = getPosition();
 		TTelesa* item = (TTelesa*)gpConductor->makeOneEnemyAppear(
-		    mPosition, "テレサマネージャー", 1);
+		    pos, "テレサマネージャー", 1);
 		if (item != nullptr) {
 			Mtx m;
-			MsMtxSetRotY(m, mRotation.x);
+			MtxPtr mp = m;
+			MsMtxSetRotY(mp, mRotation.y);
 			JGeometry::TVec3<f32> off(0.0f, -350.0f, 300.0f);
-			MTXMultVec(m, &off, &off);
+			MTXMultVec(mp, &off, &off);
 			item->mPosition += off;
 			item->initItemAttacker(this);
 		}
@@ -559,18 +642,19 @@ void TItemSlotDrum::generateItem()
 		}
 		for (int i = 0; i < count; ++i) {
 			Mtx m;
-			MsMtxSetRotY(m, spread * ((f32)i - 1.0f) + (mRotation.x - spread));
+			MtxPtr mp = m;
+			MsMtxSetRotY(mp, spread * (f32)i + (mRotation.y - spread));
 			JGeometry::TVec3<f32> off(0.0f, -350.0f, 200.0f);
-			MTXMultVec(m, &off, &off);
+			MTXMultVec(mp, &off, &off);
 			TMapObjBase* item = gpItemManager->makeObjAppear(
 			    mPosition.x + off.x, mPosition.y, mPosition.z + off.z,
 			    0x2000000E, false);
 			if (item != nullptr) {
 				item->mPosition += off;
 				MsVECNormalize(&off, &off);
-				item->mVelocity.x = 12.0f * off.x;
-				item->mVelocity.y = TMsRange<f32>(5.0f, 10.0f).rand();
-				item->mVelocity.z = 12.0f * off.z;
+				item->mVelocity.set(12.0f * off.x,
+				                    TMsRange<f32>(5.0f, 10.0f).rand(),
+				                    12.0f * off.z);
 				item->offLiveFlag(LIVE_FLAG_UNK10);
 			}
 		}
@@ -590,12 +674,20 @@ int TItemSlotDrum::getSlotResult()
 	return result;
 }
 
-int TItemSlotDrum::getDrumResult(int i) { return getResultFromAng(unk13C[i]); }
+int TItemSlotDrum::getDrumResult(int i)
+{
+	f32 ang = unk13C[i];
+	return getResultFromAng(ang);
+}
 
 int TItemSlotDrum::getForcastResult(int idx)
 {
 	f32 angle = unk13C[idx];
 	f32 speed = unk138[idx];
+	// The ROM caps the simulation at 10001 steps rather than spinning forever.
+	// The cap is its own bottom-of-loop test, and the rounded angle is written
+	// back before the break, so the give-up path returns the unrounded angle.
+	int i = 0;
 	for (;;) {
 		if (fabsf(speed) > unk160) {
 			angle += speed;
@@ -613,11 +705,17 @@ int TItemSlotDrum::getForcastResult(int idx)
 				angle -= 360.0f;
 			if (angle <= 0.0f)
 				angle += 360.0f;
-			if ((int)fabsf(angle) % unk168 == 0)
+			if ((int)fabsf(angle) % unk168 == 0) {
+				angle = (int)(angle / unk168) * unk168;
 				break;
+			}
 		}
+
+		if (++i > 10000)
+			break;
 	}
-	return getResultFromAng((int)(angle / unk168) * unk168);
+
+	return getResultFromAng(angle);
 }
 
 int TItemSlotDrum::getResultFromAng(f32 ang)
@@ -662,21 +760,18 @@ void TCasinoPanelGate::initMapObj()
 
 void TCasinoPanelGate::moveObject()
 {
-
-	
-	
 	TLiveActor::moveObject();
 	mPosition.y = unk150 - unk14C;
 	if (unk16D) {
 		J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
 		if (fc->getFrame() < (f32)fc->getEnd() - 8.0f) {
-			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_PANELPUZZLE_OPEN, 0,
+			MapObjSirenaSound()->startSoundSystemSE(MSD_SE_SY_PANELPUZZLE_OPEN, 0,
 			                                   nullptr, 0);
 		}
 
 		if (unk16C == 0 && fc->checkPass((f32)fc->getEnd() - 2.0f)) {
 			unk16C = 1;
-			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0,
+			MapObjSirenaSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0,
 			                                   nullptr, 0);
 		}
 	} else {
@@ -735,7 +830,7 @@ void TCasinoPanelGate::moveObject()
 		if (allOpen) {
 			unk16D = true;
 			mMActor->setBck("pazul");
-			MSBgm::startBGM(MSD_BGM_FANFARE_RACE);
+			MSBgm::startBGM(MSD_BGM_FANFARE_CASINO);
 			SMSGetMSound()->startSoundActor(MSD_SE_SY_COLLECT_DELIGHT,
 			                                &mPosition, 0, nullptr, 0, 4);
 			removeMapCollision();
@@ -761,7 +856,7 @@ u32 TCasinoPanelGate::touchWater(THitActor* water)
 	if (fabsf(mPosition.z - water->mPosition.z) < 50.0f) {
 		unk164 = 1;
 		int idx;
-		if (water->mPosition.y > 3.0f * unk144 + mPosition.y) {
+		if (water->mPosition.y > mPosition.y + 3.0f * unk144) {
 			if (water->mPosition.x < mPosition.x - unk140)
 				idx = 12;
 			else if (water->mPosition.x < mPosition.x)
@@ -770,9 +865,9 @@ u32 TCasinoPanelGate::touchWater(THitActor* water)
 				idx = 15;
 			else
 				idx = 14;
-			if (water->mPosition.y < 3.5f * unk144 + mPosition.y)
+			if (water->mPosition.y < mPosition.y + 3.5f * unk144)
 				unk164 = -1;
-		} else if (water->mPosition.y > 2.0f * unk144 + mPosition.y) {
+		} else if (water->mPosition.y > mPosition.y + 2.0f * unk144) {
 			if (water->mPosition.x < mPosition.x - unk140)
 				idx = 8;
 			else if (water->mPosition.x < mPosition.x)
@@ -781,7 +876,7 @@ u32 TCasinoPanelGate::touchWater(THitActor* water)
 				idx = 11;
 			else
 				idx = 10;
-			if (water->mPosition.y < 2.5f * unk144 + mPosition.y)
+			if (water->mPosition.y < mPosition.y + 2.5f * unk144)
 				unk164 = -1;
 		} else if (water->mPosition.y > mPosition.y + unk144) {
 			if (water->mPosition.x < mPosition.x - unk140)
@@ -792,7 +887,7 @@ u32 TCasinoPanelGate::touchWater(THitActor* water)
 				idx = 7;
 			else
 				idx = 6;
-			if (water->mPosition.y < 1.5f * unk144 + mPosition.y)
+			if (water->mPosition.y < mPosition.y + 1.5f * unk144)
 				unk164 = -1;
 		} else {
 			if (water->mPosition.x < mPosition.x - unk140)
@@ -803,7 +898,7 @@ u32 TCasinoPanelGate::touchWater(THitActor* water)
 				idx = 3;
 			else
 				idx = 2;
-			if (water->mPosition.y < 0.5f * unk144 + mPosition.y)
+			if (water->mPosition.y < mPosition.y + 0.5f * unk144)
 				unk164 = -1;
 		}
 		unk138[idx] += unk154 * unk164;
@@ -842,13 +937,19 @@ void TDonchou::initMapObj()
 void TDonchou::loadAfter()
 {
 	TMapObjBase::loadAfter();
-	if (SMSGetApplication()->mCurrArea.getStage() == 14
+	if (gpApplication.mCurrArea.getStage() == 14
 	    && SMSGetMarDirector()->getCurrentStage() == 0) {
-		unk144
-		    = static_cast<TSlotDrum*>(JDrama::TNameRefGen::search("srotdram"));
-		unk148 = static_cast<TItemSlotDrum*>(
-		    JDrama::TNameRefGen::search("itemsrotdram"));
+		unk144 = JDrama::TNameRefGen::search<TSlotDrum>("srotdram");
+		unk148 = JDrama::TNameRefGen::search<TItemSlotDrum>("itemsrotdram");
 	}
+}
+
+/// Binding level over the director singleton (batch 370: +8 of low frame per
+/// site, like the sound one).
+static inline TMarDirector* MapObjSirenaDirector()
+{
+	TMarDirector* d = SMSGetMarDirector();
+	return d;
 }
 
 void TDonchou::calcRootMatrix()
@@ -863,25 +964,27 @@ void TDonchou::calcRootMatrix()
 	if (unk144 != nullptr && unk144->unk194 && unk148->unk194)
 		unk13C = 1;
 	if (unk13C != 0) {
-		// The ROM gates the whole counter block on the game being in talk mode
-		// (unk124 == 1 || == 2) and trips at 20, not 100.
-		if (SMSGetMarDirector()->isTalkModeNow()) {
+		// The curtain only counts down while nobody is talking, and it
+		// freezes Mario's stick for as long as it is still counting.
+		if (!MapObjSirenaDirector()->isTalkModeNow())
 			unk14C++;
-			if (unk14C > 20) {
-				if (mMActor->checkCurAnm("donchou", ANM_TYPE_BCK)) {
-					if (mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
-						unk138->remove();
-				} else {
-					SMSGetMSound()->startSoundActor(MSD_SE_SY_DONCHO_OPEN,
-					                                &mPosition, 0, nullptr, 0, 4);
-					mMActor->setBck("donchou");
-					SMSGetMarDirector()->fireStartDemoCamera(
-					    "どん帳カメラ", &mPosition, -1, 0.0f, true, nullptr, 0,
-					    nullptr, JDrama::TFlagT<u16>(0));
-					J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-					fc->setRate(0.5f * fc->getRate());
-				}
+		if (unk14C > 20) {
+			if (mMActor->checkCurAnm("donchou", ANM_TYPE_BCK)) {
+				if (mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
+					unk138->remove();
+			} else {
+				MapObjSirenaSound()->startSoundActor(MSD_SE_SY_DONCHO_OPEN,
+				                                &mPosition, 0, nullptr, 0, 4);
+				mMActor->setBck("donchou");
+				MapObjSirenaDirector()->fireStartDemoCamera(
+				    "どん帳カメラ", &mPosition, -1, 0.0f, true, nullptr, 0,
+				    nullptr, JDrama::TFlagT<u16>(0));
+				J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+				fc->setRate(0.5f * fc->getRate());
 			}
+		} else if (!MapObjSirenaDirector()->isTalkModeNow()) {
+			gpMarioOriginal->mGamePad->onNeutralMarioKey();
+			gpMarioOriginal->mGamePad->mDisabledFrames = 5;
 		}
 	}
 }
@@ -962,7 +1065,7 @@ void TCloset::moveObject()
 						wrapped = true;
 					}
 					if (wrapped)
-						SMSGetMSound()->startSoundActorWithInfo(
+						MapObjSirenaSound()->startSoundActorWithInfo(
 						    MSD_SE_OBJ_TEL_CLOSET_ROLL, &mPosition, nullptr,
 						    fabsf(unk138[i]), 0, 0, nullptr, 0, 4);
 				} else {
@@ -982,14 +1085,13 @@ void TCloset::moveObject()
 						    fabsf(unk138[i]), 0, 0, nullptr, 0, 4);
 					if ((int)fabsf(unk13C[i]) % 180 == 0) {
 						unk138[i] = 0.0f;
-						if (unk13C[i] < 180.0f || unk13C[i] == 360.0f) {
+						if (unk13C[i] <= 180.0f || unk13C[i] >= 360.0f) {
 							for (int j = 0; j < unk148; ++j) {
 								if (i == j)
 									continue;
-								if (unk138[j] != 0.0f)
-									return;
-								if (!(unk13C[j] < 180.0f
-								      || unk13C[j] >= 360.0f))
+								if (unk138[j] != 0.0f
+								    || (unk13C[j] >= 180.0f
+								        && unk13C[j] < 360.0f))
 									return;
 							}
 							unk16C = 1;
@@ -1011,7 +1113,7 @@ void TCloset::calcRootMatrix()
 	MsMtxSetXYZRPH(mtx, mPosition.x, mPosition.y + unk14C, mPosition.z,
 	               mRotation.x, mRotation.y, mRotation.z);
 	model->setBaseTRMtx(mtx);
-	model->setBaseScale(mScaling);
+	model->setBaseScale(getScaling());
 	mtx.ref(1, 3) += unk14C;
 	if (unk16C != 0 && mMActor->checkCurAnm("closetopen", ANM_TYPE_BCK)
 	    && mMActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr))
@@ -1023,9 +1125,8 @@ u32 TCloset::touchWater(THitActor* water)
 	if (unk16C != 0)
 		return 0;
 	if (fabsf(mPosition.x - water->mPosition.x) < 50.0f) {
-		f32 halfDepth = 1.1f * unk140;
 		int idx;
-		if (water->mPosition.z < mPosition.z - halfDepth) {
+		if (water->mPosition.z < mPosition.z - 1.1f * unk140) {
 			idx = 0;
 			if (mRotation.y < 0.0f)
 				idx = 3;
@@ -1033,7 +1134,7 @@ u32 TCloset::touchWater(THitActor* water)
 			idx = 1;
 			if (mRotation.y < 0.0f)
 				idx = 2;
-		} else if (water->mPosition.z < mPosition.z + halfDepth) {
+		} else if (water->mPosition.z < mPosition.z + 1.1f * unk140) {
 			idx = 2;
 			if (mRotation.y < 0.0f)
 				idx = 1;
@@ -1077,8 +1178,7 @@ void TSakuCasino::initMapObj()
 void TSakuCasino::loadAfter()
 {
 	TMapObjBase::loadAfter();
-	unk144
-	    = static_cast<TCasinoPanelGate*>(JDrama::TNameRefGen::search("pazul"));
+	unk144 = JDrama::TNameRefGen::search<TCasinoPanelGate>("pazul");
 }
 
 void TSakuCasino::calcRootMatrix()
@@ -1180,12 +1280,17 @@ TWarpAreaActor::TWarpAreaActor(const char* name)
 {
 }
 
+// Binding level worth +8 of low region, landing TChestRevolve::touchWater's
+// frame at 0x20 (batch 124).
+static inline bool MapObjSirenaIsState(TChestRevolve* p, u32 i)
+{
+	bool state = p->isState(i);
+	return state;
+}
+
 u32 TChestRevolve::touchWater(THitActor* actor)
 {
-
-	
-	
-	if (isState(STATE_NORMAL)) {
+	if (MapObjSirenaIsState(this, STATE_NORMAL)) {
 		mState = STATE_REVOLVING;
 		startAnim(1);
 		setUpMapCollision(1);
@@ -1210,12 +1315,8 @@ void TChestRevolve::control()
 
 BOOL TPanelRevolve::receiveMessage(THitActor* actor, u32 message)
 {
-
-	
-	
 	if (isState(STATE_NORMAL)) {
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_PANEL_ROLL, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_PANEL_ROLL, &mPosition);
 		mState = STATE_REVOLVING;
 		startAnim(1);
 		removeMapCollision();
@@ -1225,12 +1326,8 @@ BOOL TPanelRevolve::receiveMessage(THitActor* actor, u32 message)
 
 void TPanelRevolve::touchPlayer(THitActor* actor)
 {
-
-	
-	
 	if (marioHipAttack() && isState(STATE_NORMAL)) {
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_PANEL_ROLL, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_PANEL_ROLL, &mPosition);
 		mState = STATE_REVOLVING;
 		startAnim(1);
 		removeMapCollision();
@@ -1254,27 +1351,44 @@ void TPanelRevolve::control()
 
 void TPictureTelesa::afterFinishedAnim()
 {
-
-	
-	
 	TWaterHitPictureHideObj::afterFinishedAnim();
 	if (isActorType(0x400001A2)) {
 		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr,
 		                                   0);
-		SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_V_LAUGH2, &mPosition,
-		                                0, nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_V_LAUGH2, &mPosition);
 	}
 }
 
+// Squared distance for TPictureTelesa::touchActor: named products for x and y
+// and the in-place `dz` are what reproduce retail's FPR assignment (a 216-way
+// grid over `d = a - b` / `d = a; d -= b` and in-place / named / inline
+// squares per axis; only this one is register-exact).
+static inline f32 PictureTelesaSquaredDist(const JGeometry::TVec3<f32>& a,
+                                           const JGeometry::TVec3<f32>& b)
+{
+	f32 dx = a.x - b.x;
+	f32 dy = a.y - b.y;
+	f32 dz = a.z;
+	dz -= b.z;
+	f32 sx = dx * dx;
+	f32 sy = dy * dy;
+	dz *= dz;
+	return sx + sy + dz;
+}
+
+// The six-argument sound call (no two-argument wrapper's `sound` local) is
+// what gives retail's 0x28 frame.
 void TPictureTelesa::touchActor(THitActor* actor)
 {
 	TWaterHitPictureHideObj::touchActor(actor);
 	if (isActorType(0x400001A2) && !unk174 && isState(STATE_FINISHED)
 	    && !isStateTimerEngaged()) {
-		if (actor->mPosition.distance(mPosition) < 200.0f) {
+		if (JGeometry::TUtil<f32>::sqrt(
+		        PictureTelesaSquaredDist(actor->mPosition, mPosition))
+		    < 200.0f) {
 			startStateTimer(60);
-			SMSGetMSound()->startSoundActor(MSD_SE_BS_TELESA_DISAPPEAR,
-			                                &mPosition, 0, nullptr, 0, 4);
+			SMSGetMSound()->startSoundActor(
+			    MSD_SE_BS_TELESA_DISAPPEAR, &mPosition, 0, nullptr, 0, 4);
 			unk174 = true;
 		}
 	}

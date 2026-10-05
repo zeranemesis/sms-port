@@ -31,6 +31,13 @@ public:
 		this->identity33();
 		this->setTrans(x, y, z);
 	}
+	// Ruled out (header round 12): spelling the body
+	// `setTrans(t.x, t.y, t.z)`, which is +8 of frame on
+	// TTalkCursor::associateNPC with no instruction change. Applied
+	// project-wide it costs TFireWanwanTailHit::init 96.14 -> 94.80,
+	// TFireWanwanTailHit::moveRequest 99.38 -> 93.96 and
+	// TFireWanwan::init 99.89 -> 97.43, and associateNPC's own score does not
+	// move.
 	void translation(const TVec3<f32>& translation)
 	{
 		this->identity33();
@@ -61,6 +68,17 @@ public:
 	void setQT(const TQuat4<f32>& quat, const TVec3<f32>& trans)
 	{
 		this->setQuat(quat);
+		this->setTrans(trans);
+	}
+	// The scaled sibling of setQT. It is never emitted (no symbol in the map),
+	// but it is the level that keeps TRotation3::setSQ a `bl` at the one place
+	// the ROM calls it out of line, TBeeHive::calcRootMatrix -- setSQ inlines
+	// at depth 1 however it is spelled, and this one-line forwarder is what
+	// pushes it to depth 2.
+	void setSQT(const TVec3<f32>& scale, const TQuat4<f32>& quat,
+	            const TVec3<f32>& trans)
+	{
+		this->setSQ(scale, quat);
 		this->setTrans(trans);
 	}
 

@@ -8,25 +8,16 @@
 class J3DModel;
 class TMapStaticObj;
 
-// NOTE: seems like they wrote something weird for these vars...
+// Defined in the header, as retail shows: every TU that includes this keeps
+// its own copy of both strings, while the map lists one global (the linker
+// keeps lensflare's definition and drops the rest). A PC build must give
+// these internal or weak linkage; the GameCube build keeps retail's form.
 extern const char* cSunVolumeName    = "/scene/sun";
 extern const char* cSunsetVolumeName = "/scene/sunset";
 
-// TODO: fabricated name. The ROM keeps the address of the sun's screen
-// position live across the four comparisons (`lfsu`/`addi` + `0x4(rX)` in
-// TLensFlare::perform), i.e. the point is passed by reference, so this is a
-// free function taking the point rather than a TSunModel member.
-inline bool sunPosInBounds(const JGeometry::TVec2<f32>& pos, f32 bounds)
-{
-	return -bounds <= pos.x && pos.x <= bounds && -bounds <= pos.y
-	               && pos.y <= bounds
-	           ? true
-	           : false;
-}
-
 class TSunModel : public JDrama::TActor {
 public:
-	TSunModel(bool, const char*);
+	TSunModel(bool, const char* name = "<TSunModel>");
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -36,11 +27,9 @@ public:
 	// fabricated
 	f32 calcHiddenRatio()
 	{
-		JGeometry::TVec2<s16>* pos = unkB4;
-		bool* hidden               = unk180;
-		int hiddenCount            = 0;
-		for (int i = 0; i < 17; ++i, ++pos, ++hidden) {
-			if (pos->x != -1 && pos->y != -1 && !*hidden)
+		int hiddenCount = 0;
+		for (int i = 0; i < 17; ++i) {
+			if (unkB4[i].x != -1 && unkB4[i].y != -1 && unk180[i] == 0)
 				++hiddenCount;
 		}
 		return hiddenCount * (1.0f / 17.0f);
@@ -49,6 +38,29 @@ public:
 	u8 getUnk191() { return unk191; }
 	f32 getUnk194() { return unk194; }
 
+	// Fabricated name; external callers retain the first position's address.
+	//
+	// Header round 21 measured this as the carrier for TLensGlow::perform's
+	// missing 96 bytes of inline-expansion pool and rejected it. A dead
+	// 48-byte *trivial* local (a bare `Mtx`) is worth exactly zero -- MWCC
+	// drops an unused POD array in an inlined callee, so perform stays at
+	// 0x120 against retail's 0x178 -- and only a dead *non-trivial* 48-byte
+	// local moves it (+0x30, as sunmgr.cpp recorded), which is both 0x28
+	// short on its own and not a shape this predicate can plausibly have
+	// built. The other candidate is gone too: retail `bl`s
+	// update__12J3DFrameCtrlFv twice in perform (0x8002DD54, 0x8002DD5C), so
+	// J3DFrameCtrl::update carries no pool there. What is left in perform
+	// that retail inlines is this predicate, getUnk191/getUnk194, the
+	// TVec2 accumulate loop and the J3DMaterial colour accessors.
+	bool isInBounds(f32 bounds)
+	{
+		const JGeometry::TVec2<f32>& position = unkF8[0];
+		f32 x = position.x;
+		return -bounds <= x && x <= bounds
+		               && -bounds <= position.y && position.y <= bounds
+		           ? true
+		           : false;
+	}
 	f32 getUnkAC() { return unkAC; }
 
 private:
@@ -56,6 +68,9 @@ private:
 	                                       const JGeometry::TVec2<f32>&, f32);
 
 	void calcDispRatioAndScreenPos_();
+
+	void moveSun_();
+	void calcAnim_();
 
 public:
 	/* 0x44 */ J3DModelData* unk44;

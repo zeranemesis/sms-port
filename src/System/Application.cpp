@@ -39,6 +39,7 @@
 #include <System/CardManager.hpp>
 #include <System/ScenarioArchiveName.hpp>
 #include <System/MarNameRefGen.hpp>
+#include <System/StageUtil.hpp>
 #include <System/GCLogoDir.hpp>
 #include <System/MovieDirector.hpp>
 #include <System/SelectDir.hpp>
@@ -48,6 +49,7 @@
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <System/DummyMactorString.hpp>
 #include <System/DummyStrings.hpp>
 
 TMarDirector* gpMarDirector;
@@ -66,56 +68,11 @@ static void* arcBufMario;
 static void* arcBufCmn;
 static void* bufStageArcBin;
 static void* spGameHeapBlock;
-#ifdef VERSION_GMSP01
-static JKRMemArchive* sCmn2DArc;
-static void* sCmn2DArcBuf;
-#endif
 
 TARAMBlock gArBkConsole;
 TARAMBlock gArBkGuide;
 
 extern "C" void ReInitializeGX();
-u8 SMS_getShineIDofExStage(u8);
-
-#ifdef VERSION_GMSP01
-f32 SMSGetRealVSyncTimesPerSec()
-{
-	f32 result = 60.0f;
-	switch (VIGetTvFormat()) {
-	case VI_MPAL:
-	case VI_NTSC:
-	case VI_EURGB60:
-		result = 60.0f;
-		break;
-	case VI_PAL:
-		result = 50.0f;
-		break;
-	}
-	return result;
-}
-
-f32 SMSGetVSyncTimesPerSec() { return SMSGetRealVSyncTimesPerSec() / 2.0f; }
-#else
-
-// Retail keeps an out-of-line call in SMSGetAnmFrameRate, so prevent
-// inlining here (initialize already calls out-of-line).
-#pragma dont_inline on
-f32 SMSGetRealVSyncTimesPerSec()
-{
-	f32 result = 60.0f;
-	switch (VIGetTvFormat()) {
-	case VI_MPAL:
-	case VI_NTSC:
-	case VI_EURGB60:
-		result = 60.0f;
-		break;
-	case VI_PAL:
-		result = 50.0f;
-		break;
-	}
-	return result;
-}
-#pragma dont_inline off
 
 f32 SMSGetVSyncTimesPerSec()
 {
@@ -133,8 +90,6 @@ f32 SMSGetVSyncTimesPerSec()
 	return result / 2.0f;
 }
 
-#endif
-
 f32 SMSGetAnmFrameRate() { return 60.0f / SMSGetVSyncTimesPerSec(); }
 
 TApplication::TApplication()
@@ -149,86 +104,89 @@ TApplication::TApplication()
 {
 }
 
-void* SMSLoadArchive(const char* path, void* dst, u32 dstLength, JKRHeap* heap)
+void* SMSLoadArchive(const char* param_1, void* param_2, u32 param_3,
+                     JKRHeap* param_4)
 {
-	if (heap == nullptr)
-		heap = JKRGetCurrentHeap();
+	if (param_4 == nullptr)
+		param_4 = JKRGetCurrentHeap();
 
 	void* result = nullptr;
 
 	// Try to load a compressed version of the archive first
 	char compressedArcPath[64];
-	strcpy(compressedArcPath, path);
+	strcpy(compressedArcPath, param_1);
 	char* loc = strstr(compressedArcPath, ".arc");
 	if (loc != nullptr) {
 		strcpy(loc, ".szs");
 		s32 entryNum = DVDConvertPathToEntrynum(compressedArcPath);
 		if (entryNum != -1) {
-			result = JKRDvdToMainRam(compressedArcPath, (u8*)dst,
-			                         EXPAND_SWITCH_DECOMPRESS, dstLength, heap,
-			                         JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0,
-			                         nullptr);
+			result = JKRDvdRipper::loadToMainRAM(
+			    compressedArcPath, (u8*)param_2, EXPAND_SWITCH_DECOMPRESS,
+			    param_3, param_4, JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0,
+			    nullptr);
 		}
 	}
 
 	// If that fails, then try to load the uncompressed version
 	if (result == nullptr)
-		result = JKRDvdToMainRam(
-		    path, (u8*)dst, EXPAND_SWITCH_DEFAULT, dstLength, heap,
+		result = JKRDvdRipper::loadToMainRAM(
+		    param_1, (u8*)param_2, EXPAND_SWITCH_DEFAULT, param_3, param_4,
 		    JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
 
 	return result;
 }
 
-void SMSLoadArchiveARAM(TARAMBlock* out_block, const char* path)
+void SMSLoadArchiveARAM(TARAMBlock* param_1, const char* param_2)
 {
 	// Try to load a compressed version of the archive first
 	char compressedArcPath[64];
-	strcpy(compressedArcPath, path);
-#ifdef VERSION_GMSP01
-	out_block->mBlock = nullptr;
-#endif
+	strcpy(compressedArcPath, param_2);
 	char* loc = strstr(compressedArcPath, ".arc");
 	if (loc != nullptr) {
 		strcpy(loc, ".szs");
 		s32 entryNum = DVDConvertPathToEntrynum(compressedArcPath);
 		if (entryNum != -1) {
-			out_block->mBlock = JKRDvdAramRipper::loadToAram(
+			param_1->unk0 = JKRDvdAramRipper::loadToAram(
 			    compressedArcPath, 0, EXPAND_SWITCH_DEFAULT, 0, 0);
-			out_block->mIsCompressed = true;
+			param_1->unk4 = true;
 		}
 	}
 
 	// If that fails, then try to load the uncompressed version
-	if (out_block->mBlock == nullptr) {
-		out_block->mBlock = JKRDvdAramRipper::loadToAram(
-		    (char*)path, 0, EXPAND_SWITCH_DEFAULT, 0, 0);
-		out_block->mIsCompressed = false;
+	if (param_1->unk0 == nullptr) {
+		param_1->unk0 = JKRDvdAramRipper::loadToAram(
+		    (char*)param_2, 0, EXPAND_SWITCH_DEFAULT, 0, 0);
+		param_1->unk4 = false;
 	}
 }
 
-void SMSMountAramArchive(JKRMemArchive* archive, TARAMBlock& block)
+static inline void* SMSMountAramArchiveGetUnkD4()
 {
+	TMarDirector* director = gpMarDirector;
+	void* unkD4            = director->getUnkD4();
+	return unkD4;
+}
 
-	
-	
-	if (block.mIsCompressed) {
-		JKRAram::aramToMainRam(
-		    block.mBlock, (u8*)SMSGetMarDirector()->getUnkD4(), 0, 0,
-		    EXPAND_SWITCH_DECOMPRESS, 0x64000, nullptr, -1, nullptr);
+void SMSMountAramArchive(JKRMemArchive* param_1, TARAMBlock& param_2)
+{
+	if (param_2.unk4) {
+		JKRAram::aramToMainRam(param_2.unk0,
+		                       (u8*)SMSMountAramArchiveGetUnkD4(), 0, 0,
+		                       EXPAND_SWITCH_DECOMPRESS, 0x64000, nullptr, -1,
+		                       nullptr);
 	} else {
-		JKRAram::aramToMainRam(block.mBlock,
-		                       (u8*)SMSGetMarDirector()->getUnkD4(), 0, 0,
+		JKRAram::aramToMainRam(param_2.unk0,
+		                       (u8*)SMSMountAramArchiveGetUnkD4(), 0, 0,
 		                       EXPAND_SWITCH_DEFAULT, 0, nullptr, -1, nullptr);
 	}
-	archive->mountFixed(SMSGetMarDirector()->getUnkD4(), MBF_0);
+	param_1->mountFixed(gpMarDirector->getUnkD4(), MBF_0);
 }
 
-JKRArchive* SMSSwitch2DArchive(const char* arc_path, TARAMBlock& block)
+JKRArchive* SMSSwitch2DArchive(const char* param_1, TARAMBlock& param_2)
 {
-	JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume(arc_path);
+	JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume(param_1);
 	arch->unmountFixed();
-	SMSMountAramArchive(arch, block);
+	SMSMountAramArchive(arch, param_2);
 	return arch;
 }
 
@@ -244,6 +202,13 @@ static void* SetupThreadFuncBoot(void* param)
 }
 
 extern void MarErrInit();
+
+// The ROM binds the address of the flag word (`addi r7, r4, 0x81c`) before
+// the read-modify-write, which a plain `->unk81C |= 1` does not produce.
+static inline u16& ApplicationTimeRecFlags(TTimeRec* rec)
+{
+	return rec->unk81C;
+}
 
 void TApplication::initialize()
 {
@@ -262,7 +227,7 @@ void TApplication::initialize()
 	GXInit(JKRAllocFromHeap(nullptr, 0x80000, 0x20), 0x80000);
 	SMS_ResetTexCacheRegion();
 	GXPokeAlphaRead(GX_READ_NONE);
-	void* pvVar3 = new (0x20) u8[0xa5a00];
+	void* pvVar3 = new (0x20) u8[0xa5000];
 	GXRenderModeObj rmode;
 	SMSSetupTitleRenderMode(&rmode);
 	mDisplay = new JDrama::TDisplay(2, pvVar3, pvVar3, rmode);
@@ -294,7 +259,7 @@ void TApplication::initialize()
 	                       SMSGetGCLogoRenderHeight());
 	TFlagManager::start(JKRGetCurrentHeap());
 	TTimeRec::start(0xDFC0);
-	TTimeRec::instance()->mFlags.on(1);
+	ApplicationTimeRecFlags(TTimeRec::instance()) |= 1;
 	TDrawSyncManager::smInstance->setCallback(0, 0xDFC0, 0xDFFF,
 	                                          TTimeRec::instance());
 	mMeter = new TProcessMeter(2);
@@ -309,77 +274,39 @@ void TApplication::initialize()
 	OSResumeThread(&gSetupThread);
 }
 
-#ifdef VERSION_GMSP01
-#pragma dont_inline on
-void load2DResource2Aram()
+// Heap accessor; inside JKRDvdToMainRam it is the depth-2 level that puts
+// one word of setupThreadFuncLogo's frame below the ARAM path buffers.
+static inline JKRHeap* ApplicationHeap(const TApplication* p)
 {
-	static u8 sLoadResourceLang     = -1;
-	static const char* cmn2dNames[] = {
-		"/data/cmn2d_en.arc", "/data/cmn2d_ge.arc", "/data/cmn2d_fr.arc",
-		"/data/cmn2d_sp.arc", "/data/cmn2d_it.arc",
-	};
-	static const char* game_6Names[] = {
-		"/data/game_6_en.arc", "/data/game_6_ge.arc", "/data/game_6_fr.arc",
-		"/data/game_6_sp.arc", "/data/game_6_it.arc",
-	};
-	static const char* guideNames[] = {
-		"/data/guide_en.arc", "/data/guide_ge.arc", "/data/guide_fr.arc",
-		"/data/guide_sp.arc", "/data/guide_it.arc",
-	};
-
-	if (sLoadResourceLang
-	    != (u8)TFlagManager::getInstance()->getFlag(0xA0001)) {
-		sLoadResourceLang = (u8)TFlagManager::getInstance()->getFlag(0xA0001);
-		if (JKRFileLoader::getVolume("cmn2d") != nullptr)
-			sCmn2DArc->unmountFixed();
-
-		SMSLoadArchive(cmn2dNames[sLoadResourceLang], sCmn2DArcBuf, 0xA000,
-		               nullptr);
-		sCmn2DArc->mountFixed(sCmn2DArcBuf, MBF_0);
-		JKRAram::getAramHeap()->freeAll();
-
-		SMSLoadArchiveARAM(&gArBkConsole, game_6Names[sLoadResourceLang]);
-		SMSLoadArchiveARAM(&gArBkGuide, guideNames[sLoadResourceLang]);
-	}
+	return p->mHeap;
 }
-#pragma dont_inline off
-#endif
 
-#pragma dont_inline on
 void* TApplication::setupThreadFuncLogo()
 {
-	while (!SMSGetMSound()->checkWaveOnAram(MS_WAVE_UNK0))
+	void* arc = nullptr;
+
+	while (!gpMSound->checkWaveOnAram(MS_WAVE_UNK0))
 		OSYieldThread();
-	while (!SMSGetMSound()->checkWaveOnAram(MS_WAVE_UNK210))
+	while (!gpMSound->checkWaveOnAram(MS_WAVE_UNK210))
 		OSYieldThread();
 
-	arcBufMario
-	    = SMSLoadArchive("/data/mario.arc", nullptr, 0, JKRGetRootHeap());
+	arc = SMSLoadArchive("/data/mario.arc", nullptr, 0, JKRGetRootHeap());
+	arcBufMario = arc;
 
-	arcBufCmn
-	    = SMSLoadArchive("/data/common.arc", nullptr, 0, JKRGetRootHeap());
+	arc = SMSLoadArchive("/data/common.arc", nullptr, 0, JKRGetRootHeap());
+	arcBufCmn = arc;
 
-	bufStageArcBin = JKRDvdToMainRam(
-	    "/data/stageArc.bin", nullptr, EXPAND_SWITCH_DEFAULT, 0, mHeap,
-	    JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
+	arc = JKRDvdToMainRam("/data/stageArc.bin", nullptr, EXPAND_SWITCH_DEFAULT,
+	                      0, ApplicationHeap(this),
+	                      JKRDvdRipper::ALLOC_DIRECTION_FORWARD, 0, nullptr);
+	bufStageArcBin = arc;
 
-#ifdef VERSION_GMSP01
-	load2DResource2Aram();
-#else
 	SMSLoadArchiveARAM(&gArBkConsole, "/data/game_6.arc");
+
 	SMSLoadArchiveARAM(&gArBkGuide, "/data/guide.arc");
-#endif
 
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xc0 against 0xb8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	return nullptr;
 }
-#pragma dont_inline off
 
 static void* SetupThreadFuncLogo(void* param)
 {
@@ -400,9 +327,9 @@ void TApplication::initialize_bootAfter()
 	gpSystemFont = new JUTResFont(font, nullptr);
 
 	this_01->becomeCurrent("/audi");
-	void* aafRes = this_01->getResource("mSound.aaf");
-	u32 uVar3    = this_01->getResSize(aafRes);
-	u8* buf      = new u8[uVar3];
+	void* soundRes = this_01->getResource("mSound.aaf");
+	u32 uVar3      = this_01->getResSize(soundRes);
+	u8* buf   = new u8[uVar3];
 	this_01->readResource(buf, uVar3, "mSound.aaf");
 	JKRHeap* prevHeap = JKRGetCurrentHeap();
 	gpMSound = new MSound(prevHeap, nullptr, 0xF40000, buf, nullptr, 0xb00000);
@@ -421,11 +348,6 @@ void TApplication::initialize_bootAfter()
 	                                 workerThreadStack, 0x1000);
 	gpCardManager->readOptionBlock();
 
-#ifdef VERSION_GMSP01
-	sCmn2DArcBuf = new (0x20) u8[0xA000];
-	sCmn2DArc    = new JKRMemArchive;
-#endif
-
 	mHeap->becomeCurrentHeap();
 
 	OSCreateThread(&gSetupThread, SetupThreadFuncLogo, this,
@@ -433,6 +355,16 @@ void TApplication::initialize_bootAfter()
 	OSResumeThread(&gSetupThread);
 }
 
+// TODO: instructions match; frame 8 short, the option stream 4 low (0x50 vs
+// 0x54) and the name-ref stream's ctor temp at 0x48 vs 0x4c. Tried:
+// status/outputMode hoisted, lVar3 inlined, a default-ctor stream spelled
+// (nullptr, 0). An identity binder over gpCardManager in the status loop
+// supplies the 8 bytes but is a fabricated level (refused). Measured (c-d8):
+// without the `this_00` name and with the stage-archive search behind a
+// TU-local binder (`{ TNameRef* ref = TNameRefGen::search2(name); return
+// ref; }`) the frame is 0xa0 and every slot lands except the option stream's
+// ctor binding (0x44 vs 0x40): retail has one more depth-1 object between the
+// two stream constructions and one fewer below them. Not committed.
 void TApplication::initialize_nlogoAfter()
 {
 	JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume("nintendo");
@@ -450,29 +382,26 @@ void TApplication::initialize_nlogoAfter()
 		u32 lVar3 = JKRGetRootHeap()->getSize(bufStageArcBin);
 		JSUMemoryInputStream stream(bufStageArcBin, lVar3);
 		JDrama::TNameRefGen::getInstance()->load(stream);
-		unk30 = static_cast<
-		    TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >*>(
-		    JDrama::TNameRefGen::search("ステージ毎シナリオアーカイブ名群"));
+		unk30 = JDrama::TNameRefGen::search<
+		    TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> > >(
+		    "ステージ毎シナリオアーカイブ名群");
 
-		delete JDrama::TNameRefGen::instance;
+		delete JDrama::TNameRefGen::getInstance();
 		JDrama::TNameRefGen::instance = nullptr;
 	}
 
 	gpRomFont = nullptr;
 	((JKRExpHeap*)mHeap)->destroy();
+	// destroy() on a create(void*, ...)-style heap (mIsRoot) does not
+	// release the backing block; retail vcalls slot 0x10 (free).
 	JKRGetRootHeap()->free(spGameHeapBlock);
 
 	JKRMemArchive* this_00 = new JKRMemArchive(arcBufMario, 0, MBF_0);
 	gpCardManager->mIcons
 	    = (ResTIMG*)piVar2->getResource("/card/mario_icon.bti") + 1;
 	gpCardManager->mBanner
-#ifdef VERSION_GMSP01
 	    = (ResTIMG*)piVar2->getResource("/card/mariobnr.bti") + 1;
-#else
-	    = (ResTIMG*)piVar2->getResource("/card/mariobnr_jpn.bti") + 1;
-#endif
 
-#ifndef VERSION_GMSP01
 	int status;
 	while ((status = gpCardManager->getLastStatus()) == -1)
 		OSYieldThread();
@@ -482,8 +411,6 @@ void TApplication::initialize_nlogoAfter()
 		gpCardManager->getOptionReadStream(&stream);
 		TFlagManager::getInstance()->loadOption(stream);
 	}
-
-#endif
 
 	gpCardManager->unmount();
 
@@ -501,8 +428,7 @@ void TApplication::initialize_nlogoAfter()
 
 	JMANewSinTable(0xC);
 
-	mHeap = JKRSolidHeap::create(JKRGetCurrentHeap()->getFreeSize(),
-	                             JKRGetCurrentHeap(), true);
+	mHeap = JKRSolidHeap::create(JKRGetCurrentHeap()->getFreeSize(), JKRGetCurrentHeap(), true);
 	mHeap->becomeCurrentHeap();
 }
 
@@ -525,32 +451,29 @@ void TApplication::finalize()
 	OSResetSystem(unk44 & 2 ? 1 : 0, 0, FALSE);
 }
 
+// TODO: frame 0x38 short with no stack references. Tried (cc50):
+// SMSGetFlagManager() at all eleven reads with setMovie() at the five stores
+// (inert), and a flag/movie helper per block (77.7%).
 bool TApplication::checkAdditionalMovie()
 {
 	bool result = false;
 
-	const TGameSequence& currArea = SMSGetApplication()->mCurrArea;
+	const TGameSequence& currArea = gpApplication.mCurrArea;
 
-	u8 uVar1 = SMS_getShineIDofExStage(currArea.getStage());
+	int scenario = currArea.unk0;
+	u8 uVar1     = SMS_getShineIDofExStage(scenario);
 	if (uVar1 != 0xFF) {
 		if (!TFlagManager::getInstance()->getShineFlag(uVar1)) {
 			if (!TFlagManager::getInstance()->getBool(0x3000D)) {
 				mMovie = 5;
 				TFlagManager::getInstance()->setBool(true, 0x3000D);
 				result = true;
-
-	// Every diff marker of this function is a stack offset sitting 0x30 above
-	// ours (target frame 0x58 against 0x28). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 			}
 		}
 	} else {
-		switch (currArea.getStage()) {
+		switch (currArea.unk0) {
 		case 0:
-			if (currArea.getScenario() == 0) {
+			if (currArea.unk1 == 0) {
 				if (!TFlagManager::getInstance()->getBool(0x30009)) {
 					mMovie = 1;
 					TFlagManager::getInstance()->setBool(true, 0x30009);
@@ -560,13 +483,13 @@ bool TApplication::checkAdditionalMovie()
 			break;
 
 		case 1:
-			if (currArea.getScenario() == 0) {
+			if (currArea.unk1 == 0) {
 				if (!TFlagManager::getInstance()->getBool(0x3000B)) {
 					mMovie = 3;
 					TFlagManager::getInstance()->setBool(true, 0x3000B);
 					result = true;
 				}
-			} else if (currArea.getScenario() == 1) {
+			} else if (currArea.unk1 == 1) {
 				if (!TFlagManager::getInstance()->getBool(0x3000C)) {
 					mMovie = 4;
 					TFlagManager::getInstance()->setBool(true, 0x3000C);
@@ -576,7 +499,7 @@ bool TApplication::checkAdditionalMovie()
 			break;
 
 		case 8:
-			if (currArea.getScenario() == 2) {
+			if (currArea.unk1 == 2) {
 				if (!TFlagManager::getInstance()->getBool(0x3000D)) {
 					mMovie = 5;
 					TFlagManager::getInstance()->setBool(true, 0x3000D);
@@ -593,9 +516,6 @@ bool TApplication::checkAdditionalMovie()
 void TApplication::proc()
 {
 	while (mAppState != APP_STATE_QUIT) {
-#ifdef VERSION_GMSP01
-		mDisplay->unk4C = 2;
-#endif
 		u8 nextState = APP_STATE_DEFAULT;
 		int iVar9    = 0;
 
@@ -626,10 +546,6 @@ void TApplication::proc()
 			if (checkAdditionalMovie()) {
 				// Show a movie before entering a stage, e.g. the secret levels
 				SMSSetupMovieRenderingInfo(mDisplay);
-#ifdef VERSION_GMSP01
-				if ((mDisplay->getRenderMode().viTVmode >> 2) == VI_PAL)
-					mDisplay->unk4C = 1;
-#endif
 				mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 				                       (u16)SMSGetGameRenderHeight());
 				TMovieDirector* dir = new TMovieDirector;
@@ -658,16 +574,12 @@ void TApplication::proc()
 		} break;
 
 		case APP_STATE_DONE:
-			SMSGetApplication()->setMovie(9);
+			gpApplication.mMovie = 9;
 			mNextArea.set(15, 0, 0);
 			// FALLTHROUGH
 
 		case APP_STATE_MOVIE: {
 			SMSSetupMovieRenderingInfo(mDisplay);
-#ifdef VERSION_GMSP01
-			if ((mDisplay->getRenderMode().viTVmode >> 2) == VI_PAL)
-				mDisplay->unk4C = 1;
-#endif
 			mFader->setDisplaySize((u16)SMSGetGameRenderWidth(),
 			                       (u16)SMSGetGameRenderHeight());
 			TMovieDirector* dir = new TMovieDirector;
@@ -679,18 +591,20 @@ void TApplication::proc()
 		if (!iVar9)
 			nextState = gameLoop();
 
-		if (mDirector != nullptr)
+		// The director lives in mHeap, which the switch below frees wholesale,
+		// so retail destroys it in place (dtor flag -1) instead of deleting it.
+		if (mDirector)
 			mDirector->~TDirector();
 		mDirector = nullptr;
 
 		switch (mAppState) {
 		case APP_STATE_BOOT:
-			if (!mGamePads[0]->isSomethingPushed())
+			if (mGamePads[0]->isSomethingPushed() == 0)
 				initialize_bootAfter();
 			break;
 
 		case APP_STATE_NLOGO:
-			if (!mGamePads[0]->isSomethingPushed())
+			if (mGamePads[0]->isSomethingPushed() == 0)
 				initialize_nlogoAfter();
 			break;
 
@@ -700,7 +614,7 @@ void TApplication::proc()
 		}
 
 		SMSRumbleMgr->reset();
-		if (mGamePads[0]->isSomethingPushed()) {
+		if (mGamePads[0]->isSomethingPushed() != 0) {
 			TMarioGamePad::mResetFlag = 0;
 			JUTGamePad::recalibrate(0xf0000000);
 			if (!DVDCheckDisk()) {
@@ -721,19 +635,50 @@ void TApplication::proc()
 	}
 }
 
+// Three forwarding levels over only the second crTimeAry() so that site
+// sits at depth 5 and retail's `bl crTimeAry` appears; the first append
+// still expands (codegen-tells.md Header round 40).
+static inline TTimeArray* ApplicationCrTimeAry3(TTimeRec* inst)
+{
+	return inst->crTimeAry();
+}
+
+static inline TTimeArray* ApplicationCrTimeAry2(TTimeRec* inst)
+{
+	return ApplicationCrTimeAry3(inst);
+}
+
+static inline TTimeArray* ApplicationCrTimeAry1(TTimeRec* inst)
+{
+	return ApplicationCrTimeAry2(inst);
+}
+
+static inline void ApplicationStartTimerTwice(u32 tick, u32 param)
+{
+	TTimeRec* inst = TTimeRec::_instance;
+	if (!inst)
+		return;
+	inst->crTimeAry()[0].append(tick, param);
+	ApplicationCrTimeAry1(inst)[1].append(tick, param);
+}
+
+// TODO: frame 0x50 short (0x70 before the display's video was read through
+// getVideo()): retail's low region runs to 0xac (the TRect temp) where ours
+// ended at 0x38, i.e. inline temporaries from an expansion this body lacks;
+// plus the gpMSound reload noted below.
 int TApplication::gameLoop()
 {
 	u32 nextState = APP_STATE_DEFAULT;
 	while (nextState <= APP_STATE_DEFAULT) {
 		mDisplay->startRendering();
 
-		TTimeRec::startFrameSt(mDisplay->unk60->mLastRetraceTime);
-		TTimeRec::snapGXTimeSt(0);
+		ApplicationStartTimerTwice(mDisplay->getVideo()->mLastRetraceTime, 0);
+		TTimeRec::snapGxTimeStatic(0);
 
 		TMarioGamePad::read();
 		for (int i = 0; i < 4; i++) {
 			mGamePads[i]->updateMeaning();
-			mGamePads[i]->onFlag(TMarioGamePad::PAD_FLAG_0x40);
+			mGamePads[i]->onFlag(0x40);
 		}
 
 		if (int dvderr = drawDVDErr()) {
@@ -771,24 +716,28 @@ int TApplication::gameLoop()
 			}
 
 			JDrama::TGraphics graphics;
-			graphics.unkFE = 0;
+			graphics.unk0 = 0;
 
-			const GXRenderModeObj& rmode
-			    = mDisplay->getVideo()->mNextRenderMode;
-			GXSetViewport(0.0f, 0.0f, rmode.fbWidth, rmode.efbHeight, 0.0f,
+			JDrama::TVideo* video = mDisplay->getVideo();
+			GXRenderModeObj& mode = video->mNextRenderMode;
+			GXSetViewport(0.0f, 0.0f, mode.fbWidth, mode.efbHeight, 0.0f,
 			              1.0f);
-			GXSetScissor(0, 0, rmode.fbWidth, rmode.efbHeight);
-			Mtx afStack_1ac;
-			C_MTXOrtho(afStack_1ac, 0.0f, (f32)rmode.efbHeight, 0.0f,
-			           (f32)rmode.fbWidth, -1.0f, 1.0f);
+			GXSetScissor(0, 0, mode.fbWidth, mode.efbHeight);
+			Mtx44 afStack_1ac;
+			C_MTXOrtho(afStack_1ac, 0.0f, (f32)mode.efbHeight, 0.0f,
+			           (f32)mode.fbWidth, -1.0f, 1.0f);
 			GXSetProjection(afStack_1ac, GX_ORTHOGRAPHIC);
 			mFader->update();
-			mFader->draw(JDrama::TRect(0, 0, rmode.fbWidth, rmode.efbHeight));
+			mFader->draw(
+			    JDrama::TRect(0, 0, mode.fbWidth, mode.efbHeight));
+			// TODO: the ROM loads gpMSound twice here (once for the test,
+			// once for the call); neither this spelling nor SMSGetMSound()
+			// per use reproduces the reload.
 			if (gpMSound != nullptr)
 				gpMSound->mainLoop();
 		}
 
-		TTimeRec::snapCPUTime(0);
+		TTimeRec::endTimer();
 
 		THPPlayerDrawDone();
 		mDisplay->endRendering();
@@ -796,7 +745,7 @@ int TApplication::gameLoop()
 		if (TTimeRec::_instance)
 			TTimeRec::_instance->flip();
 
-		JDrama::TVideo* video = mDisplay->unk60;
+		JDrama::TVideo* video = mDisplay->getVideo();
 		if (video->mCurFrameBuffer) {
 			JUTDirectPrint::getManager()->changeFrameBuffer(
 			    (void*)video->mCurFrameBuffer, video->mCurRenderMode.fbWidth,
@@ -808,190 +757,76 @@ int TApplication::gameLoop()
 	return nextState;
 }
 
-#ifdef VERSION_GMSP01
-static const char* sDvdErrMsgs[][6] = {
-	{
-	    "An error has occurred. Turn the\npower OFF and check the \n"
-	    "NINTENDO GAMECUBE\x99"
-	    "\nInstruction Booklet for further instructions.",
-	    "The Disc could not be read.\nPlease read the NINTENDO GAMECUBE\x99"
-	    "\nInstruction Booklet for\nmore information.",
-	    "Reading Disc... ",
-	    "The Disc Cover is open.\nTo continue playing,\nplease close the\nDisc "
-	    "Cover.",
-	    "Please insert a Super Mario Sunshine\nGame Disc.",
-	    "This Disc is not\nSuper Mario Sunshine.\nPlease insert a Super\n"
-	    "Mario Sunshine Game Disc.",
-	},
-	{
-	    "Ein Fehler ist aufgetreten. Bitte schalte\nden NINTENDO GAMECUBE\x99"
-	    " aus und\nlies die Bedienungsanleitung,\num weitere Informationen zu "
-	    "erhalten.",
-	    "Diese Disc kann nicht gelesen werden.\nBitte lies die "
-	    "Bedienungsanleitung\n"
-	    "des NINTENDO GAMECUBE\x99"
-	    ",\num weitere Informationen zu erhalten.",
-	    "Disc wird gelesen...",
-	    "Disc-Deckel ist ge\xF6"
-	    "ffnet. Bitte\nschlie\xDF"
-	    "e den Disc-Deckel,\n"
-	    "um weiterzuspielen.",
-	    "Bitte lege eine Super Mario Sunshine\nGame Disc ein.",
-	    "Diese Disc beinhaltet nicht Super Mario Sunshine.\n"
-	    "Bitte lege eine Super Mario Sunshine\nGame Disc ein.",
-	},
-	{
-	    "Une erreur est survenue. Eteignez\nla console et r\xE9"
-	    "f\xE9"
-	    "rez-vous au manuel\n"
-	    "d'instructions NINTENDO GAMECUBE\x99"
-	    "\npour de plus amples informations.",
-	    "La lecture du disque a \xE9"
-	    "chou\xE9"
-	    ".\nVeuillez-vous r\xE9"
-	    "f\xE9"
-	    "rer au manuel\nd'instructions NINTENDO GAMECUBE\x99"
-	    "\npour de plus amples informations.",
-	    "Lecture du disque...",
-	    "Le couvercle est ouvert.\nPour continuer \xE0"
-	    " jouer,\n"
-	    "veuillez fermer le couvercle.",
-	    "Veuillez ins\xE9"
-	    "rer\nle disque\nSuper Mario Sunshine.",
-	    "Ce disque n'est pas\nle bon. Veuillez\nins\xE9"
-	    "rer le disque\n"
-	    "Super Mario Sunshine.",
-	},
-	{
-	    "Se ha producido un error. Apaga la consola\ny consulta el manual de "
-	    "instrucciones\n"
-	    "de NINTENDO GAMECUBE\x99"
-	    " para\nobtener m\xE1"
-	    "s informaci\xF3"
-	    "n.",
-	    "No se puede leer el disco. Consulta\nel manual de instrucciones de \n"
-	    "NINTENDO GAMECUBE\x99"
-	    "\npara obtener m\xE1"
-	    "s informaci\xF3"
-	    "n.",
-	    "Leyendo el disco...",
-	    "La tapa est\xE1"
-	    " abierta.\nCi\xE9"
-	    "rrala para seguir jugando.",
-	    "Coloca el disco de Super Mario Sunshine.",
-	    "\xC9"
-	    "ste no es el disco de\nSuper Mario Sunshine.\n"
-	    "Coloca el disco apropiado.",
-	},
-	{
-	    "Si \xE8"
-	    " verificato un errore. Spegni (OFF) e\n"
-	    "controlla il manuale d'istruzioni del\nNINTENDO GAMECUBE\x99"
-	    "\nper ulteriori indicazioni.",
-	    "Impossibile leggere il disco. Consulta il manuale \n"
-	    "d'istruzioni del NINTENDO GAMECUBE\x99"
-	    "\nper ulteriori indicazioni.",
-	    "Lettura del disco in corso...",
-	    "Il coperchio del disco \xE8"
-	    "\naperto. Se vuoi proseguire\n"
-	    "il gioco, chiudi il\ncoperchio del disco.",
-	    "Inserisci il disco\nSuper Mario Sunshine.",
-	    "Questo disco non \xE8"
-	    " \nSuper Mario Sunshine.\n"
-	    "Inserisci il disco \nSuper Mario Sunshine.",
-	},
-};
-#endif
+static inline void DrawInitFullViewport(TApplication* app)
+{
+	SMS_DrawInit();
+	JDrama::TVideo* video = app->mDisplay->unk60;
+
+	GXRenderModeObj& mode = video->mNextRenderMode;
+	GXSetViewport(0.0f, 0.0f, mode.fbWidth, mode.efbHeight, 0.0f, 1.0f);
+}
 
 int TApplication::drawDVDErr()
 {
 	char message[512];
 	u32 error = 0;
-#ifdef VERSION_GMSP01
-	u32 language;
-	language = TFlagManager::getInstance()->getFlag(0xA0001);
-#endif
 
 	switch (DVDGetDriveStatus()) {
 	case -1:
-#ifdef VERSION_GMSP01
-		snprintf(message, 512, sDvdErrMsgs[language][0]);
-#else
 		snprintf(message, 512,
-		         "エラーが発生しました。\n"
-		         "本体のパワーボタンを押して電源をOFFにし\n"
-		         "本体の取扱説明書の指示に従ってください。");
-#endif
+		         "An error has occurred. Turn the\n"
+		         "power OFF and check the\n"
+		         "NINTENDO GAMECUBE\x99\n"
+		         "Instruction Booklet for further instructions.");
 		error = 'em_1';
 		break;
 
 	case 11:
-#ifdef VERSION_GMSP01
-		snprintf(message, 512, sDvdErrMsgs[language][1]);
-#else
 		snprintf(message, 512,
-		         "ディスクを読めませんでした。\n"
-		         "くわしくは、本体の取扱説明書を\n"
-		         "お読みください。");
-#endif
+		         "The Disc could not be read.\n"
+		         "Please read the NINTENDO GAMECUBE\x99\n"
+		         "Instruction Booklet for\n"
+		         "more information.\n");
 		error = 'em_2';
 		break;
 
 	case 1:
 		if (DVDCheckDisk() == 0) {
-#ifdef VERSION_GMSP01
-			snprintf(message, 512, sDvdErrMsgs[language][2]);
-#else
-			snprintf(message, 512, "ディスクを読み込んでいます。");
-#endif
+			snprintf(message, 512, "Reading Disc...");
 			error = 'em_3';
 		}
 		break;
 
 	case 5:
-#ifdef VERSION_GMSP01
-		snprintf(message, 512, sDvdErrMsgs[language][3]);
-#else
 		snprintf(message, 512,
-		         "ディスクカバーが開いています。\n"
-		         "ゲームを続ける場合は\n"
-		         "ディスクカバーを閉めてください。");
-#endif
+		         "The Disc Cover is open.\n"
+		         "To continue playing,\n"
+		         "please close the\n"
+		         "Disc Cover.");
 		error = 'em_4';
 		break;
 
 	case 4:
-#ifdef VERSION_GMSP01
-		snprintf(message, 512, sDvdErrMsgs[language][4]);
-#else
 		snprintf(message, 512,
-		         "「スーパーマリオサンシャイン」の\n"
-		         "ディスクをセットしてください。");
-#endif
+		         "Please insert a Super Mario Sunshine\n"
+		         "Game Disc.");
 		error = 'em_5';
 		break;
 
 	case 6:
-#ifdef VERSION_GMSP01
-		snprintf(message, 512, sDvdErrMsgs[language][5]);
-#else
 		snprintf(message, 512,
-		         "このディスクは、「スーパーマリオサンシャイン」の\n"
-		         "ディスクではありません。\n"
-		         "「スーパーマリオサンシャイン」の\n"
-		         "ディスクをセットしてください。 ");
-#endif
+		         "This Disc is not\n"
+		         "Super Mario Sunshine.\n"
+		         "Please insert a Super\n"
+		         "Mario Sunshine Game Disc.");
 		error = 'em_6';
 		break;
 	}
 
 	if (error != 0) {
 		ReInitializeGX();
-		SMS_DrawInit();
-		const GXRenderModeObj& rmode = mDisplay->getVideo()->mNextRenderMode;
-
-		GXSetViewport(0.0f, 0.0f, rmode.fbWidth, rmode.efbHeight, 0.0f, 1.0f);
-		Mtx afStack_260;
+		DrawInitFullViewport(this);
+		Mtx44 afStack_260;
 		C_MTXOrtho(afStack_260, 16.0f, 464.0f, 0.0f, 600.0f, -1.0f, 1.0f);
 		GXSetProjection(afStack_260, GX_ORTHOGRAPHIC);
 		MTXIdentity(afStack_260);
@@ -1031,26 +866,45 @@ int TApplication::drawDVDErr()
 		if (gpSystemFont != nullptr)
 			font = gpSystemFont;
 		J2DPrint print(font, 0);
-		print.unk44  = (GXColor) { 0xff, 0xff, 0, 0xff };
-		print.unk48  = (GXColor) { 0xff, 0xff, 0, 0xff };
+		// TODO: frame and every slot but two exact (0x318). The draw-init
+		// and viewport level (DrawInitFullViewport, hsearch c-k12) put the
+		// J2DPrint/Mtx44 block on retail's 0x54/0xb8. Still open: retail's
+		// second copy of the colour pair is one 8-byte object
+		// at 0x2c with 8 bytes between it and the by-value parameter at
+		// 0x3c, where ours has the two TColor conversion temporaries apart.
+		// Named `display`, `getVideo()`, and a caller-side pointer local
+		// all grow the frame. Tried (cc50): the pair as a compound-literal
+		// argument, assigned later, const, or compound-initialised;
+		// TColor/named amb colour; the render-mode read without the `mode`
+		// reference. Tried (c-d8): unnamed or getVideo() video crossed with
+		// per-colour TColor/GXColor setters, a pair-copying inner setter and
+		// a local pair copy (all +8 or worse).
+		J2DPrint::TColorPair colors
+		    = { { 0xff, 0xff, 0, 0xff }, { 0xff, 0xff, 0, 0xff } };
+		print.setEscapeColors(colors);
 		f32 msgWidth = print.getWidth(message);
-		print.print(0.5f * (600.0f - msgWidth), 230, message);
+		f32 x        = (600.0f - msgWidth) * 0.5f;
+		print.print(x, 230, message);
 	}
 
 	return error;
 }
 
+// TODO: frame 8 short (the path buffer sits 0x14 low); and retail reloads the
+// outer vector's begin through the base pointer (`lwz r4, 4(r5)`) where ours
+// reuses the null-check load. Tried (cc50): raw `tmp.size()`, a pointer or
+// `unk30` receiver, getChildren() on each level, begin()[i], and archBlob as a
+// separate declaration or `!= nullptr` test.
 JKRMemArchive* TApplication::mountStageArchive()
 {
 	JKRMemArchive* result = nullptr;
 
 	TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >& tmp = *unk30;
 	if (mCurrArea.getStage() < tmp.getChildren().size()) {
-		TNameRefAryT<TScenarioArchiveName>& scenarios
-		    = tmp[mCurrArea.getStage()];
-		if (mCurrArea.getScenario() < scenarios.size()) {
+		TNameRefAryT<TScenarioArchiveName>* stageAry = tmp.getChildren()[mCurrArea.getStage()];
+		if (mCurrArea.getScenario() < stageAry->size()) {
 			const char* scenarioArcName
-			    = scenarios.getChildren()[mCurrArea.getScenario()].mArcName;
+			    = stageAry->getChildren()[mCurrArea.getScenario()].mArcName;
 
 			DVDChangeDir("/data/scene");
 			if (void* archBlob

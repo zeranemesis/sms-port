@@ -67,34 +67,30 @@ void TMapObjManager::loadAfter()
 
 void TMapObjManager::initDrawBuffer()
 {
-	mDrawBufferSunOpa = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf StaticMapObj SunOpa"));
-	mDrawBufferSunXlu = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf StaticMapObj SunXlu"));
-	mDrawBufferShadowOpa = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf StaticMapObj ShadowOpa"));
-	mDrawBufferShadowXlu = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf StaticMapObj ShadowXlu"));
-	mDrawBufferAfterIndirectOpa = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf AfterIndirect Opa"));
-	mDrawBufferAfterIndirectXlu = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf AfterIndirect Xlu"));
+	mDrawBufferSunOpa = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	    "DrawBuf StaticMapObj SunOpa");
+	mDrawBufferSunXlu = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	    "DrawBuf StaticMapObj SunXlu");
+	mDrawBufferShadowOpa = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	    "DrawBuf StaticMapObj ShadowOpa");
+	mDrawBufferShadowXlu = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	    "DrawBuf StaticMapObj ShadowXlu");
+	mDrawBufferAfterIndirectOpa
+	    = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	        "DrawBuf AfterIndirect Opa");
+	mDrawBufferAfterIndirectXlu
+	    = JDrama::TNameRefGen::search<JDrama::TDrawBufObj>(
+	        "DrawBuf AfterIndirect Xlu");
 }
 
 J3DMaterialTable* TMapObjManager::loadMatTable(const char* name)
 {
 	void* res = JKRGetResource(name);
-	if (res)
-		return J3DModelLoaderDataBase::loadMaterialTable(res);
-	else
-		return nullptr;
+	return res ? J3DModelLoaderDataBase::loadMaterialTable(res) : nullptr;
 }
 
 void TMapObjManager::load(JSUMemoryInputStream& stream)
 {
-
-	
-	
 	TMapObjBaseManager::load(stream);
 	unk40 = new MActorAnmData;
 
@@ -117,7 +113,8 @@ void TMapObjManager::load(JSUMemoryInputStream& stream)
 	unk94 = loadMatTable("/scene/mapObj/riccoShip.bmt");
 
 	if ((gpMarDirector->getCurrentMap() == 3
-	     && (gpMarDirector->unk7D == 1 || gpMarDirector->unk7D == 5))
+	     && (SMSGetMarDirector()->unk7D == 1
+	         || SMSGetMarDirector()->unk7D == 5))
 	    || gpMarDirector->getCurrentMap() == 0x1E) {
 		mSurfGessoModelData = SMS_MakeSDLModelData(
 		    "/scene/mapObj/surfgeso.bmd", J3DMLF_MaterialPEFull
@@ -216,9 +213,16 @@ bool TMapObjBaseManager::canAppear(const TMapObjBase* param_1,
 TMapObjBase* TMapObjBaseManager::makeObjAppear(f32 x, f32 y, f32 z, u32 param_4,
                                                bool param_5)
 {
+	// The loops in this class read the object through
+	// `TObjManager::getObj(i)` with the cast at the call site, not through
+	// `TMapObjBaseManager::getObj(i)`, whose cast sits inside the accessor:
+	// the two spellings cost different numbers of low-region slots at equal
+	// depth, and the cast-outside form is the -4 that puts `checkData` on
+	// retail's 0x30 here. It is codegen-neutral for the two `u32` siblings,
+	// so all three loops are spelled the same way.
 	f32 y2;
+	const TBGCheckData* checkData;
 	if (param_5) {
-		const TBGCheckData* checkData;
 		y2 = gpMap->checkGround(x, y + 5.0f, z, &checkData);
 		if (checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL))
 			return nullptr;
@@ -227,7 +231,7 @@ TMapObjBase* TMapObjBaseManager::makeObjAppear(f32 x, f32 y, f32 z, u32 param_4,
 	}
 
 	for (int i = 0; i < getObjNum(); ++i) {
-		TMapObjBase* obj = (TMapObjBase*)getObj(i);
+		TMapObjBase* obj = (TMapObjBase*)TObjManager::getObj(i);
 
 		if (canAppear(obj, param_4)) {
 			obj->mPosition.set(x, y2, z);
@@ -242,7 +246,7 @@ TMapObjBase* TMapObjBaseManager::makeObjAppear(f32 x, f32 y, f32 z, u32 param_4,
 TMapObjBase* TMapObjBaseManager::makeObjAppear(u32 param_1)
 {
 	for (int i = 0; i < getObjNum(); ++i) {
-		TMapObjBase* obj = (TMapObjBase*)getObj(i);
+		TMapObjBase* obj = (TMapObjBase*)TObjManager::getObj(i);
 
 		if (canAppear(obj, param_1)) {
 			obj->appear();
@@ -256,7 +260,7 @@ TMapObjBase* TMapObjBaseManager::makeObjAppear(u32 param_1)
 TMapObjBase* TMapObjBaseManager::makeObjAppeared(u32 param_1)
 {
 	for (int i = 0; i < getObjNum(); ++i) {
-		TMapObjBase* obj = (TMapObjBase*)getObj(i);
+		TMapObjBase* obj = (TMapObjBase*)TObjManager::getObj(i);
 
 		if (canAppear(obj, param_1)) {
 			obj->makeObjAppeared();
@@ -313,6 +317,25 @@ static TMapObjBase* newUniqueObjByName(const char* name)
 	else if (strcmp(name, "JuiceBlock") == 0)
 		return new TJuiceBlock;
 	else if (strcmp(name, "TelesaBlock") == 0)
+		// TODO: header items (measured, zero regressions, DOL unchanged;
+		// all three together take this function 97.25 -> 100 and restore
+		// the map's local set<f>__Q29JGeometry8TVec3<f>Ffff):
+		//  1. include/MoveBG/MapObjBlock.hpp - TTelesaBlock's ctor takes a
+		//     defaulted name (`TTelesaBlock(const char* name =
+		//     "テレサブロック") : TJuiceBlock(name)`). The defaulted
+		//     argument is one extra inline level, which is what puts the
+		//     3-statement TVec3::set<f> at depth 4 and makes it the ROM's
+		//     `bl`, and it also binds the `this` the ROM spills to 0x30(r1).
+		//  2. include/MoveBG/MapObjPinna.hpp - TMerryPole::unk138 is
+		//     TPosition3f, not TMtx34f: the ROM `bl`s the empty
+		//     SMatrix34C<f> ctor, i.e. that ctor sits at depth 5.
+		//  3. include/JSystem/JGeometry/JGMatrix34.hpp - identity()'s nine
+		//     zero stores are ONE assignment chain, not four statements;
+		//     the ROM keeps every zero in f0 where four statements need two
+		//     `fmr`s. Written order is the reverse of the store order:
+		//     ref(1,0) = ref(2,0) = ref(0,1) = ref(2,1) = ref(0,2) =
+		//     ref(1,2) = ref(0,3) = ref(1,3) = ref(2,3) = 0.0f;
+		//     (also closes TMapObjFlag::TMapObjFlag).
 		return new TTelesaBlock;
 	else if (strcmp(name, "lean_block") == 0)
 		return new TLeanBlock("傾くブロック");
@@ -400,7 +423,7 @@ TMapObjBase* TMapObjBaseManager::newAndRegisterObjByEventID(u32 event_id,
 	case 777: {
 		char buffer[256];
 		snprintf(buffer, 256, "シャイン（%s）", name);
-		return static_cast<TMapObjBase*>(JDrama::TNameRefGen::search(buffer));
+		return (TMapObjBase*)JDrama::TNameRefGen::search2(buffer);
 	} break;
 
 	case 1000:
@@ -476,9 +499,9 @@ void TMapObjBaseManager::createModelData()
 	createModelDataArray(&entry);
 }
 
-int TMapObjBaseManager::getObjNumWithActorType(u32 param_1) const
+u32 TMapObjBaseManager::getObjNumWithActorType(u32 param_1) const
 {
-	int result = 0;
+	u32 result = 0;
 	for (int i = 0; i < mObjNum; ++i)
 		if (unk18[i]->isActorType(param_1))
 			++result;

@@ -1,154 +1,124 @@
-#include <Camera/cameralib.hpp>
 #include <Enemy/BossHanachan.hpp>
-#include <Enemy/BossHanachanChangeSaveParams.hpp>
+
+#include <Camera/cameralib.hpp>
 #include <M3DUtil/MActor.hpp>
-#include <MarioUtil/MathUtil.hpp>
+#include <NPC/NpcInbetween.hpp>
 #include <Strategic/Spine.hpp>
-#include <math.h>
 
-template <> f32 CLBCalcRatio<f32>(f32, f32, f32);
-
-// The target build walks mHead first and then mBody[0..7] with a rolled loop,
-// so the parts are never copied into a local array.
-#define BH_HEAD_AND_BODY(body)                                                  \
-	do {                                                                         \
-		mHead->mNonstopMotionBlend->unk28 = (body);                              \
-		for (int i = 0; i < 8; i++)                                             \
-			mBody[i]->mNonstopMotionBlend->unk28 = (body);                        \
-	} while (0)
-
-void TBossHanachan::changeAnmRateAndFrameUpdate_()
+// Declaring `texFrame` before the BCK setFrame call puts the two conversion
+// temporaries in retail's order (0x28 then 0x30).
+// `int frame;` is declared ahead of `body`, so `body` gets the lower virtual
+// register: it then meets the first simplify sweep at full degree (29), is
+// deferred with `i` and the parameters, and takes r30 as in retail.
+void TBossHanachan::setHeadAndBodyAnm(
+    EnumBossHanachanAnmKind anm, EnumBossHanachanStopMotionBlendOnOff blend)
 {
-	bool setFrameRate = true;
-	f32 rate         = SMSGetAnmFrameRate();
-	const JDrama::TNerveBase<TLiveActor>* currentNerve
-	    = mSpine->getLatestNerve();
-
-	if (currentNerve == &TNerveBossHanachanTumble::theNerve()) {
-		BH_HEAD_AND_BODY(0.0f);
-		mHead->changeTumbleAnmRate_();
-		for (int i = 0; i < 8; i++)
-			mBody[i]->changeTumbleAnmRate_();
-		setFrameRate = false;
-	} else {
-		// Note: the target re-loads mHead->mCurAnm from memory at every
-		// decision point instead of caching it, so no local copy is made.
-		if (mHead->mCurAnm < BH_ANM_KIND_UNK2
-		    && mHead->mCurAnm >= BH_ANM_KIND_UNK0) {
-			f32 walkSpeed = mChangeSaveParams->mSLWalkAnmMarchSpeed.get();
-			if (mMarchSpeed <= walkSpeed) {
-				BH_HEAD_AND_BODY(0.0f);
-				switch (mHead->mCurAnm) {
-				case BH_ANM_KIND_UNK1:
-					setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
-					                  BH_STOP_MOTION_BLEND_OFF);
-					mHead->copyFrameFromOldAnmToNewAnm_();
-					for (int i = 0; i < 8; i++)
-						mBody[i]->copyFrameFromOldAnmToNewAnm_();
-					break;
-				case BH_ANM_KIND_UNK0:
-					break;
-				default:
-					setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
-					                  BH_STOP_MOTION_BLEND_ON);
-					break;
-				}
-			} else {
-				f32 runSpeed = mChangeSaveParams->mSLRunAnmMarchSpeed.get();
-				if (mMarchSpeed < runSpeed) {
-					BH_HEAD_AND_BODY(0.0f);
-					switch (mHead->mCurAnm) {
-					case BH_ANM_KIND_UNK0:
-						setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
-						                  BH_STOP_MOTION_BLEND_OFF);
-						mHead->copyFrameFromOldAnmToNewAnm_();
-						for (int i = 0; i < 8; i++)
-							mBody[i]->copyFrameFromOldAnmToNewAnm_();
-						break;
-					case BH_ANM_KIND_UNK1:
-						break;
-					default:
-						setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
-						                  BH_STOP_MOTION_BLEND_ON);
-						break;
-					}
-				} else {
-					rate = CLBCalcRatio(walkSpeed, runSpeed,
-					                    mMarchSpeed);
-					switch (mHead->mCurAnm) {
-					case BH_ANM_KIND_UNK1:
-						if (mHead->mOldAnm != BH_ANM_KIND_UNK0) {
-							setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
-							                  BH_STOP_MOTION_BLEND_OFF);
-							mHead->copyFrameFromOldAnmToNewAnm_();
-							for (int i = 0; i < 8; i++)
-								mBody[i]->copyFrameFromOldAnmToNewAnm_();
-						} else {
-							rate = 1.0f - rate;
-						}
-						BH_HEAD_AND_BODY(rate);
-						break;
-					case BH_ANM_KIND_UNK0:
-						if (mHead->mOldAnm != BH_ANM_KIND_UNK1) {
-							setHeadAndBodyAnm(BH_ANM_KIND_UNK1,
-							                  BH_STOP_MOTION_BLEND_OFF);
-							mHead->copyFrameFromOldAnmToNewAnm_();
-							for (int i = 0; i < 8; i++)
-								mBody[i]->copyFrameFromOldAnmToNewAnm_();
-							rate = 1.0f - rate;
-						}
-						BH_HEAD_AND_BODY(rate);
-						break;
-					default:
-						BH_HEAD_AND_BODY(0.0f);
-						setHeadAndBodyAnm(BH_ANM_KIND_UNK0,
-						                  BH_STOP_MOTION_BLEND_ON);
-						break;
-					}
-				}
-			}
-
-			rate = mMarchSpeed * SMSGetAnmFrameRate()
-			        * mChangeSaveParams->mSLWalkBckRateMagnif.get();
-			f32 minRate = mChangeSaveParams->mSLWalkBckRateMin.get();
-			if (rate < minRate)
-				rate = minRate;
-		} else {
-			BH_HEAD_AND_BODY(0.0f);
-			rate = SMSGetAnmFrameRate();
+	mHead->setAnm_(anm, blend);
+	for (int i = 0; i < 8; ++i) {
+		int frame;
+		TBossHanachanPartsBody* body = mBodies[i];
+		if (body->setAnm_(anm, blend)) {
+			J3DFrameCtrl* bck = body->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
+			frame = (i * getChangeParams()->getSLNormalBckFrameDiff())
+			        % bck->getEnd();
+			f32 texFrame = frame;
+			bck->setFrame(frame);
+			J3DFrameCtrl* btp = body->getMActor()->getFrameCtrl(ANM_TYPE_BTP);
+			if (btp)
+				btp->setFrame(texFrame);
+			J3DFrameCtrl* btk = body->getMActor()->getFrameCtrl(ANM_TYPE_BTK);
+			if (btk)
+				btk->setFrame(texFrame);
 		}
-	}
-
-	MActor* headActor = mHead->getMActor();
-	if (setFrameRate)
-		headActor->getFrameCtrl(0)->setRate(rate);
-	mHead->updateAnmSound();
-	headActor->frameUpdate();
-	for (int i = 0; i < 8; i++) {
-		MActor* actor = mBody[i]->getMActor();
-		if (setFrameRate)
-			actor->getFrameCtrl(0)->setRate(rate);
-		mBody[i]->updateAnmSound();
-		actor->frameUpdate();
 	}
 }
 
-#undef BH_HEAD_AND_BODY
+void TBossHanachan::setTumbleBckRate_(TBossHanachanPartsBase* part)
+{
+	J3DFrameCtrl* ctrl = part->mMActor->getFrameCtrl(ANM_TYPE_BCK);
+	f32 frames = unk194 - part->mRotation.z;
+	frames = (1.0f / unk198) * (frames >= 0.0f ? frames : -frames);
+	ctrl->setRate((1.0f / frames) * (2.0f * (40.0f * SMSGetAnmFrameRate())));
+}
+
+void TBossHanachan::setTumbleAnm(EnumBossHanachanStopMotionBlendOnOff blend)
+{
+	EnumBossHanachanAnmKind anm;
+	if (unk194 == 179.0f)
+		anm = BOSS_HANACHAN_ANM_UNK17;
+	else if (unk194 == -179.0f)
+		anm = BOSS_HANACHAN_ANM_UNK16;
+	else
+		return;
+	mHead->setAnm_(anm, blend);
+	setTumbleBckRate_(mHead);
+	for (int i = 0; i < 8; ++i) {
+		mBodies[i]->setAnm_(anm, blend);
+		setTumbleBckRate_(mBodies[i]);
+	}
+}
+
+void TBossHanachan::setAnmTimerWhenGetUp()
+{
+	u8 delay = getChangeParams()->getSLGetUpFrameDiff();
+	for (int i = 0; i < 8; ++i)
+		mBodies[7 - i]->unk10C = delay * i;
+	mHead->unk10C = delay * 8;
+}
+
+void TBossHanachan::setAnmTimerWhenSnort()
+{
+	u8 delay = getChangeParams()->getSLSnortFrameDiff();
+	mHead->unk10C = 0;
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->unk10C = delay * (i + 1);
+}
+
+void TBossHanachan::setAnmTimerWhenDamage()
+{
+	u8 delay = getChangeParams()->getSLDamageFrameDiff();
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->unk10C = delay * CLBAbs(mWeakBodyIndex - i);
+	mHead->unk10C = delay * CLBAbs(mWeakBodyIndex + 1);
+}
+
+void TBossHanachan::setAnmTimerWhenDead()
+{
+	u8 delay = getChangeParams()->getSLDeadFrameDiff();
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->unk10C = delay * CLBAbs(mWeakBodyIndex - i);
+	mHead->unk10C = delay * CLBAbs(mWeakBodyIndex + 1);
+}
+
+void TBossHanachan::considerSetAnm(EnumBossHanachanNerveAnm nerve)
+{
+	mHead->considerSetAnm_(nerve);
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->considerSetAnm_(nerve);
+}
+
+bool TBossHanachan::isFinishedGetUp() const
+{
+	bool result = false;
+	switch (mHead->mCurrentAnm) {
+	case BOSS_HANACHAN_ANM_UNK9:
+	case BOSS_HANACHAN_ANM_UNK12:
+		if (mHead->isCurBckAlreadyEnd_())
+			result = true;
+		break;
+	}
+	return result;
+}
 
 bool TBossHanachan::isAllBckAlreadyEnd(EnumBossHanachanAnmKind anm) const
 {
 	bool result = true;
-	bool ok     = false;
-	if (mHead->mCurAnm == anm && mHead->isCurBckAlreadyEnd_())
-		ok = true;
-	if (!ok) {
+	if ((mHead->mCurrentAnm == anm && mHead->isCurBckAlreadyEnd_()) == false) {
 		result = false;
 	} else {
-		for (int i = 0; i < 8; i++) {
-			ok = false;
-			if (mBody[i]->mCurAnm == anm && mBody[i]->isCurBckAlreadyEnd_())
-				ok = true;
-			if (!ok) {
+		for (int i = 0; i < 8; ++i) {
+			if ((mBodies[i]->mCurrentAnm == anm
+			     && mBodies[i]->isCurBckAlreadyEnd_()) == false) {
 				result = false;
 				break;
 			}
@@ -157,124 +127,125 @@ bool TBossHanachan::isAllBckAlreadyEnd(EnumBossHanachanAnmKind anm) const
 	return result;
 }
 
-bool TBossHanachan::isFinishedGetUp() const
+void TBossHanachan::offHeadAndBodyNonstopMotionBlend_()
 {
-	bool result = false;
-	switch (mHead->mCurAnm) {
-	case BH_ANM_KIND_UNKC:
-	case BH_ANM_KIND_UNK9:
-		if (mHead->isCurBckAlreadyEnd_())
-			result = true;
-		break;
-	}
-	return result;
+	mHead->mInbetween->mForcedBlendRatio = 0.0f;
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->mInbetween->mForcedBlendRatio = 0.0f;
 }
 
-void TBossHanachan::considerSetAnm(EnumBossHanachanNerveAnm anm)
+void TBossHanachan::setHeadAndBodyNonstopMotionBlendRatio_(f32 ratio)
 {
-	mHead->considerSetAnm_(anm);
-	for (int i = 0; i < 8; i++)
-		mBody[i]->considerSetAnm_(anm);
+	mHead->mInbetween->mForcedBlendRatio = ratio;
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->mInbetween->mForcedBlendRatio = ratio;
 }
 
-void TBossHanachan::setAnmTimerWhenDead()
+void TBossHanachan::copyFrameFromOldAnmToNewAnm_()
 {
-	u8 diff = mChangeSaveParams->mSLDeadFrameDiff.get();
-	for (int i = 0; i < 8; i++) {
-		s32 d = mWeakBodyIndex - i;
-		d = (d >= 0) ? d : -d;
-		mBody[i]->unk10C = diff * d;
-	}
-	s32 d = mWeakBodyIndex + 1;
-	d = (d >= 0) ? d : -d;
-	mHead->unk10C = diff * d;
+	mHead->copyFrameFromOldAnmToNewAnm_();
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->copyFrameFromOldAnmToNewAnm_();
 }
 
-void TBossHanachan::setAnmTimerWhenDamage()
+void TBossHanachan::changeAnmRateAndFrameUpdate_()
 {
-	u8 diff = mChangeSaveParams->mSLDamageFrameDiff.get();
-	for (int i = 0; i < 8; i++) {
-		s32 d = mWeakBodyIndex - i;
-		d = (d >= 0) ? d : -d;
-		mBody[i]->unk10C = diff * d;
-	}
-	s32 d = mWeakBodyIndex + 1;
-	d = (d >= 0) ? d : -d;
-	mHead->unk10C = diff * d;
-}
-
-void TBossHanachan::setAnmTimerWhenSnort()
-{
-	u8 diff = mChangeSaveParams->mSLSnortFrameDiff.get();
-	mHead->unk10C  = 0;
-	for (int i = 0; i < 8; i++)
-		mBody[i]->unk10C = diff * (i + 1);
-}
-
-void TBossHanachan::setAnmTimerWhenGetUp()
-{
-	u8 diff = mChangeSaveParams->mSLGetUpFrameDiff.get();
-	mBody[7]->unk10C = 0;
-	mBody[6]->unk10C = diff;
-	mBody[5]->unk10C = diff * 2;
-	mBody[4]->unk10C = diff * 3;
-	mBody[3]->unk10C = diff * 4;
-	mBody[2]->unk10C = diff * 5;
-	mBody[1]->unk10C = diff * 6;
-	mBody[0]->unk10C = diff * 7;
-	mHead->unk10C    = diff * 8;
-}
-
-// The target build inlines this into setTumbleAnm() (marioEU.MAP lists the
-// symbol as UNUSED), which is why it is declared inline in the header.
-void TBossHanachan::setTumbleBckRate_(TBossHanachanPartsBase* part)
-{
-	J3DFrameCtrl* frameCtrl = part->getMActor()->getFrameCtrl(0);
-	f32 diff                 = unk194 - part->getRotation().z;
-	diff = (diff >= 0.0f) ? diff : -diff;
-	f32 t = (1.0f / unk198) * diff;
-	frameCtrl->setRate((1.0f / t) * (2.0f * (40.0f * SMSGetAnmFrameRate())));
-}
-
-void TBossHanachan::setTumbleAnm(EnumBossHanachanStopMotionBlendOnOff onOff)
-{
-	EnumBossHanachanAnmKind anm;
-	if (unk194 == 179.0f)
-		anm = BH_ANM_KIND_UNK11;
-	else if (unk194 == -179.0f)
-		anm = BH_ANM_KIND_UNK10;
-	else
-		return;
-
-	mHead->setAnm_(anm, onOff);
-	setTumbleBckRate_(mHead);
-	for (int i = 0; i < 8; i++) {
-		mBody[i]->setAnm_(anm, onOff);
-		setTumbleBckRate_(mBody[i]);
-	}
-}
-
-void TBossHanachan::setHeadAndBodyAnm(EnumBossHanachanAnmKind anm,
-                                       EnumBossHanachanStopMotionBlendOnOff onOff)
-{
-	mHead->setAnm_(anm, onOff);
-
-	for (int i = 0; i < 8; i++) {
-		TBossHanachanPartsBody* body = mBody[i];
-		if (body->setAnm_(anm, onOff)) {
-			J3DFrameCtrl* ctrl = body->getMActor()->getFrameCtrl(0);
-			u8 frameDiff = mChangeSaveParams->mSLNormalBckFrameDiff.get();
-			s32 frame = (i * frameDiff) % ctrl->getEnd();
-			ctrl->setFrame((f32)frame);
-
-			f32 f = (f32)frame;
-			J3DFrameCtrl* ctrl3 = body->getMActor()->getFrameCtrl(3);
-			if (ctrl3)
-				ctrl3->setFrame(f);
-
-			J3DFrameCtrl* ctrl4 = body->getMActor()->getFrameCtrl(4);
-			if (ctrl4)
-				ctrl4->setFrame(f);
+	bool changeRate = true;
+	int i;
+	MActor* actor;
+	f32 rate = SMSGetAnmFrameRate();
+	if (mSpine->getLatestNerve() == &TNerveBossHanachanTumble::theNerve()) {
+		offHeadAndBodyNonstopMotionBlend_();
+		getHead()->changeTumbleAnmRate_();
+		for (int i = 0; i < 8; ++i)
+			mBodies[i]->changeTumbleAnmRate_();
+		changeRate = false;
+	} else {
+		switch (getHead()->mCurrentAnm) {
+		case BOSS_HANACHAN_ANM_UNK0:
+		case BOSS_HANACHAN_ANM_UNK1:
+			if (getMarchSpeed() <= getChangeParams()->getSLWalkAnmMarchSpeed()) {
+				offHeadAndBodyNonstopMotionBlend_();
+				switch (getHead()->mCurrentAnm) {
+				case BOSS_HANACHAN_ANM_UNK0:
+					break;
+				case BOSS_HANACHAN_ANM_UNK1:
+					setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK0,
+					                  BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+					copyFrameFromOldAnmToNewAnm_();
+					break;
+				default:
+					setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK0,
+					                  BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+					break;
+				}
+			} else if (getMarchSpeed() >= getChangeParams()->getSLRunAnmMarchSpeed()) {
+				offHeadAndBodyNonstopMotionBlend_();
+				switch (getHead()->mCurrentAnm) {
+				case BOSS_HANACHAN_ANM_UNK1:
+					break;
+				case BOSS_HANACHAN_ANM_UNK0:
+					setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK1,
+					                  BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+					copyFrameFromOldAnmToNewAnm_();
+					break;
+				default:
+					setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK1,
+					                  BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+					break;
+				}
+			} else {
+				f32 ratio = CLBCalcRatio(getChangeParams()->getSLWalkAnmMarchSpeed(),
+				                        getChangeParams()->getSLRunAnmMarchSpeed(),
+				                        mMarchSpeed);
+				switch (getHead()->mCurrentAnm) {
+				case BOSS_HANACHAN_ANM_UNK0:
+					if (getHead()->mPreviousAnm != BOSS_HANACHAN_ANM_UNK1) {
+						setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK1,
+						                  BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+						copyFrameFromOldAnmToNewAnm_();
+						ratio = 1.0f - ratio;
+					}
+					setHeadAndBodyNonstopMotionBlendRatio_(ratio);
+					break;
+				case BOSS_HANACHAN_ANM_UNK1:
+					if (getHead()->mPreviousAnm == BOSS_HANACHAN_ANM_UNK0) {
+						ratio = 1.0f - ratio;
+					} else {
+						setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK0,
+						                  BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+						copyFrameFromOldAnmToNewAnm_();
+					}
+					setHeadAndBodyNonstopMotionBlendRatio_(ratio);
+					break;
+				default:
+					offHeadAndBodyNonstopMotionBlend_();
+					setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK0,
+					                  BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+					break;
+				}
+			}
+			rate = mMarchSpeed * SMSGetAnmFrameRate()
+			       * getChangeParams()->mSLWalkBckRateMagnif.get();
+			if (rate < getChangeParams()->mSLWalkBckRateMin.get())
+				rate = getChangeParams()->mSLWalkBckRateMin.get();
+			break;
+		default:
+			offHeadAndBodyNonstopMotionBlend_();
+			rate = SMSGetAnmFrameRate();
+			break;
 		}
+	}
+	MActor* headActor = getHead()->mMActor;
+	if (changeRate)
+		headActor->getFrameCtrl(ANM_TYPE_BCK)->setRate(rate);
+	getHead()->updateAnmSound();
+	headActor->frameUpdate();
+	for (i = 0; i < 8; ++i) {
+		actor = mBodies[i]->mMActor;
+		if (changeRate)
+			actor->getFrameCtrl(ANM_TYPE_BCK)->setRate(rate);
+		mBodies[i]->updateAnmSound();
+		actor->frameUpdate();
 	}
 }

@@ -50,14 +50,14 @@ static void drawBlack(u16 param_1, u16 param_2)
 void TPollutionCounterBase::setCallback(int param_1) const
 {
 	TDrawSyncManager::smInstance->pushBreakPoint();
-	GXSetDrawSync(getCounterNo(param_1));
+	GXSetDrawSync(getTokenNo(param_1));
 	TDrawSyncManager::smInstance->pushBreakPoint();
 	GXSetDrawSync(0);
 }
 
 void TPollutionCounterBase::drawSyncCallback(u16 param_1)
 {
-	int token = getTokenNo(param_1);
+	int token = getCounterNo(param_1);
 	u32 discard;
 	GXReadPixMetric(&discard, &discard, &discard, &discard, mCounters[token],
 	                &discard);
@@ -73,6 +73,14 @@ void TPollutionCounterBase::initCounters(int max_counters)
 		mCounters[i]     = nullptr;
 		mPolygonCount[i] = 0;
 	}
+}
+
+TPollutionCounterBase::TPollutionCounterBase()
+    : mCounterCapacity(0)
+    , mCounterNum(0)
+    , mCounters(nullptr)
+    , mPolygonCount(nullptr)
+{
 }
 
 void loadPollutionLayer(const u8* param_1, u16 param_2, u16 param_3,
@@ -302,6 +310,30 @@ static void initGXforPollutionLayer(int pol_type, u16 flags, u8 threshold,
 	GXSetAlphaUpdate(0);
 }
 
+static inline u16 countGetLayerFlags(const TPollutionLayer* layer)
+{
+	u16 flags = layer->mFlags;
+	return flags;
+}
+
+static inline const TPollutionPos& countGetPos(const TPollutionLayer* layer)
+{
+	return layer->mPos;
+}
+
+static inline u8* countGetHeightMap(const TPollutionLayer* layer)
+{
+	u8* map = countGetPos(layer).mHeightMap;
+	return map;
+}
+
+static inline TPollutionTexStamp& countGetTexStamp(TPollutionTexStamp* stamps,
+                                                   int i)
+{
+	TPollutionTexStamp& stamp = stamps[i];
+	return stamp;
+}
+
 void TPollutionCounterLayer::drawPollutionLayer(int layer_index) const
 {
 	const TPollutionLayer* layer = mLayers[layer_index];
@@ -309,34 +341,52 @@ void TPollutionCounterLayer::drawPollutionLayer(int layer_index) const
 	drawBlack(img->width, img->height);
 	loadPollutionLayer((u8*)img + img->imageDataOffset, img->width, img->height,
 	                   GX_TEXMAP0);
-	initGXforPollutionLayer(layer->mPollutionType, layer->mFlags,
+	u16 flags = countGetLayerFlags(layer);
+	initGXforPollutionLayer(layer->getPollutionType(), flags,
 	                        layer->mPerFrameChangeThreshold,
 	                        layer->mPerFrameChangeDelta);
 
 	GXClearPixMetric();
-	drawTex(mLayers[layer_index]->mPollutionImage->width,
-	        mLayers[layer_index]->mPollutionImage->height);
+	drawTex(mLayers[layer_index]->getPollutionImage()->width,
+	        mLayers[layer_index]->getPollutionImage()->height);
 	setCallback(layer_index);
 }
 
-static void makeWorldToPollutionMtx(f32 scale, f32 x, f32 z, TPosition3f* mtx)
+// Row 0 scales world X into pollution U and row 1 scales world Z into V, so
+// each row's translation is its own minimum. The parameter order is pinned by
+// right-to-left evaluation at both inline sites: retail loads mMinZ (0x40)
+// into the first float register and mMinX (0x38) into the second, i.e. min_z
+// is the later parameter.
+static void makeWorldToPollutionMtx(f32 scale, f32 min_x, f32 min_z,
+                                    TPosition3f* mtx)
 {
 	mtx->zero();
 
 	mtx->mMtx[0][0] = scale;
-	mtx->mMtx[0][3] = -z * scale;
+	mtx->mMtx[0][3] = -min_x * scale;
 	mtx->mMtx[1][2] = scale;
-	mtx->mMtx[1][3] = -x * scale;
+	mtx->mMtx[1][3] = -min_z * scale;
 }
 
+// TODO: 99.9%, frame exact. The residue is one FPR pair at
+// makeWorldToPollutionMtx: the four-`~` FPR permutation here (retail loaded
+// mMinZ into f0 and mMinX into f1 and negated both in place, we loaded mMinZ
+// into f3 and mMinX into f0) was closed in research batch 171 by naming the
+// two arguments as locals at the call site with mMinZ declared first; see the
+// comment there. Rejected on the callee side: negating the parameters in
+// place, `scale * -min_x`, `-(min_x * scale)`, named products, and hoisting
+// both `mMtx[.][.] = scale` stores above the translations (store order is
+// source order, so all lose, most of them at the calcViewMtx site too).
+// Rejected on the caller side: `layer->getMinX()/getMinZ()` (frame +8, 32
+// diffs) and naming the two mins with mMinX first (no change).
 void TPollutionCounterLayer::drawJointObjStamp(int layer_index) const
 {
-	for (int i = 0; i < mJointObjStampTaskNum; ++i) {
+	for (int i = 0; i < getJointObjStampTaskNum(); ++i) {
 		const TPollutionJointObjTaskInfo& info = mJointObjStampTaskQueue[i];
 		if (info.mLayerIdx != layer_index)
 			continue;
 
-		TPollutionLayer* layer = gpPollution->getLayer(info.mLayerIdx);
+		TPollutionLayer* layer = SMSGetPollutionLayer(info.mLayerIdx);
 
 		initDrawObjGX();
 		GXSetNumChans(1);
@@ -345,18 +395,11 @@ void TPollutionCounterLayer::drawJointObjStamp(int layer_index) const
 		GXSetChanCtrl(GX_COLOR1A1, 0, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
 		              GX_AF_NONE);
 
-		if (mJointObjStampTaskQueue[i].unk0 == 0) {
+		if (info.unk0 == 0) {
 			GXSetChanMatColor(GX_COLOR0A0, (GXColor) { 0, 0, 0, 0xff });
 		} else {
 			GXSetChanMatColor(GX_COLOR0A0,
 			                  (GXColor) { 0xff, 0xff, 0xff, 0xff });
-
-	// Every diff marker of this function is a stack offset sitting 0x10 above
-	// ours (target frame 0xe0 against 0xd0). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 		}
 		GXSetNumTevStages(1);
 		GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL,
@@ -371,14 +414,19 @@ void TPollutionCounterLayer::drawJointObjStamp(int layer_index) const
 		                GX_TEVPREV);
 
 		TPosition3f local_6c;
-		makeWorldToPollutionMtx(layer->mPos.mInverseTexelScale, layer->mMinX,
-		                        layer->mMinZ, &local_6c);
+		// The declaration order of these two is load-bearing: retail loads
+		// mMinZ before mMinX here (research batch 171), which naming them in
+		// this order reproduces -- the raw arguments evaluate right to left
+		// but end up in the opposite register pair.
+		f32 minZ = layer->mMinZ;
+		f32 minX = layer->mMinX;
+		makeWorldToPollutionMtx(layer->mPos.mInverseTexelScale, minX, minZ,
+		                        &local_6c);
 		GXLoadPosMtxImm(local_6c, GX_PNMTX0);
 
 		j3dSys.setVtxPos(layer->getModelData()->getVtxPosArray());
-		for (int j = 0; j < mJointObjStampTaskQueue[i].mJointObj->getShapeNum();
-		     ++j)
-			drawShape(mJointObjStampTaskQueue[i].mJointObj->getShape(j));
+		for (int j = 0; j < info.mJointObj->getShapeNum(); ++j)
+			drawShape(info.mJointObj->getShape(j));
 	}
 }
 
@@ -493,12 +541,12 @@ void TPollutionCounterLayer::drawTexStamp(int target_layer) const
 	               ? frac = layer2->mPos.mLog2Width
 	               : layer2->mPos.mLog2Height;
 
-	initGXforStamp(layer2->mPos.mHeightMap, layer2->mPollutionImage->width,
-	               layer2->mPollutionImage->height, frac);
+	initGXforStamp(countGetHeightMap(layer2), layer2->getPollutionImage()->width,
+	               layer2->getPollutionImage()->height, frac);
 
 	for (int i = 0; i < mTexStampNum; ++i) {
-		TPollutionTexStamp& stamp = mTexStamps[i];
-		setTevColorInByStampType(mTexStamps[i].mStampType);
+		TPollutionTexStamp& stamp = countGetTexStamp(mTexStamps, i);
+		setTevColorInByStampType(stamp.mStampType);
 		doTask(target_layer, stamp.mTaskNum, stamp.mTaskQueue,
 		       stamp.mStampShapeTex,
 		       mLayers[target_layer]->getPollutionImage()->width,
@@ -537,7 +585,7 @@ void TPollutionCounterLayer::drawRevivalTexStamp(int layer_index) const
 	GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
 	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_NOOP);
 
-	for (int i = 0; i < mRevivalTexStampNum; ++i) {
+	for (int i = 0; i < getRevivalTexStampNum(); ++i) {
 		TPollutionRevivalTexStamp& stamp = mRevivalTexStamps[i];
 
 		if (stamp.mStampInterval > 0) {
@@ -608,10 +656,36 @@ void TPollutionCounterLayer::cleanProhibitArea(int param_1) const
 	GXEnd();
 }
 
-void TPollutionCounterLayer::drawModelStamp(int) { }
+// The map's UNUSED size 0x5c is countTexDegree's model-stamp block: the guard
+// on the task count, the draw-pass number and the two draw-buffer calls, with
+// the buffer bound to a local (that local is exactly the 12 bytes between the
+// 0x68 the two raw indexed reads compile to and the map's 0x5c).
+// It has no caller: countTexDegree is byte-exact with the block spelled out
+// and the member re-read after `draw()`, and calling this function instead
+// costs an instruction there (99.9% -> 98.2%), so retail duplicated the body
+// rather than calling it.
+void TPollutionCounterLayer::drawModelStamp(int layer_index)
+{
+	if (mModelStampTaskNum == 0)
+		return;
 
+	j3dSys.setUnk4C(7);
+	J3DDrawBuffer* buffer = getModelStampDrawBuffer(layer_index);
+	buffer->draw();
+	buffer->frameInit();
+}
+
+// The 0x58 frame was accessor pool below the inlined loadPollutionLayer
+// texObj (later statements) plus the last-8-bytes two-word aggregate.
+// Later-statement rungs, all instruction-free: getPollutionImage at drawTex
+// and initGXforStamp, getPollutionType, a flags binder, a height-map binder
+// over a pos fork, and a tex-stamp binder. texSize[2] is the documented
+// last-8-bytes carrier (frame-gaps.md); it names the width/height pair the
+// inlined draw path consumes.
 void TPollutionCounterLayer::countTexDegree(int layer_index)
 {
+	u32 texSize[2];
+
 	if (!mIsLayerEnabled[layer_index])
 		return;
 
@@ -619,8 +693,8 @@ void TPollutionCounterLayer::countTexDegree(int layer_index)
 	drawPollutionLayer(layer_index);
 	if (mModelStampTaskNum != 0) {
 		j3dSys.setUnk4C(7);
-		mModelStampDrawBuffers[layer_index]->draw();
-		mModelStampDrawBuffers[layer_index]->frameInit();
+		getModelStampDrawBuffer(layer_index)->draw();
+		getModelStampDrawBuffer(layer_index)->frameInit();
 	}
 
 	ReInitializeGX();
@@ -674,16 +748,17 @@ void TPollutionCounterLayer::calcViewMtx()
 	J3DDrawBuffer* oldDbOpa = j3dSys.getDrawBuffer(0);
 	J3DDrawBuffer* oldDbXlu = j3dSys.getDrawBuffer(1);
 
-	for (int i = 0; i < mCounterNum; ++i) {
-		TPollutionLayer* layer = gpPollution->getLayer(i);
+	for (int i = 0; i < getCounterNum(); ++i) {
+		TPollutionLayer* layer = SMSGetPollutionLayer(i);
 
 		TPosition3f local_a4;
-		makeWorldToPollutionMtx(layer->mPos.mInverseTexelScale, layer->mMinX,
-		                        layer->mMinZ, &local_a4);
+		makeWorldToPollutionMtx(layer->mPos.mInverseTexelScale,
+		                        layer->getMinX(), layer->getMinZ(),
+		                        &local_a4);
 
 		j3dSys.setViewMtx(local_a4);
-		j3dSys.setDrawBuffer(mModelStampDrawBuffers[i], 0);
-		j3dSys.setDrawBuffer(mModelStampDrawBuffers[i], 1);
+		j3dSys.setDrawBuffer(getModelStampDrawBuffer(i), 0);
+		j3dSys.setDrawBuffer(getModelStampDrawBuffer(i), 1);
 
 		for (int j = 0; j < mModelStampTaskNum; ++j) {
 			if (mModelStampTaskQueue[j].mLayerIdx != i)

@@ -1,12 +1,6 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <MoveBG/MapObjManager.hpp>
 #include <MoveBG/MapObjGeneral.hpp>
 #include <MoveBG/MapObjBase.hpp>
-#include <Map/MapCollisionManager.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <Map/MapData.hpp>
 #include <Map/Map.hpp>
 #include <M3DUtil/MActor.hpp>
@@ -24,9 +18,13 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionManager.hpp>
+#include <Map/MapCollisionEntry.hpp>
 
 TMapObjSoundData TMapObjGeneral::mDefaultSound = {
 	{ 0xFFFFFFFF, MSD_SE_IT_COMMON_APPEAR, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF,
@@ -2175,13 +2173,28 @@ static TMapObjData barrel_oil_data = {
 	0x00000000,
 };
 
+// The block collision tables are defined together, in retail's .sdata2
+// order (c-u12).
 static const TMapObjCollisionData warp_block_map_collision_data[] = {
 	{ "lower_block", 2 },
 };
 
+static const TMapObjCollisionInfo warp_block_map_collision_info
+    = { 1, 1, warp_block_map_collision_data };
+
+static const TMapObjCollisionData move_block_map_collision_data[] = {
+	{ "lower_block", 1 },
+};
+
+static const TMapObjCollisionInfo move_block_map_collision_info
+    = { 1, 1, move_block_map_collision_data };
+
 static const TMapObjCollisionData move_block_center_map_collision_data[] = {
 	{ "center_block", 1 },
 };
+
+static const TMapObjCollisionInfo move_block_center_map_collision_info
+    = { 1, 1, move_block_center_map_collision_data };
 
 static const TMapObjAnimData breakable_block_anim_data[] = {
 	{ "breakable_block.bmd", nullptr, 0, nullptr, nullptr },
@@ -2228,9 +2241,6 @@ static TMapObjData breakable_block_data = {
 static const TMapObjHitInfo supermario_block_obj_hit_info
     = { 0x1, 0x80000000, -10.0f, breakable_block_hit_data_table };
 
-static const TMapObjCollisionInfo warp_block_map_collision_info
-    = { 1, 1, warp_block_map_collision_data };
-
 static TMapObjData supermario_block_data = {
 	"supermario_block",
 	0x400002BC,
@@ -2248,13 +2258,6 @@ static TMapObjData supermario_block_data = {
 	0x00002005,
 	0x00000000,
 };
-
-static const TMapObjCollisionData move_block_map_collision_data[] = {
-	{ "lower_block", 1 },
-};
-
-static const TMapObjCollisionInfo move_block_map_collision_info
-    = { 1, 1, move_block_map_collision_data };
 
 static TMapObjData move_block_data = {
 	"move_block",
@@ -2418,9 +2421,6 @@ static TMapObjData sand_block_data = {
 	0x00002007,
 	0x00000000,
 };
-
-static const TMapObjCollisionInfo move_block_center_map_collision_info
-    = { 1, 1, move_block_center_map_collision_data };
 
 static TMapObjData water_power_lift_data = {
 	"water_power_lift",
@@ -2787,13 +2787,20 @@ static const TMapObjCollisionData JuiceBlock_map_collision_data[] = {
 static const TMapObjCollisionInfo JuiceBlock_map_collision_info
     = { 1, 1, JuiceBlock_map_collision_data };
 
+static const TMapObjHitDataTable JuiceBlock_hit_data_table[] = {
+	{ 200.0f, 100.0f, 200.0f, 100.0f },
+};
+
+static const TMapObjHitInfo JuiceBlock_obj_hit_info
+    = { 0x1, 0xC0000000, 0.0f, JuiceBlock_hit_data_table };
+
 static TMapObjData JuiceBlock_data = {
 	"JuiceBlock",
 	0x400002C6,
 	"地形オブジェマネージャー",
-	"オブジェクトグループ",
+	"敵グループ",
 	nullptr,
-	&no_data_obj_hit_info,
+	&JuiceBlock_obj_hit_info,
 	&JuiceBlock_map_collision_info,
 	nullptr,
 	nullptr,
@@ -6492,7 +6499,7 @@ static TMapObjData windmill_far_data = {
 };
 
 static const TMapObjHitDataTable MiniWindmill_hit_data_table[] = {
-	{ 0.0f, 0.0f, 20.0f, 6400.0f },
+	{ 0.0f, 0.0f, 10.0f, 1500.0f },
 };
 
 static const TMapObjHitInfo MiniWindmill_obj_hit_info
@@ -10820,6 +10827,17 @@ void TMapObjBase::setMatTableTex(J3DMaterialTable* table)
 void TMapObjBase::initUnique()
 {
 	// TODO: I hate switches, someone fix this please...
+	// TODO: instruction-exact; the frame is 0x1a8 against retail 0x2d8, a
+	// 0x130 dead region with no stack reference (0x100 before the actor
+	// keeper and ground plane were read through their accessors, c-hs5). The sixteen setMatTable/
+	// setMatTableTex expansions share one temp block, so the missing bytes
+	// are not per-expansion accessor pool; unexplained (cc41).
+	// agg1: switch arms do not share slots (emptying any one arm drops 0 or
+	// 8 bytes; the 0x2000000E arm 0x20). Each extra accessor or named local
+	// in the UNUSED setMatTable/setMatTableTex bodies costs 0x40 over the 16
+	// expansions at equal instructions (max tried 0x1c0 with getMActor() and
+	// two binders), so 0x1d8 is not a multiple of that price: a 0x18
+	// remainder must come from another arm. No stack aggregate is visible.
 	switch (getActorType()) {
 	case 0x2000003C:
 		mMActor->setLightType(LIGHT_TYPE_PLAYER);
@@ -10837,28 +10855,28 @@ void TMapObjBase::initUnique()
 		break;
 	case 0x4000001C:
 		for (int i = 0; i < 2; ++i) {
-			mMActor = mMActorKeeper->mActors[i];
+			mMActor = getActorKeeper()->getMActor(i);
 			setMatTable(gpMapObjManager->unk7C);
 			SMS_UnifyMaterial(getModel());
 		}
-		mMActor = mMActorKeeper->mActors[0];
-		if (mGroundPlane->isShadow())
+		mMActor = getActorKeeper()->getMActor(0);
+		if (getGroundPlane()->isShadow())
 			mMapCollisionManager->unk8->setAllBGType(0x4000);
 		break;
 	case 0x4000005A:
 		for (int i = 0; i < 2; ++i) {
-			mMActor = mMActorKeeper->mActors[i];
+			mMActor = getActorKeeper()->getMActor(i);
 			setMatTable(gpMapObjManager->unk80);
 			SMS_UnifyMaterial(getModel());
 		}
-		mMActor = mMActorKeeper->mActors[0];
+		mMActor = getActorKeeper()->getMActor(0);
 		break;
 	case 0x400000BA:
 		setMatTable(gpMapObjManager->unk94);
 		SMS_UnifyMaterial(getModel());
 		break;
 	case 0x40000263:
-		startAllAnim(mMActor, unkF4);
+		startAllAnim(getMActor(), getUnkF4());
 		break;
 	case 0x4000003C:
 		mMActor->initSimpleMotionBlend(0x14);
@@ -10866,7 +10884,7 @@ void TMapObjBase::initUnique()
 	case 0x400000A8:
 	case 0x40000096:
 	case 0x4000009A:
-	case 0x4000009D:
+	case 0x4000009B:
 	case 0x4000009E:
 	case 0x4000009F:
 	case 0x400000A1:
@@ -10886,6 +10904,8 @@ void TMapObjBase::initUnique()
 		setMatTable(gpMapObjManager->unk90);
 		break;
 	case 0x400000CB:
+	case 0x400000CD:
+	case 0x400000CE:
 		setMatTable(gpMapObjManager->unkC0);
 		SMS_UnifyMaterial(getModel());
 		break;
@@ -10907,24 +10927,24 @@ void TMapObjBase::initUnique()
 		break;
 	case 0x20000068:
 		for (int i = 0; i < 3; ++i) {
-			mMActor = mMActorKeeper->mActors[i];
+			mMActor = getActorKeeper()->getMActor(i);
 			setMatTableTex(gpMapObjManager->unk70);
 		}
-		mMActor = mMActorKeeper->mActors[0];
+		mMActor = getActorKeeper()->getMActor(0);
 		break;
 	case 0x400002C2:
 		for (int i = 0; i < 2; ++i) {
-			mMActor = mMActorKeeper->mActors[i];
+			mMActor = getActorKeeper()->getMActor(i);
 			setMatTable(gpMapObjManager->unk84);
 		}
-		mMActor = mMActorKeeper->mActors[0];
+		mMActor = getActorKeeper()->getMActor(0);
 		break;
 	case 0x400002C3:
 		for (int i = 0; i < 2; ++i) {
-			mMActor = mMActorKeeper->mActors[i];
+			mMActor = getActorKeeper()->getMActor(i);
 			setMatTable(gpMapObjManager->unk88);
 		}
-		mMActor = mMActorKeeper->mActors[0];
+		mMActor = getActorKeeper()->getMActor(0);
 		break;
 	case 0x400000D0:
 		mMActor->setLightType(LIGHT_TYPE_OBJECT);
@@ -10974,9 +10994,6 @@ void TMapObjBase::initMapCollisionData()
 
 void TMapObjBase::initObjCollisionData()
 {
-
-	
-	
 	if (getMapObjData()->mHit != nullptr) {
 		initHitActor(getMapObjData()->unk4, getHitObjNumMax(),
 		             getMapObjData()->mHit->unk4, 0.0f, 0.0f, 0.0f, 0.0f);
@@ -10985,10 +11002,10 @@ void TMapObjBase::initObjCollisionData()
 		const TMapObjHitDataTable* table = getMapObjData()->mHit->unkC;
 
 		f32 fVar2;
-		if (mScaling.x > mScaling.z)
-			fVar2 = mScaling.x;
+		if (getScaling().x > getScaling().z)
+			fVar2 = getScaling().x;
 		else
-			fVar2 = mScaling.z;
+			fVar2 = getScaling().z;
 
 		if (table->unk8 > 0.0f) {
 			mBodyRadius = table->unk8 * fVar2;
@@ -11048,28 +11065,48 @@ bool isAlreadyRegistered(const TMapObjAnimDataInfo* anim, int i)
 	return false;
 }
 
+// TODO: retail copies `param_2` into a callee-saved register (r29) at entry
+// and never reads it again, and both `makeMActors` expansions load
+// `anim->unk4[i].unkC` for it, so the ROM has a use of it whose values MWCC
+// stripped while the load survived (the walkerEnemy `getSaveParam()` pattern).
+// Nothing below uses it, so our copy drops the register and both call sites
+// drop the load. The missing statement is still unidentified.
+// cc41: an empty inline taking param_2 (before calc, before or after the
+// restore), a dead named copy, and a guarded empty body all compile away
+// without keeping the register.
+// c-k8: the guard has to be an explicit comparison. `if (param_2) {}` is
+// folded by the frontend, but `if (param_2 != nullptr) {}` after viewCalc()
+// (or after the restore) reaches the backend, keeps param_2 in r29 across the
+// calls and is deleted only after register allocation: initMActor 87.1 ->
+// 98.6 (left: retail `mr r3, r30` for our `addi r3, r30, 0` at the return)
+// and makeMActors 98.65 -> 99.8 (every instruction and the two unkC loads
+// exact; frame 0x40 short). So retail tested param_2 in a block whose body
+// did not survive preprocessing. Not landed: an empty body is on the
+// rejected list; it needs a policy decision.
 MActor* TMapObjBase::initMActor(const char* param_1, const char* param_2,
                                 u32 param_3)
 {
-	MActor* oldActor = mMActor;
+	MActor* oldActor = getMActor();
 	MActor* newActor = getActorKeeper()->createMActor(param_1, param_3);
 	mMActor          = newActor;
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000)) {
-		mMActor->setLightID(0);
-		mMActor->unmarkUnk40();
+		getMActor()->setLightID(0);
+		getMActor()->unmarkUnk40();
 	}
 	calcRootMatrix();
-	mMActor->calc();
-	mMActor->viewCalc();
+	getMActor()->calc();
+	getMActor()->viewCalc();
 	mMActor = oldActor;
 	return newActor;
 }
 
+// TODO: frame 0x30 short (low region), and each initMActor expansion lacks
+// retail's dead `unkC` load and old-actor register (see initMActor's TODO).
 void TMapObjBase::makeMActors()
 {
 	u16 uVar6 = 1;
-	if (mMapObjData->mAnim)
-		uVar6 = mMapObjData->mAnim->unk2;
+	if (getMapObjData()->mAnim)
+		uVar6 = getMapObjData()->mAnim->unk2;
 
 	if (uVar6 == 0)
 		return;
@@ -11084,9 +11121,10 @@ void TMapObjBase::makeMActors()
 		                                   | J3DMLF_UseUniqueMaterials
 		                                   | (2 << J3DMLF_TevStageNumShift);
 
-	if (mMapObjData->mAnim) {
-		const TMapObjAnimDataInfo* anim = mMapObjData->mAnim;
-		mMActor = initMActor(anim->unk4[0].unk0, nullptr, getSDLModelFlag());
+	if (getMapObjData()->mAnim) {
+		const TMapObjAnimDataInfo* anim = getMapObjData()->mAnim;
+		mMActor = initMActor(anim->unk4[0].unk0, anim->unk4[0].unkC,
+		                     getSDLModelFlag());
 
 		for (u16 i = 1; i < anim->unk0; ++i) {
 			if (anim->unk4[i].unk10 && mAnmSound == nullptr)
@@ -11094,12 +11132,13 @@ void TMapObjBase::makeMActors()
 
 			if (anim->unk4[i].unk0 != nullptr
 			    && !isAlreadyRegistered(anim, i)) {
-				initMActor(anim->unk4[i].unk0, nullptr, getSDLModelFlag());
+				initMActor(anim->unk4[i].unk0, anim->unk4[i].unkC,
+				           getSDLModelFlag());
 			}
 		}
 	} else {
 		char buffer[64];
-		snprintf(buffer, 64, "%s.bmd", mMapObjData->unk0);
+		snprintf(buffer, 64, "%s.bmd", getMapObjData()->unk0);
 		mMActor = initMActor(buffer, nullptr, getSDLModelFlag());
 	}
 }
@@ -11127,10 +11166,23 @@ void TMapObjBase::initModelData()
 	}
 }
 
+// Name-and-return levels for initActorData's frame (+8 each over +8).
+static inline TMapObjData* MapObjDataAt(int i)
+{
+	TMapObjData* data = sObjDataTable[i];
+	return data;
+}
+
+static inline TLiveManager* MapObjSearchManager(const char* name)
+{
+	TLiveManager* manager = JDrama::TNameRefGen::search<TLiveManager>(name);
+	return manager;
+}
+
 void TMapObjBase::initActorData()
 {
 	int i    = 0;
-	u16 code = JDrama::TNameRef::calcKeyCode(unkF4);
+	u32 code = JDrama::TNameRef::calcKeyCode(unkF4);
 	for (; sObjDataTable[i]->unk4; ++i) {
 		if (code == sObjDataTable[i]->unk38
 		    && strcmp(sObjDataTable[i]->unk0, unkF4) == 0)
@@ -11140,11 +11192,10 @@ void TMapObjBase::initActorData()
 	if (strcmp(mName, "地形オブジェ") == 0)
 		mName = unkF4;
 
-	mMapObjData = sObjDataTable[i];
+	mMapObjData = MapObjDataAt(i);
 	unkF8       = mMapObjData->unk34;
 
-	mManager = static_cast<TLiveManager*>(
-	    JDrama::TNameRefGen::search(mMapObjData->unk8));
+	mManager = MapObjSearchManager(mMapObjData->unk8);
 	mManager->manageActor(this);
 	if (mMapObjData->mHit)
 		mYOffset = mScaling.y * mMapObjData->mHit->unk8;
@@ -11158,8 +11209,8 @@ void TMapObjBase::initActorData()
 
 void TMapObjBase::initMapObj()
 {
-	mInitialPosition = mPosition;
-	mInitialRotation = mRotation;
+	mInitialPosition = getPosition();
+	mInitialRotation = getRotation();
 	mInitialScaling  = mScaling;
 
 	initActorData();
@@ -11178,11 +11229,11 @@ void TMapObjBase::initMapObj()
 		mLiveFlag |= LIVE_FLAG_UNK8;
 
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK8000) && !isActorType(0x40000084)) {
-		TScreenTexture* ref = static_cast<TScreenTexture*>(
-		    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+		TScreenTexture* ref = JDrama::TNameRefGen::search<TScreenTexture>(
+		    "スクリーンテクスチャ");
 		const ResTIMG* img = ref->getTexture()->getTexInfo();
 		getModel()->getModelData()->getTexture()->setResTIMG(2, *img);
-		mMActor->setLightType(LIGHT_TYPE_INDIRECT);
+		getMActor()->setLightType(LIGHT_TYPE_INDIRECT);
 	}
 
 	makeObjDead();

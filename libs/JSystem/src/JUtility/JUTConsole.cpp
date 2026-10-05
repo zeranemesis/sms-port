@@ -442,10 +442,13 @@ void JUTReportConsole_f_va(const char* fmt, va_list args)
 
 	if (JUTGetReportConsole() == nullptr) {
 		vsnprintf(buf, sizeof(buf), fmt, args);
-	} else if (JUTGetReportConsole()->getOutput()
-	           & (JUTConsole::OUTPUT_CONSOLE | JUTConsole::OUTPUT_OSREPORT)) {
-		vsnprintf(buf, sizeof(buf), fmt, args);
-		JUTGetReportConsole()->print(buf);
+	} else {
+		u32 output = JUTGetReportConsole()->getOutput();
+		if (output
+		    & (JUTConsole::OUTPUT_CONSOLE | JUTConsole::OUTPUT_OSREPORT)) {
+			vsnprintf(buf, sizeof(buf), fmt, args);
+			JUTGetReportConsole()->print(buf);
+		}
 	}
 }
 
@@ -468,11 +471,13 @@ void JUTWarningConsole_f_va(const char* fmt, va_list args)
 
 	if (JUTGetWarningConsole() == nullptr) {
 		vsnprintf(buf, sizeof(buf), fmt, args);
-		OSReport("%s", buf);
-	} else if (JUTGetWarningConsole()->getOutput()
-	           & (JUTConsole::OUTPUT_CONSOLE | JUTConsole::OUTPUT_OSREPORT)) {
-		vsnprintf(buf, sizeof(buf), fmt, args);
-		JUTGetWarningConsole()->print(buf);
+	} else {
+		u32 output = JUTGetWarningConsole()->getOutput();
+		if (output
+		    & (JUTConsole::OUTPUT_CONSOLE | JUTConsole::OUTPUT_OSREPORT)) {
+			vsnprintf(buf, sizeof(buf), fmt, args);
+			JUTGetWarningConsole()->print(buf);
+		}
 	}
 }
 

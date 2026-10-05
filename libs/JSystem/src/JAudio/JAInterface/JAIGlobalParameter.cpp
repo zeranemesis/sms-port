@@ -249,9 +249,6 @@ void JAIGlobalParameter::setParamSeDistancepitchMax(f32 value)
 
 void JAIGlobalParameter::setParamSoundOutputMode(u32 value)
 {
-
-	
-	
 	int r31 = 1;
 	int r30 = 0;
 	switch (value) {
@@ -272,7 +269,8 @@ void JAIGlobalParameter::setParamSoundOutputMode(u32 value)
 		                      "出力モードが不正です。\n");
 		break;
 	}
-	JAIBasic::getInterface()->mSoundOutputMode = value;
+	JAIBasic* basic         = JAIBasic::getInterface();
+	basic->mSoundOutputMode = value;
 	JASystem::Driver::setOutputMode(r31);
 	JAInter::StreamLib::setOutputMode(r30);
 }

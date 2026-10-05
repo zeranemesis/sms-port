@@ -13,7 +13,6 @@
 #include <Strategic/ObjManager.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
-#include <System/MarDirector.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <M3DUtil/InfectiousStrings.hpp>
@@ -41,33 +40,49 @@ void TRealoidActor::perform(u32 cue, JDrama::TGraphics* graphics)
 		unk70->perform(cue, graphics);
 }
 
+static inline J3DModel* getRealoidModel(TRealoidActor* actor)
+{
+	MActor* mactor  = actor->getMActor();
+	J3DModel* model = mactor->getModel();
+	return model;
+}
+
+static inline TTakeActor* getRealoidHolder(TRealoidActor* actor)
+{
+	TTakeActor* holder = actor->getHolder();
+	return holder;
+}
+
 void TRealoidActor::calcRootMatrix(TBoid* boid)
 {
+	JGeometry::TVec3<f32> trans;
+	MtxPtr root;
+	JGeometry::TVec3<f32> up, dir, n;
+
 	if (mFlags & FLAG_UNK2_OR_UNK4)
 		return;
 
 	mPosition = boid->mPosition;
 
-	if (mHolder != nullptr) {
+	if (getRealoidHolder(this) != nullptr) {
 		MtxPtr hm = mHolder->getTakingMtx();
 		JGeometry::TVec3<f32> v;
 		v.x             = hm[0][3];
 		v.y             = hm[1][3];
 		v.z             = hm[2][3];
 		boid->mPosition = v;
-		unk70->getModel()->setBaseTRMtx(mHolder->getTakingMtx());
+		getRealoidModel(this)->setBaseTRMtx(mHolder->getTakingMtx());
 		return;
 	}
 
 	mPosition = boid->mPosition;
 
-	JGeometry::TVec3<f32> trans = boid->mPosition;
+	trans = boid->mPosition;
 
-	MtxPtr root = unk70->getModel()->getBaseTRMtx();
+	root = getRealoidModel(this)->getBaseTRMtx();
 
-	JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
-	JGeometry::TVec3<f32> dir = boid->mHeading;
-	JGeometry::TVec3<f32> n;
+	up.set(0.0f, 1.0f, 0.0f);
+	dir = boid->mHeading;
 
 	n.cross(up, dir);
 	VECNormalize(&n, &n);
@@ -105,27 +120,15 @@ void TRealoidActor::checkHitActors()
 	for (; it != end; ++it) {
 		switch ((*it)->getActorType()) {
 		case 0x80000001:
-			bool shouldSkipMessage = true;
-			bool isTalk = shouldSkipMessage;
-			u8 state = gpMarDirector->unk124;
-			if (state != 1 && state != 2)
-				isTalk = false;
-			if (!isTalk) {
-				bool isDemo = true;
-				u8 demoState = gpMarDirector->unk124;
-				if (demoState != 3 && demoState != 4)
-					isDemo = false;
-				if (!isDemo)
-					shouldSkipMessage = false;
-			}
-			if (!shouldSkipMessage)
-				SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
+			SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 			break;
 		}
 	}
 }
 
 MtxPtr TRealoidActor::getTakingMtx() { return unk78; }
+
+void TRealoidActor::calcRootMatrixOnTaking() { }
 
 TRealoid::TRealoid(const char* name)
     : TSpineEnemy(name)
@@ -145,9 +148,9 @@ void TRealoid::loadDefault(JSUMemoryInputStream& stream, const char* name,
 	mMActorKeeper = new TMActorKeeper(mManager, count + arg2);
 	unk150        = new TBoidLeader(count, "コントローラ");
 
-	unk150->setUnk38(mPosition);
+	unk150->setUnk38(getPosition());
 
-	unk150->setGraph(unk124->getGraph(), mPosition);
+	unk150->setGraph(unk124->getGraph(), getPosition());
 
 	unk154 = new TRealoidActor*[count];
 
@@ -160,23 +163,34 @@ void TRealoid::loadDefault(JSUMemoryInputStream& stream, const char* name,
 		unk154[i]       = createRealoidActor(actor);
 		pos.y += 10.0f;
 	}
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
+// Closed by re-pass 172 with header round 26's consumed-reference-binding rule:
+// `const TVec3<f32>& boidPos = unk150->getBoid(i)->mPosition;` ahead of the
+// copy is the 4 bytes of low region that slide `pos` from 0x48 to retail's
+// 0x44 in the out-of-line copy.  The same binding is worth **8** in an inlined
+// expansion, so it had to be paid for on both sides of the family, and it was:
+// `TRealoid::perform`'s second loop bound spelled `unk150->getBoidNum()`
+// instead of `getBoidLeader()->getBoidNum()` removes 8 there, and
+// `TFishoid::perform` (which the same accounting moved) takes the same
+// reference binding for +8 plus a `TRealoid::getBoid(int)` forwarder -- a
+// nested fork over `getBoidLeader()`, worth the last +4.  All three are
+// byte-exact and nothing else in the tree moved.
+// Rejected on the way (batch 128 and here): a named `TBoid* boid` before the
+// copy is +8 in both (one nonmatching function either way); a dead `BOOL` or
+// `f32` before `pos` is +0 in both; dropping a camera accessor level is -8 in
+// both; `getRealoid(i)` for the flag calls is +8/+16; a named
+// `getBoid(getBoidNum() - 1)` result in `TFishoid::perform` is +0.
 void TRealoid::clipBoids(JDrama::TGraphics* graphics)
 {
-	SetViewFrustumClipCheckPerspective(gpCamera->getFovy(),
-	                                   gpCamera->getAspect(),
+	SetViewFrustumClipCheckPerspective(SMSGetCamera()->getFovy(),
+	                                   SMSGetCamera()->getAspect(),
 	                                   graphics->getNearPlane(), 10000.0f);
 
 	for (int i = 0; i < unk150->getBoidNum(); ++i) {
-		JGeometry::TVec3<f32> pos = unk150->getBoid(i)->mPosition;
+		const JGeometry::TVec3<f32>& boidPos
+		    = unk150->getBoid(i)->mPosition;
+		JGeometry::TVec3<f32> pos = boidPos;
 		if (ViewFrustumClipCheck(graphics, &pos, 100.0f))
 			unk154[i]->offFlag(TRealoidActor::FLAG_CLIPPED_OUT);
 		else
@@ -191,7 +205,7 @@ void TRealoid::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_CALC_ANIM) {
 		clipBoids(graphics);
 		for (int i = 0; i < unk150->getBoidNum(); ++i)
-			unk154[i]->calcRootMatrix(unk150->getBoid(i));
+			unk154[i]->calcRootMatrix(getBoidLeader()->getBoid(i));
 	}
 
 	for (int i = 0; i < unk150->getBoidNum(); ++i)
@@ -211,20 +225,24 @@ void TFishoid::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TRealoid::perform(cue, graphics);
 
-	for (int i = 0; i < unk150->getBoidNum(); ++i) {
-		TBoid* boid = unk150->getBoid(i);
+	for (int i = 0; i < getBoidNum(); ++i) {
+		TBoid* boid = getBoid(i);
 
-		JGeometry::TVec3<f32> pos = boid->mPosition;
-		if (pos.y > 0.0f)
+		const JGeometry::TVec3<f32>& boidPos = boid->mPosition;
+		JGeometry::TVec3<f32> pos            = boidPos;
+		f32 y                     = pos.y;
+		if (y > 0.0f)
 			pos.y = 0.0f;
 		boid->mPosition = pos;
 	}
 
 	if (unk15C != nullptr && (cue & CUE_MOVE)) {
 		unk15C->mPosition
-		    = unk150->getBoid(unk150->getBoidNum() - 1)->mPosition;
+		    = getBoidLeader()->getBoid(getBoidNum() - 1)->mPosition;
 	}
 }
+
+void TFishoid::performItem(u32, JDrama::TGraphics*) { }
 
 void TFishoid::init(TLiveManager* manager)
 {
@@ -235,10 +253,52 @@ void TFishoid::init(TLiveManager* manager)
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+void TFishoid::initBoids() { }
+
+static inline TBoidLeader* FishoidLeader(TRealoid* realoid)
+{
+	TBoidLeader* leader = realoid->getBoidLeader();
+	return leader;
+}
+
+// The appearing item's setup is a helper of its own: retail keeps the last
+// realoid out of load's named block, as a named local of an inlined body.
+static inline void FishoidAppearItem(TFishoid* fishoid)
+{
+	TRealoidActor* realoid = fishoid->getRealoid(fishoid->getBoidNum() - 1);
+	realoid->onFlag(TRealoidActor::FLAG_UNK2);
+	fishoid->unk15C->makeObjAppeared();
+	fishoid->unk15C->mPosition = realoid->mPosition;
+}
+
 void TFishoid::load(JSUMemoryInputStream& stream)
 {
 	loadDefault(stream, cFishoidMdlNames[mType], 0);
+	loadItem(stream);
 
+	getBoidLeader()->setBaseSpeed(4.0f);
+	getBoidLeader()->setNeighborRadius(200.0f);
+	getBoidLeader()->setYawSpeed(1.0f);
+	getBoidLeader()->setPitchSpeed(0.5f);
+	getBoidLeader()->setMaxPitch(5.0f);
+	getBoidLeader()->setAlignmentStrength(0.5f);
+
+	TPathNode node((THitActor*)gpMarioAddress);
+	FishoidLeader(this)->setFleeTarget(node);
+
+	getBoidLeader()->setFleeRadius(400.0f);
+	getBoidLeader()->setFleeStrength(3.0f);
+	getBoidLeader()->onFlag(TBoidLeader::FLAG_UNK2);
+
+	for (int i = 0; i < getBoidNum(); ++i)
+		getRealoid(i)->unk70->setBck("fish_swim");
+
+	if (unk15C)
+		FishoidAppearItem(this);
+}
+
+void TFishoid::loadItem(JSUMemoryInputStream& stream)
+{
 	u32 eventId;
 	stream >> eventId;
 
@@ -246,29 +306,6 @@ void TFishoid::load(JSUMemoryInputStream& stream)
 	if (unk15C != nullptr) {
 		if (unk15C->isActorType(0x2000000E))
 			unk15C = gpItemManager->newAndRegisterCoinReal();
-	}
-
-	unk150->mBaseSpeed         = 4.0f;
-	unk150->mNeighborRadius    = 200.0f;
-	unk150->mYawSpeed          = 1.0f;
-	unk150->mPitchSpeed        = 0.5f;
-	unk150->mMaxPitch          = 5.0f;
-	unk150->mAlignmentStrength = 0.5f;
-
-	unk150->mFleeTarget = (THitActor*)gpMarioAddress;
-
-	unk150->mFleeRadius   = 400.0f;
-	unk150->mFleeStrength = 3.0f;
-	unk150->mFlags |= 2;
-
-	for (int i = 0; i < unk150->mNumBoids; ++i)
-		unk154[i]->unk70->setBck("fish_swim");
-
-	if (unk15C) {
-		TRealoidActor* realoid = getRealoid(unk150->mNumBoids - 1);
-		realoid->onFlag(TRealoidActor::FLAG_UNK2);
-		unk15C->makeObjAppeared();
-		unk15C->mPosition = realoid->mPosition;
 	}
 }
 
@@ -305,5 +342,3 @@ void TFishoidManager::createModelData()
 	};
 	createModelDataArray(entry);
 }
-
-TFishoidManager::~TFishoidManager() { }

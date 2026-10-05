@@ -38,7 +38,7 @@ public:
 
 	static void* getGlbResource(const char*);
 	static void* getGlbResource(const char*, JKRFileLoader* fileLoader);
-	static s32 getResSize(void* resourceBuffer, JKRFileLoader* fileLoader);
+	static long getResSize(void* resourceBuffer, JKRFileLoader* fileLoader);
 	static size_t readGlbResource(void* resourceBuffer, u32 bufferSize,
 	                              const char* path);
 	static size_t readGlbResource(void* resourceBuffer, u32 bufferSize,

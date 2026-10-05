@@ -1,105 +1,136 @@
-#ifndef MOVE_BG_MAP_OBJ_BIANCO_HPP
-#define MOVE_BG_MAP_OBJ_BIANCO_HPP
+#ifndef MOVEBG_MAPOBJBIANCO_HPP
+#define MOVEBG_MAPOBJBIANCO_HPP
 
+#include <JSystem/JAudio/JAInterface/JAISound.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjFloat.hpp>
-#include <MoveBG/MapObjHide.hpp>
 #include <MoveBG/MapObjTurn.hpp>
-#include <dolphin/gx/GXStruct.h>
 
-class JAISound;
 class TBGCheckData;
+class TBiancoBell;
+class TLampSeesawMain;
 class TMapObjMessenger;
 class TTrembleModelEffect;
 struct TBGWallCheckRecord;
 
-class TWoodLog : public TMapObjFloatOnSea {
+/// The big windmill on the Bianco Hills bridge, carrying four blocks around
+/// its rim.
+class TBigWindmill : public TMapObjBase {
 public:
-	TWoodLog(const char* name = "丸太")
-	    : TMapObjFloatOnSea(name)
+	virtual ~TBigWindmill() { }
+	virtual void load(JSUMemoryInputStream&);
+	virtual void control();
+
+	TBigWindmill(const char* name = "大風車")
+	    : TMapObjBase(name)
 	{
+		mSoundHandle = nullptr;
 	}
 
-	virtual void control();
+public:
+	/* 0x138 */ TMapObjBase* mBlocks[4];
+	/* 0x148 */ JAISoundHandle mSoundHandle;
 };
 
-class TBiancoBell : public TMapObjBase {
+/// The Piranha Plant root that shakes the ground it sits on.
+class TMapObjRootPakkun : public TMapObjBase {
 public:
-	TBiancoBell(const char* name = "ベル水車");
-
+	virtual ~TMapObjRootPakkun() { }
 	virtual void initMapObj();
-	virtual void touchPlayer(THitActor*);
-	virtual u32 touchWater(THitActor*);
+	virtual void drawObject(JDrama::TGraphics*);
 
-	void ringSingle();
-	void ring();
-	void stopToRing();
+	TMapObjRootPakkun(const char* name = "根元パックン")
+	    : TMapObjBase(name)
+	{
+		mTrembleEffect = nullptr;
+	}
+
+	static f32 mTremblePower;
+	static f32 mTrembleAccel;
+	static f32 mTrembleBrake;
+	static int mTrembleTime;
 
 public:
-	/* 0x138 */ u16 mRingAnm;
-	/* 0x13A */ u8 mRingSound;
+	/* 0x138 */ TTrembleModelEffect* mTrembleEffect;
 };
 
-class TBellWatermill : public TMapObjTurn {
+/// The horizontal water wheels beside the Bianco Hills stream.
+class TBiancoWatermill : public TMapObjBase {
 public:
-	TBellWatermill(const char* name = "ベル水車");
-
-	virtual void loadAfter();
+	virtual ~TBiancoWatermill() { }
+	virtual void initMapObj();
 	virtual void control();
 	virtual u32 touchWater(THitActor*);
 
+	void turn(const JGeometry::TVec3<f32>&, const TBGCheckData*, f32);
+	void turnByEnemy(THitActor*, const TBGCheckData*);
+
+	TBiancoWatermill(const char* name = "水車");
+
+	static f32 mRotAccel;
+	static f32 mEnemyRotAccel;
+	static f32 mRotSpeedDownRate;
+	static f32 mRotSpeedMax;
+	static f32 mRotSpeedMin;
+
 public:
-	/* 0x16C */ f32 unk16C;
-	/* 0x170 */ f32 unk170;
-	/* 0x174 */ f32 unk174;
-	/* 0x178 */ f32 unk178;
-	/* 0x17C */ f32 unk17C;
-	/* 0x180 */ f32 unk180;
-	/* 0x184 */ f32 unk184;
-	/* 0x188 */ f32 unk188;
-	/* 0x18C */ f32 unk18C;
-	/* 0x190 */ u8 unk190;
-	/* 0x194 */ TBiancoBell* mBells[3];
-	/* 0x1A0 */ u8 unk1A0;
-	/* 0x1A4 */ JAISound* unk1A4;
+	/* 0x138 */ f32 mRotSpeed;
+	/* 0x13C */ JAISoundHandle mSoundHandle;
 };
 
-class TLampSeesaw : public TMapObjBase {
+/// The vertical water wheel that drives the turning bridge.
+class TBiancoWatermillVertical : public TMapObjBase {
 public:
-	TLampSeesaw(const char* name = "ランプシーソー（従）");
-
+	virtual ~TBiancoWatermillVertical() { }
 	virtual void load(JSUMemoryInputStream&);
-	virtual void touchPlayer(THitActor*);
-	virtual void pushDown(f32) { }
-
-public:
-	/* 0x138 */ TLampSeesaw* mPartner;
-	/* 0x13C */ f32 unk13C;
-	/* 0x140 */ f32 unk140;
-};
-
-class TLampSeesawMain : public TLampSeesaw {
-public:
-	TLampSeesawMain(const char* name = "ランプシーソー");
-
 	virtual void loadAfter();
+	virtual void setGroundCollision();
 	virtual void control();
-	virtual void touchPlayer(THitActor*);
-	virtual void pushDown(f32);
+	virtual u32 touchWater(THitActor*);
 
-	void move();
+	TBiancoWatermillVertical(const char* name = "縦水車");
+
+	static f32 mRotAccel;
+	static f32 mRotSpeedDownRate;
+	static f32 mRotSpeedMax;
+	static f32 mBridgeRotRate;
 
 public:
-	/* 0x144 */ f32 unk144;
-	/* 0x148 */ f32 unk148;
-	/* 0x14C */ f32 unk14C;
-	/* 0x150 */ f32 unk150;
+	/* 0x138 */ f32 mRotSpeed;
+	/* 0x13C */ f32 mRotSpeedTarget;
+	/* 0x140 */ TMapObjBase* mBridge;
+	/* 0x144 */ u8 mNeedGroundUpdate;
+	/* 0x148 */ JAISoundHandle mSoundHandle;
+	/* 0x14C */ JAISoundHandle mBridgeSoundHandle;
 };
 
+/// The small windmills on the Bianco Hills roofs, spun by the hose.
+class TBiancoMiniWindmill : public THideObjBase {
+public:
+	virtual ~TBiancoMiniWindmill() { }
+	virtual void initMapObj();
+	virtual void control();
+	virtual void calc();
+	virtual u32 touchWater(THitActor*);
+
+	TBiancoMiniWindmill(const char* name = "小風車");
+
+	static f32 mRotWaterAccel;
+	static f32 mFriction;
+	static f32 mRotSpeedMax;
+
+public:
+	/* 0x150 */ f32 mAngle;
+	/* 0x154 */ f32 mRotSpeed;
+	/* 0x158 */ f32 mIdleRotSpeed;
+	/* 0x15C */ TMapObjMessenger* mMessenger;
+	/* 0x160 */ JAISoundHandle mSoundHandle;
+};
+
+/// The leaf boat floating on the Bianco Hills stream.
 class TLeafBoat : public TMapObjBase {
 public:
-	TLeafBoat(const char* name = "リーフボート");
-
+	virtual ~TLeafBoat() { }
 	virtual void control();
 	virtual void bind();
 	virtual void initMapObj();
@@ -108,142 +139,135 @@ public:
 
 	void touchWall(JGeometry::TVec3<f32>*, TBGWallCheckRecord*);
 
+	TLeafBoat(const char* name = "葉っぱボート");
+
 public:
-	/* 0x138 */ f32 unk138;
-	/* 0x13C */ f32 unk13C;
-	/* 0x140 */ f32 unk140;
-	/* 0x144 */ f32 unk144;
-	/* 0x148 */ f32 unk148;
+	/* 0x138 */ f32 mEnemyBounce;
+	/* 0x13C */ f32 mActorBounce;
+	/* 0x140 */ f32 mWallBounce;
+	/* 0x144 */ f32 mWaterPushRate;
+	/* 0x148 */ f32 mFriction;
 	/* 0x14C */ f32 unk14C;
-	/* 0x150 */ f32 unk150;
-	/* 0x154 */ f32 unk154;
-	/* 0x158 */ f32 unk158;
-	/* 0x15C */ f32 unk15C;
-	/* 0x160 */ int unk160;
-	/* 0x164 */ JGeometry::TVec3<f32> unk164;
+	/* 0x150 */ f32 mRiderWeight;
+	/* 0x154 */ f32 mHipAttackPower;
+	/* 0x158 */ f32 mSpringRate;
+	/* 0x15C */ f32 mVerticalDecay;
+	/* 0x160 */ int mEffectTimer;
+	/* 0x164 */ JGeometry::TVec3<f32> mEffectPos;
 };
 
+/// The rotten leaf boat: it sinks and fades once Mario steps on it.
 class TLeafBoatRotten : public TLeafBoat {
 public:
-	TLeafBoatRotten(const char* name = "腐ったリーフボート");
-
+	virtual ~TLeafBoatRotten() { }
 	virtual void load(JSUMemoryInputStream&);
-	virtual void perform(u32, JDrama::TGraphics*);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void control();
 
-public:
-	/* 0x170 */ int unk170;
-	/* 0x174 */ f32 unk174;
-	/* 0x178 */ GXColorS10 unk178;
+	TLeafBoatRotten(const char* name = "腐った葉っぱボート");
 
 	static f32 mAlphaDownSpeed;
 	static f32 mCollisionRemoveAlpha;
 	static int mBoatFlushTime;
 	static int mBoatFlushInterval;
 	static GXColorS10 mRottenColor;
+
+public:
+	/* 0x170 */ int mRottenTime;
+	/* 0x174 */ f32 mAlpha;
+	/* 0x178 */ GXColorS10 mColor;
 };
 
-class TBiancoMiniWindmill : public THideObjBase {
+/// The lamp seesaw's counterweight end; the main end does the moving.
+class TLampSeesaw : public TMapObjBase {
 public:
-	TBiancoMiniWindmill(const char* name = "風車（ビアンコ小）");
-
-	virtual void control();
-	virtual void initMapObj();
-	virtual void calc();
-	virtual u32 touchWater(THitActor*);
-
-public:
-	/* 0x150 */ f32 unk150;
-	/* 0x154 */ f32 unk154;
-	/* 0x158 */ f32 unk158;
-	/* 0x15C */ TMapObjMessenger* unk15C;
-	/* 0x160 */ JAISound* unk160;
-
-	static f32 mRotWaterAccel;
-	static f32 mFriction;
-	static f32 mRotSpeedMax;
-};
-
-class TBiancoWatermillVertical : public TMapObjBase {
-public:
-	TBiancoWatermillVertical(const char* name = "水車（ビアンコ垂直）");
-
+	virtual ~TLampSeesaw() { }
 	virtual void load(JSUMemoryInputStream&);
+	virtual void touchPlayer(THitActor*);
+	virtual void pushDown(f32) { }
+
+	TLampSeesaw(const char* name = "ランプシーソー");
+
+public:
+	/* 0x138 */ TLampSeesawMain* mPartner;
+	/* 0x13C */ f32 mLowerLimitY;
+	/* 0x140 */ f32 mPushSpeed;
+};
+
+class TLampSeesawMain : public TLampSeesaw {
+public:
+	virtual ~TLampSeesawMain() { }
 	virtual void loadAfter();
-	virtual void setGroundCollision();
+	virtual void control();
+	virtual void touchPlayer(THitActor*);
+	virtual void pushDown(f32);
+
+	void move();
+
+	TLampSeesawMain(const char* name = "ランプシーソー（主）");
+
+public:
+	/* 0x144 */ f32 mSpeed;
+	/* 0x148 */ f32 mSpeedDecay;
+	/* 0x14C */ f32 mReboundRate;
+	/* 0x150 */ f32 mMinSpeed;
+};
+
+/// One of the three Bianco Hills bells.
+class TBiancoBell : public TMapObjBase {
+public:
+	virtual ~TBiancoBell() { }
+	virtual void initMapObj();
+	virtual void touchPlayer(THitActor*);
+	virtual u32 touchWater(THitActor*);
+
+	void ringSingle();
+	void ring();
+	void stopToRing();
+
+	TBiancoBell(const char* name = "ビアンコの鐘");
+
+public:
+	/* 0x138 */ u16 mAnmIndex;
+	/* 0x13A */ u8 mRingsAloud;
+};
+
+/// The water wheel that rings the three bells and coughs up coins.
+class TBellWatermill : public TMapObjTurn {
+public:
+	virtual ~TBellWatermill() { }
+	virtual void loadAfter();
 	virtual void control();
 	virtual u32 touchWater(THitActor*);
 
-public:
-	/* 0x138 */ f32 unk138;
-	/* 0x13C */ f32 unk13C;
-	/* 0x140 */ TMapObjBase* unk140;
-	/* 0x144 */ u8 unk144;
-	/* 0x148 */ JAISound* unk148;
-	/* 0x14C */ JAISound* unk14C;
+	TBellWatermill(const char* name = "鐘水車");
 
-	static f32 mRotAccel;
-	static f32 mRotSpeedDownRate;
-	static f32 mRotSpeedMax;
-	static f32 mBridgeRotRate;
+public:
+	/* 0x16C */ f32 mRotSpeedMax;
+	/* 0x170 */ f32 mHeight;
+	/* 0x174 */ f32 mHeightMax;
+	/* 0x178 */ f32 mRiseSpeed;
+	/* 0x17C */ f32 mMinRiseSpeed;
+	/* 0x180 */ f32 mRiseAccel;
+	/* 0x184 */ f32 mGravity;
+	/* 0x188 */ f32 mReboundRate;
+	/* 0x18C */ f32 unk18C;
+	/* 0x190 */ u8 mSprayedThisFrame;
+	/* 0x194 */ TBiancoBell* mBells[3];
+	/* 0x1A0 */ u8 mShouldPayCoins;
+	/* 0x1A4 */ JAISoundHandle mSoundHandle;
 };
 
-class TBiancoWatermill : public TMapObjBase {
+/// The floating log in the Bianco Hills lake; it pushes a swimming Mario out.
+class TWoodLog : public TMapObjFloatOnSea {
 public:
-	TBiancoWatermill(const char* name = "水車（ビアンコ大）");
-
-	virtual void control();
-	virtual void initMapObj();
-	virtual u32 touchWater(THitActor*);
-
-	void turn(const JGeometry::TVec3<f32>&, const TBGCheckData*, f32);
-	void turnByEnemy(THitActor*, const TBGCheckData*);
-
-public:
-	/* 0x138 */ f32 unk138;
-	/* 0x13C */ JAISound* unk13C;
-
-	static f32 mRotAccel;
-	static f32 mEnemyRotAccel;
-	static f32 mRotSpeedDownRate;
-	static f32 mRotSpeedMax;
-	static f32 mRotSpeedMin;
-};
-
-class TMapObjRootPakkun : public TMapObjBase {
-public:
-	TMapObjRootPakkun(const char* name = "ボスパックンの根")
-	    : TMapObjBase(name)
-	    , unk138(nullptr)
-	{
-	}
-
-	virtual void drawObject(JDrama::TGraphics*);
-	virtual void initMapObj();
-
-public:
-	/* 0x138 */ TTrembleModelEffect* unk138;
-
-	static f32 mTremblePower;
-	static f32 mTrembleAccel;
-	static f32 mTrembleBrake;
-	static int mTrembleTime;
-};
-
-class TBigWindmill : public TMapObjBase {
-public:
-	TBigWindmill(const char* name = "巨大風車")
-	    : TMapObjBase(name)
-	    , unk148(nullptr)
-	{
-	}
-
-	virtual void load(JSUMemoryInputStream&);
+	virtual ~TWoodLog() { }
 	virtual void control();
 
-public:
-	/* 0x138 */ TMapObjBase* unk138[4];
-	/* 0x148 */ JAISound* unk148;
+	TWoodLog(const char* name = "丸太")
+	    : TMapObjFloatOnSea(name)
+	{
+	}
 };
 
 #endif

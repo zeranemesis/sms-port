@@ -24,7 +24,15 @@ void EnableMetroTRKInterrupts(void);
 
 extern unsigned long __DVDLongFileNameFlag;
 extern unsigned long __PADSpec;
-#ifdef VERSION_GMSP01
+// TODO: other games don't seem to have AT_ADDRESS here,
+// but OSInit won't match without it. Am I doing smthing wrong?
+// The linker script computes these from the end of .sdata2, so they are
+// region-specific; marioUS.MAP gives _stack_addr 0x804277e8 and
+// _db_stack_addr 0x804297e8 for GMSE01 (__ArenaLo = (_db_stack_addr + 0x1f) & ~0x1f).
+#if defined(VERSION_GMSE01)
+extern unsigned char __ArenaLo[] AT_ADDRESS(0x80429800);
+extern char _stack_addr[] AT_ADDRESS(0x804277e8);
+#elif defined(VERSION_GMSP01)
 extern unsigned char __ArenaLo[] AT_ADDRESS(0x80420D60);
 extern char _stack_addr[] AT_ADDRESS(0x8041ED48);
 #else
@@ -52,15 +60,17 @@ static volatile u32* BI2DebugFlag;
 static u32* BI2DebugFlagHolder;
 static f64 ZeroPS;
 static f64 ZeroF;
-static BOOL __OSIsGcam;
+// Defined, not tentative: MWCC emits tentative globals after the statics,
+// where the map keeps these four in declaration order among them.
+BOOL __OSIsGcam = 0;
 static BOOL AreWeInitialized;
 
 typedef void (*OSExceptionHandler)(u8, struct OSContext*);
 static OSExceptionHandler* OSExceptionTable;
 
-static void* __OSSavedRegionEnd;
-static void* __OSSavedRegionStart;
-static BOOL __OSInIPL;
+void* __OSSavedRegionEnd = 0;
+void* __OSSavedRegionStart = 0;
+BOOL __OSInIPL = 0;
 OSTime __OSStartTime;
 
 static DVDDriveInfo DriveInfo __attribute__((aligned(0x20)));
@@ -69,8 +79,8 @@ static DVDCommandBlock DriveBlock;
 // functions
 static asm void __OSInitFPRs(void);
 static void OSExceptionInit(void);
-static void OSDefaultExceptionHandler(u8 exception /* r3 */,
-                                      OSContext* context /* r4 */);
+void OSDefaultExceptionHandler(u8 exception /* r3 */,
+                               OSContext* context /* r4 */);
 
 // NOTE: this is unused, but stuff won't align properly without it
 static asm void __OSInitFPRs(void)

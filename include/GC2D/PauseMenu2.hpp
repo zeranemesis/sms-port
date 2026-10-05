@@ -27,14 +27,9 @@ public:
 	void drawAppearPane(J2DPicture* picture, f32 anim, JUTRect& rect,
 	                    f32 rotation);
 
-	// fabricated; smells fake
-	void setEmitterScale(f32 x, f32 y, f32 z)
-	{
-		mEmitter->setEmitterScale(JGeometry::TVec3<f32>(x, y, z));
-	}
-
 	// fabricated
 	inline void draw(JDrama::TGraphics* gfx);
+	inline void move();
 
 public:
 	enum PauseMenuState {

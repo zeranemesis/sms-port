@@ -12,20 +12,19 @@ class ResTIMG;
 
 class TPollutionCounterBase : public TDrawSyncCallback {
 public:
-	TPollutionCounterBase()
-	    : mCounterCapacity(0)
-	    , mCounterNum(0)
-	    , mCounters(nullptr)
-	    , mPolygonCount(nullptr)
-	{
-	}
+	// Defined out of line in PollutionCount.cpp: the map lists it UNUSED, and
+	// an UNUSED symbol is never weak, so it cannot be a header inline.
+	TPollutionCounterBase();
 
 	void setCallback(int) const;
 	void drawSyncCallback(u16);
 	void initCounters(int);
 
-	virtual int getTokenNo(int) const   = 0;
-	virtual u16 getCounterNo(u32) const = 0;
+	virtual int getCounterNo(u32) const = 0;
+	virtual u16 getTokenNo(int) const   = 0;
+
+	// fabricated
+	int getCounterNum() const { return mCounterNum; }
 
 public:
 	/* 0x4 */ int mCounterCapacity;
@@ -38,8 +37,8 @@ class TPollutionCounterObj : public TPollutionCounterBase {
 public:
 	TPollutionCounterObj();
 
-	virtual int getTokenNo(int param_1) const { return param_1 + 0x92; }
-	virtual u16 getCounterNo(u32 param_1) const { return param_1 - 0x92; }
+	virtual int getCounterNo(u32 param_1) const { return param_1 - 0x92; }
+	virtual u16 getTokenNo(int param_1) const { return param_1 + 0x92; }
 
 	void draw(int index) const;
 	void countObjDegree() const;
@@ -140,8 +139,8 @@ class TPollutionCounterLayer : public TPollutionCounterBase {
 public:
 	TPollutionCounterLayer();
 
-	virtual int getTokenNo(int param_1) const { return param_1 + 0x7E; }
-	virtual u16 getCounterNo(u32 param_1) const { return param_1 - 0x7E; }
+	virtual int getCounterNo(u32 param_1) const { return param_1 - 0x7E; }
+	virtual u16 getTokenNo(int param_1) const { return param_1 + 0x7E; }
 
 	void drawPollutionLayer(int) const;
 	void drawJointObjStamp(int) const;
@@ -154,6 +153,28 @@ public:
 	void setTevColorInByStampType(u16) const;
 	void pushJointObjStampTask(u8, u8, TPollutionObj*);
 	void calcViewMtx();
+	// fabricated. calcViewMtx wants 12 bytes of low region over the raw
+	// indexed reads and this pair of expansions is +8 of it; the last +4 and
+	// the register allocation come from getCounterNum() on the loop bound
+	// (each level is +0 alone and the pair is exact -- the lever-pair rule).
+	// getJointObjStampTaskNum() does the same for drawJointObjStamp, which
+	// was 30 diffs with an exact frame and is now 4 (an f0/f1 vs f3/f0 pair
+	// at makeWorldToPollutionMtx, which the calcViewMtx site gets right).
+	// Rejected there: a getJointObjStampTask(i) reference accessor (97.2%)
+	// and getMinX/getMinZ (frame 8 over).
+	J3DDrawBuffer* getModelStampDrawBuffer(int i) const
+	{
+		return mModelStampDrawBuffers[i];
+	}
+	u16 getJointObjStampTaskNum() const { return mJointObjStampTaskNum; }
+	// A binding inside the class's own accessor is +4 of low region per
+	// expansion (half the +8 a TU-local binding over the raw read buys),
+	// which is exactly what drawRevivalTexStamp's loop bound wanted.
+	// Plain, no binding: drawRevivalTexStamp is exact with this and 4 bytes
+	// of low region over it, so the TU-local binding over the raw
+	// mRevivalTexStampNum read that used to stand here (batch 127, +8) was
+	// overshooting by exactly one accessor step.
+	u16 getRevivalTexStampNum() const { return mRevivalTexStampNum; }
 	void pushModelStampTask(u8, J3DModel*);
 	int registerRevivalTexStamp(int, short, short, short, short, int, ResTIMG*);
 	int registerTexStamp(u16, u16, ResTIMG*);

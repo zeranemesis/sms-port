@@ -9,6 +9,7 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DCluster.hpp>
 #include <JSystem/JKernel/JKRHeap.hpp>
+#include <JSystem/JKernel/JKRSolidHeap.hpp>
 #include <dolphin/os/OSCache.h>
 #include <math.h>
 
@@ -108,6 +109,17 @@ void J3DModelData::makeHierarchy(J3DNode* root_node,
 	}
 }
 
+// UNUSED (0x70). Reconstructed from the shared-display-list branch of
+// J3DModel::entryModelData, which is the only other site that pairs
+// J3DMaterial::newSharedDisplayList with countDLSize.
+void J3DModelData::newSharedDisplayList()
+{
+	for (u16 i = 0; i < mMaterialNum; i++) {
+		J3DMaterial* mat = getMaterialNodePointer(i);
+		mat->newSharedDisplayList(mat->countDLSize());
+	}
+}
+
 bool J3DModelData::isDeformableVertexFormat() const
 {
 	const GXVtxAttrFmtList* vtxAttrFmtList;
@@ -174,6 +186,34 @@ int J3DModelData::entryMatColorAnimator(J3DAnmColor* anm)
 			} else {
 				J3DMatColorAnm* matColorAnm = new J3DMatColorAnm(anm, i);
 				pMatAnm->setMatColorAnm(0, matColorAnm);
+			}
+		}
+	}
+
+	return ret;
+}
+
+// UNUSED (0xdc). Same shape as setTexNoAnimator below, with the animation
+// object allocated rather than taken from the caller's array, exactly as
+// entryMatColorAnimator differs from setMatColorAnimator.
+int J3DModelData::entryTexNoAnimator(J3DAnmTexPattern* anm)
+{
+	int ret         = 0;
+	u16 materialNum = anm->getUpdateMaterialNum();
+
+	for (u16 i = 0; i < materialNum; i++) {
+		u16 materialID = anm->getUpdateMaterialID(i);
+		if (materialID != 0xFFFF) {
+			J3DMaterialAnm* pMatAnm
+			    = getMaterialNodePointer(materialID)->getMaterialAnm();
+			u8 texNo = anm->getAnmTable()[i].mTexNo;
+			if (pMatAnm == nullptr)
+				ret = 1;
+			else {
+				J3DTexNoAnm* texNoAnm = new J3DTexNoAnm();
+				texNoAnm->setAnmTexPattern(anm);
+				texNoAnm->setAnmIndex(i);
+				pMatAnm->setTexNoAnm(texNo, texNoAnm);
 			}
 		}
 	}
@@ -566,20 +606,31 @@ void J3DModel::entryModelData(J3DModelData* pModelData, u32 mdlFlags,
 		for (int i = 0; i < pModelData->getMaterialNum(); ++i) {
 			mMatPackets[i].setMaterial(pModelData->getMaterialNodePointer(i));
 			J3DShape* shape = pModelData->getMaterialNodePointer(i)->getShape();
-			mMatPackets[i].addShapePacket(&mShapePackets[shape->getIndex()]);
+			// The array base is its own local: it decides which of the two
+			// volatile registers the `addShapePacket` argument chain is built
+			// in (retail loads the material into r4 and the packet base into
+			// r5). Spelling this `&mShapePackets[shape->getIndex()]` swaps
+			// the pair, and binding the resulting packet instead costs a
+			// further 8 bytes of frame.
+			J3DShapePacket* packets = mShapePackets;
+			mMatPackets[i].addShapePacket(&packets[shape->getIndex()]);
 			mMatPackets[i].setTexture(pModelData->getTexture());
 
+			// The doubled `getMaterialNodePointer(i)` is deliberate: retail
+			// loads the material straight into r3 for `countDLSize` and keeps
+			// a copy in a callee-saved register for the outer call, which is
+			// what an unnamed receiver gives. A named `J3DMaterial* mat` is
+			// the other way round (load into the callee-saved register, copy
+			// into r3) and costs three more differing operands.
 			if (mdlFlags & 0x20000) {
-				J3DMaterial* mat = pModelData->getMaterialNodePointer(i);
-				u32 dlSize       = mat->countDLSize();
 				mMatPackets[i].setDisplayListObj(
-				    mat->newSharedDisplayList(dlSize));
+				    pModelData->getMaterialNodePointer(i)
+				        ->newSharedDisplayList(
+				            pModelData->getMaterialNodePointer(i)
+				                ->countDLSize()));
 			} else {
-				J3DMaterial* mat     = pModelData->getMaterialNodePointer(i);
-				u32 dlSize           = mat->countDLSize();
-				J3DMatPacket* packet = &mMatPackets[i];
-				packet->setDisplayListObj(new J3DDisplayListObj);
-				packet->getDisplayListObj()->newDisplayList(dlSize);
+				mMatPackets[i].newDisplayList(
+				    pModelData->getMaterialNodePointer(i)->countDLSize());
 			}
 		}
 	}
@@ -661,6 +712,31 @@ void J3DModel::makeDL()
 	}
 }
 
+// UNUSED (0x88). J3DMaterial::patch() is likewise UNUSED in J3DMaterial.cpp;
+// makeDL above is the same loop with makeDisplayList in place of patch.
+void J3DModel::patch()
+{
+	j3dSys.setModel(this);
+	j3dSys.setTexture(mModelData->getTexture());
+	for (u16 i = 0; i < mModelData->getMaterialNum(); ++i) {
+		j3dSys.setMatPacket(&mMatPackets[i]);
+		mModelData->getMaterialNodePointer(i)->patch();
+	}
+}
+
+// UNUSED (0x34). Same shape as setSkinDeform below; the deform flag is the
+// one J3DVertexBuffer::copyLocalVtxArray takes.
+void J3DModel::setDeformData(J3DDeformData* pDeformData,
+                             J3DDeformAttachFlag flags)
+{
+	mDeformData = pDeformData;
+
+	if (pDeformData == nullptr)
+		unk8 &= ~0x1;
+	else
+		unk8 |= 0x1;
+}
+
 void J3DModel::setSkinDeform(J3DSkinDeform* pSkinDeform,
                              J3DDeformAttachFlag flags)
 {
@@ -674,6 +750,35 @@ void J3DModel::setSkinDeform(J3DSkinDeform* pSkinDeform,
 		unk8 |= 0x8;
 		mSkinDeform->initMtxIndexArray(mModelData);
 		mVertexBuffer->copyTransformedVtxArray();
+	}
+}
+
+// UNUSED (0x34). Mirror of setDeformData over unk90, with the colour-array
+// copy J3DVertexBuffer::copyVtxColorArray provides.
+void J3DModel::setVtxColorCalc(J3DVtxColorCalc* pVtxColorCalc,
+                               J3DDeformAttachFlag flags)
+{
+	unk90 = pVtxColorCalc;
+
+	if (pVtxColorCalc == nullptr)
+		unk8 &= ~0x10;
+	else
+		unk8 |= 0x10;
+}
+
+// UNUSED (0x4c). Same shape again; the extra 0x18 over the two above is the
+// second array copy, a vertex shader touching positions and colours both.
+void J3DModel::setVtxShader(J3DVtxShader* pVtxShader,
+                            J3DDeformAttachFlag flags)
+{
+	unk94 = (J3DUnkCalc1*)pVtxShader;
+
+	if (pVtxShader == nullptr) {
+		unk8 &= ~0x20;
+	} else {
+		unk8 |= 0x20;
+		mVertexBuffer->copyLocalVtxArray(flags);
+		mVertexBuffer->copyVtxColorArray(flags);
 	}
 }
 
@@ -729,6 +834,10 @@ void J3DModel::calcWeightEnvelopeMtx()
 		ps_merge00 var_f12, var_f27, var_f27
 		ps_merge00 var_f31, var_f27, var_f27
 	}
+#else
+	// Portable fallback: weightAnmMtx accumulates
+	// sum(weight * (worldMtx * invMtx)) over each envelope's mix matrices.
+	Mtx acc;
 #endif // clang-format on
 
 	while (++i < max)
@@ -743,6 +852,10 @@ void J3DModel::calcWeightEnvelopeMtx()
 			ps_merge00 var_f11, var_f27, var_f27
 			ps_merge00 var_f13, var_f27, var_f27
 		}
+#else
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 4; c++)
+				acc[r][c] = 0.0f;
 #endif // clang-format on
 
 		j      = 0;
@@ -772,6 +885,8 @@ void J3DModel::calcWeightEnvelopeMtx()
 				psq_l var_f6, 0x28(worldMtx), 0, qr0
 				ps_madds0 var_f8, var_f7, var_f2, var_f8
 			}
+#else
+			// The product is formed below, once the weight is loaded.
 #endif // clang-format on
 
 			weight = *++weights;
@@ -805,6 +920,17 @@ void J3DModel::calcWeightEnvelopeMtx()
 				ps_madds0 var_f12, var_f29, weight, var_f12
 				ps_madds0 var_f31, var_f28, weight, var_f31
 			}
+#else
+			for (int r = 0; r < 3; r++) {
+				for (int c = 0; c < 4; c++) {
+					f32 v = (*worldMtx)[r][0] * invMtx[0][c]
+					        + (*worldMtx)[r][1] * invMtx[1][c]
+					        + (*worldMtx)[r][2] * invMtx[2][c];
+					if (c == 3)
+						v += (*worldMtx)[r][3];
+					acc[r][c] += v * weight;
+				}
+			}
 #endif // clang-format on
 
 			*pScale &= mScaleFlagArr[idx];
@@ -819,8 +945,22 @@ void J3DModel::calcWeightEnvelopeMtx()
 			psq_st var_f31, 0x28(weightAnmMtx), 0, qr0
 			ps_merge00 var_f31, var_f27, var_f27
 		}
+#else
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 4; c++)
+				weightAnmMtx[r][c] = acc[r][c];
 #endif // clang-format on
 	}
+}
+
+// UNUSED (0xa8). The base scale/base matrix pair is what update() and calc()
+// hand to J3DMtxCalc::init; this is the same composition written into the
+// root node matrix directly.
+void J3DModel::calcBaseMtx()
+{
+	Mtx m;
+	MTXScale(m, unk14.x, unk14.y, unk14.z);
+	MTXConcat(unk20, m, mNodeMatrices[0]);
 }
 
 void J3DModel::update()
@@ -1149,4 +1289,192 @@ void J3DModel::prepareShapePackets()
 			    ->setNrmMtx(mBumpMtxArr[1][matShape->getBumpMtxOffset()]);
 		}
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Everything below this line is UNUSED in the map: dead-stripped from the DOL,
+// so only the mangled names, their emission order and their sizes survive.
+// The bodies are reconstructed from the live J3DModel members above.
+
+// UNUSED (0x10c).
+J3DModel* J3DCreateModel(J3DModelData* pModelData, u32 mdlFlags, JKRHeap* heap,
+                         bool errorFlag, JKRSolidHeap** pOutHeap)
+{
+	JKRSolidHeap* solidHeap
+	    = JKRSolidHeap::create(heap->getTotalFreeSize(), heap, errorFlag);
+	JKRHeap* oldHeap = solidHeap->becomeCurrentHeap();
+
+	J3DModel* model = new J3DModel(pModelData, mdlFlags, 1);
+
+	solidHeap->adjustSize();
+	oldHeap->becomeCurrentHeap();
+
+	if (pOutHeap != nullptr)
+		*pOutHeap = solidHeap;
+
+	return model;
+}
+
+// UNUSED (0x90).
+J3DModel* J3DCreateModel(JKRSolidHeap* solidHeap, u32 mtxNum,
+                         J3DModelData* pModelData, u32 mdlFlags)
+{
+	JKRHeap* oldHeap = solidHeap->becomeCurrentHeap();
+
+	J3DModel* model = new J3DModel(pModelData, mdlFlags, mtxNum);
+
+	solidHeap->adjustSize();
+	oldHeap->becomeCurrentHeap();
+
+	return model;
+}
+
+// UNUSED (0xc4).
+void J3DCreateModelArray(JKRSolidHeap* solidHeap, int num, J3DModel** pModels,
+                         J3DModelData* pModelData, u32 mdlFlags)
+{
+	JKRHeap* oldHeap = solidHeap->becomeCurrentHeap();
+
+	for (int i = 0; i < num; i++)
+		pModels[i] = new J3DModel(pModelData, mdlFlags, 1);
+
+	solidHeap->adjustSize();
+	oldHeap->becomeCurrentHeap();
+}
+
+// J3DSimpleModel is UNUSED in its entirety, including its vtable (0xc: two
+// null words and one slot, so its only virtual is the destructor -- it does
+// not derive from J3DModel, whose vtable is 0x1c).  J3DSimpleModel::lock() is
+// 0x10, four instructions with no prologue, which is a flag read-modify-write
+// on an *embedded* J3DMatPacket (through a pointer it would need a fifth
+// instruction), so the class owns one material packet and one shape packet by
+// value: a single-material, single-shape model.
+// TODO: the member layout below beyond that is reconstruction, not evidence;
+// the bodies are the J3DModel ones with the loops collapsed to one element.
+class J3DSimpleModel {
+public:
+	J3DSimpleModel(J3DModelData*, u32);
+	virtual ~J3DSimpleModel();
+
+	void initialize();
+	void entryModelData(J3DModelData*, u32);
+	void lock();
+	void unlock();
+	void update();
+	void calc();
+	void entry();
+	void viewCalc();
+	void calcNrmMtx();
+	void prepareShapePackets();
+
+	/* 0x04 */ J3DModelData* mModelData;
+	/* 0x08 */ u32 mFlags;
+	/* 0x0C */ u8* mScaleFlagArr;
+	/* 0x10 */ Mtx* mNodeMatrices;
+	/* 0x14 */ Mtx* mDrawMtx;
+	/* 0x18 */ Mtx33* mNrmMtx;
+	/* 0x1C */ u32 mCurrentViewNo;
+	/* 0x20 */ J3DVertexBuffer* mVertexBuffer;
+	/* 0x24 */ J3DMatPacket mMatPacket;
+	/* .... */ J3DShapePacket mShapePacket;
+};
+
+// UNUSED (0x90).
+J3DSimpleModel::J3DSimpleModel(J3DModelData* pModelData, u32 mdlFlags)
+{
+	initialize();
+	entryModelData(pModelData, mdlFlags);
+}
+
+// UNUSED (0x70).
+J3DSimpleModel::~J3DSimpleModel() { }
+
+// UNUSED (0x68).
+void J3DSimpleModel::initialize()
+{
+	mModelData     = nullptr;
+	mFlags         = 0;
+	mScaleFlagArr  = nullptr;
+	mNodeMatrices  = nullptr;
+	mDrawMtx       = nullptr;
+	mNrmMtx        = nullptr;
+	mCurrentViewNo = 0;
+	mVertexBuffer  = nullptr;
+}
+
+// UNUSED (0x9c).
+void J3DSimpleModel::entryModelData(J3DModelData* pModelData, u32 mdlFlags)
+{
+	mModelData = pModelData;
+	mFlags     = mdlFlags;
+
+	mScaleFlagArr = new u8[pModelData->getJointNum()];
+	mNodeMatrices = new Mtx[pModelData->getJointNum()];
+	mDrawMtx      = new (0x20) Mtx[pModelData->getDrawMtxNum()];
+	mNrmMtx       = new (0x20) Mtx33[pModelData->getDrawMtxNum()];
+
+	mMatPacket.setMaterial(pModelData->getMaterialNodePointer(0));
+	mShapePacket.setShape(pModelData->getShapeNodePointer(0));
+	mMatPacket.addShapePacket(&mShapePacket);
+
+	mVertexBuffer = new J3DVertexBuffer(&pModelData->getVertexData());
+}
+
+// UNUSED (0x10).
+void J3DSimpleModel::lock() { mMatPacket.lock(); }
+
+// UNUSED (0x10).
+void J3DSimpleModel::unlock() { mMatPacket.unlock(); }
+
+// UNUSED (0x34).
+void J3DSimpleModel::update()
+{
+	mModelData->getMtxCalc()->recursiveUpdate(mModelData->getRootNode());
+}
+
+// UNUSED (0x94).
+void J3DSimpleModel::calc()
+{
+	mVertexBuffer->frameInit();
+	j3dSys.setCurrentMtxCalc(mModelData->getMtxCalc());
+	j3dSys.setTexture(mModelData->getTexture());
+	mModelData->getMtxCalc()->recursiveCalc(mModelData->getRootNode());
+}
+
+// UNUSED (0x174).
+void J3DSimpleModel::entry()
+{
+	j3dSys.setTexture(mModelData->getTexture());
+	j3dSys.setMatPacket(&mMatPacket);
+	mModelData->getMtxCalc()->recursiveEntry(mModelData->getRootNode());
+}
+
+// UNUSED (0x88).
+void J3DSimpleModel::viewCalc()
+{
+	MtxPtr viewMtx = j3dSys.getViewMtx();
+
+	J3DMTXConcatArrayIndexedSrc(viewMtx, mNodeMatrices,
+	                            mModelData->mDrawMtxData.mDrawMtxIndex,
+	                            mDrawMtx, mModelData->getDrawFullWgtMtxNum());
+
+	calcNrmMtx();
+	prepareShapePackets();
+}
+
+// UNUSED (0x2c).
+void J3DSimpleModel::calcNrmMtx()
+{
+	J3DPSCalcInverseTranspose(mDrawMtx[0], mNrmMtx[0]);
+}
+
+// UNUSED (0x68).
+void J3DSimpleModel::prepareShapePackets()
+{
+	mShapePacket.setDrawMtx(&mDrawMtx);
+	mShapePacket.setNrmMtx(&mNrmMtx);
+	mShapePacket.setCurrentViewNoPtr(&mCurrentViewNo);
+	mShapePacket.setVtxPos(mVertexBuffer->getCurrentVtxPos());
+	mShapePacket.setVtxNrm(mVertexBuffer->getCurrentVtxNrm());
+	mShapePacket.setVtxCol(mVertexBuffer->getCurrentVtxCol());
 }

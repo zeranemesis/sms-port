@@ -129,7 +129,8 @@ public:
 
 class TDiffusionNameKuriManager : public TNameKuriManager {
 public:
-	TDiffusionNameKuriManager(const char* name = "拡散ナメクリマネージャー")
+	TDiffusionNameKuriManager(
+	    const char* name = "拡散ナメクリマネージャー")
 	    : TNameKuriManager(name)
 	{
 	}

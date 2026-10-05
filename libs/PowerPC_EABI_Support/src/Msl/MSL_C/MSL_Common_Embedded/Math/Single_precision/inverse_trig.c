@@ -56,6 +56,9 @@ __declspec(weak) float atan__Ff(float x) { return atanf(x); }
 
 #pragma dont_inline reset
 
+// UNUSED. acosf without the subtraction from pi/2: asin(x) = atan(x / sqrt(1 - x*x)).
+float asinf(float x) { return atan__Ff(x * _inv_sqrtf(1.0f - x * x)); }
+
 float atanf(float x)
 {
 	float z, z_square;

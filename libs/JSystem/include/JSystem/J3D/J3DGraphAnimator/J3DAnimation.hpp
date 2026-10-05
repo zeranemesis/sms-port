@@ -122,7 +122,7 @@ struct J3DAnmClusterKeyTable {
 class J3DAnmVtxColorIndexData {
 public:
 	/* 0x00 */ u16 mNum;
-	/* 0x04 */ void* mpData;
+	/* 0x04 */ PTR32(void) mpData;
 };
 
 struct J3DAnmColorFullTable {
@@ -752,7 +752,7 @@ public:
 
 	u16 getUpdateMaterialID(u16 idx) const
 	{
-		J3D_ASSERT_RANGE(idx < mUpdateMaterialNum / 3 && idx >= 0);
+		J3D_ASSERT_RANGE(idx < mUpdateMaterialNum);
 		return mUpdateMaterialID[idx];
 	}
 	u16 getUpdateMaterialNum() const { return mUpdateMaterialNum; }

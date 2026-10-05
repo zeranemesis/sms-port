@@ -22,7 +22,8 @@ public:
 	virtual void createModelData();
 	virtual void clipActors(JDrama::TGraphics*);
 
-	int getObjNumWithActorType(u32) const;
+	// u32, not int: bosstelesa's loadAfter compares the result with cmplwi.
+	u32 getObjNumWithActorType(u32) const;
 	static u32 getActorTypeByEventID(u32);
 	static TMapObjBase* newAndRegisterObjByEventID(u32, const char*);
 	static TMapObjBase*
@@ -107,7 +108,17 @@ public:
 	/* 0xC4 */ J3DMaterialTable* unkC4;
 	/* 0xC8 */ ResTIMG* unkC8;
 	/* 0xCC */ ResTIMG* unkCC;
-	/* 0xD0 */ Vec unkD0;
+	/* 0xD0 */ JGeometry::TVec3<f32> unkD0;
 };
+
+// The binding is load-bearing, unlike the other SMSGet* globals: every
+// expansion of this accessor reserves 8 bytes of low region for the named
+// pointer, which is what TMario::getGesso's three mutually exclusive
+// surf-squid branches pay (frame 0x30 -> 0x50, byte-exact). Header round 21.
+inline TMapObjManager* SMSGetMapObjManager()
+{
+	TMapObjManager* manager = gpMapObjManager;
+	return manager;
+}
 
 #endif

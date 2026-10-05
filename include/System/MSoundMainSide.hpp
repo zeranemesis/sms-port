@@ -18,6 +18,21 @@ public:
 	static MSStage* smMSStage;
 };
 
+// Dead in the shipped game: the whole class is UNUSED in the map, vtable
+// included, but it still has to be compiled for the .data layout.
+class MSSTageSimpleEnvironmentMonte : public MSStage {
+public:
+	MSSTageSimpleEnvironmentMonte()
+	    : unk4(MSD_SE_ENV_MONTE_UPPER_WIND)
+	{
+	}
+
+	virtual void proc();
+
+public:
+	/* 0x4 */ u32 unk4;
+};
+
 class MSSTageSimpleEnvironment : public MSStage {
 public:
 	MSSTageSimpleEnvironment()
@@ -31,14 +46,6 @@ public:
 	/* 0x4 */ u32 unk4;
 };
 
-class MSSTageSimpleEnvironmentMonte : public MSStage {
-public:
-	virtual void proc();
-
-public:
-	/* 0x4 */ u32 unk4;
-};
-
 class MSStageCubeFade : public MSStage {
 public:
 	MSStageCubeFade();
@@ -46,11 +53,12 @@ public:
 	virtual void proc();
 
 	f32 calcParamRatioInCube(s32);
-#ifdef VERSION_GMSP01
+
+	// Not static: the only caller (TBossGesso, 0x80074D58) loads smInstance
+	// into r3 and tests it before the bl, i.e. `smInstance->setBgmVolumeForce()`.
 	void setBgmVolumeForce();
 
 	static MSStageCubeFade* smInstance;
-#endif
 
 public:
 	/* 0x4 */ int unk4;
@@ -58,7 +66,9 @@ public:
 	/* 0xC */ f32 unkC;
 };
 
-#ifdef VERSION_GMSP01
+// The two-cube variant used by Bianco Hills episode 5 (the two gate keepers).
+// MSStage::init hands each cube's BGM an enable flag that the gate keepers
+// raise through MSMainProc::setGateKeeperBGMPlayFlag.
 class MSStageCubeFadeDouble : public MSStageCubeFade {
 public:
 	MSStageCubeFadeDouble();
@@ -68,9 +78,8 @@ public:
 	static MSStageCubeFadeDouble* smInstance;
 
 public:
-	/* 0x10 */ bool mPlayFlag[2];
+	/* 0x10 */ u8 unk10[2];
 };
-#endif
 
 class MSStageCubeSwitch : public MSStageCubeFade {
 public:
@@ -126,11 +135,10 @@ public:
 	/* 0x20 */ int unk20;
 };
 
-namespace MSStageProc {
-
-void setBgmPosition(const Vec&, f32, bool, u32, u32);
-
-} // namespace MSStageProc
+class MSStageProc {
+public:
+	static void setBgmPosition(const Vec&, f32, bool, u32, u32);
+};
 
 namespace MSMainProc {
 
@@ -148,15 +156,13 @@ void setBossLivesFlag2(bool);
 bool getBossLivesFlag();
 bool getBossLivesFlag2();
 void setBossNotDamagedFlag(bool);
+void setGateKeeperBGMPlayFlag(u32, bool);
+bool getGateKeeperBGMStopFlag();
 void setMSoundEnterStage(u8, u8);
 void startStageEntranceDemo(u8, u8);
 void entranceDemoLoop(u32);
 void endStageEntranceDemo(u8, u8);
 void startStageBGM(u8, u8);
-#ifdef VERSION_GMSP01
-bool getGateKeeperBGMStopFlag();
-void setGateKeeperBGMPlayFlag(u32, bool);
-#endif
 
 } // namespace MSMainProc
 

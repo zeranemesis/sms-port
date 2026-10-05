@@ -5,8 +5,6 @@
 #include <Camera/cameralib.hpp>
 #include <Player/MarioAccess.hpp>
 
-template <> s16 CLBRoundf<s16>(f32);
-
 void TNpcThrow::throwMario(THitActor* param_1)
 {
 	JGeometry::TVec3<f32> local_14;

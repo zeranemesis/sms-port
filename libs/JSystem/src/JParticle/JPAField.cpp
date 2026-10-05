@@ -50,6 +50,24 @@ bool JPABaseField::checkMaxDistance(JGeometry::TVec3<f32>& param_1,
 	return result;
 }
 
+// TODO: 95.3%.  Every instruction is the right one; the whole residue is that
+// retail *re-loads* `unk54` in each of the four flag blocks (0x198, 0x1d8,
+// 0x22c) while we load it once and keep it in r4, which also pushes `cutOff`
+// from retail's r4 into r5.  Structural pass 167 measured, and refuted, the
+// obvious levers: `const` on `checkStatus` (inert), a `u8` instead of a `bool`
+// for `cutOff` (inert), and a TU-local `static inline` taking `this` by
+// pointer (inert -- MWCC sees through it and still CSEs).  A probe TU
+// (scratchpad `probe2.cpp`) shows that exactly one spelling reproduces
+// retail's shape -- `volatile u16 unk54` gives four per-site `lhz` with
+// in-place masks and the same bool materialisation, and closes this function
+// (95.27 -> 100.00, whole-tree fuzzy unchanged) -- but it is *not* the answer:
+// with `volatile` JPAAirField::affect goes 96.55 -> 95.74 because retail
+// demonstrably CSEs the same member there (`lhz r3, 0x54(r3)` at 0x978 reused
+// at 0x998).  So the member is not volatile and the difference is a per-
+// function CSE decision: two reads two blocks apart are shared, four reads
+// spread over ~50 instructions are not.  A bitfield is also refuted: bitfield
+// reads rotate the bit to 31 (`rlwinm. r0,r0,28,31,31`) and do not materialise
+// a bool, while retail masks in place and materialises.
 f32 JPABaseField::calcFieldFadeScale(f32 progress)
 {
 	bool cutOff = false;
@@ -117,18 +135,28 @@ void JPABaseField::affect(JPAParticle* particle)
 {
 	calcFieldVelocity(particle);
 }
+// TODO: slots exact (getRawData() is the +8 of pool); the frame is 8 short
+// at the top of the named block. Only a dead `u8*` or a pointer alias
+// (`JSUInputStream* ps` declared first, `stream = *ps`) lands it, both
+// rejected as fabricated; a pointer-typed stream, chained `>>` (changes the
+// code), and a named data pointer or size are inert or worse.  Four named
+// s16 fade locals land the frame but give each read its own slot (retail
+// reuses 0x34 for all four); four scoped `s16 value` blocks land the frame
+// but move the stream to 0x28; an f32 temp and a `readFixed` helper are inert
+// or worse.
 void JPABaseField::loadFieldBlock(JPADataBlock* block)
 {
-	JSUMemoryInputStream streamImpl(block->mRawData,
-	                                *(u32*)((u8*)block->mRawData + 4));
-	JSUInputStream& stream = streamImpl; // TODO: fakematch?
+	s16 value;
+	JSUMemoryInputStream streamImpl(block->getRawData(),
+	                                *(u32*)(block->getRawData() + 4));
+	JSUInputStream& stream = streamImpl;
 
 	stream.skip(0xC);
 	stream >> unk50;
 	stream >> unk51;
 	stream >> unk52;
 	stream >> unk53;
-	stream >> mMaxDistanceSq;
+	stream >> unk54;
 	stream.skip(0x2);
 	stream >> unk10;
 	stream >> unk14;
@@ -143,10 +171,14 @@ void JPABaseField::loadFieldBlock(JPADataBlock* block)
 	stream >> unk34;
 	stream >> unk38;
 
-	mFadeInEnd    = JPAConvertFixToFloat(stream.readS16());
-	mFadeOutStart = JPAConvertFixToFloat(stream.readS16());
-	mFadeInStart  = JPAConvertFixToFloat(stream.readS16());
-	mFadeOutEnd   = JPAConvertFixToFloat(stream.readS16());
+	stream >> value;
+	mFadeInEnd = JPAConvertFixToFloat(value);
+	stream >> value;
+	mFadeOutStart = JPAConvertFixToFloat(value);
+	stream >> value;
+	mFadeInStart = JPAConvertFixToFloat(value);
+	stream >> value;
+	mFadeOutEnd = JPAConvertFixToFloat(value);
 }
 
 JPAGravityField::JPAGravityField() { unk50 = 0; }
@@ -178,6 +210,21 @@ void JPAAirField::set()
 			unk58.set(unk18);
 	}
 }
+// TODO: two residues, none of them a wrong statement: (1) the x component
+// of the `diff.sub(...)` pair loads the subtrahend first in retail
+// (`0x58(r30)` then `0x20(r31)`) and the minuend first for us, with the `0x5c`
+// load one slot early -- a schedule difference inside the shared `sub` body
+// (set-then-sub, and sub straight into `dir`, are worse); (2) `vec` sits at
+// 0x28(r1) in retail against our 0x20 although the frame total matches at
+// 0x68, i.e. retail has 8 more bytes of low region below it.  Hoisting `vec`
+// to function scope puts it at 0x38 (structural pass 167), and a checkStatus
+// binder at any one of the three sites costs +8 of frame.  Normalising a
+// copy (`dir.set(diff); dir.normalize();`) fixed the old f4/f5 swap.
+// Worse (2026-09-23): getLocal/GlobalPosition into diff then sub(unk58),
+// a separate `pos` local, and `dir.normalize(diff)`.
+// Also inert or worse (2026-09-23 sweep): diff stored x,y,z / z,y,x or via
+// set(a-b,...), `diff = pos; diff -= unk58`, `pos - unk58`, set + `-=`, and
+// dir as a copy-constructed/assigned local, setLength(diff, 1) or in place.
 void JPAAirField::affect(JPAParticle* particle)
 {
 	if (checkStatus(STATUS_AIR_CONE)) {
@@ -189,7 +236,8 @@ void JPAAirField::affect(JPAParticle* particle)
 		}
 
 		JGeometry::TVec3<f32> dir;
-		dir.normalize(diff);
+		dir.set(diff);
+		dir.normalize();
 		if (unk70.dot(dir) >= unk64.x)
 			calcFieldVelocity(particle);
 	} else {
@@ -217,12 +265,17 @@ void JPAMagnetField::set()
 	else
 		unk58.set(unk18);
 }
+// Binding level worth +8 of low region, landing JPAMagnetField::affect's
+// frame at 0x28 (batch 124).
+static inline bool JPAFieldCheckStatus(JPAMagnetField* p, u32 i)
+{
+	bool status = p->checkStatus(i);
+	return status;
+}
+
 void JPAMagnetField::affect(JPAParticle* particle)
 {
-
-	
-	
-	if (!checkStatus(STATUS_USE_GLOBAL_COORDS))
+	if (!JPAFieldCheckStatus(this, STATUS_USE_GLOBAL_COORDS))
 		unk7C.sub(unk58, particle->mLocalPosition);
 	else
 		unk7C.sub(unk58, particle->mGlobalPosition);
@@ -275,6 +328,22 @@ void JPAVortexField::set()
 	unk30 = unk18.z * unk18.z;
 	unk34 = 1.0f / unk30;
 }
+// TODO: FPR colouring only: retail gives thing3.z f29 and the blend f28
+// (ours the reverse), and reads unk58/unk60/unk30 through the saved `this`.
+// Naming the clamped product `ratio` fixed the clamp register; a ternary
+// clamp fixes f28/f29 but lays the branch out wrong (all five compare forms).
+// Tried: the blend declared before/after `tmp`, at the top, reusing fVar1,
+// `tmp` at the top, thing3 by copy/-=/set/sub(a), dot for squared, a
+// set-then-normalize tmp, `localPos.dot(unk58)`, a named dot.
+// Inert or worse (2026-09-23 component sweep): projected and thing3 stored
+// z,y,x / y,x,z / field-wise or via the 3-float ctor, the blend's operands
+// swapped or `1 - ratio` named, a named dot, a copy or reference localPos,
+// thing3 normalised in place, and localPos reused as thing3.
+// Register model (c-g4): thing3.z is the IRO temp @1329 with remaining degree
+// 31 when the first simplify sweep reaches it (fVar1, ratio and three lower
+// IRO temps already pushed), so it is coloured after fVar2; retail defers it
+// to the second sweep (one more neighbour, or one fewer lower-numbered one).
+// Inert: `ratio` reused for the clamp, fVar2 declared then assigned.
 void JPAVortexField::affect(JPAParticle* particle)
 {
 	JGeometry::TVec3<f32> localPos;
@@ -287,8 +356,8 @@ void JPAVortexField::affect(JPAParticle* particle)
 	f32 fVar1 = thing3.squared();
 	if (fVar1 > unk30)
 		fVar1 = unk30;
-	fVar1 *= unk34;
-	f32 fVar2 = (1.0f - fVar1) * unk10 + fVar1 * unk14;
+	f32 ratio = fVar1 * unk34;
+	f32 fVar2 = (1.0f - ratio) * unk10 + ratio * unk14;
 
 	JGeometry::TVec3<f32> tmp;
 	tmp.normalize(thing3);
@@ -331,6 +400,16 @@ void JPAConvectionField::set()
 	unk64.normalize();
 	unk70.normalize();
 }
+// TODO: 0x10 of frame short (0x100 against 0x110), the prologue schedules
+// the particle loads before the `up == unk64` compare (retail after), and
+// dir.y/dir.z trade f4/f5 inside the shared setLength body.  Inert: `up`
+// declared first or via set(), `unk64 == up`, the thing3/thing4 order.
+// Also inert or worse (2026-09-23): a temporary `up` in the compare, a cross
+// temp for unk7C, field-wise thing2, dot(thing) operand swap, `+=` for thing5.
+// Also inert or worse (2026-09-23 sweep): thing2 stored field-wise (x,y,z
+// or z,y,x; -8 frame, so set() is a real inline call), thing4 stored z,y,x,
+// set + sub for thing4, a/b hoisted, `up` before thing, dir.set + setLength
+// (frame lands 0x110 but three extra saved FPRs), thing4/thing2 in place.
 void JPAConvectionField::affect(JPAParticle* particle)
 {
 	JGeometry::TVec3<f32> thing;
@@ -347,20 +426,21 @@ void JPAConvectionField::affect(JPAParticle* particle)
 		b.scale(unk70.dot(thing), unk70);
 		thing2.add(a, b);
 	}
-	thing2.setLength(thing2, unk30);
+	JGeometry::TVec3<f32> dir;
+	dir.setLength(thing2, unk30);
 
 	JGeometry::TVec3<f32> thing4;
-	thing4.sub(thing, thing2);
+	thing4.sub(thing, dir);
 
 	JGeometry::TVec3<f32> thing3;
-	thing3.cross(unk64, thing2);
+	thing3.cross(unk64, dir);
 
 	unk7C.cross(thing3, thing4);
 	unk7C.setLength(unk10);
 	if (unk34 != 0.0f) {
-		JGeometry::TVec3<f32> thing4;
-		thing4.setLength(thing4, unk34);
-		unk7C.add(thing4);
+		JGeometry::TVec3<f32> thing5;
+		thing5.setLength(thing4, unk34);
+		unk7C.add(thing5);
 	}
 	calcFieldVelocity(particle);
 }
@@ -372,6 +452,11 @@ bool JPAConvectionField::checkMaxDistance(JGeometry::TVec3<float>&,
 
 JPARandomField::JPARandomField() { unk50 = 5; }
 JPARandomField::~JPARandomField() { }
+static inline f32 JPARandomFieldRandom()
+{
+	return FieldRand.get_ufloat_1() - 0.5f;
+}
+
 void JPARandomField::affect(JPAParticle* particle)
 {
 	bool bVar3 = false;
@@ -386,9 +471,8 @@ void JPARandomField::affect(JPAParticle* particle)
 	}
 
 	if (bVar3) {
-		unk7C.set(FieldRand.get_ufloat_1() - 0.5f,
-		          FieldRand.get_ufloat_1() - 0.5f,
-		          FieldRand.get_ufloat_1() - 0.5f);
+		unk7C.set(JPARandomFieldRandom(), JPARandomFieldRandom(),
+		          JPARandomFieldRandom());
 		unk7C.scale(unk10);
 		calcFieldVelocity(particle);
 	}
@@ -396,11 +480,16 @@ void JPARandomField::affect(JPAParticle* particle)
 
 JPADragField::JPADragField() { unk50 = 6; }
 JPADragField::~JPADragField() { }
+static inline f32 JPADragFieldRandom()
+{
+	return FieldRand.get_ufloat_1();
+}
+
 void JPADragField::affect(JPAParticle* particle)
 {
 	if (!particle->checkStatus(JPABaseParticle::FLAG_UNK4)) {
 		if (particle->getAge() == 0) {
-			f32 rnd = unk14 * (FieldRand.get_ufloat_1() - 0.5f) + unk10;
+			f32 rnd = unk14 * (JPADragFieldRandom() - 0.5f) + unk10;
 			if (rnd > 1.0f)
 				rnd = 1.0f;
 			particle->mDragForce = rnd;

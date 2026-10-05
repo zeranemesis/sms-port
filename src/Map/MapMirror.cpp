@@ -18,38 +18,141 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-void TMirrorCamera::makeMirrorViewMtx() { }
+// Parked TU-local (BATCH_BRIEF rule): the mirror plane makeMirrorViewMtx
+// reflects through. The levels are measured, not decorative --
+// TMirrorModelManager::perform inlines makeMirrorViewMtx twice, once at depth
+// 2 (from the CUE_MOVE block) and once at depth 3 (through
+// TMirrorModel::entry -> TMirrorModel::calcView). Retail reaches
+// TVec3<f32>::set<f32> out of line from both and TVec3<f32>::dot out of line
+// from both, while TVec3<f32>::scaleAdd expands in the shallow copy and is
+// called in the deep one: that only works if the normal is filled one level
+// below makeMirrorViewMtx's body (this constructor) and the dot product three
+// levels below it (calcReflectScale -> calcDistance -> dot).
+//
+// The four floats are parameters, not a camera pointer: retail evaluates them
+// right to left at the call site (-unk90 first, then z, y, x, into f28-f31
+// across the member's TVec3() call in the deep expansion) and stores mD only
+// after `bl set<f32>`, which no mem-initialiser spelling reproduces. That
+// spelling also lands TMirrorModel::entry on the map's 0x200.
+struct MapMirrorPlane {
+	MapMirrorPlane(f32 x, f32 y, f32 z, f32 d)
+	{
+		mNormal.set(x, y, z), mD = d;
+	}
 
+	f32 calcReflectScale(const JGeometry::TVec3<f32>& point) const
+	{
+		return -2.0f * (mNormal.dot(point) - mD);
+	}
+
+	/* 0x0 */ JGeometry::TVec3<f32> mNormal;
+	/* 0xC */ f32 mD;
+};
+
+// JGVec3.hpp's `scaleAdd(scale, b, c)` is `x = b.x * scale + c.x`: the scaled
+// operand is the first reference parameter. Retail's only out-of-line copy in
+// the whole game is the one this TU emits, `lfs f2, 0(r4); lfs f0, 0(r5);
+// fmadds f0, f2, f1, f0`, and the three `bl scaleAdd` sites below pass r4/r5
+// to match it.
+struct MapMirrorVecs {
+	/* 0x0 */ JGeometry::TVec3<f32> mTarget;
+	/* 0xC */ JGeometry::TVec3<f32> mUp;
+};
+
+void TMirrorCamera::makeMirrorViewMtx()
+{
+	// TODO: one level is still wrong in the deep (TMirrorModel::entry)
+	// expansion. Retail inlines MapMirrorPlane's constructor at depth 4 and
+	// leaves only mNormal's `bl TVec3::TVec3()` plus `bl set<f>` behind;
+	// MWCC here refuses it because the implicit member construction costs 1
+	// on top of the two statements and the depth-4 allowance is 2 (measured:
+	// dropping either statement makes the constructor inline and the
+	// `bl TVec3::TVec3()` appear at the right place). An explicit
+	// `: mNormal()` is not free, and `: mD(d)` is not free either and also
+	// moves the mD store ahead of `bl set<f32>`; a default constructor plus
+	// a four-float set() member is much worse (73.8%). Folding mTarget/mUp
+	// into the plane so the constructor is the only declaration costs more
+	// than it gains (80.9%, and makeMirrorViewMtx then compiles to 0x178
+	// instead of the map's 0x120); MapMirrorVecs keeps the 0x120 but pays
+	// two extra `bl TVec3::TVec3()` for its own members.
+	MapMirrorPlane plane(unk84.x, unk84.y, unk84.z, -unk90);
+	MapMirrorVecs vecs;
+
+	unk98.scaleAdd(plane.calcReflectScale(gpCamera->unk124), plane.mNormal,
+	               gpCamera->unk124);
+	vecs.mTarget.scaleAdd(plane.calcReflectScale(gpCamera->unk148),
+	                      plane.mNormal, gpCamera->unk148);
+	vecs.mUp.scaleAdd(plane.calcReflectScale(gpCamera->mUp), plane.mNormal,
+	                  gpCamera->mUp);
+
+	C_MTXLookAt(unk30, unk98, vecs.mUp, vecs.mTarget);
+}
+
+// TODO: frame 0x40 short (0x28 vs 0x68), instructions exact. Camera, matrix
+// and projection binders price +8 each at most (SMSGetCamera() reads 0); no
+// single spelling reaches 0x40.
 void TMirrorCamera::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & (CUE_CALC_VIEW | CUE_SET_PROJECTION)) {
-		C_MTXPerspective(graphics->mProjMtx.mMtx, unk80 * gpCamera->mFovy,
-		                 gpCamera->mAspect, gpCamera->mNear, gpCamera->mFar);
+		Mtx44Ptr projMtx = graphics->mProjMtx.mMtx;
+		f32 fovy = SMSGetCamera()->getFovy();
+		f32 far = SMSGetCamera()->getFar();
+		f32 near = SMSGetCamera()->getNear();
+		f32 aspect = SMSGetCamera()->mAspect;
+		C_MTXPerspective(projMtx, unk80 * fovy, aspect, near, far);
 		MTXCopy(unk30, graphics->mViewMtx);
-		graphics->mNearPlane = gpCamera->mNear;
-		graphics->mFarPlane  = gpCamera->mFar;
+		graphics->mNearPlane = SMSGetCamera()->mNear;
+		graphics->mFarPlane  = SMSGetCamera()->getFar();
 		if (cue & CUE_SET_PROJECTION)
-			GXSetProjection(graphics->mProjMtx.mMtx, GX_PERSPECTIVE);
+			GXSetProjection(projMtx, GX_PERSPECTIVE);
 		GXSetAlphaUpdate(GX_TRUE);
 	}
+}
+
+// Binders: the named fovy read loads the camera ahead of unk80 (retail's
+// f1/f0), and with the mirror-matrix binder they are drawSetting's 0x10 of
+// pool.
+static inline f32 MMFovy()
+{
+	f32 fovy = gpCamera->mFovy;
+	return fovy;
+}
+
+static inline MtxPtr MMBind30(TMirrorCamera* c)
+{
+	MtxPtr m = c->getUnk30();
+	return m;
 }
 
 void TMirrorCamera::drawSetting(MtxPtr param_1)
 {
 	GXLoadTexObj(&unk60, GX_TEXMAP0);
 	Mtx afStack_38;
-	C_MTXLightPerspective(afStack_38, unk80 * gpCamera->mFovy,
-	                      gpCamera->mAspect, 1.0f, -1.0f, 1.0f, 1.0f);
+	C_MTXLightPerspective(afStack_38, unk80 * MMFovy(), gpCamera->mAspect,
+	                      0.5f, -0.5f, 0.5f, 0.5f);
 
 	Mtx afStack_68;
-	MTXConcat(getUnk30(), param_1, afStack_68);
+	MTXConcat(MMBind30(this), param_1, afStack_68);
 	Mtx afStack_98;
 	MTXConcat(afStack_38, afStack_68, afStack_98);
 	GXLoadTexMtxImm(afStack_98, 0x1E, GX_MTX3x4);
 }
 
-void TMirrorCamera::calcEffectMtx(MtxPtr) { }
+void TMirrorCamera::calcEffectMtx(MtxPtr param_1)
+{
+	Mtx afStack_38;
+	C_MTXLightPerspective(afStack_38, getUnk80() * gpCamera->mFovy,
+	                      gpCamera->mAspect, 0.5f, -0.5f, 0.5f, 0.5f);
+	MTXConcat(afStack_38, getUnk30(), param_1);
+}
 
+// TODO: 96.3%. Retail loads GXInitTexObj's arguments as format, height,
+// pointer, width (ours width, height, pointer, format) and schedules the
+// C_MTXLookAt address pair the other way. Forks on the image pointer and the
+// format reproduce the order (99.6) but add 0x18 of frame; a named ResTIMG*,
+// casts on the pointer, a whole-call helper and the six orders of the three
+// Vec literals are inert or worse. Also inert (c-m5): the pointer as
+// `(u32)unk94 + offset`, `offset + (u8*)unk94` or `&((u8*)unk94)[offset]`.
 TMirrorCamera::TMirrorCamera(const char* name)
     : JDrama::TCamera(10.0f, 300000.0f, name)
     , unk80(1.3f)
@@ -78,14 +181,13 @@ TMirrorCamera::TMirrorCamera(const char* name)
 	Vec local_20 = (Vec) { 10000.0f, 10000.0f, 10000.0f };
 	Vec local_2C = (Vec) { 0.0f, 1.0f, 0.0f };
 	Vec local_38 = (Vec) { 20000.0f, 20000.0f, 20000.0f };
-	C_MTXLookAt(unk30, &local_20, &local_2C, &local_38);
+	C_MTXLookAt(getUnk30(), &local_20, &local_2C, &local_38);
 	unk98.zero();
 }
 
 static u8 getVertexFormat(const J3DModelData* model_data, GXAttr attr)
 {
-	const GXVtxAttrFmtList* list
-	    = model_data->getVertexData().getVtxAttrFmtList();
+	const GXVtxAttrFmtList* list = model_data->getVtxAttrFmtList();
 	for (; list->attr != GX_VA_NULL; ++list)
 		if (list->attr == attr)
 			return list->type;
@@ -109,16 +211,14 @@ void TMirrorModel::initPlaneInfo()
 	if (posComp == GX_S16) {
 		S16Vec* v = (S16Vec*)unk4->getModel()
 		                ->getModelData()
-		                ->getVertexData()
-		                .getVtxPosArray();
+		                ->getVtxPosArray();
 		unkC.x = v->x;
 		unkC.y = v->y;
 		unkC.z = v->z;
 	} else {
 		Vec* v = (Vec*)unk4->getModel()
 		             ->getModelData()
-		             ->getVertexData()
-		             .getVtxPosArray();
+		                ->getVtxPosArray();
 		unkC.x = v->x;
 		unkC.y = v->y;
 		unkC.z = v->z;
@@ -129,8 +229,7 @@ void TMirrorModel::initPlaneInfo()
 	if (normComp == GX_S16) {
 		S16Vec* v = (S16Vec*)unk4->getModel()
 		                ->getModelData()
-		                ->getVertexData()
-		                .getVtxNormArray();
+		                ->getVtxNormArray();
 		// BUG: probably meant to do a float division here?
 		unk18.x = v->x / 16384;
 		unk18.y = v->y / 16384;
@@ -138,8 +237,7 @@ void TMirrorModel::initPlaneInfo()
 	} else if (normComp == GX_F32) {
 		Vec* v = (Vec*)unk4->getModel()
 		             ->getModelData()
-		             ->getVertexData()
-		             .getVtxNormArray();
+		                ->getVtxNormArray();
 		unk18.x = v->x;
 		unk18.y = v->y;
 		unk18.z = v->z;
@@ -150,9 +248,27 @@ void TMirrorModel::initPlaneInfo()
 	}
 }
 
-void TMirrorModel::entry() { }
+static inline void MapMirrorMakeViewMtx(TMirrorCamera* camera)
+{
+	camera->makeMirrorViewMtx();
+}
 
-void TMirrorModel::calcView() { }
+void TMirrorModel::entry()
+{
+	MapMirrorMakeViewMtx(unk8);
+
+	Mtx effectMtx;
+	unk8->calcEffectMtx(effectMtx);
+
+	J3DMaterial* material
+	    = unk4->getModel()->getModelData()->getMaterialNodePointer(0);
+	material->change();
+	material->getTexGenBlock()->getTexMtx(0)->setEffectMtx(effectMtx);
+
+	unk4->entry();
+}
+
+void TMirrorModel::calcView() { unk4->viewCalc(); }
 
 void TMirrorModel::getMirrorTexInfo() { }
 
@@ -172,6 +288,16 @@ inline static void identity34(MtxPtr mtx)
 	mtx[0][0] = 1.0f;
 }
 
+static inline TMirrorModelManager* MapMirrorGetManager()
+{
+	return gpMirrorModelManager;
+}
+
+static inline MActor* MapMirrorGetActor(const TMirrorModel* model)
+{
+	return model->unk4;
+}
+
 void TMirrorModel::init(const char* name)
 {
 	unk4 = SMS_MakeMActorWithAnmData(name, gpMirrorModelManager->getUnk20(), 2,
@@ -181,13 +307,13 @@ void TMirrorModel::init(const char* name)
 
 	TPosition3f local_44;
 	local_44.identity();
-	unk4->getModel()->setBaseTRMtx(local_44);
-	unk4->calc();
-	unk4->getModel()->getModelData()->getMaterialNodePointer(0)->change();
+	MapMirrorGetActor(this)->getModel()->setBaseTRMtx(local_44);
+	MapMirrorGetActor(this)->calc();
+	MapMirrorGetActor(this)->getModel()->getModelData()->getMaterialNodePointer(0)->change();
 
-	if (!gpMirrorModelManager->unk24)
-		gpMirrorModelManager->findMirrorCamera();
-	unk8 = gpMirrorModelManager->unk24;
+	if (!MapMirrorGetManager()->unk24)
+		MapMirrorGetManager()->findMirrorCamera();
+	unk8 = MapMirrorGetManager()->unk24;
 
 	initPlaneInfo();
 }
@@ -201,13 +327,13 @@ TMirrorModel::TMirrorModel()
 	unk18.zero();
 }
 
+// TODO: frame size is exact but local_18 sits 4 bytes above retail's slot, so
+// retail reserves 4 more bytes above it (the "every temporary 4 bytes low"
+// family).
 void TMirrorModelObj::setPlane()
 {
-	MtxPtr mtx = unk4->getModel()->getAnmMtx(0);
-	Vec* v     = (Vec*)unk4->getModel()
-	             ->getModelData()
-	             ->getVertexData()
-	             .getVtxPosArray();
+	MtxPtr mtx = getUnk4()->mModel->getAnmMtx(0);
+	Vec* v     = (Vec*)unk4->getModel()->getModelData()->getVtxPosArray();
 
 	JGeometry::TVec3<f32> local_18;
 	local_18.x = v->x;
@@ -239,10 +365,17 @@ TMirrorModelManager* gpMirrorModelManager;
 bool TMirrorModelManager::isUpperThanMirrorPlane(
     const JGeometry::TVec3<f32>& param_1) const
 {
-	const JGeometry::TVec3<f32>* normal
-	    = unk18 != -1 ? &unk1C[unk18]->getNormalVec() : nullptr;
+	const JGeometry::TVec3<f32>* normal;
+	if (unk18 != -1)
+		normal = &unk1C[unk18]->getNormalVec();
+	else
+		normal = nullptr;
 
-	f32 d   = unk18 != -1 ? unk1C[unk18]->getD() : 0.0f;
+	f32 d;
+	if (unk18 != -1)
+		d = unk1C[unk18]->getD();
+	else
+		d = 0.0f;
 	f32 dot = normal->dot(param_1);
 
 	return dot + d < -50.0f ? false : true;
@@ -255,55 +388,43 @@ bool TMirrorModelManager::isInMirror(JGeometry::TVec3<f32>& param_1) const
 	           : false;
 }
 
-// NOTE on scaleAdd: the ROM's out-of-line body is `this->c = b.c * scale +
-// c.c`, while the one in libs/ computes `b.c + c.c * scale` (the operands are
-// swapped). Addition is commutative, so passing the two references the other
-// way round gives the ROM's result; the argument registers are then the wrong
-// way round, which is the cheaper of the two mismatches.
+// Parked TU-local (BATCH_BRIEF rule): the inline level that puts
+// makeMirrorViewMtx at depth 2 in the CUE_MOVE block, one below the depth 3
+// it reaches through TMirrorModel::entry -> calcView in the CUE_ENTRY block.
+// The manager is taken by pointer so that both statements re-read unk24,
+// which is what retail does (two `lwz rN, 0x24(r30)`).
+static inline void MapMirrorSetPlaneFromGround(TMirrorModelManager* manager,
+                                               const TBGCheckData* ground)
+{
+	manager->unk24->setUnk84AndUnk90(ground->mNormal.x, ground->mNormal.y,
+	                                 ground->mNormal.z,
+	                                 ground->mPlaneDistance);
+	manager->unk24->makeMirrorViewMtx();
+}
+
+// TODO: 91.3%, frame 0x168 vs 0x1a8. Structural residue in the deep
+// (CUE_ENTRY -> entry -> makeMirrorViewMtx) expansion, read by c-k6:
+//  * retail evaluates each camera vector address once and keeps it in r28
+//    for both the dot argument and the out-of-line scaleAdd's `c`
+//    (`addi r28, r4, 0x124; ...; mr r5, r28`); ours re-reads gpCamera after
+//    `bl dot`. That is one binding used twice, i.e. an inline parameter.
+//  * retail has no `bl TVec3::TVec3()` for the two reflected vectors (only
+//    for the plane's normal); MapMirrorVecs costs two.
+//  Tried: a `MapMirrorPlane::reflect(out, point)` level (with MapMirrorVecs
+//  71.7, with plain locals 53.3: the extra level moves scaleAdd/dot across
+//  the depth budgets in both copies), named `const TVec3&` camera vectors
+//  (73.9, the added statements change the shallow copy's inlining), plain
+//  target/up locals alone (73.8). The fix probably removes the fabricated
+//  MapMirrorSetPlaneFromGround/MapMirrorMakeViewMtx levels at the same time
+//  as it adds the parameter level.
 void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_MOVE) {
 		JGeometry::TVec3<f32> local_44 = *gpMarioPos;
 		unk18 = gpCubeMirror->getDataNo(gpCubeMirror->getInCubeNo(local_44));
 		if (!isUnk18Present()
-		    && !gpMarioGroundPlane[0]->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
-			unk24->setUnk84AndUnk90(gpMarioGroundPlane[0]->mNormal.x,
-			                       gpMarioGroundPlane[0]->mNormal.y,
-			                       gpMarioGroundPlane[0]->mNormal.z,
-			                       gpMarioGroundPlane[0]->mPlaneDistance);
-
-			JGeometry::TVec3<f32> normal;
-			normal.set(unk24->unk84.x, unk24->unk84.y, unk24->unk84.z);
-			f32 negPlaneD = -unk24->unk90;
-
-			// The three scaleAdds of this block are inlined in the ROM (they
-			// sit one nesting level shallower than the CUE_ENTRY ones), so
-			// they are written out as `dst = a + normal * scale`.
-			f32 scale = -2.0f * (normal.dot(gpCamera->unk124) - negPlaneD);
-			unk24->unk98.set(gpCamera->unk124.x + scale * normal.x,
-			                 gpCamera->unk124.y + scale * normal.y,
-			                 gpCamera->unk124.z + scale * normal.z);
-
-			// NOTE: CPolarSubCamera's `mUp` sits at 0x30 and `mTarget` at
-			// 0x3C, but the ROM reflects 0x30 into the vector that is then
-			// handed to C_MTXLookAt as the *target*.  The header's names for
-			// these two fields are probably swapped; go by the offsets.
-			JGeometry::TVec3<f32> reflectedUp;
-			JGeometry::TVec3<f32> reflectedTarget;
-
-			scale = -2.0f * (normal.dot(gpCamera->unk148) - negPlaneD);
-			reflectedUp.set(gpCamera->unk148.x + scale * normal.x,
-			                gpCamera->unk148.y + scale * normal.y,
-			                gpCamera->unk148.z + scale * normal.z);
-
-			scale = -2.0f * (normal.dot(gpCamera->mUp) - negPlaneD);
-			reflectedTarget.set(gpCamera->mUp.x + scale * normal.x,
-			                    gpCamera->mUp.y + scale * normal.y,
-			                    gpCamera->mUp.z + scale * normal.z);
-
-			C_MTXLookAt(unk24->unk30, &unk24->unk98, &reflectedTarget,
-			            &reflectedUp);
-		}
+		    && !gpMarioGroundPlane[0]->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+			MapMirrorSetPlaneFromGround(this, gpMarioGroundPlane[0]);
 	}
 
 	if (isUnk18Present()) {
@@ -311,56 +432,18 @@ void TMirrorModelManager::perform(u32 cue, JDrama::TGraphics* graphics)
 			unk1C[unk18]->calc();
 
 		if (cue & CUE_CALC_VIEW)
-			unk1C[unk18]->unk4->viewCalc();
+			unk1C[unk18]->calcView();
 
 		if (cue & CUE_ENTRY) {
-			Mtx effectMtx;
-			Mtx lightProjection;
-
-			TMirrorModel* model = unk1C[unk18];
-			model->setPlane();
-
-			TMirrorCamera* mirrorCamera = model->unk8;
-			JGeometry::TVec3<f32> normal;
-			normal.set(mirrorCamera->unk84.x, mirrorCamera->unk84.y,
-			           mirrorCamera->unk84.z);
-			f32 negPlaneD = -mirrorCamera->unk90;
-			JGeometry::TVec3<f32> reflectedUp;
-			JGeometry::TVec3<f32> reflectedTarget;
-
-			f32 offset
-			    = -2.0f * (normal.dot(gpCamera->unk124) - negPlaneD);
-			mirrorCamera->unk98.scaleAdd(offset, gpCamera->unk124, normal);
-
-			offset = -2.0f * (normal.dot(gpCamera->unk148) - negPlaneD);
-			reflectedUp.scaleAdd(offset, gpCamera->unk148, normal);
-
-			offset = -2.0f * (normal.dot(gpCamera->mUp) - negPlaneD);
-			reflectedTarget.scaleAdd(offset, gpCamera->mUp, normal);
-
-			C_MTXLookAt(mirrorCamera->unk30, &mirrorCamera->unk98,
-			            &reflectedTarget, &reflectedUp);
-
-			C_MTXLightPerspective(lightProjection,
-			                      mirrorCamera->unk80 * gpCamera->mFovy,
-			                      gpCamera->mAspect, 1.0f, -1.0f, 1.0f, 1.0f);
-			PSMTXConcat(lightProjection, mirrorCamera->unk30, effectMtx);
-
-			J3DMaterial* material
-			    = model->unk4->getModel()
-			          ->getModelData()
-			          ->getMaterialNodePointer(0);
-			material->change();
-			material->getTexGenBlock()->getTexMtx(0)->setEffectMtx(effectMtx);
-			model->unk4->entry();
+			unk1C[unk18]->setPlane();
+			unk1C[unk18]->entry();
 		}
 	}
 }
 
 void TMirrorModelManager::findMirrorCamera()
 {
-	unk24
-	    = static_cast<TMirrorCamera*>(JDrama::TNameRefGen::search("鏡カメラ"));
+	unk24 = JDrama::TNameRefGen::search<TMirrorCamera>("鏡カメラ");
 }
 
 void TMirrorModelManager::loadAfter()
@@ -387,6 +470,20 @@ void TMirrorModelManager::registerObjMirror(TMirrorModel* model)
 	unk10++;
 }
 
+// Binding level worth +8 of low region, landing TMirrorModelManager::load's
+// frame at 0x150 (batch 124).
+static inline u8 MapMirrorGetCurrentMapL0(TMarDirector* p)
+{
+	u8 currentMap = p->getCurrentMap();
+	return currentMap;
+}
+
+static inline u8 MapMirrorGetCurrentMap(TMarDirector* p)
+{
+	u8 currentMap = MapMirrorGetCurrentMapL0(p);
+	return currentMap;
+}
+
 void TMirrorModelManager::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TViewObj::load(stream);
@@ -404,7 +501,7 @@ void TMirrorModelManager::load(JSUMemoryInputStream& stream)
 		for (int i = 0; i < local_28; ++i) {
 			unk1C[i] = new TMirrorModel;
 			char acStack_130[0x100];
-			if (gpMarDirector->getCurrentMap() == 7) {
+			if (MapMirrorGetCurrentMap(gpMarDirector) == 7) {
 				static const char* table[] = { "205", nullptr };
 				snprintf(acStack_130, 0x100, "/scene/map/mirror/mirror%s.bmd",
 				         table[i]);

@@ -14,6 +14,7 @@
 #include <Player/MarioAccess.hpp>
 #include <Player/ModelWaterManager.hpp>
 #include <Camera/CameraShake.hpp>
+#include <Camera/CubeManagerBase.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/ShadowUtil.hpp>
 #include <MarioUtil/TexUtil.hpp>
@@ -40,7 +41,7 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-static const char* bgeso_bastable[] = {
+const char* bgeso_bastable[] = {
 	nullptr,
 	"/scene/bgeso/bas/bgeso_cannon.bas",
 	nullptr,
@@ -71,7 +72,47 @@ static const char* bgeso_bastable[] = {
 	"/scene/bgeso/bas/bgeso_wait3.bas",
 };
 
-static void getAttackModeStr(int) { }
+// TODO: 8 bytes in the map, i.e. `li r3, 0; blr`, so the debug name table this
+// returned was stripped from the retail build and only the null return is
+// left. The return type is a guess from the name.
+static const char* getAttackModeStr(int) { return nullptr; }
+
+// fabricated: a TBGTentacle predicate over the same state set as the one
+// changeAllTentacleState() tests. Parked here rather than in
+// BossGessoTentacle.hpp, which belongs to bgtentacle.cpp.
+//
+// The `int state` copy is load-bearing, not decoration: reading the member
+// straight into the comparisons leaves all three tests separate in every
+// expansion, while copying it first lets MWCC fold `state == 3 || state == 4`
+// into retail's `subi 3; cmplwi 1` and hoist the `== 6` test ahead of it, at
+// every inlined site (stopIfRoll, changeAttackMode and the five nerves) and
+// in the unit's .data, which only matches with the fold. The comparison order
+// stays 4, 6, 3: 6/3/4 and 3/4/6 both break the fold and the data again.
+//
+// TODO: the out-of-line TBossGesso::changeAllTentacleState (94.12) is the one
+// body that must *not* fold -- retail emits 4, 6, 3 unmerged there from the
+// same source and folds only in the expansions. No spelling found that splits
+// them: a named local in that loop (93.9), reading getState() (93.9), the
+// explicit three-compare chain (87.0, and it costs the expansions their
+// materialised bool), a pointer-taking forwarding overload, and
+// TBGTentacle::isThing() (order 6/3/4, no fold anywhere) were all tried.
+// The inlined copies are expansions of changeAllTentacleState itself, so any
+// source change there moves them too: naming `TBGTentacle* tentacle` in its
+// loop unfolds the out-of-line body exactly (frame 8 short) but also unfolds
+// every expansion; a member-reading predicate does the same.
+// c-k14: the predicate as a whole condition (`if (isTentacleBusy(t)) continue;`,
+// statement mode) is byte-identical to the `!` operand form in all nine
+// functions, so the fold is not a mode effect.
+// TODO: find the real name; `canTake` and `isAttacking` are the only named
+// TBGTentacle predicates in the map and neither fits.
+static inline BOOL isTentacleBusy(TBGTentacle* tentacle)
+{
+	int state = tentacle->mState;
+	if (state == 4 || state == 6 || state == 3)
+		return true;
+
+	return false;
+}
 
 static BOOL isNozzleWater(THitActor* param_1)
 {
@@ -123,33 +164,36 @@ TBGBeakHit::TBGBeakHit(TBossGesso* owner, const char* name)
     : TTakeActor(name)
     , mOwner(owner)
 {
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 
 	initHitActor(0x8000008, 1, -0x80000000, 0.0f, 0.0f,
-	             mOwner->getSaveParam()->mSLBeakDamageRadius.get(),
-	             mOwner->getSaveParam()->mSLBeakDamageHeight.get());
+	             mOwner->getSaveParam2()->mSLBeakDamageRadius.get(),
+	             mOwner->getSaveParam2()->mSLBeakDamageHeight.get());
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	unkA4.zero();
 }
 
 MtxPtr TBGBeakHit::getTakingMtx() { return unk74; }
 
-// TODO: fake
-static inline JGeometry::TVec3<f32> fromPolar(f32 theta, f32 radius)
+// Binding level worth +8 of low region, landing TBGBeakHit::moveRequest's
+// frame at 0x78 (batch 124).
+static inline f32 BossgessoGetIntendedMag(const TMario* p)
 {
-	return JGeometry::TVec3<f32>(radius * JMASSin(theta * (65536.0f / 360.0f)),
-	                             0.0f,
-	                             radius * JMASCos(theta * (65536.0f / 360.0f)));
+	f32 intendedMag = p->getIntendedMag();
+	return intendedMag;
 }
+
+static inline TBGBeakHit* BossgessoGetBeak(const TBossGesso* p);
+static inline MActor* BossgessoGetMActor(const TLiveActor* p);
 
 BOOL TBGBeakHit::moveRequest(const JGeometry::TVec3<f32>& where_to)
 {
-	TBossGessoParams* params = mOwner->getSaveParam();
+	TBossGessoParams* params = mOwner->getSaveParam2();
 
 	unkA4 = fromPolar(gpMarioOriginal->getIntendedYaw(),
-	                  gpMarioOriginal->getIntendedMag()
+	                  BossgessoGetIntendedMag(gpMarioOriginal)
 	                      * params->mSLBeakStretch.get());
 
 	JGeometry::TVec3<f32> delta = mOwner->mPosition;
@@ -158,6 +202,7 @@ BOOL TBGBeakHit::moveRequest(const JGeometry::TVec3<f32>& where_to)
 	unkA4 += delta;
 
 	mPosition = where_to;
+	return FALSE;
 }
 
 BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
@@ -168,12 +213,12 @@ BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
 
 		mOwner->gotEyeDamage();
 
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &mPosition, 0,
-		                             nullptr);
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
+		                             &sender->getPosition(), 0, nullptr);
 		return true;
 	}
 
-	if (mOwner->mAttackMode == 3)
+	if (mOwner->getAttackMode() == 3)
 		return false;
 
 	if (mOwner->getLatestNerve() == &TNerveBGPollute::theNerve()
@@ -184,7 +229,8 @@ BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
 	if (sender->getActorType() == 0x80000001) {
 		if (message == HIT_MESSAGE_TAKE) {
 			TTakeActor* actor = (TTakeActor*)sender;
-			if (actor->mHeldObject != nullptr && actor->mHeldObject != this)
+			if (actor->getHeldObject() != nullptr
+			    && actor->getHeldObject() != this)
 				return false;
 
 			mHolder = actor;
@@ -192,15 +238,16 @@ BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
 			if (mOwner->unk190.color.a != 0)
 				mOwner->showMessage(0x25);
 
+			mOwner->unk1A0 = 1;
 			return true;
 		}
 
 		if (message == HIT_MESSAGE_THROWN || message == HIT_MESSAGE_UNK8) {
 			// TODO: inlined from TBossGesso?
-			JGeometry::TVec3<f32> delta = mPosition;
+			JGeometry::TVec3<f32> delta = getPosition();
 			TBossGesso* gesso           = mOwner;
-			delta -= gesso->mPosition;
-			f32 length = gesso->getSaveParam()->mSLBeakLengthDamage.get();
+			delta -= gesso->getPosition();
+			f32 length = gesso->getSaveParam2()->mSLBeakLengthDamage.get();
 
 			if (delta.length() >= length)
 				mOwner->gotBeakDamage();
@@ -213,6 +260,14 @@ BOOL TBGBeakHit::receiveMessage(THitActor* sender, u32 message)
 	return false;
 }
 
+// TODO: frame 0xf0 against retail 0x138. Every named slot now sits exactly
+// (up is declared before offset and never materialised), but retail's low
+// region is 0xd0 of dead inline temporaries against our 0x84 (getHolder()
+// at all six holder reads +8, c-hs6; getDamageHeight()/getDamageRadius(),
+// never used in this file, +8 more).
+// getSpine() at gotBeakDamage's four spine reads buys +0x10 here and in
+// TBGBeakHit::receiveMessage (0xc0 vs 0x100) but scores lower; gotEyeDamage
+// must stay raw for TBGEyeHit::receiveMessage.
 void TBGBeakHit::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_MOVE) {
@@ -220,27 +275,26 @@ void TBGBeakHit::perform(u32 cue, JDrama::TGraphics* graphics)
 		mPosition.y -= mDamageHeight * 0.5f;
 
 		ensureTakeSituation();
-		if (mHolder != nullptr && !unkA4.isZero()) {
+		if (getHolder() != nullptr && !unkA4.isZero()) {
 			mPosition += unkA4;
-			JGeometry::TVec3<f32> delta = mHolder->mPosition;
+			JGeometry::TVec3<f32> delta = getHolder()->mPosition;
 			delta += unkA4;
-			mHolder->moveRequest(delta);
+			getHolder()->moveRequest(delta);
 			unkA4.zero();
 		}
 
-		if (mHolder != nullptr) {
+		if (getHolder() != nullptr) {
 			JGeometry::TVec3<f32> us2mario = SMS_GetMarioPos();
-			us2mario -= mPosition;
+			us2mario -= mOwner->mPosition;
 			if (!us2mario.isZero())
 				VECNormalize(&us2mario, &us2mario);
 			else
 				us2mario.set(0.0f, 0.0f, 1.0f);
 
+			JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
 			JGeometry::TVec3<f32> offset = us2mario;
 			JGeometry::TVec3<f32> perp;
-			// TODO: cross is incorrect?
-			JGeometry::TVec3<f32> up(0.0f, 1.0f, 1.0f);
-			perp.cross(offset, up);
+			perp.cross(up, us2mario);
 			if (!perp.isZero())
 				VECNormalize(&perp, &perp);
 			else
@@ -266,14 +320,14 @@ void TBGBeakHit::perform(u32 cue, JDrama::TGraphics* graphics)
 			ownerToUs -= mOwner->mPosition;
 			f32 beakPullDist = ownerToUs.length();
 
-			f32 lenPollute = mOwner->getSaveParam()->mSLBeakLengthPollute.get();
+			f32 lenPollute = mOwner->getSaveParam2()->mSLBeakLengthPollute.get();
 			if (mOwner->unk190.color.a != 0 && beakPullDist >= lenPollute) {
-				mHolder->receiveMessage(this, HIT_MESSAGE_UNK8);
+				getHolder()->receiveMessage(this, HIT_MESSAGE_UNK8);
 			}
 
-			f32 lenLimit = mOwner->getSaveParam()->mSLBeakLengthLimit.get();
+			f32 lenLimit = mOwner->getSaveParam2()->mSLBeakLengthLimit.get();
 			if (beakPullDist >= lenLimit) {
-				mHolder->receiveMessage(this, HIT_MESSAGE_UNK8);
+				getHolder()->receiveMessage(this, HIT_MESSAGE_UNK8);
 				mOwner->gotBeakDamage();
 			}
 		}
@@ -285,13 +339,13 @@ TBGEyeHit::TBGEyeHit(TBossGesso* owner, int joint_index, const char* name)
     , mOwner(owner)
     , mJointIndex(joint_index)
 {
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 
 	initHitActor(0x8000009, 1, 0x1000000, 0.0f, 0.0f,
-	             mOwner->getSaveParam()->mSLEyeDamageRadius.get(),
-	             mOwner->getSaveParam()->mSLEyeDamageHeight.get());
+	             mOwner->getSaveParam2()->mSLEyeDamageRadius.get(),
+	             mOwner->getSaveParam2()->mSLEyeDamageHeight.get());
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
@@ -323,7 +377,7 @@ TBGBodyHit::TBGBodyHit(TBossGesso* owner, int joint_index, const char* name)
     , mOwner(owner)
     , mJointIndex(joint_index)
 {
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 
@@ -364,7 +418,12 @@ void TBossGessoMtxCalc::joinAnm(int param_1)
 	        param_1));
 }
 
-void TBossGessoMtxCalc::setAnm(int param_1) { }
+void TBossGessoMtxCalc::setAnm(int param_1)
+{
+	M3UMtxCalcSIAnmBlendQuat::setAnm(
+	    mOwner->getActorKeeper()->getMActorAnmData()->getUnk2C()->getAnmPtr(
+	        param_1));
+}
 
 void TBossGessoMtxCalc::calc(u16 param_1)
 {
@@ -372,15 +431,15 @@ void TBossGessoMtxCalc::calc(u16 param_1)
 	if (param_1 != 26)
 		return;
 
-	if (mOwner->mBeak != nullptr && mOwner->mBeak->isTaken()) {
-		TBGBeakHit* beak = mOwner->mBeak;
+	TBGBeakHit* beak = BossgessoGetBeak(mOwner);
+	if (beak != nullptr && beak->isTaken()) {
 		MtxPtr mtx26     = mOwner->getModel()->getAnmMtx(param_1);
 		mtx26[0][3]      = beak->mPosition.x;
 		mtx26[1][3]      = beak->mPosition.y + 50.0f;
 		mtx26[2][3]      = beak->mPosition.z;
 
 		JGeometry::TVec3<f32> local_28 = beak->mPosition;
-		local_28 -= mOwner->mPosition;
+		local_28 -= mOwner->getPosition();
 
 		f32 fVar4 = VECMag(&local_28);
 		if (fVar4 > 0.0f)
@@ -411,12 +470,16 @@ void TBossGessoMtxCalc::calc(u16 param_1)
 
 TBGBinder::TBGBinder() { }
 
+// TODO: every instruction matches; the frame is 0xd8 against retail 0x100
+// (c-hs7: getCurrentMap(), the file's spelling, is +8). getLinearVelocity()
+// and getVelocity(), never used in this file, are +8 each.
 void TBGBinder::bind(TLiveActor* param_1)
 {
 	TBossGesso* gesso = (TBossGesso*)param_1;
 
-	JGeometry::TVec3<f32> local_3c = gesso->mPosition;
-	local_3c += gesso->mLinearVelocity;
+	JGeometry::TVec3<f32> linearVel = gesso->mLinearVelocity;
+	JGeometry::TVec3<f32> local_3c  = gesso->mPosition;
+	local_3c += linearVel;
 
 	if (gesso->isAirborne()) {
 		JGeometry::TVec3<f32> local_48 = gesso->mVelocity;
@@ -430,12 +493,9 @@ void TBGBinder::bind(TLiveActor* param_1)
 	if (gesso->getLatestNerve() == &TNerveBGDie::theNerve()
 	    && gesso->getMActor()->checkCurBckFromIndex(6)) {
 
-		// TODO: defo an inline
-		JGeometry::TVec3<f32> local_b4 = local_3c;
-		local_b4 -= gesso->mPosition;
-		gesso->mLinearVelocity = local_b4;
+		gesso->mLinearVelocity = local_3c - gesso->mPosition;
 
-		if (gpMarDirector->mMap != 9
+		if (gpMarDirector->getCurrentMap() != 9
 		    && gesso->mPosition.y - local_3c.y > 0.0f) {
 
 			// TODO: this is likely an inline where xyz are passed as separate
@@ -452,12 +512,12 @@ void TBGBinder::bind(TLiveActor* param_1)
 			    &pTStack_50);
 			dVar8 += 1.0f;
 
-			if (dVar7 < dVar8) {
+			if (dVar8 > dVar7) {
 				TEffectColumWater* enemy
 				    = (TEffectColumWater*)gpConductor->makeOneEnemyAppear(
 				        gesso->mPosition, "エフェクト水柱マネージャー", 1);
 				if (enemy) {
-					f32 scale = gesso->getSaveParam()->mSLColumnScale.get();
+					f32 scale = gesso->getSaveParam2()->mSLColumnScale.get();
 					JGeometry::TVec3<f32> local_5c;
 					local_5c.x = scale;
 					local_5c.y = scale;
@@ -508,10 +568,7 @@ void TBGBinder::bind(TLiveActor* param_1)
 		gesso->mGroundHeight = fVar1;
 		gesso->mGroundPlane  = local_60;
 
-		// TODO: defo an inline
-		JGeometry::TVec3<f32> local_c0 = local_3c;
-		local_c0 -= gesso->mPosition;
-		gesso->mLinearVelocity = local_c0;
+		gesso->mLinearVelocity = local_3c - gesso->mPosition;
 	}
 }
 
@@ -531,7 +588,7 @@ void TBGCork::crush()
 		return;
 
 	unk8->setBckFromIndex(8);
-	unk4->getModel()->setBaseTRMtx(unk8->getModel()->getBaseTRMtx());
+	unk8->getModel()->setBaseTRMtx(unk4->getModel()->getBaseTRMtx());
 	unkC = 1;
 }
 
@@ -595,17 +652,20 @@ void TBossGesso::init(TLiveManager* param_1)
 	mSpine->initWith(&TNerveBGWait::theNerve());
 	mMtxCalc = new TBossGessoMtxCalc(this);
 
-	getMActor()->setCalcForBck(mMtxCalc);
+	// Two getMActor binders land the 0x250 frame; the inlined `new` result
+	// still sits 12 bytes high (0x234 against retail 0x228).
+	// TODO: the remaining ~ mismatches are that allocation-order hole.
+	BossgessoGetMActor(this)->setCalcForBck(mMtxCalc);
 
-	getMActor()->calc();
+	BossgessoGetMActor(this)->calc();
 	getMActor()->setLightType(LIGHT_TYPE_OBJECT);
 
 	unk178   = getActorKeeper()->createMActor("bgeso_dirty_white.bmd", 0);
 	mPolDrop = new TBGPolDrop;
 
 	mPolDrop->setMActors(
-	    getActorKeeper()->createMActor("bgeso_osenball_white.bmd", 0),
-	    getActorKeeper()->createMActor("bgeso_osenball.bmd", 0));
+	    getActorKeeper()->createMActor("bgeso_osenball.bmd", 0),
+	    getActorKeeper()->createMActor("bgeso_osenball_white.bmd", 0));
 
 	mCork = new TBGCork(this);
 
@@ -675,10 +735,27 @@ void TBossGesso::rumblePad(int param_1, const JGeometry::TVec3<f32>& param_2)
 	SMSRumbleMgr->start(8, &unk1A4);
 }
 
-void TBossGesso::definiteRumble() { }
+void TBossGesso::definiteRumble()
+{
+	unk1A4 = 1.0f;
+	SMSRumbleMgr->start(8, &unk1A4);
+}
 
-void TBossGesso::continuousRumble() { }
+void TBossGesso::continuousRumble()
+{
+	if (mBeak->mHolder != nullptr && mTimeInCurrentAttackMode % 4 == 0)
+		rumblePad(1, mBeak->mPosition);
+}
 
+// Retail keeps this a `bl` inside perform because perform passes the result
+// straight to startSoundActorWithInfo: a loop callee is not expanded in that
+// argument, while `f32 len = lenFromToeToMario();` expands it (perform 83.9).
+// The TVec3 copy of the node position gives retail's `fmadds` (x*x folded
+// onto y*y) and its y, z, x load order.
+// TODO: every instruction and tipPos's slot (0x30) match; the frame is 0x40
+// against retail's 0x48, eight bytes above the saved registers. The literal
+// pool agrees that retail expands nothing here: its 100000.0f is @7822, the
+// highest id in the TU.
 f32 TBossGesso::lenFromToeToMario()
 {
 	f32 min = 100000.0f;
@@ -701,26 +778,50 @@ f32 TBossGesso::lenFromToeToMario()
 void TBossGesso::showMessage(u32 param_1)
 {
 	u32 idx;
-	if (param_1 == 0x25) {
+	if (param_1 == 0x25)
 		idx = 3;
-	} else {
+	else
 		idx = param_1 - 3;
-	}
 
 	u32 flag;
-	if (param_1 == 3) {
+	if (param_1 == 3)
 		flag = 0;
-	} else {
+	else
 		flag = 1 << idx;
-	}
 
-	if ((unk198 & flag) == 0)
-		gpMarDirector->getConsole()->startAppearBalloon(param_1, true);
+	if (!(unk198 & flag)) {
+		TGCConsole2* console = gpMarDirector->getConsole();
+		console->startAppearBalloon(param_1, true);
+	}
 
 	unk198 |= flag;
 }
 
-void TBossGesso::checkTakeMsg() { }
+// Compiles to the map's 0x11c. perform inlines this body and `bl`s its
+// showMessage(4), while inlining showMessage(3) at its own site: showMessage's
+// if/else spelling costs too much for depth 2 but not for depth 1 (the
+// ternaries inlined at both). Wrapping this call in one more TU-local level
+// makes the whole body a call instead (perform 98.3 -> 91.5), and naming the
+// rumble block continuousRumble() is -8 of frame.
+void TBossGesso::checkTakeMsg()
+{
+	if (unk1A0)
+		return;
+
+	if (is2ndFightNow())
+		return;
+
+	JGeometry::TVec3<f32> toMario = SMS_GetMarioPos();
+	toMario -= mPosition;
+
+	if (toMario.squared() < 4000000.0f) {
+		unk19C++;
+		if (unk19C >= 1200) {
+			showMessage(4);
+			unk1A0 = 1;
+		}
+	}
+}
 
 void TBossGesso::changeBck(int param_1)
 {
@@ -735,10 +836,26 @@ void TBossGesso::changeBck(int param_1)
 	setAnmSound(!table ? nullptr : table[param_1]);
 }
 
-// TODO: this inline is 99% incorrect, need to try harder =(
-bool TBossGesso::inSightAngle(f32 a) { return inSight() < a ? TRUE : FALSE; }
+// Takes the full sight angle and halves it itself: retail multiplies by 0.5f
+// after inSight() returns at the moveObject guard site (97.8 -> 98.8).
+// TODO: map 0x16c, ours 0xcc: retail also expands MsGetRotFromZaxisY here.
+BOOL TBossGesso::inSightAngle(f32 a)
+{
+	if (inSight() < 0.5f * a)
+		return TRUE;
 
-// TODO: this inline is 99% incorrect, need to try harder =(
+	return FALSE;
+}
+
+// TODO: map 0x17c, ours 0x184. Naming the lower bound
+// (`f32 lo = dVar9 - 180.0f;` passed to MsWrap) gives exactly 0x17c but costs
+// doAttackSingle 93.29 -> 93.22, so it stays out. No spelling of this body
+// (operator-, sub/set/assign/direct-init, SMS_DistanceFromMarioVec, a
+// temporary `TVec3(...) -= mPosition`, MsAngleDiff, extra named floats; ~30
+// variants, 2026-09-23) nor of inSightAngle (bare `return <`, ternary,
+// inverted, BOOL local) expands MsGetRotFromZaxisY at depth 2: every caller
+// still `bl`s it, so the shoot site and inSightAngle's 0x16c stay open on the
+// shared header (see MathUtil.hpp).
 f32 TBossGesso::inSight()
 {
 	JGeometry::TVec3<f32> local_90 = SMS_GetMarioPos();
@@ -763,7 +880,7 @@ void TBossGesso::stopIfRoll()
 
 	changeAttackMode(ASTATE_SINGLE);
 
-	mSpine->reset();
+	getSpine()->reset();
 	mSpine->setNext(&TNerveBGWait::theNerve());
 
 	changeAllTentacleState(0);
@@ -774,10 +891,18 @@ void TBossGesso::changeAttackMode(int new_mode)
 	mAttackMode              = new_mode;
 	mTimeInCurrentAttackMode = 0;
 	switch (mAttackMode) {
-	case ASTATE_GUARD:
-		// TODO: wrong, this should only use 2 tentacles, not all
-		changeAllTentacleState(10);
+	case ASTATE_SINGLE:
+	case ASTATE_DOUBLE:
+	case ASTATE_SKIP_ROPE:
 		break;
+
+	case ASTATE_GUARD: {
+		static int idx[2] = { 1, 3 };
+		for (int i = 0; i < 2; ++i)
+			if (!isTentacleBusy(mTentacles[idx[i]]))
+				mTentacles[idx[i]]->changeStateAndFixNodes(10);
+		break;
+	}
 
 	case ASTATE_UNISON:
 		changeAllTentacleState(0);
@@ -789,8 +914,8 @@ void TBossGesso::changeAttackMode(int new_mode)
 		else
 			unk1A1 = false;
 		changeAllTentacleState(0x8);
-		mSpine->reset();
-		mSpine->setNext(&TNerveBGRoll::theNerve());
+		getSpine()->reset();
+		getSpine()->setNext(&TNerveBGRoll::theNerve());
 		mSpine->pushAfterCurrent(&TNerveBGWait::theNerve());
 		break;
 
@@ -851,12 +976,14 @@ void TBossGesso::gotBeakDamage()
 		mSpine->setNext(&TNerveBGBeakDamage::theNerve());
 		mSpine->pushAfterCurrent(&TNerveBGWait::theNerve());
 	}
+
+	unk1A0 = 1;
 }
 
 void TBossGesso::changeAllTentacleState(int param_1)
 {
 	for (int i = 0; i < TENTACLE_NUM; ++i)
-		if (mTentacles[i]->mState != 5 && !mTentacles[i]->isThing())
+		if (mTentacles[i]->mState != 5 && !isTentacleBusy(mTentacles[i]))
 			mTentacles[i]->changeStateAndFixNodes(param_1);
 }
 
@@ -866,9 +993,17 @@ void TBossGesso::forceAllTentacleState(int param_1)
 		mTentacles[i]->changeStateAndFixNodes(param_1);
 }
 
-void TBossGesso::startPollute() { }
+void TBossGesso::startPollute()
+{
+	unk178->setBckFromIndex(4);
+	unk17C = 1;
+}
 
-void TBossGesso::stopPollute() { }
+void TBossGesso::stopPollute()
+{
+	unk178->setBckFromIndex(-1);
+	unk17C = 0;
+}
 
 void TBossGesso::launchPolDrop()
 {
@@ -896,7 +1031,25 @@ void TBossGesso::launchPolDrop()
 	unk195 += 1;
 }
 
-void TBossGesso::setEyeDamageBtp(int) { }
+// Both btp spellings the nerves paste (index 1 held at frame 1.5, index 2
+// at frame 0) as one flag-selected body; this is the map's 0x8c. Calling it
+// at the eight nerve sites compiles to the same code but adds 0x18 of frame
+// per site under the current changeBck spelling, so the sites stay pasted.
+void TBossGesso::setEyeDamageBtp(int index)
+{
+	if (index != 0) {
+		getMActor()->setBtpFromIndex(1);
+		J3DFrameCtrl* ctrl = getMActor()->getFrameCtrl(ANM_TYPE_BTP);
+		ctrl->setFrame(1.5f);
+		ctrl->setRate(0.0f);
+		getMActor()->resetDL();
+	} else {
+		getMActor()->setBtpFromIndex(2);
+		J3DFrameCtrl* ctrl = getMActor()->getFrameCtrl(ANM_TYPE_BTP);
+		ctrl->setFrame(0.0f);
+		getMActor()->resetDL();
+	}
+}
 
 BOOL TBossGesso::tentacleHeld() const
 {
@@ -907,11 +1060,25 @@ BOOL TBossGesso::tentacleHeld() const
 	return false;
 }
 
-void TBossGesso::tentacleAttack() { }
+BOOL TBossGesso::tentacleAttack()
+{
+	for (int i = 0; i < TENTACLE_NUM; ++i)
+		if (mTentacles[i]->mState == 2)
+			return true;
+
+	return false;
+}
 
 BOOL TBossGesso::beakHeld() const { return !!mBeak->mHolder; }
 
-void TBossGesso::tentacleWait() { }
+BOOL TBossGesso::tentacleWait()
+{
+	for (int i = 0; i < TENTACLE_NUM; ++i)
+		if (mTentacles[i]->mState == 1)
+			return true;
+
+	return false;
+}
 
 const char** TBossGesso::getBasNameTable() const { return bgeso_bastable; }
 
@@ -927,18 +1094,13 @@ BOOL TBossGesso::receiveMessage(THitActor* sender, u32 message)
 	return false;
 }
 
-#pragma dont_inline on
 void TBossGesso::doAttackSingle()
 {
-	if (getLatestNerve() != &TNerveBGPollute::theNerve()) {
-		unk178->setBckFromIndex(-1);
-		unk17C = 0;
-	}
+	if (getLatestNerve() != &TNerveBGPollute::theNerve())
+		stopPollute();
 
-	if (gpMarDirector->mMoveTickCount < 0x1E0)
-		return;
-
-	if (gpMarDirector->isTalkOrDemoModeNow())
+	if (gpMarDirector->unk58 < 0x1E0
+	    || gpMarDirector->isTalkOrDemoModeNow())
 		return;
 
 	if (unk1A8 > 0) {
@@ -946,11 +1108,10 @@ void TBossGesso::doAttackSingle()
 		return;
 	}
 
-	if (gpMarDirector->unk7D == 4 ? 1 : 0) {
-
+	if (is2ndFightNow()) {
 		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
 
-		if (delta.y + 20.0f < mPosition.y)
+		if (20.0f + delta.y < mPosition.y)
 			return;
 
 		delta -= mPosition;
@@ -960,63 +1121,221 @@ void TBossGesso::doAttackSingle()
 	}
 
 	for (int i = 0; i < 2; ++i) {
-		static const int idxarray[] = { 1, 3 };
-		TBGTentacle* tentacle       = mTentacles[idxarray[i]];
+		static const int idxarray[2] = { 1, 3 };
+		TBGTentacle* tentacle        = mTentacles[idxarray[i]];
 
-		if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)
-		    && tentacle->mState == 0) {
+		f32 sightAngle = getSaveParam2()->mSLSightAngle.get();
+		if (inSightAngle(sightAngle) && tentacle->mState == 0) {
 			JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
-			delta -= mPosition;
+			delta -= tentacle->getFirstNode()->getPosition();
 
-			if (delta.squared() > getSaveParam()->mSLSingleAttackLen.get()) {
+			f32 attackLen = getSaveParam2()->mSLSingleAttackLen.get();
+			if (delta.squared() < attackLen * attackLen) {
 				tentacle->changeStateAndFixNodes(1);
 				break;
 			}
 		}
 	}
 
-	if (mTentacles[3]->isThing2() && mTentacles[1]->isThing2()
-	    && mTentacles[2]->isThing2()) {
-		if (mTimeInCurrentAttackMode <= getSaveParam()->mSLUnisonInter.get())
-			return;
+	if (mTentacles[3]->isThing2() && mTentacles[1]->isThing2()) {
+		if (!mTentacles[2]->isThing2() || !mTentacles[0]->isThing2()) {
+			if (mTimeInCurrentAttackMode
+			        > getSaveParam2()->mSLUnisonInter.get()
+			    && is2ndFightNow())
+				changeAttackMode(ASTATE_ROLL);
 
-		if (gpMarDirector->unk7D != 4)
 			return;
+		}
+	}
 
-		changeAttackMode(ASTATE_ROLL);
+	if (tentacleHeld())
+		return;
+
+	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+
+	f32 unisonAttackLen2 = getSaveParam2()->mSLUnisonAttackLen.get();
+	unisonAttackLen2 *= unisonAttackLen2;
+
+	f32 forceUnisonLen2 = getSaveParam2()->mSLForceUnisonLen.get();
+	forceUnisonLen2 *= forceUnisonLen2;
+
+	// TODO: retail makes a third getSaveParam() call here whose result is
+	// never read; the fetch it belonged to was dead code. Keeping the bare
+	// call reproduces the instruction.
+	getSaveParam2();
+
+	delta -= mPosition;
+
+	if (mBeak->mHolder != nullptr
+	    && !(mTentacles[3]->isThing2() && mTentacles[1]->isThing2())) {
+		for (int i = 0; i < 2; ++i) {
+			static const int idxarray[2] = { 1, 3 };
+			TBGTentacle* tentacle        = mTentacles[idxarray[i]];
+
+			if (tentacle->mState != 1 && tentacle->mState != 4
+			    && tentacle->mState != 5 && tentacle->mState != 3
+			    && tentacle->mState != 6)
+				tentacle->changeStateAndFixNodes(1);
+		}
+
 		return;
 	}
 
-	// TODO: ughhhhhhhhhhhhhh
+	f32 distToMario2 = delta.squared();
+
+	if (distToMario2 < forceUnisonLen2
+	    && gpMarioOriginal->isTouchGround4cm()) {
+		changeAttackMode(ASTATE_UNISON);
+		return;
+	}
+
+	if (distToMario2 < unisonAttackLen2
+	    && gpMarioOriginal->isTouchGround4cm()) {
+		if (mTimeInCurrentAttackMode
+		    > getSaveParam2()->mSLUnisonInter.get()) {
+			if (is2ndFightNow())
+				changeAttackMode(ASTATE_ROLL);
+			else
+				changeAttackMode(ASTATE_UNISON);
+		}
+
+		return;
+	}
+
+	if (tentacleWait())
+		return;
+
+	if (mCork->unkC != 0 && unk195 < 3) {
+		f32 shootRadius2 = getSaveParam2()->mSLShootRadius.get();
+		shootRadius2 *= shootRadius2;
+
+		// Retail compares inSight() directly here: this is the one site where
+		// TVec3::sub expands and the `li 1 / li 0; cmpwi` BOOL stands without
+		// an inSightAngle() level (91.5 -> 93.3).
+		// TODO: retail also expands MsGetRotFromZaxisY at this site (41
+		// missing instructions, frame 0x1a8 vs 0x280) and inside the UNUSED
+		// inSightAngle (map 0x16c, ours 0xc4), while calling it at depth 3
+		// from every inSightAngle site. Our MathUtil.hpp spelling costs too
+		// much for depth 2: a TU-local probe copy costing 8-10 filler units
+		// inlines at depth 2 but not 3 and lifts this function to 99.5 with
+		// every other caller unchanged; the if/else spellings tried (single
+		// or multiple returns) all stay out of line. A shared-header fix.
+		if (mTimeInCurrentAttackMode > getSaveParam2()->mSLUnisonInter.get()
+		    && distToMario2 < shootRadius2 && (inSight() < 30.0f ? TRUE : FALSE))
+			changeAttackMode(ASTATE_SHOOT);
+
+		return;
+	}
+
+	if (is2ndFightNow()) {
+		f32 sightAngle = getSaveParam2()->mSLSightAngle.get();
+		if (inSightAngle(sightAngle)
+		    && mTimeInCurrentAttackMode
+		        > getSaveParam2()->mSLUnisonInter.get()) {
+			changeAttackMode(ASTATE_ROLL);
+			unk195 = 0;
+		}
+	}
 }
-#pragma dont_inline off
+
+// Binding level worth +16 of low region, landing TBossGesso::doAttackShoot's
+// frame at 0x98 (batch 124).
+static inline TBossGessoParams* BossgessoGetSaveParam2(const TBossGesso* p)
+{
+	TBossGessoParams* saveParam2 = p->getSaveParam2();
+	return saveParam2;
+}
+
+static inline TBGBeakHit* BossgessoGetBeak(const TBossGesso* p)
+{
+	TBGBeakHit* beak = p->mBeak;
+	return beak;
+}
+
+// Mario's ear is 75 units above his feet.  Retail copies the vector into a
+// second slot before the getInCubeNo() call, which is this by-value return.
+static inline JGeometry::TVec3<f32> BossgessoMarioEarPos()
+{
+	JGeometry::TVec3<f32> earPos = SMS_GetMarioPos();
+	earPos.y += 75.0f;
+	return earPos;
+}
+
+static inline J3DModel* BossgessoGetModel(const TBossGesso* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+// +8 of pool per site. Two sites close TBossGesso::init and
+// TNerveBGDie's frames (both were 0x18 short).
+static inline MActor* BossgessoGetMActor(const TLiveActor* p)
+{
+	MActor* actor = p->getMActor();
+	return actor;
+}
+
+// A bare-return fork over getModel() is the +4 rung this TU's nerve pools
+// need (the binder BossgessoGetModel above is +8): one site closed
+// TNerveBGPollute and TNerveBGTug.
+static inline J3DModel* BossgessoModelOf(const TBossGesso* p)
+{
+	return p->getModel();
+}
+
+static inline MSound* BossgessoGetMSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+// +8 of low region at its one expansion in TNerveBGPollute (the named
+// TStack_24 there is still 4 bytes low: one 4-byte inline level short).
+static inline MActor* BossgessoGetUnk178(const TBossGesso* p)
+{
+	MActor* actor = p->unk178;
+	return actor;
+}
+
+static inline int BossgessoGetUnk195(const TBossGesso* p) { return p->unk195; }
+
+static inline TTakeActor* BossgessoGetBeakHolder(const TBossGesso* p)
+{
+	TTakeActor* holder = BossgessoGetBeak(p)->mHolder;
+	return holder;
+}
 
 void TBossGesso::doAttackDouble()
 {
-	if (mBeak->getHolder() != nullptr || tentacleHeld()) {
+	if (BossgessoGetBeak(this)->mHolder != nullptr || tentacleHeld()) {
 		changeAttackMode(ASTATE_SKIP_ROPE);
 		return;
 	}
 
-	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
-	delta -= mPosition;
+	JGeometry::TVec3<f32> delta = mPosition;
+	delta -= SMS_GetMarioPos();
 
-	f32 doubleAttackLen2 = getSaveParam()->mSLUnisonAttackLen.value;
+	// Declare sightAngle first so it takes f30 and the squared length f29,
+	// matching retail. The leftover 4-byte TVec3 slot (0x80 vs 0x84) is the
+	// known-open `a = b - c` allocation-order residue.
+	f32 sightAngle;
+	f32 doubleAttackLen2 = BossgessoGetSaveParam2(this)->mSLDoubleAttackLen.get();
 	doubleAttackLen2 *= doubleAttackLen2;
 
-	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)
+	sightAngle = BossgessoGetSaveParam2(this)->mSLSightAngle.get();
+	BOOL inSight = inSightAngle(sightAngle);
+	if (inSight
 	    && delta.squared() < doubleAttackLen2) {
 
 		for (int i = 0; i < 2; ++i) {
-			static const int idxarray[] = { 0, 2 };
-			TBGTentacle* tentacle       = mTentacles[idxarray[i]];
-			if (tentacle->mState == 0) {
+			static const int idxarray[2] = { 0, 2 };
+			TBGTentacle* tentacle        = mTentacles[idxarray[i]];
+			if (tentacle->mState == 0)
 				tentacle->changeStateAndFixNodes(1);
-			}
 		}
 	}
 
-	if (mBeak->getHolder() != nullptr)
+	if (mBeak->mHolder != nullptr)
 		return;
 
 	if (!mTentacles[3]->isThing2() || !mTentacles[1]->isThing2())
@@ -1025,20 +1344,21 @@ void TBossGesso::doAttackDouble()
 
 void TBossGesso::doAttackSkipRope()
 {
-	if (mBeak->getHolder() != nullptr) {
+	if (BossgessoGetBeakHolder(this) != nullptr) {
 		changeAttackMode(ASTATE_SKIP_ROPE);
 		return;
 	}
 
-	if (mBeak->getHolder() == nullptr && !tentacleHeld()) {
+	if (BossgessoGetBeak(this)->mHolder == nullptr && !tentacleHeld()) {
 		changeAttackMode(ASTATE_SINGLE);
 		return;
 	}
 
-	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)) {
+	f32 sightAngle = BossgessoGetSaveParam2(this)->mSLSightAngle.get();
+	if (inSightAngle(sightAngle)) {
 		for (int i = 0; i < 2; ++i) {
-			static const int idxarray[] = { 0, 2 };
-			TBGTentacle* tentacle       = mTentacles[idxarray[i]];
+			static const int idxarray[2] = { 0, 2 };
+			TBGTentacle* tentacle        = getTentacle(idxarray[i]);
 			if (tentacle->mState != 2 && tentacle->mState != 1
 			    && tentacle->mState != 4 && tentacle->mState != 5
 			    && tentacle->mState != 3 && tentacle->mState != 6) {
@@ -1050,18 +1370,20 @@ void TBossGesso::doAttackSkipRope()
 
 void TBossGesso::doAttackUnison()
 {
-	if (mBeak->getHolder() != nullptr) {
+	if (mBeak->mHolder != nullptr) {
 		changeAttackMode(ASTATE_SKIP_ROPE);
 		return;
 	}
+
 	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
 	delta -= mPosition;
 
-	f32 unisonAttackLen2 = getSaveParam()->mSLUnisonAttackLen.value;
+	f32 unisonAttackLen2 = BossgessoGetSaveParam2(this)->mSLUnisonAttackLen.get();
 	unisonAttackLen2 *= unisonAttackLen2;
 
-	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)
-	    && gpMarioOriginal->isTouchGround4cm()
+	f32 sightAngle = BossgessoGetSaveParam2(this)->mSLSightAngle.get();
+	if (inSightAngle(sightAngle)
+	    && SMSGetMarioBound()->isTouchGround4cm()
 	    && delta.squared() < unisonAttackLen2) {
 
 		BOOL bVar3 = true;
@@ -1092,50 +1414,55 @@ void TBossGesso::doAttackUnison()
 
 void TBossGesso::doAttackShoot()
 {
-	if (mBeak->getHolder() != nullptr) {
+	if (mBeak->mHolder != nullptr) {
 		changeAttackMode(ASTATE_SINGLE);
 		return;
 	}
 
 	if (mTimeInCurrentAttackMode > 120
-	    && mSpine->getLatestNerve() != &TNerveBGPolDrop::theNerve()) {
+	    && getSpine()->getLatestNerve() != &TNerveBGPolDrop::theNerve()) {
 		changeAttackMode(ASTATE_SINGLE);
 		return;
 	}
 
-	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)) {
-		JGeometry::TVec3<f32> delta = *gpMarioPos;
-		delta -= mPosition;
+	f32 sightAngle = BossgessoGetSaveParam2(this)->mSLSightAngle.get();
+	if (!inSightAngle(sightAngle))
+		return;
 
-		f32 singleAttackLen = getSaveParam()->mSLSingleAttackLen.get();
-		if (delta.squared() < singleAttackLen * singleAttackLen) {
-			changeAttackMode(ASTATE_SINGLE);
-		}
-	}
+	JGeometry::TVec3<f32> delta = *gpMarioPos;
+	delta -= mPosition;
+
+	f32 singleAttackLen2 = getSaveParam2()->mSLSingleAttackLen.get();
+	singleAttackLen2 *= singleAttackLen2;
+
+	if (delta.squared() < singleAttackLen2)
+		changeAttackMode(ASTATE_SINGLE);
 }
 
-// TODO: inline seems sus here, probably needed cuz inSight is wrong
+// Retail inlines this whole body into moveObject's ASTATE_GUARD case while
+// keeping doAttackShoot a `bl`; the lever is the statement budget, not bytes.
+// doAttackShoot sat at exactly 14 and needed one more statement (the early
+// return below), and this body sat at 16 and needed two fewer -- the two
+// nested `isThing2` guards collapse into one `||` inside the positive
+// condition. moveObject 85.0 -> 97.8.
+// TODO: the out-of-line copy is still 584 bytes against the map's 580.
 void TBossGesso::doAttackGuard()
 {
-	if (mBeak->getHolder() != nullptr) {
+	if (mBeak->mHolder != nullptr) {
 		changeAttackMode(ASTATE_SKIP_ROPE);
 		return;
 	}
 
-	// TODO: inSight inline is definitely wrong...
-	if (inSightAngle(getSaveParam()->mSLSightAngle.get() * 0.5f)) {
-		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
-		delta -= mPosition;
+	f32 sightAngle = BossgessoGetSaveParam2(this)->mSLSightAngle.get();
+	if (!inSightAngle(sightAngle))
+		return;
 
-		f32 guardLen = getSaveParam()->mSLGuardLen.get();
-		if (!(guardLen * guardLen < delta.squared())) {
-			if (!mTentacles[3]->isThing2())
-				return;
+	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
+	delta -= mPosition;
 
-			if (!mTentacles[1]->isThing2())
-				return;
-		}
-
+	f32 guardLen = getSaveParam2()->mSLGuardLen.get();
+	if (guardLen * guardLen < delta.squared()
+	    || (mTentacles[3]->isThing2() && mTentacles[1]->isThing2())) {
 		changeAllTentacleState(0);
 		changeAttackMode(ASTATE_SINGLE);
 	}
@@ -1150,6 +1477,26 @@ void TBossGesso::doAttackRoll()
 	changeAttackMode(ASTATE_SINGLE);
 }
 
+// TODO: 98.8%, frame 0xe0 against 0xe8. At the ASTATE_GUARD expansion retail
+// calls SMS_GetMarioPos out of line (its only bl in the TU, hence the weak
+// copy). Also inert on top of the halving inside inSightAngle (c-m3): set(),
+// assignment, TVec3(...) copy and sub() spellings of inSight's Mario copy.
+// Dropping the sightAngle local or wrapping the guard body were inert.
+// Retail's guard expansion copies Mario's position inline but `bl`s both
+// SMS_GetMarioPos and TVec3::sub, i.e. only the position fetch sits one level
+// deeper than the copy. Inert or worse (c-h5, 2026-09-27): SMS_DistanceFromMarioVec,
+// a TU-local angle-to-Mario or to-Mario-vector helper in inSight, direct-init,
+// assign-init or `*gpMarioPos` copies, an extra level between inSightAngle and inSight.
+// c-k14 (statement-mode model): the guard reaches inSight's body at level 4 in
+// expression mode (`!inSightAngle(...)`, then `inSight() < ...`), so
+// SMS_GetMarioPos is judged at 4. An angle-to-Mario level inside inSight
+// takes it to 5 and emits the weak SMS_GetMarioPos, but also pushes Mario's
+// copy and `operator-=` to 5 (both then `bl`, moveObject 98.8 -> 97.8).
+// Retail has SMS_GetMarioPos exactly one level below the copy, which is the
+// +1 a class initialiser's argument gets in statement mode: inSight's body is
+// a statement block at level 4 in retail. Every spelling that keeps the
+// comparison (`if (inSight() < ...)`, a named f32, `return inSight() < ...`)
+// is expression mode; `if (inSightAngle(...))` alone changes nothing.
 void TBossGesso::moveObject()
 {
 	TLiveActor::moveObject();
@@ -1222,16 +1569,13 @@ void TBossGesso::moveObject()
 
 void TBossGesso::reset()
 {
-
-	
-	
 	for (int i = 0; i < TENTACLE_NUM; ++i) {
 		mTentacles[i]->resetAllNodes(mPosition);
 		mTentacles[i]->getFirstNode()->onUnk24();
 	}
 
-	if (gpMarDirector->getCurrentMap() == 3
-	    && gpMarDirector->getCurrentStage() == 0)
+	if (SMSGetMarDirector()->getCurrentMap() == 3
+	    && SMSGetMarDirector()->getCurrentStage() == 0)
 		changeAttackMode(ASTATE_UNK6);
 	else
 		changeAttackMode(ASTATE_SINGLE);
@@ -1251,6 +1595,7 @@ void TBossGesso::calcRootMatrix()
 		               mRotation.y, mRotation.z);
 
 		Mtx local_50;
+
 		MsMtxSetRotX(local_50, 90.0f);
 
 		MTXConcat(mA, local_50, mA);
@@ -1262,8 +1607,27 @@ void TBossGesso::calcRootMatrix()
 	TSpineEnemy::calcRootMatrix();
 }
 
-void TBossGesso::performInContainer(u32, JDrama::TGraphics*) { }
+void TBossGesso::performInContainer(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_CALC_ANIM) {
+		if (JDrama::TNameRefGen::search<THitActor>("container") == nullptr) {
+			changeAttackMode(ASTATE_SINGLE);
+		} else if (mTentacles[0]->mState != 4) {
+			JGeometry::TVec3<f32> pos(11603.0f, 2114.3f, 2411.4f);
+			mTentacles[0]->mNodes[0].setPosition(pos);
+			pos.x = 11510.0f;
+			mTentacles[0]->mNodes[1].setPosition(pos);
+		}
+	}
 
+	mTentacles[0]->testPerform(cue, graphics);
+}
+
+// TODO: 99.7%, frame 0x240 vs 0x2c8. Left: performInContainer's first
+// setPosition keeps the checked mTentacles[0] where ours reloads it (a named
+// tentacle keeps it for both; direct member stores, set() and a named inner
+// pointer are inert). c-hs7: getMActor() at every read (+0x10) and the named
+// source matrix for MTXCopy (two instructions, +8) are kept.
 void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_CALC_ANIM) {
@@ -1276,18 +1640,7 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & CUE_MOVE) {
-		if (!unk1A0 && !is2ndFightNow() && mAttackMode == 6) {
-			JGeometry::TVec3<f32> toMario = SMS_GetMarioPos();
-			toMario -= mPosition;
-
-			if (toMario.squared() < 4000000.0f) {
-				unk19C++;
-				if (unk19C >= 1200) {
-					showMessage(4);
-					unk1A0 = 1;
-				}
-			}
-		}
+		checkTakeMsg();
 
 		if (mBeak->getHolder() != nullptr
 		    && mTimeInCurrentAttackMode % 4 == 0) {
@@ -1302,32 +1655,19 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (mAttackMode == 6) {
-		if (cue & CUE_CALC_ANIM) {
-			if (static_cast<THitActor*>(
-			        JDrama::TNameRefGen::search("container"))
-			    == nullptr) {
-				changeAttackMode(0);
-			} else if (mTentacles[0]->mState != 4) {
-				JGeometry::TVec3<f32> pos(11603.0f, 2114.3f, 2411.4f);
-				mTentacles[0]->mNodes[0].setPosition(pos);
-				pos.x = 11510.0f;
-				mTentacles[0]->mNodes[1].setPosition(pos);
-			}
-		}
-
-		mTentacles[0]->testPerform(cue, graphics);
+		performInContainer(cue, graphics);
 		return;
 	}
 
 	if (cue & CUE_ENTRY) {
-		if (mSpine->getLatestNerve() == &TNerveBGBeakDamage::theNerve()) {
-			SMS_AddDamageFogEffect(mMActor->getModel()->getModelData(),
+		if (getLatestNerve() == &TNerveBGBeakDamage::theNerve()) {
+			SMS_AddDamageFogEffect(getMActor()->getModel()->getModelData(),
 			                       mPosition, graphics);
 		} else {
-			SMS_ResetDamageFogEffect(mMActor->getModel()->getModelData());
+			SMS_ResetDamageFogEffect(getMActor()->getModel()->getModelData());
 		}
 
-		mMActor->getModel()
+		getMActor()->getModel()
 		    ->getModelData()
 		    ->getMaterialNodePointer(0)
 		    ->getTevBlock()
@@ -1353,9 +1693,13 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_CALC_VIEW) {
 		TCircleShadowRequest request;
 
-		MtxPtr joint = mMActor->getModel()->getAnmMtx(1);
-		request.mPosition
-		    = JGeometry::TVec3<f32>(joint[0][3], mPosition.y, joint[2][3]);
+		MtxPtr joint = getMActor()->getModel()->getAnmMtx(1);
+
+		JGeometry::TVec3<f32> shadowPos;
+		shadowPos.x      = joint[0][3];
+		shadowPos.y      = mPosition.y;
+		shadowPos.z      = joint[2][3];
+		request.mPosition = shadowPos;
 
 		JGeometry::TVec3<f32> right(joint[0][0], joint[1][0], joint[2][0]);
 		JGeometry::TVec3<f32> front(joint[0][2], joint[1][2], joint[2][2]);
@@ -1381,8 +1725,8 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (unk17C) {
 		if (cue & CUE_CALC_ANIM) {
-			MTXCopy(mMActor->getModel()->getBaseTRMtx(),
-			        unk178->getModel()->getBaseTRMtx());
+			MtxPtr src = getMActor()->getModel()->getBaseTRMtx();
+			MTXCopy(src, unk178->getModel()->getBaseTRMtx());
 			unk178->calcAnm();
 		}
 
@@ -1397,14 +1741,14 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 					mTentacles[i]->mNodes[0].setPosition(mPosition);
 			}
 		} else {
-			static const int rootJoints[] = { 2, 3, 5, 6 };
+			static const int idxarray[] = { 2, 3, 5, 6 };
 
 			for (int i = 0; i < TENTACLE_NUM; ++i) {
 				if (mTentacles[i]->mState == 4)
 					continue;
 
 				JGeometry::TVec3<f32> trans;
-				if (getJointTransByIndex(rootJoints[i], &trans) >= 0)
+				if (getJointTransByIndex(idxarray[i], &trans) >= 0)
 					mTentacles[i]->mNodes[0].setPosition(trans);
 			}
 		}
@@ -1412,7 +1756,7 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	for (int i = 0; i < TENTACLE_NUM; ++i) {
 		if (cue & CUE_ENTRY) {
-			if (mSpine->getLatestNerve() == &TNerveBGBeakDamage::theNerve()) {
+			if (getLatestNerve() == &TNerveBGBeakDamage::theNerve()) {
 				mTentacles[i]->unk2C->offMakeDL();
 				SMS_AddDamageFogEffect(
 				    mTentacles[i]->unk2C->getModel()->getModelData(), mPosition,
@@ -1427,24 +1771,24 @@ void TBossGesso::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & CUE_CALC_ANIM) {
-		if (mMActor->checkCurBckFromIndex(14)
-		    || mMActor->checkCurBckFromIndex(15)) {
-			f32 len = lenFromToeToMario();
-			SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_GESO_ROLL,
-			                                        &mPosition, nullptr, len, 0,
-			                                        0, nullptr, 0, 4);
+		if (getMActor()->checkCurBckFromIndex(14)
+		    || getMActor()->checkCurBckFromIndex(15)) {
+			SMSGetMSound()->startSoundActorWithInfo(
+			    MSD_SE_BS_GESO_ROLL, &mPosition, nullptr, lenFromToeToMario(),
+			    0, 0, nullptr, 0, 4);
 		}
 	}
 
 	if (cue & CUE_MOVE) {
-		if (mBeak->getHolder() != nullptr && unk190.color.a == 0) {
-			int left  = mTentacles[1]->mState;
-			int right = mTentacles[3]->mState;
-
-			if (!((left == 4 || left == 6 || left == 3)
-			      && (right == 4 || right == 6 || right == 3))) {
-				gpMarDirector->mConsole->startAppearBalloon(
-				    VERSION_SELECT(GMSJ01(0xE0003), GMSP01(0x03)), true);
+		if (mBeak->mHolder != nullptr && unk190.color.a == 0) {
+			// Retail inlines showMessage here (the `bl` it keeps is the
+			// showMessage(4) inside checkTakeMsg's expansion; see there).
+			// With showMessage(3) the flag is
+			// 0, so the balloon always appears, which is why spelling the
+			// console call directly here was byte-identical.
+			if (!(isTentacleBusy(mTentacles[1])
+			      && isTentacleBusy(mTentacles[3]))) {
+				showMessage(3);
 			}
 		}
 	}
@@ -1507,6 +1851,9 @@ void TBossGessoManager::load(JSUMemoryInputStream& stream)
 	initJParticle();
 }
 
+// TODO: frame 0xd0 against retail 0xa0, all low-region temps. The pasted
+// changeBck's accessor spelling is the knob (raw mMActorKeeper in joinAnm
+// gives 0xa0 here) but it breaks Tug/Eye/Die, which match with it as is.
 DEFINE_NERVE(TNerveBGWait, TLiveActor)
 {
 	TBossGesso* self = (TBossGesso*)spine->getBody();
@@ -1520,17 +1867,23 @@ DEFINE_NERVE(TNerveBGWait, TLiveActor)
 			self->changeBck(25);
 		}
 
-		self->setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		self->setGoalPathMario();
 
 		self->getMActor()->setBtpFromIndex(2);
-		self->getMActor()->getFrameCtrl(ANM_TYPE_BTP)->setFrame(0.0f);
+
+		J3DFrameCtrl* ctrl3 = self->getMActor()->getFrameCtrl(ANM_TYPE_BTP);
+		ctrl3->setFrame(0.0f);
 		self->getMActor()->resetDL();
 	}
 
-	JGeometry::TVec3<f32> delta = *gpMarioPos;
+	JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
 	delta -= self->mPosition;
 	f32 len   = delta.length();
-	f32 fVar2 = len > 800.0f ? 1.0f : 3000.0f / len;
+	f32 fVar2;
+	if (len > 800.0f)
+		fVar2 = 1.0f;
+	else
+		fVar2 = 3000.0f / len;
 	self->walkToCurPathNode(0.0f, fVar2 * self->getTurnSpeed(), 0.0f);
 
 	return false;
@@ -1543,7 +1896,8 @@ DEFINE_NERVE(TNerveBGEyeDamage, TLiveActor)
 	if (spine->getTime() == 0) {
 		self->changeBck(5);
 
-		if (self->mBeak->mHolder == nullptr && self->mAttackMode != 2) {
+		if (BossgessoGetBeakHolder(self) == nullptr
+		    && self->mAttackMode != 2) {
 			self->changeAttackMode(TBossGesso::ASTATE_UNISON);
 			self->changeAllTentacleState(1);
 		}
@@ -1564,14 +1918,16 @@ DEFINE_NERVE(TNerveBGEyeDamage, TLiveActor)
 	}
 
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(7), 1, self);
-	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(4), 1, self);
+	    BGESO_JPA_MS_BOGE_NAMIDA, BossgessoGetModel(self)->getAnmMtx(7), 1,
+	    self);
+	SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
+	    BGESO_JPA_MS_BOGE_NAMIDA, BossgessoGetModel(self)->getAnmMtx(4), 1,
+	    self);
 
 	if (self->unk1AE == 0) {
 		self->unk1AE = 0x78;
 		SMSGetMSound()->startSoundActor(MSD_SE_BS_GESO_WATER_HIT,
-		                                &self->mPosition, 0, nullptr, 0, 4);
+		                                &self->mPosition);
 	}
 
 	if (self->unk190.color.a != 0) {
@@ -1603,8 +1959,9 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 
 		self->getMActor()->resetDL();
 
-		if (gpMarDirector->mMap == 3 || gpMarDirector->mMap == 59) {
-			MSBgm::stopBGM(MSD_BGM_MAP_SELECT, 10);
+		if (SMSGetMarDirector()->getCurrentMap() == 3
+		    || SMSGetMarDirector()->getCurrentMap() == 59) {
+			MSBgm::stopBGM(MSD_BGM_BOSS, 10);
 			MSMainProc::setBossNotDamagedFlag(false);
 		}
 	}
@@ -1614,7 +1971,7 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 
 	if (spine->getTime() == 12) {
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    BGESO_JPA_MS_BOGE_HIT_A, self->getModel()->getAnmMtx(27), 0,
+		    BGESO_JPA_MS_BOGE_HIT_A, BossgessoGetModel(self)->getAnmMtx(27), 0,
 		    nullptr);
 		gpMarioParticleManager->emitAndBindToMtxPtr(
 		    BGESO_JPA_MS_BOGE_HIT_C, self->getModel()->getAnmMtx(27), 0,
@@ -1625,17 +1982,17 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 	}
 
 	if (spine->getTime() == 18) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK12, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_BEAK_HIT, 1.0f);
 		self->rumblePad(1, self->mPosition);
 	}
 
 	if (spine->getTime() == 234) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK13, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_TUMBLE, 1.0f);
 		self->rumblePad(2, self->mPosition);
 	}
 
 	if (spine->getTime() == 510) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK14, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_LAND, 1.0f);
 		self->rumblePad(1, self->mPosition);
 	}
 
@@ -1652,10 +2009,10 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 
 	if (spine->getTime() == 40) {
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    BGESO_JPA_MS_BOGE_KIZETSU, self->getModel()->getAnmMtx(7), 0,
+		    BGESO_JPA_MS_BOGE_KIZETSU, BossgessoGetModel(self)->getAnmMtx(7), 0,
 		    nullptr);
 		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    BGESO_JPA_MS_BOGE_KIZETSU_R, self->getModel()->getAnmMtx(4), 0,
+		    BGESO_JPA_MS_BOGE_KIZETSU_R, BossgessoGetModel(self)->getAnmMtx(4), 0,
 		    nullptr);
 	}
 
@@ -1668,8 +2025,22 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 		ctrl4->setFrame(0.0f);
 
 		spine->pushAfterCurrent(&TNerveBGPollute::theNerve());
-		if (gpMarDirector->mMap == 3 || gpMarDirector->mMap == 59)
-			MSBgm::startBGM(MSD_BGM_CHUBOSS_MANTA);
+		if (SMSGetMarDirector()->getCurrentMap() == 3
+		    || SMSGetMarDirector()->getCurrentMap() == 59) {
+			MSBgm::startBGM(MSD_BGM_BOSSGESO_2DN3RD);
+
+			// Outside every sound cube the boss theme plays on a muted
+			// track; inside one the Sirena hotel (map 59) hands the volume
+			// back to the cube fader.
+			if (gpCubeSoundChange != nullptr
+			    && gpCubeSoundChange->getInCubeNo(BossgessoMarioEarPos())
+			           == -1) {
+				MSBgm::setTrackVolume(1, 0.0f, 0, 0);
+			} else if (SMSGetMarDirector()->mMap == 59
+			           && MSStageCubeFade::smInstance != nullptr) {
+				MSStageCubeFade::smInstance->setBgmVolumeForce();
+			}
+		}
 
 		return true;
 	}
@@ -1677,6 +2048,10 @@ DEFINE_NERVE(TNerveBGBeakDamage, TLiveActor)
 	return false;
 }
 
+// TODO: frame 0x80 against retail 0x78. Dropping getMActor() at
+// curAnmEndsNext is 0 (the accessor decays). The +8 lives in the
+// pasted changeBck, whose getMActor()->mMActor rung disagrees in
+// sign across the nine callers.
 DEFINE_NERVE(TNerveBGTentacleDamage, TLiveActor)
 {
 	TBossGesso* self = (TBossGesso*)spine->getBody();
@@ -1697,12 +2072,12 @@ DEFINE_NERVE(TNerveBGTentacleDamage, TLiveActor)
 	}
 
 	if (spine->getTime() == 10) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK15, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_TE_HIT, 1.0f);
 		self->rumblePad(1, self->mPosition);
 	}
 
 	if (spine->getTime() == 304) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK14, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_LAND, 1.0f);
 		self->rumblePad(1, self->mPosition);
 	}
 
@@ -1726,16 +2101,19 @@ DEFINE_NERVE(TNerveBGTug, TLiveActor)
 	}
 
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    BGESO_JPA_MS_BOGE_ASE, self->getModel()->getAnmMtx(47), 0, nullptr);
+	    BGESO_JPA_MS_BOGE_ASE, BossgessoModelOf(self)->getAnmMtx(47), 1, self);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(7), 0, nullptr);
+	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(7), 1, self);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(4), 0, nullptr);
+	    BGESO_JPA_MS_BOGE_NAMIDA, self->getModel()->getAnmMtx(4), 1, self);
 
 	if (self->mBeak->mHolder != nullptr) {
-		JGeometry::TVec3<f32> delta = *gpMarioPos;
+		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
 		delta -= self->mPosition;
-		f32 lim = self->getSaveParam()->mSLBeakLengthDamage.get();
+		// Read raw: the const f32& from TParamT::get() is 8 bytes of frame.
+		// TODO: frame exact now, but delta still sits 4 bytes low (0xa0
+		// against retail's 0xa4); 4 bytes of low pool are still missing.
+		f32 lim = self->getSaveParam2()->mSLBeakLengthDamage.value;
 
 		if (delta.length() >= lim) {
 			self->getMActor()->setBtpFromIndex(1);
@@ -1766,57 +2144,64 @@ DEFINE_NERVE(TNerveBGDie, TLiveActor)
 	TBossGesso* self = (TBossGesso*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->changeBck(5);
+		self->changeBck(2);
 
-		self->getMActor()->setBtpFromIndex(1);
+		// Two getMActor binders land the low region exactly.
+		// TODO: frame 0x1b8 against retail's 0x1c0: every slot below 0x190
+		// matches, but retail keeps an unreferenced 12 bytes under local_24
+		// (0x19c in retail, 0x190 here), which also pushes the int->float
+		// conversion temp from 0x1a0 to 0x1a8.
+		// Naming calcVelocityToJumpToY's result (`vel`, then
+		// `mVelocity = vel`) lands that slot at 0x190 and the frame at 0x1c0,
+		// but retail copies the return temp straight into mVelocity (98.6).
+		BossgessoGetMActor(self)->setBtpFromIndex(1);
 
-		J3DFrameCtrl* ctrl3 = self->getMActor()->getFrameCtrl(ANM_TYPE_BTP);
+		J3DFrameCtrl* ctrl3 = BossgessoGetMActor(self)->getFrameCtrl(ANM_TYPE_BTP);
 		ctrl3->setFrame(1.5f);
 		ctrl3->setRate(0.0f);
 
 		self->getMActor()->resetDL();
 
-		if (gpMarDirector->mMap == 3 || gpMarDirector->mMap == 59) {
+		if (SMSGetMarDirector()->getCurrentMap() == 3 || SMSGetMarDirector()->getCurrentMap() == 59) {
 			MSBgm::stopTrackBGMs(7, 10);
 			MSMainProc::setBossLivesFlag(false);
-		} else if (gpMarDirector->mMap == 9) {
+		} else if (SMSGetMarDirector()->getCurrentMap() == 9) {
 			MSBgm::stopTrackBGM(1, 10);
 			MSMainProc::setBossLivesFlagOnlyFlag(false);
 		}
 
-		if (gpMarDirector->mMap == 9) {
+		if (SMSGetMarDirector()->getCurrentMap() == 9) {
 			gpMarDirector->fireStartDemoCamera("bgeso_fall_camera3", nullptr,
 			                                   -1, 0.0f, true, nullptr, 0,
 			                                   nullptr, JDrama::TFlagT<u16>(0));
-		} else if (gpMarDirector->unk7D == 4) {
-			gpMarDirector->fireStartDemoCamera("bgeso_fall_camera2", nullptr,
-			                                   -1, 0.0f, true, nullptr, 0,
-			                                   nullptr, JDrama::TFlagT<u16>(0));
-		} else {
+		} else if (!self->is2ndFightNow()) {
 			gpMarDirector->fireStartDemoCamera("bgeso_fall_camera", nullptr, -1,
 			                                   0.0f, true, nullptr, 0, nullptr,
 			                                   JDrama::TFlagT<u16>(0));
+		} else {
+			gpMarDirector->fireStartDemoCamera("bgeso_fall_camera2", nullptr,
+			                                   -1, 0.0f, true, nullptr, 0,
+			                                   nullptr, JDrama::TFlagT<u16>(0));
 		}
 
-		if (gpMarDirector->mMap == 3 || gpMarDirector->mMap == 59) {
+		if (SMSGetMarDirector()->getCurrentMap() == 3 || SMSGetMarDirector()->getCurrentMap() == 59) {
 			gpItemManager->makeShineAppearWithDemo(
 			    "シャイン（ボス用）", "ボスシャインカメラ", self->mPosition.x,
-			    self->mPosition.y + 6000.0f, self->mPosition.z);
+			    6000.0f + self->mPosition.y, self->mPosition.z);
 		}
 
-		TNameKuriManager* nameKuriMgr = static_cast<TNameKuriManager*>(
-		    JDrama::TNameRefGen::search("ナメクリマネージャー"));
+		TNameKuriManager* nameKuriMgr
+		    = JDrama::TNameRefGen::search<TNameKuriManager>(
+		        "ナメクリマネージャー");
 		if (nameKuriMgr)
 			nameKuriMgr->killChildren();
 
-		SMSGetMSound()->startSoundActor(MSD_SE_BS_GESO_MHIT_NOBOICE,
-		                                &self->mPosition, 0, nullptr, 0, 4);
+		BossgessoGetMSound()->startSoundActor(MSD_SE_BS_GESO_MHIT_NOBOICE, &self->mPosition);
 	}
 
-	if (gpMarDirector->mMap == 9 && spine->getTime() >= 740
+	if (SMSGetMarDirector()->getCurrentMap() == 9 && spine->getTime() >= 740
 	    && spine->getTime() <= 750) {
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &self->mPosition, 0,
-		                                nullptr, 0, 4);
+		BossgessoGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &self->mPosition);
 
 		if (spine->getTime() == 745) {
 			self->unk1A4 = 1.0f;
@@ -1825,43 +2210,37 @@ DEFINE_NERVE(TNerveBGDie, TLiveActor)
 	}
 
 	if (self->getMActor()->checkCurBckFromIndex(2)
-	    || self->getMActor()->curAnmEndsNext()) {
+	    && self->getMActor()->curAnmEndsNext()) {
 
 		self->changeBck(6);
 		self->changeAllTentacleState(8);
 
 		JGeometry::TVec3<f32> local_24;
-		local_24.x = self->mPosition.x;
-		local_24.y = -5000.0f;
-		local_24.z = self->mPosition.z + 7000.0f;
+		local_24.set(self->getPosition().x, -5000.0f,
+		             7000.0f + self->getPosition().z);
 
-		self->unkF4.unk0 = nullptr;
-		self->unkF4.unk4 = local_24;
+		self->setGoalPath(local_24);
 
-		self->unk104.unk0 = nullptr;
-		self->unk104.unk4 = local_24;
-
-		self->unk114.clear();
-
-		self->mVelocity
-		    = self->calcVelocityToJumpToY(local_24, 0.0f, self->getGravityY());
+		self->mVelocity = self->calcVelocityToJumpToY(local_24, 50.0f,
+		                                              self->getGravityY());
 		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
 		return false;
 	}
 
 	if (self->isReachedToGoal()) {
-		self->mLinearVelocity = self->mVelocity
-		    = JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f);
+		JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
+		self->mVelocity       = zero;
+		self->mLinearVelocity = zero;
 		self->onLiveFlag(LIVE_FLAG_UNK10);
 	}
 
-	if (self->isReachedToGoal() && gpMarDirector->unk124 != 3) {
+	if (self->isReachedToGoal() && SMSGetMarDirector()->unk124 != 3) {
 
 		self->changeAllTentacleState(0);
 		self->kill();
 
-		THitActor* block = static_cast<THitActor*>(
-		    JDrama::TNameRefGen::search("マーレボスゲッソー用ブロック"));
+		THitActor* block = JDrama::TNameRefGen::search<THitActor>(
+		    "マーレボスゲッソー用ブロック");
 
 		if (block != nullptr) {
 			block->receiveMessage(self, HIT_MESSAGE_ATTACK);
@@ -1881,7 +2260,7 @@ DEFINE_NERVE(TNerveBGPollute, TLiveActor)
 
 	if (spine->getTime() == 0) {
 		self->changeBck(10);
-		self->unk178->setBckFromIndex(4);
+		BossgessoGetUnk178(self)->setBckFromIndex(4);
 		self->unk17C = 1;
 		self->changeAllTentacleState(0);
 		self->getMActor()->setBtpFromIndex(2);
@@ -1893,7 +2272,7 @@ DEFINE_NERVE(TNerveBGPollute, TLiveActor)
 
 	if (spine->getTime() == 90) {
 		gpMarioParticleManager->emitAndBindToSRTMtxPtr(
-		    BGESO_JPA_MS_BOGE_OSEN, self->getModel()->getAnmMtx(27), 0,
+		    BGESO_JPA_MS_BOGE_OSEN, BossgessoModelOf(self)->getAnmMtx(27), 0,
 		    nullptr);
 	}
 
@@ -1906,7 +2285,7 @@ DEFINE_NERVE(TNerveBGPollute, TLiveActor)
 	}
 
 	if (spine->getTime() == 230) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK14, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BOGE_LAND, 1.0f);
 		self->rumblePad(2, self->mPosition);
 	}
 
@@ -1942,12 +2321,13 @@ DEFINE_NERVE(TNerveBGPolDrop, TLiveActor)
 		JGeometry::TVec3<f32> delta = SMS_GetMarioPos();
 		delta -= self->mPosition;
 
-		f32 shootRadius2 = self->getSaveParam()->mSLShootRadius.value;
+		f32 shootRadius2 = BossgessoGetSaveParam2(self)->mSLShootRadius.value;
 		shootRadius2 *= shootRadius2;
-		f32 singleAttackLen2 = self->getSaveParam()->mSLSingleAttackLen.get();
+		f32 singleAttackLen2
+		    = BossgessoGetSaveParam2(self)->mSLSingleAttackLen.get();
 		singleAttackLen2 *= singleAttackLen2;
 
-		if (self->unk195 < 3) {
+		if (BossgessoGetUnk195(self) < 3) {
 			f32 len = delta.squared();
 			if (singleAttackLen2 <= len && len < shootRadius2) {
 				spine->pushAfterCurrent(&TNerveBGPolDrop::theNerve());
@@ -1971,9 +2351,9 @@ DEFINE_NERVE(TNerveBGRoll, TLiveActor)
 			self->changeBck(19);
 
 		if (mactor->curAnmEndsNext()) {
-			if (mactor->checkCurBckFromIndex(13)) {
+			if (mactor->checkCurBckFromIndex(14)) {
 				if (self->unk196 < 3) {
-					self->changeBck(13);
+					self->changeBck(14);
 					self->unk196 += 1;
 				} else {
 					self->changeBck(18);
@@ -1981,13 +2361,13 @@ DEFINE_NERVE(TNerveBGRoll, TLiveActor)
 				}
 			} else {
 				if (mactor->checkCurBckFromIndex(19))
-					self->changeBck(13);
+					self->changeBck(14);
 				else
 					return true;
 			}
-
-			return false;
 		}
+
+		return false;
 	} else {
 		if (spine->getTime() == 0)
 			self->changeBck(17);

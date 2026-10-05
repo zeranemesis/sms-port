@@ -24,7 +24,10 @@ enum THitMessageType {
 	HIT_MESSAGE_PUT              = 0x6,
 	HIT_MESSAGE_THROWN           = 0x7,
 	HIT_MESSAGE_UNK8             = 0x8,
-	HIT_MESSAGE_UNK9             = 0x9,
+	// The only receiver is TMario::receiveMessage's elec-attacker group
+	// (actor types 0x1000000B / 0x10000021 / 0x10000034), where it runs
+	// elecEffect() and MARIO_STATUS_ELECTRIC_DAMAGE.
+	HIT_MESSAGE_ELECTRIC_SHOCK   = 0x9,
 	HIT_MESSAGE_UNKA             = 0xA, // burn?
 	HIT_MESSAGE_UNKB             = 0xB,
 	HIT_MESSAGE_PUNCH            = 0xC,
@@ -63,12 +66,20 @@ public:
 	}
 
 	void initHitActor(u32 actor_type, u16 max_collisions, int hit_flags,
-	                  f32 attack_radius, f32 attack_height, f32 damage_radius,
-	                  f32 damage_height);
+	                 f32 attack_radius, f32 attack_height, f32 damage_radius,
+	                 f32 damage_height);
 	void calcEntryRadius();
 
 	// fabricated
 	u32 getActorType() const { return mActorType; }
+	// mActorType is an int, and getActorType()'s u32 turns a range compare
+	// into cmplw; this reader keeps retail's signed compare (tail sweep 310).
+	// Returning int from getActorType() itself is refuted tree-wide.
+	int getActorTypeID() const
+	{
+		int actorType = mActorType;
+		return actorType;
+	}
 	bool checkActorType(u32 flag) const
 	{
 		return mActorType & flag ? true : false;

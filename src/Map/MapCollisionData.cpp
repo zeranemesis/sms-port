@@ -41,6 +41,8 @@ void TMapCollisionData::initMoveCollision()
 	memset(unk18, 0, unk10 * sizeof(*unk18));
 }
 
+void TMapCollisionData::initAllCheckDataAndList() { }
+
 void TMapCollisionData::init(JSUMemoryInputStream& stream)
 {
 	s32 value;

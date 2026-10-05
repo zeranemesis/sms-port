@@ -11,9 +11,9 @@
 #include <stdlib.h>
 
 // rogue include
-#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 
 TEffectObjManager* gpEffectObjManager;
 
@@ -104,6 +104,20 @@ void TEffectObjBase::reset()
 	unk74 = 0;
 }
 
+// TODO: 90.8%. Every instruction matches; retail's frame is 0x20 with r31
+// saved and never used (a dead callee-saved GPR plus 0x10 dead bytes). Inert:
+// a switch on unk68, an early `!(cue & CUE_MOVE)` return.
+// c-h22: retail tested `cue` again after moveObject() in a statement that
+// compiled to nothing (an empty `if (cue & CUE_DRAW) {}` there is byte-exact:
+// cue lives across the call in r31, then the test is dropped); empty bodies
+// are refused, and forceKill() is UNUSED so it cannot be that body.
+// c-k8 (scratch TU, game flags): after a call, `if (cue & 2) {}`, `{ ; }`,
+// `if (cue & 2) ;`, `{ do {} while (0); }` and `{ if (0) f(); }` all keep cue
+// in r31 and are deleted after register allocation; `{ (void)0; }` (the
+// release JUT_ASSERT), an empty inline call, a dead `int x = 0;` or a bare
+// `g;` are folded before it. A trailing `if (!(cue & 2)) return;` keeps the
+// test instruction. So retail's body was removed by the preprocessor (for
+// example a release JUT_WARNING/JUT_LOG_F, which expand to nothing).
 void TEffectObjBase::perform(u32 cue, JDrama::TGraphics*)
 {
 	if (cue & CUE_MOVE) {
@@ -126,6 +140,11 @@ BOOL TEffectObjBase::receiveMessage(THitActor* sender, u32 message)
 	return false;
 }
 
+// TODO: the three setGlobalScale copies load x/y/z into f2/f0/f1; retail uses
+// f0/f1/f2. A TVec3 local, direct set() calls and an xyz constructor were inert.
+// c-h22 dump: the Vec->TVec3 conversion temp's x goes through an extra IRO copy
+// (@1613 = @1622 = local.x) that colours last; `: Vec(b)`/component ctor bodies,
+// split Dynamics/Particle setters and a named ratio were inert or worse.
 void TEffectObjBase::moveObject()
 {
 	if (unk68 == 2) {
@@ -235,7 +254,8 @@ void TEffectModel::init(TLiveManager* param_1)
 void TEffectModel::reset()
 {
 	TSpineEnemy::reset();
-	mRotation.y = TMsRange<f32>(0.0f, 360.0f).rand();
+	TMsRange<f32> angleRange(0.0f, 360.0f);
+	mRotation.y = angleRange.rand();
 	onLiveFlag(LIVE_FLAG_UNK8);
 	onLiveFlag(LIVE_FLAG_UNK10);
 	offLiveFlag(LIVE_FLAG_DEAD);
@@ -254,12 +274,11 @@ void TEffectModel::moveObject()
 void TEffectModel::calcRootMatrix()
 {
 	TPosition3f mtx;
-
 	MsMtxSetXYZRPH(mtx, mPosition.x, mPosition.y, mPosition.z, mRotation.x,
 	               mRotation.y, mRotation.z);
 	mtx.translation(mPosition.x, mPosition.y, mPosition.z);
-	mMActor->getModel()->setBaseTRMtx(mtx);
-	mMActor->getModel()->setBaseScale(mScaling);
+	getMActor()->getModel()->setBaseTRMtx(mtx);
+	getMActor()->getModel()->setBaseScale(mScaling);
 }
 
 TEffectColumWaterManager::TEffectColumWaterManager(const char* name)
@@ -293,6 +312,11 @@ void TEffectColumWaterManager::createModelData()
 	createModelDataArray(entry);
 }
 
+TEffectColumWater::TEffectColumWater(const char* name)
+    : TEffectModel(name)
+{
+}
+
 void TEffectColumWater::init(TLiveManager* param_1)
 {
 	TEffectModel::init(param_1);
@@ -319,6 +343,10 @@ void TEffectColumWater::reset()
 	mMActor->getFrameCtrl(2)->setFrame(0.0f);
 }
 
+// TODO: 91.9%. Retail stores the scale() result straight into mScaling; ours
+// copies the by-value operator* return once more. That is the JGVec3.hpp
+// operator* return-type note (99.79 with a reference return, a tree-wide
+// loss); a named local with `*=` inlines scale (79.0).
 void TEffectColumWater::generate(JGeometry::TVec3<f32>& param_1,
                                  JGeometry::TVec3<f32>& param_2)
 {
@@ -327,7 +355,7 @@ void TEffectColumWater::generate(JGeometry::TVec3<f32>& param_1,
 
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
 	        COLUMWATER_JPA_MS_ENEHAMON_A, &param_1, 0, nullptr)) {
-		emitter->setGlobalScale(mScaling);
+		emitter->setGlobalScale(getScaling());
 	}
 
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
@@ -370,6 +398,10 @@ void TEffectBombColumWaterManager::createModelData()
 	createModelDataArray(entry);
 }
 
+TEffectBombColumWater::TEffectBombColumWater(const char* name)
+    : TEffectModel(name)
+{
+}
 void TEffectBombColumWater::init(TLiveManager* param_1)
 {
 	TEffectModel::init(param_1);
@@ -450,6 +482,11 @@ void TEffectColumSandManager::createModelData()
 	createModelDataArray(entry);
 }
 
+TEffectColumSand::TEffectColumSand(const char* name)
+    : TEffectModel(name)
+{
+}
+
 void TEffectColumSand::init(TLiveManager* param_1)
 {
 	TEffectModel::init(param_1);
@@ -462,15 +499,18 @@ void TEffectColumSand::init(TLiveManager* param_1)
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+// TODO: GPR swap only: retail keeps this in r31 and the string pool base in
+// r30, although the same-shaped TEffectExplosion::reset matches with the
+// opposite ranking. Inert: ANM_TYPE_BRK for 5.
 void TEffectColumSand::reset()
 {
 	TEffectModel::reset();
-	mMActor->setBck("08_sunabashira");
-	mMActor->setBrk("08_sunabashira");
-	mMActor->setBtk("08_sunabashira");
-	mMActor->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
-	mMActor->getFrameCtrl(5)->setFrame(0.0f);
-	mMActor->getFrameCtrl(4)->setFrame(0.0f);
+	getMActor()->setBck("08_sunabashira");
+	getMActor()->setBrk("08_sunabashira");
+	getMActor()->setBtk("08_sunabashira");
+	getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
+	getMActor()->getFrameCtrl(5)->setFrame(0.0f);
+	getMActor()->getFrameCtrl(4)->setFrame(0.0f);
 }
 
 void TEffectColumSand::generate(JGeometry::TVec3<f32>& param_1,
@@ -518,6 +558,11 @@ void TEffectExplosionManager::createModelData()
 		{ nullptr, 0, 0 },
 	};
 	createModelDataArray(entry);
+}
+
+TEffectExplosion::TEffectExplosion(const char* name)
+    : TEffectModel(name)
+{
 }
 
 void TEffectExplosion::init(TLiveManager* param_1)

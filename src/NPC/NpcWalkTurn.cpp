@@ -5,38 +5,32 @@
 #include <NPC/NpcNerve.hpp>
 #include <Camera/cameralib.hpp>
 
-// Reconstructed inline layer (see isCanWalk): returns the horizontal delta
-// to a path point through the TVec3<f32> 3-float ctor (JGVec3.hpp:91),
-// which routes to set<f32>(f32,f32,f32). Same shape as polarXZ in
-// src/Enemy/enemy.cpp:396. Fully inlined, no emitted symbol.
-static inline JGeometry::TVec3<f32>
-horizontalDeltaTo(const JGeometry::TVec3<f32>& point,
-                  const JGeometry::TVec3<f32>& pos)
-{
-	return JGeometry::TVec3<f32>(point.x - pos.x, 0.0f, point.z - pos.z);
-}
-
+// The map emits JGeometry::TVec3<f32>::set<f32>(f32, f32, f32) as a local
+// 16-byte instantiation for this TU and execWalk's inlined copy of isCanWalk
+// reaches it with a `bl`, so retail has one inline level between isCanWalk and
+// the unnamed vector's constructor: that puts `set` (three statements) at
+// depth 4, where the allowance is two. Spelling the level as a squared-XZ
+// helper reproduces the call (execWalk 95.8 -> 97.7 and the MISSING symbol is
+// gone); a level *above* isCanWalk instead pushes TPathNode::getPoint() out of
+// line too, which retail expands. The helper is MathUtil.hpp's
+// MsSquaredDistXZ.
+// TODO: in execWalk's inlined copy retail puts the point copy at 0x90 and
+// the unnamed vector at 0x9c; ours has the vector at 0x90 and `target` at
+// 0xa8. Passing getPoint() straight to a by-value helper parameter, an
+// explicit temporary, getUnkF4(), and a set()-built vector were all inert or
+// worse (95.8-97.8).
 bool TBaseNPC::isCanWalk() const
 {
 	bool result = true;
-	// The ROM builds the horizontal delta through an out-of-line
-	// TVec3<f32>::set<float>(f32, f32, f32) (16 B, local in NpcWalkTurn.o).
-	// The set call only goes out of line when it sits at expansion depth
-	// >= 2 (AGENT_MATCHING_TIPS depth table), so the delta is built by a
-	// file-static by-value helper exactly like src/Enemy/enemy.cpp's
-	// polarXZ, whose return-ctor produces the ROM's `bl set` sites in
-	// walkToCurPathNode/zigzag/goToDirLimited. Fully inlined: the helper
-	// has no symbol in marioEU.MAP (same as polarXZ).
-	JGeometry::TVec3<f32> point = unkF4.getPoint();
-	JGeometry::TVec3<f32> delta = horizontalDeltaTo(point, mPosition);
-	if (delta.squared() < CLBSquared(2.5625f))
+	JGeometry::TVec3<f32> target = unkF4.getPoint();
+	if (MsSquaredDistXZ(target, mPosition) < CLBSquared(10.0f))
 		result = false;
 	return result;
 }
 
 void TBaseNPC::execWalk(bool param_1)
 {
-	if (mWalkForbidCount != 0 || gpMarDirector->isThing() || !isClean()
+	if (mWalkForbidCount != 0 || SMSGetMarDirector()->isThing() || !isClean()
 	    || checkActionFlag(NPC_ACTION_HAPPY)) {
 		mMarchSpeed = 0.0f;
 		mTurnSpeed  = 0.0f;
@@ -48,18 +42,40 @@ void TBaseNPC::execWalk(bool param_1)
 		if (checkActionFlag(NPC_ACTION_RUN))
 			fVar1 = 6.0f;
 
-		SMS_GoRotate(mPosition, unkF4.getPoint(), fVar1, &mRotation.y);
+		SMS_GoRotate(mPosition, getUnkF4().getPoint(), fVar1, &mRotation.y);
 
-		// TODO: vector math is borked - the ROM chains two redundant word
-		// copies (copy/copy2, same idiom as NpcNerve.cpp) and wraps the
-		// *absolute* rotation difference.
-		JGeometry::TVec3<f32> local_54 = unkF4.getPoint();
-		local_54 -= mPosition;
-		JGeometry::TVec3<f32> copy = local_54;
-		JGeometry::TVec3<f32> copy2 = copy;
+		// TODO: retail makes *two* 12-byte copies of `direction` before
+		// reading .z/.x (0xdc -> 0xfc -> 0x10c), and execWalk's frame only
+		// reaches 0x130 with both. The source spelling that produces two
+		// copies is unknown; a named copy plus one conversion temporary
+		// reproduces the shape but is surely not what was written. New
+		// evidence: retail's three objects sit in the *temp pool* in
+		// ascending creation order, where a named local puts two of them in
+		// the named region above it, so neither vector was a named local.
+		// `MsGetRotFromZaxisY(TVec3(TVec3(getUnkF4().getPoint() -
+		// mPosition)))` reproduces that placement at the same 97.7%, one
+		// unnested temporary drops to 92.7% (frame 0x110), and a TU-local
+		// copy of MsGetRotFromZaxisY taking its axis *by value* is 95.3%
+		// (frame 0x120), so the by-value header spelling is ruled out.
+		// Batch cc33 (after execUTurn closed with a by-value level over
+		// MsGetRotFromZaxis): by-value TU-local levels here are all worse --
+		// `a - b` returned by value (90.5%, frame exact but `bl sub`), named
+		// or `-=` difference helpers (frame 0x120-0x148), an identity copy
+		// level, and a by-value `NpcRotY(TVec3)` wrapper; retail's hoisted
+		// `.x` load before the `.z == 0` test is not reproduced by any.
+		// Frame now exact (0x130) via the SMSGetMarDirector() accessor at
+		// the guard, which also lands the 0xfc copy on retail's slot; left
+		// are the first temp (ours 0x108, retail 0xdc) and the last copy
+		// (ours 0xec, retail 0x10c). Under the `: Vec(other)` copy ctor,
+		// nested TVec3(TVec3(a - b)) elides the inner copy (95.4), and
+		// named/assigned/by-value-wrapper spellings are all worse.
+		JGeometry::TVec3<f32> direction = getUnkF4().getPoint();
+		direction -= mPosition;
+		JGeometry::TVec3<f32> copy;
+		copy = direction;
 
-		f32 angle = MsGetRotFromZaxisY(copy2);
-		if (MsWrap(abs(mRotation.y - angle), 0.0f, 360.0f) < 0.001f)
+		f32 angle = MsGetRotFromZaxisY(JGeometry::TVec3<f32>(copy));
+		if (MsWrap(fabsf(mRotation.y - angle), 0.0f, 360.0f) < 0.001f)
 			offUnk1DA(UNK1DA_FLAG_UNK1);
 
 		return;
@@ -102,12 +118,23 @@ void TBaseNPC::execWalk(bool param_1)
 		walkToCurPathNode(mMarchSpeed, mTurnSpeed, 0.0f);
 }
 
+// The compare really is `mRotation.y == targetYaw` (retail's `fcmpu cr0, f3,
+// f0` puts the member first); reversing it costs nothing and is the ROM's
+// operand order.
+// A by-value level over MsGetRotFromZaxis materialises the struct-return
+// slot's address before the difference temporary's (retail's r3 before r4)
+// and loads the returned `.y` into f0 with an `fmr` into targetYaw's f2.
+// fabricated
+static inline JGeometry::TVec3<f32>
+NpcUTurnRotFromZaxis(const JGeometry::TVec3<f32>& axis)
+{
+	return MsGetRotFromZaxis(axis);
+}
+
 bool TBaseNPC::execUTurn()
 {
-	JGeometry::TVec3<f32> local_24 = unkF4.getPoint();
-	local_24 -= mPosition;
-	f32 targetYaw = MsGetRotFromZaxis(local_24).y;
-	if (targetYaw == mRotation.y)
+	f32 targetYaw = NpcUTurnRotFromZaxis(unkF4.getPoint() - mPosition).y;
+	if (mRotation.y == targetYaw)
 		return true;
 
 	if (!isClean() || checkActionFlag(NPC_ACTION_HAPPY))
@@ -134,6 +161,21 @@ bool TBaseNPC::execUTurn()
 	return result;
 }
 
+// Binding level worth +8 of low region, landing
+// TBaseNPC::execTurnToFirstState's frame at 0x50 (batch 124).
+static inline const JGeometry::TVec3<f32>&
+NpcWalkTurnGetUnk1A0(const TBaseNPC* p)
+{
+	const JGeometry::TVec3<f32>& unk1A0 = p->getUnk1A0();
+	return unk1A0;
+}
+
+// The `getUnk1A0()` level at the angle2 site alone is +8 with no instruction
+// change (frame 0x48 -> 0x50, which is exact) and saturates there: at the
+// compare site or the tail assignment it is +0 and costs 1-3 instructions.
+// The turn speed is converted straight into the call's argument: a named
+// `s16 angle3` takes a 4-byte slot at the bottom of the named block and pushes
+// `angle1` down to 0x34.
 bool TBaseNPC::execTurnToFirstState()
 {
 	if (mRotation.y == unk1A0.y)
@@ -142,10 +184,11 @@ bool TBaseNPC::execTurnToFirstState()
 	bool result = false;
 
 	s16 angle1 = CLBDegToShortAngle(mRotation.y);
-	s16 angle2 = CLBDegToShortAngle(unk1A0.y);
-	s16 angle3
-	    = CLBDegToShortAngle(mIndividualParams->mFirstStateTurnSpeed.get());
-	if (!CLBChaseGeneralConstantSpecifySpeed(&angle1, angle2, angle3)) {
+	s16 angle2 = CLBDegToShortAngle(NpcWalkTurnGetUnk1A0(this).y);
+	if (!CLBChaseGeneralConstantSpecifySpeed(
+	        &angle1, angle2,
+	        CLBDegToShortAngle(
+	            mIndividualParams->mFirstStateTurnSpeed.get()))) {
 		result      = true;
 		mRotation.y = unk1A0.y;
 	} else {
@@ -157,15 +200,12 @@ bool TBaseNPC::execTurnToFirstState()
 
 bool TBaseNPC::isNeedTurnToFirstState() const
 {
-
-	
-	
 	if (!isClean() || checkActionFlag(NPC_ACTION_HAPPY))
 		return false;
 
 	bool result = false;
 
-	switch (mActorType) {
+	switch (getActorType()) {
 	case 0x400001C:
 	case 0x400001D:
 	case 0x4000008:
@@ -175,7 +215,7 @@ bool TBaseNPC::isNeedTurnToFirstState() const
 		const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
 		if ((nerve == &TNerveNPCWaitMarioApproach::theNerve()
 		     || nerve == &TNerveNPCTurnToMario::theNerve())
-		    && (mActorType == 0x4000006
+		    && (getActorType() == 0x4000006
 		        || !checkActionFlag(NPC_ACTION_UNK800 | NPC_ACTION_UNK400
 		                            | NPC_ACTION_UNK1))) {
 			result = true;

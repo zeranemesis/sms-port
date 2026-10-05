@@ -71,6 +71,45 @@ bool JDrama::IssueGXSetCopyClear(JUtility::TColor clear_color, u32 clear_z,
 	return bVar1;
 }
 
+// TODO: 95 of 101 instructions and the 0x50 frame are exact; the residue is a
+// six-instruction scratch-register permutation inside the inlined
+// `IssueGXSetCopyFilter`, where the *dead* `flags & 0x20` value and the
+// `render_mode.aa` byte swap homes: retail is `lbz r0, 0x19(r28)` /
+// `rlwinm. r4, r25, ...` and materialises the bool through r3/r0, ours is
+// `lbz r3` / `rlwinm. r0` through r4/r3. Both `rlwinm.` results are unused
+// (only CR0 is read), so this is allocator ranking, not a value.
+// `IssueGXSetCopyFilter`'s own out-of-line copy is byte-exact, which pins its
+// body: named `aa`/`vf` bools drop it to 93-94.5%, reversing the `&&` operands
+// to 70%, and neither fixes the call site. Dropping the `!= nullptr` tests and
+// spelling the third argument `(flags & 0x20) != 0` or through a named `bool`
+// are codegen-identical here.
+// Closure re-pass 2026-09-18: the new register rule is about callee-saved
+// GPRs and this is a scratch permutation, so it does not apply. Two more
+// call-site trials measured: a named `bool useVFilter = flags & 0x20` grows the
+// frame to 0x58 (11 operands), and a named `bool antialias = render_mode.aa`
+// is byte-identical to the current spelling (6 operands). Still open.
+// Library re-pass 2026-09-18: two more call-site conversions of the first
+// argument are refuted -- `render_mode.aa != 0` is 98.0% (it turns the
+// normalisation into an opcode difference, 1 `|` and 1 `<`) and
+// `(bool)render_mode.aa` is byte-identical to the plain member read. What the
+// permutation really is: retail spends r0 on the live `aa` byte and coalesces
+// the *dead* `flags & 0x20` result into r4, the register `sample_pattern` is
+// loaded into at 0x348; we spend r0 on the dead value and run the bool chain
+// through r3/r4. Nothing at the call site reaches that coalescing.
+// Batch cc22, all identical or worse: `!= 0`, `!!`, `(bool)`, `(u32)`,
+// `(int)flags`, `1 << 5` and `(flags >> 5) & 1` (99.0) for the third argument,
+// a named `const GXRenderModeObj*`, and a TU-local inline level above the call
+// taking the render mode, the flags, or all four arguments.
+// Unit pass c-jdr 2026-09-23: `&sample_pattern[0]`/`&vfilter[0]`,
+// `(bool)(flags & 0x20)` and `(GXBool)render_mode.aa` are identical; ternaries
+// into bool (77-94.5%) and `aa == GX_TRUE` (97.0%) are worse.
+// c-k2 (mwcc-debugger replay): all six webs are pcode temporaries, coloured
+// latest-generated first. The antialias binding (`lbz`, neg/addic/subfe) is
+// generated before the `flags & 0x20` test, so the test is coloured first and
+// takes r0; retail's r4 needs the test generated before the aa chain (or made
+// an @ object). A named `u32`/`int`/`u16`/`u8` copy of `flags & 0x20`, before
+// or after GXSetCopyClamp, is forwarded back into the test (registers
+// unchanged, frame +8); a named `GXBool aa` is 93.4%.
 void JDrama::IssueGXCopyDisp(void* param_1, const TRect& src_rect,
                              const GXRenderModeObj& render_mode,
                              JUtility::TColor clear_color, u32 clear_z,

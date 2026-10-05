@@ -22,6 +22,20 @@ public:
 
 	virtual int direct();
 
+	TMarioGamePad* getGamePad()
+	{
+		TMarioGamePad* gamePad = unk18;
+		return gamePad;
+	}
+
+	// fabricated name, getGamePad()'s shape: its named pointer is the dead
+	// word per site that direct()'s menu reads leave in retail (c-r29).
+	TSelectMenu* getSelectMenu()
+	{
+		TSelectMenu* menu = unk20;
+		return menu;
+	}
+
 	void setup(JDrama::TDisplay*, TMarioGamePad*, unsigned char);
 	static void* setupThreadFunc(void*);
 	int rsetup();

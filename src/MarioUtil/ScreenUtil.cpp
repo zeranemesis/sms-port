@@ -41,8 +41,8 @@ void TAfterEffect::load(JSUMemoryInputStream& stream)
 
 void TAfterEffect::loadAfter()
 {
-	TScreenTexture* tex = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+	TScreenTexture* tex
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
 	unk10         = tex->getTexture();
 	gpAfterEffect = this;
 }
@@ -64,10 +64,10 @@ void TAfterEffect::setBlurDefaultValue()
 void TAfterEffect::calcDashBlurValue()
 {
 	if (unk50 > 0.0f) {
-		unk28 = mBlurDirection.x * unk50 * 0.5f;
-		unk2C = -mBlurDirection.y * unk50 * 0.5f;
-		unk30 = mBlurDirection.z * unk50 + 1.0f;
-		unk34 = mBlurDirection.z * unk50 + 1.0f;
+		unk28 = unk5C.x * unk50 * 0.5f;
+		unk2C = -unk5C.y * unk50 * 0.5f;
+		unk30 = unk5C.z * unk50 + 1.0f;
+		unk34 = unk5C.z * unk50 + 1.0f;
 		unk50 = unk50 - unk54;
 		unk58 = unk59;
 		unk14 |= 4;
@@ -89,6 +89,10 @@ void TAfterEffect::calcDashBlurValue()
 	unk15 = 0;
 }
 
+// checkFlag's if/return body (ScreenUtil.hpp) is what gives retail's r31 for
+// the first site's flag, which also holds the colour's constant 0: an inlined
+// return value is created before the optimiser splits `rect`, so it is
+// coloured first. The ternary spelling left `rect` in r31 and the flag in r30.
 void TAfterEffect::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (!(unk14 & 1))

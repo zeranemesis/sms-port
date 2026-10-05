@@ -144,12 +144,12 @@ static u16 Zenkaku2Code[] = {
 	0x312, 0x313, 0x314, 0x315, 0x316, 0x317, 0x318, 0x319, 0x31A, 0x31B, 0x000
 };
 
-inline static BOOL IsSjisLeadByte(u8 c)
+static BOOL IsSjisLeadByte(u8 c)
 {
 	return (0x81 <= c && c <= 0x9F) || (0xE0 <= c && c <= 0xFC);
 }
 
-inline static BOOL IsSjisTrailByte(u8 c)
+static BOOL IsSjisTrailByte(u8 c)
 {
 	return (0x40 <= c && c <= 0xFC) && (c != 0x7F);
 }
@@ -263,6 +263,15 @@ static void Decode(unsigned char* s, unsigned char* d)
 	} while (q < os);
 }
 
+static u32 GetFontSize(u8* buf)
+{
+	if (buf[0] == 'Y' && buf[1] == 'a' && buf[2] == 'y') {
+		return *(u32*)(buf + 0x4);
+	}
+
+	return 0;
+}
+
 u16 OSGetFontEncode(void)
 {
 	static u16 fontEncode = 0xFFFF;
@@ -287,15 +296,6 @@ u16 OSGetFontEncode(void)
 	return fontEncode;
 }
 
-static inline u32 GetFontSize(u8* buf)
-{
-	if (buf[0] == 'Y' && buf[1] == 'a' && buf[2] == 'y') {
-		return *(u32*)(buf + 0x4);
-	}
-
-	return 0;
-}
-
 static void ReadROM(void* buf, int length, int offset)
 {
 	int len;
@@ -312,7 +312,7 @@ static void ReadROM(void* buf, int length, int offset)
 	}
 }
 
-static inline u32 ReadFont(void* img)
+static u32 ReadFont(void* img)
 {
 	if (OSGetFontEncode() == OS_FONT_ENCODE_SJIS) {
 		ReadROM(img, OS_FONT_ROM_SIZE_SJIS, 0x1AFF00);

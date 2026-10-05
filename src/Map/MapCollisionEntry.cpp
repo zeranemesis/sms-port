@@ -80,20 +80,36 @@ void TMapCollisionBase::init(const char* path, u16 param_2,
 	if (!(mCollisionGroups->mFlags & WAS_PATCHED)) {
 		for (s16 i = 0; i < mCollisionGroupNum; ++i) {
 			mCollisionGroups[i].mIndices
-			    = (s16*)((int)mCollisionGroups[i].mIndices + (u8*)hdr);
+			    = (s16*)((int)(void*)mCollisionGroups[i].mIndices + (u8*)hdr);
 			mCollisionGroups[i].unkC
-			    = (u8*)((int)mCollisionGroups[i].unkC + (u8*)hdr);
+			    = (u8*)((int)(void*)mCollisionGroups[i].unkC + (u8*)hdr);
 			mCollisionGroups[i].unk10
-			    = (u8*)((int)mCollisionGroups[i].unk10 + (u8*)hdr);
+			    = (u8*)((int)(void*)mCollisionGroups[i].unk10 + (u8*)hdr);
 
 			if (mCollisionGroups[i].mAdditionalDatas)
 				mCollisionGroups[i].mAdditionalDatas
-				    = (s16*)((int)mCollisionGroups[i].mAdditionalDatas
+				    = (s16*)((int)(void*)mCollisionGroups[i].mAdditionalDatas
 				             + (u8*)hdr);
 
 			mCollisionGroups[i].mFlags |= WAS_PATCHED;
 		}
 	}
+}
+
+TMapCollisionBase::TMapCollisionBase()
+    : mCheckDatas(nullptr)
+    , mKind(0)
+    , mCheckDataNum(0)
+    , mVertexNum(0)
+    , mVertices(nullptr)
+    , mCollisionGroupNum(0)
+    , mCollisionGroups(nullptr)
+    , mFlags(0)
+{
+	MTXIdentity(unk20);
+	mPrevTranslation.x = 0.0f;
+	mPrevTranslation.y = 0.0f;
+	mPrevTranslation.z = 0.0f;
 }
 
 void TMapCollisionStatic::setUp()
@@ -129,9 +145,6 @@ TMapCollisionStatic::TMapCollisionStatic()
 
 void TMapCollisionMove::move()
 {
-
-	
-	
 	if (checkFlag(FLAG_NEEDS_SETUP))
 		return;
 
@@ -140,7 +153,8 @@ void TMapCollisionMove::move()
 		return;
 	}
 
-	if (checkFlag(FLAG_UNK8000)) {
+	bool translationOnly = checkFlag(FLAG_UNK8000);
+	if (translationOnly) {
 		JGeometry::TVec3<f32> local_18;
 		local_18.x = unk20[0][3];
 		local_18.y = unk20[1][3];
@@ -164,19 +178,22 @@ void TMapCollisionMove::moveTrans(const JGeometry::TVec3<f32>& param_1)
 	TMapCollisionBase::updateTrans(param_1);
 }
 
+// Every member read here goes through an accessor, and that is load-bearing.
+// `allocCheckData(getUnkC())` is what makes the count load precede the
+// `gpMapCollisionData` load (reading `mCheckDataNum` directly swaps them), and
+// each inlined accessor leaves a dead temporary on the stack, which is what
+// gives the function its 0x38 frame. Reading the members directly compiles to
+// the same instructions with a 0x28 frame.
 void TMapCollisionMove::init(u32 param_1, u16 bg_type, s16 data,
                              const TLiveActor* actor)
 {
-
-	
-	
 	mKind         = 1;
 	mCheckDataNum = param_1;
 	mCheckDatas   = gpMapCollisionData->allocCheckData(getUnkC());
 	for (int i = 0; i < getUnkC(); ++i) {
-		mCheckDatas[i].mBGType = bg_type;
-		mCheckDatas[i].mData   = data;
-		mCheckDatas[i].mActor  = actor;
+		getCheckDatas()[i].mBGType = bg_type;
+		getCheckDatas()[i].mData   = data;
+		getCheckDatas()[i].mActor  = actor;
 	}
 }
 
@@ -200,18 +217,13 @@ void TMapCollisionWarp::setUp()
 
 	mEntryId = gpMapCollisionData->getEntryID();
 
-	if (checkFlag(FLAG_UNK8000)) {
-		JGeometry::TVec3<f32> local_18(unk20[0][3], unk20[1][3], unk20[2][3]);
+	JGeometry::TVec3<f32> local_18;
+	bool translationOnly = checkFlag(FLAG_UNK8000);
+	if (translationOnly) {
+		local_18.set(unk20[0][3], unk20[1][3], unk20[2][3]);
 		TMapCollisionBase::updateTrans(local_18);
 	} else {
 		TMapCollisionBase::update();
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	mEntrySize = gpMapCollisionData->getEntrySize(mEntryId);

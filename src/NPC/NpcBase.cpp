@@ -30,33 +30,6 @@ TNpcSaveNormal* TBaseNPC::mPtrSaveNormal = nullptr;
 s16 TBaseNPC::mAngleYDiffWhenTaken       = 0;
 TBaseNPC* gpCurrentNpc                   = nullptr;
 
-f32 TBaseNPC::getAnmOffDist_()
-{
-	bool bVar3 = false;
-	f32 fVar1  = gpCamera->mFar;
-	int uVar5  = unkD0->getCurrentAnmKind();
-	f32 fVar2  = mPtrSaveNormal->mSLDanceAnmOffDist.get();
-	if (checkActionFlag(NPC_ACTION_HAPPY | NPC_ACTION_DANCE)
-	    || mActorType == 0x400000D || uVar5 == 10 || uVar5 == 23) {
-		bVar3 = true;
-	}
-
-	if (isNerveMaybeDontCalcAnim0()) {
-		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
-		if (bVar3)
-			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
-	} else if (isNerveMaybeDontCalcAnim1()) {
-		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
-		if (bVar3)
-			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
-	}
-
-
-	
-	
-	return fVar1;
-}
-
 TBaseNPC::TBaseNPC(u32 param_1, const char* name)
     : TSpineEnemy(name)
     , unk150(nullptr)
@@ -132,12 +105,9 @@ void TBaseNPC::load(JSUMemoryInputStream& stream)
 
 void TBaseNPC::loadAfter()
 {
-
-	
-	
 	TSpineEnemy::loadAfter();
-	if (mActorType == 0x4000018 && gpMarDirector->getCurrentMap() == 1
-	    && gpMarDirector->getCurrentStage() == 1) {
+	if (mActorType == 0x4000018 && SMSGetMarDirectorBound()->getCurrentMap() == 1
+	    && SMSGetMarDirectorBound()->getCurrentStage() == 1) {
 		mBalloonCtrl = new TNpcBalloon;
 	}
 	gpMarDirector->entryNPC(this);
@@ -405,12 +375,9 @@ bool TBaseNPC::isPartsAnmNpc() const
 
 bool TBaseNPC::isNeedNeckStraight() const
 {
-
-	
-	
 	bool result = false;
-	int anmKind = unkD0->getCurrentAnmKind();
-	if ((mHolder != nullptr && mHolder == gpMarioAddress) || !isClean()
+	int anmKind = getLodAnm()->getCurrentAnmKind();
+	if ((getHolder() != nullptr && getHolder() == gpMarioAddress) || !isClean()
 	    || mActorType == 0x4000012
 	    || (mActorType == 0x4000019 && anmKind == NPC_ANM_KIND_UNK5)
 	    || (isMare() && anmKind == NPC_ANM_KIND_UNKC)
@@ -539,9 +506,9 @@ void TBaseNPC::moveObject()
 
 	if (mBalloonCtrl != nullptr) {
 		int prev = mBalloonCtrl->unk0;
-		if (!gpMarDirector->isTalkOrDemoModeNow()
+		if (!SMSGetMarDirectorBound()->isTalkOrDemoModeNow()
 		    && mBalloonCtrl->updateBalloon()) {
-			if (mHolder != nullptr) {
+			if (getHolder() != nullptr) {
 				switch (prev) {
 				case 0x52:
 					mBalloonCtrl->setNextMessage(0x54, 0x1C20);
@@ -550,8 +517,6 @@ void TBaseNPC::moveObject()
 					break;
 				case 0x54:
 					mBalloonCtrl->setNextMessage(0x52, 0x1C20);
-					break;
-				case 0x55:
 					break;
 				}
 			} else {
@@ -588,18 +553,18 @@ void TBaseNPC::moveObject()
 	    && !checkLiveFlag(LIVE_FLAG_UNK1000000))
 		emitSinkEffect_();
 
-	if (mSpine->getLatestNerve()
+	if (getSpine()->getLatestNerve()
 	    != &TNerveNPCSetPosAfterSinkBottom::theNerve()) {
 		execNpcObjCollision_();
 
 		if (!checkLiveFlag(LIVE_FLAG_UNK10))
 			bind();
 
-		if (mHolder != nullptr) {
-			MtxPtr mtx = mHolder->getTakingMtx();
+		if (getHolder() != nullptr) {
+			MtxPtr mtx = getHolder()->getTakingMtx();
 			mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 			if (unk150 == nullptr) {
-				s16 angle = CLBDegToShortAngle(mHolder->mRotation.y)
+				s16 angle = CLBDegToShortAngle(getHolder()->getRotation().y)
 				            - mAngleYDiffWhenTaken;
 				mRotation.y = SHORTANGLE2DEG(angle);
 			}
@@ -608,28 +573,29 @@ void TBaseNPC::moveObject()
 			    && !belongToGround() && mLinearVelocity.y > 5.0f) {
 				mLinearVelocity.y = 5.0f;
 			}
-			mPosition += mLinearVelocity;
+			mPosition += getLinearVelocity();
 			mRotation += mAngularVelocity;
 		}
 		calcRidePos();
 	}
+}
 
-
-	
-	
+// Binding level over a raw member read, worth +8 of low region per site.
+static inline TNpcInbetween* NpcBaseInbetween(const TBaseNPC* p)
+{
+	TNpcInbetween* ctrl = p->mInbetweenCtrl;
+	return ctrl;
 }
 
 void TBaseNPC::execMotionBlend_()
 {
-
-	
-	
-	if (!mInbetweenCtrl->isMotionBlending())
+	bool blending = NpcBaseInbetween(this)->isMotionBlending();
+	if (!blending)
 		setKeepAnm_();
-
-	mInbetweenCtrl->execMotionBlend(getMActor());
-
-	if (mInbetweenCtrl->isForcedBlendRatio())
+	MActor* mactor = getMActor();
+	mInbetweenCtrl->execMotionBlend(mactor);
+	bool forced = mInbetweenCtrl->isForcedBlendRatio();
+	if (forced)
 		mKeepAnmCtrl->reset();
 }
 
@@ -664,9 +630,127 @@ void TBaseNPC::movementOnlyTalk_(const JDrama::TGraphics* param_1)
 		changeNerveProc_();
 }
 
+inline f32 TBaseNPC::getAnmOffDist_()
+{
+	bool bVar3 = false;
+	f32 fVar1  = SMSGetCamera()->getFar();
+	int uVar5  = unkD0->getCurrentAnmKind();
+	f32 fVar2  = mPtrSaveNormal->mSLDanceAnmOffDist.get();
+	if (checkActionFlag(NPC_ACTION_HAPPY | NPC_ACTION_DANCE)
+	    || mActorType == 0x400000D || uVar5 == NPC_ANM_KIND_MAD
+	    || uVar5 == NPC_ANM_KIND_UNK17) {
+		bVar3 = true;
+	}
+
+	if (isNerveMaybeDontCalcAnim0()) {
+		fVar1 = mIndividualParams->mWaitAnmOffDist0.get();
+		if (bVar3)
+			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
+	} else if (isNerveMaybeDontCalcAnim1()) {
+		fVar1 = mIndividualParams->mWaitAnmOffDist1.get();
+		if (bVar3)
+			fVar1 = fVar2 > fVar1 ? fVar2 : fVar1;
+	}
+
+	return fVar1;
+}
+
+inline f32 TBaseNPC::getAnmOffDistSquared_()
+{
+	return CLBSquared(getAnmOffDist_());
+}
+
+// Retail squares the camera distance unfused (three fmuls, two fadds), the
+// shape of CameraNotice.cpp's helper; parked TU-local. The two-step sum is
+// what keeps it computed before the CLBSquared call (one expression is
+// forwarded past the call; perform 94.7 -> 96.9).
+// Retail calls execMotionBlend_ and isPartsAnmNpc from perform but inlines
+// execMotionBlend_ into calcRootMatrix: the animation-skip block sits one
+// inline level below perform. The name is ours.
+inline bool TBaseNPC::calcAnmOff_()
+{
+	bool r31 = false;
+
+	// Raw, not checkLiveFlag2: these two want the bool-returning twin of
+	// that accessor, which has no name yet. See the note on
+	// checkLiveFlag2 in Strategic/LiveActor.hpp for the four spellings
+	// that were measured here and lost.
+	bool bVar12 = mLiveFlag
+	        & (LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT | LIVE_FLAG_DEAD)
+	    ? true
+	    : false;
+	bool bVar6 = mLiveFlag & LIVE_FLAG_UNK1000000 ? true : false;
+
+	if (bVar12) {
+		r31 = true;
+		updateAnmSound();
+		execMotionBlend_();
+		mMActor->frameUpdate();
+		if (unk168 != nullptr && isPartsAnmNpc()) {
+			unk168->partsFrameUpdate();
+		}
+	} else if (mHolder == nullptr) {
+		if (!isAirborne() && !belongToGround()
+		    && (isNerveMaybeDontCalcAnim0()
+		        || isNerveMaybeDontCalcAnim1())) {
+			// Named first: retail calls getAnmOffDist_ before the squared
+			// camera distance and CLBSquared after it.
+			f32 dist = getAnmOffDist_();
+			if (MsSquaredDist(mPosition, gpCamera->unk124) > CLBSquared(dist) && !bVar6
+			    && mSpine->getTime() > 2) {
+				r31 = true;
+				execMotionBlend_();
+			}
+		}
+	}
+
+	if (bVar6 && !r31 && mMultiMtxEffect != nullptr) {
+		mMultiMtxEffect->flagOn(0x2);
+	}
+
+	return r31;
+}
+
+// Retail calls isPollutionNpc here but inlines isJellyFishMare, so this block
+// also sits one inline level below perform. The name is ours.
+inline void TBaseNPC::performMove_()
+{
+	changeNerveProc_();
+	if (mHolder == nullptr) {
+		if (isNerveWalk())
+			walkAnmRateChange_();
+		if (unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4) {
+			f32 rate = SMSGetAnmFrameRate();
+			mMActor->setFrameRate(
+			    MsClamp(
+			        mTurnSpeed * mIndividualParams->mTurnAnmRate.get()
+			            * rate,
+			        mIndividualParams->mTurnAnmMinRate.get() * rate,
+			        mIndividualParams->mTurnAnmMaxRate.get() * rate),
+			    ANM_TYPE_BCK);
+		}
+	}
+
+	mInbetweenCtrl->execPosInbetween(&mPosition);
+	if (unk1DC > 0) {
+		unk1DC -= 1;
+		if (unk1DC == 0 && mHolder == nullptr) {
+			offHitFlag(HIT_FLAG_NO_COLLISION);
+			offLiveFlag(LIVE_FLAG_UNK10000000);
+		}
+	}
+
+	if (!isJellyFishMare() && mActorType != 0x4000007)
+		setVariableDamageRadius_();
+
+	if (isPollutionNpc())
+		unk174.a
+		    = mPollutionAmount * mIndividualParams->mPollutionMax.get();
+}
+
 void TBaseNPC::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (mActorType == 0x400001C) {
+	if (getActorType() == 0x400001C) {
 		if (!(cue & CUE_MOVE))
 			return;
 
@@ -679,7 +763,7 @@ void TBaseNPC::perform(u32 cue, JDrama::TGraphics* graphics)
 		return;
 	}
 
-	if (mActorType == 0x400001D) {
+	if (getActorType() == 0x400001D) {
 		if (checkLiveFlag(LIVE_FLAG_UNK200 | LIVE_FLAG_DEAD))
 			return;
 
@@ -698,27 +782,28 @@ void TBaseNPC::perform(u32 cue, JDrama::TGraphics* graphics)
 	} else if ((cue & (CUE_CALC_VIEW | CUE_ENTRY))
 	           && checkLiveFlag(LIVE_FLAG_CLIPPED_OUT | LIVE_FLAG_HIDDEN)) {
 		bVar5 = false;
-	} else if ((cue & CUE_MOVE) && mHolder == nullptr && !isAirborne()
+	} else if ((cue & CUE_MOVE) && getHolder() == nullptr && !isAirborne()
 	           && !belongToGround() && mSpine->getTime() != 0
-	           && mActorType != 0x4000018 && isNerveMaybeDontMovement()
+	           && getActorType() != 0x4000018 && isNerveMaybeDontMovement()
 	           && !checkLiveFlag(TBaseNPC::LIVE_FLAG_SINK_BOTTOM)) {
 		TNPCManager* manager = (TNPCManager*)mManager;
 		f32 farClip          = gpConductor->unk84.mEnemyFarClip.get();
 		if (manager != nullptr)
 			farClip = *manager->unk58;
 
-		s16 angle = matan(gpCamera->unk148.z - gpCamera->unk124.z,
-		                  gpCamera->unk148.x - gpCamera->unk124.x);
+		const JGeometry::TVec3<f32>& at  = gpCamera->unk148;
+		const JGeometry::TVec3<f32>& pos = gpCamera->unk124;
+		s16 angle = matan(at.z - pos.z, at.x - pos.x);
 		JGeometry::TVec3<f32> local_4C = gpCamera->unk124;
 		if (!MsIsInSight(local_4C, SHORTANGLE2DEG(angle), mPosition,
-		                 farClip + 500.0f, 3.46875f, 4.28125f)) {
+		                 farClip + 500.0f, 120.0f, 800.0f)) {
 			updateSquareToMario();
 			bVar5 = false;
 		}
 	}
 
 	if (!bVar5) {
-		offLiveFlag(LIVE_FLAG_DONT_TALK);
+		offLiveFlag(LIVE_FLAG_UNK20000 | LIVE_FLAG_UNK40000);
 		return;
 	}
 
@@ -726,37 +811,7 @@ void TBaseNPC::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_MOVE) {
 		moveObject();
 		if (graphics->unk0 & 0x2) {
-			changeNerveProc_();
-			if (mHolder == nullptr) {
-				if (isNerveWalk())
-					walkAnmRateChange_();
-				if (unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4) {
-					f32 rate = SMSGetAnmFrameRate();
-					mMActor->setFrameRate(
-					    MsClamp(
-					        mTurnSpeed * mIndividualParams->mTurnAnmRate.get()
-					            * rate,
-					        mIndividualParams->mTurnAnmMinRate.get() * rate,
-					        mIndividualParams->mTurnAnmMaxRate.get() * rate),
-					    ANM_TYPE_BCK);
-				}
-			}
-
-			mInbetweenCtrl->execPosInbetween(&mPosition);
-			if (unk1DC > 0) {
-				unk1DC -= 1;
-				if (unk1DC == 0 && mHolder == nullptr) {
-					offHitFlag(HIT_FLAG_NO_COLLISION);
-					offLiveFlag(LIVE_FLAG_UNK10000000);
-				}
-			}
-
-			if (!isJellyFishMare() && mActorType != 0x4000007)
-				setVariableDamageRadius_();
-
-			if (isPollutionNpc())
-				unk174.a
-				    = mPollutionAmount * mIndividualParams->mPollutionMax.get();
+			performMove_();
 		}
 
 		cue &= ~CUE_MOVE;
@@ -773,55 +828,39 @@ void TBaseNPC::perform(u32 cue, JDrama::TGraphics* graphics)
 		                   | LIVE_FLAG_CLIPPED_OUT))
 			emitParticle_();
 
-		bool r31 = false;
-
-		bool bVar12 = checkLiveFlag2(LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT
-		                             | LIVE_FLAG_DEAD);
-		bool bVar6  = checkLiveFlag2(LIVE_FLAG_UNK1000000);
-
-		if (bVar12) {
-			r31 = true;
-			updateAnmSound();
-			execMotionBlend_();
-			mMActor->frameUpdate();
-			if (unk168 != nullptr && isPartsAnmNpc()) {
-				unk168->partsFrameUpdate();
-			}
-		} else if (mHolder == nullptr) {
-			if (!isAirborne() && !belongToGround()
-			    && (isNerveMaybeDontCalcAnim0()
-			        || isNerveMaybeDontCalcAnim1())) {
-				JGeometry::TVec3<f32> diff;
-				diff.sub(mPosition, gpCamera->unk124);
-				if (CLBSquared(getAnmOffDist_()) < diff.squared() && !bVar6
-				    && mSpine->getTime() > 2) {
-					r31 = true;
-					execMotionBlend_();
-				}
-			}
-		}
-
-		if (bVar6 && !r31 && mMultiMtxEffect != nullptr) {
-			mMultiMtxEffect->flagOn(0x2);
-		}
-
-		if (r31) {
+		if (calcAnmOff_())
 			cue &= ~CUE_CALC_ANIM;
-		}
 	}
 
 	if ((cue & CUE_CALC_ANIM) && mMultiMtxEffect != nullptr) {
 		mMultiMtxEffect->setUserArea();
-		if (mActorType == 0x4000018 && mHolder != nullptr) {
+		if (getActorType() == 0x4000018 && getHolder() != nullptr) {
 			mMultiMtxEffect->flagOn(0x2);
 		}
 	}
 
+	// TODO: MsSquaredDist's two-step sum now lands the sum in f31 before
+	// the CLBSquared call as retail does, but retail adds z*z first
+	// (`fadds f31, f3, f0`) where ours adds it last. The frame is still
+	// 0xb8 short of retail's: retail's low region is dead (no stores), so
+	// it is inline temporaries we have not found; accessor spellings
+	// (getPosition(), getUnk124()) move it but cost instructions, and the
+	// float-by-float `local_4C.set(gpCamera->unk124)` copy retail shows is
+	// worse (96.2) until the scheduling around it is found.
+	// c-k17: retail's copy is the `TVec3(const Vec&)` set() copy (x loaded off
+	// gpCamera, y/z through a kept `&unk124`): `local_4C((const Vec&)
+	// gpCamera->unk124)` reproduces it (96.6, semantic-diff clean) but not the
+	// conversion schedule around it. TLensFlare's CLBCalcNearNinePos
+	// arguments need the same `Vec`-typed reads of unk124/unk148.
+	// c-r26: the members are TVec3 (the camera's own TUs pass their
+	// addresses to `TVec3` parameters; as plain `Vec`s the tree loses 6
+	// functions and gains none), so the `Vec` view is an accessor:
+	// `local_4C = gpCamera->getUnk124Vec()` is the same 96.6 as the cast,
+	// with `at`/`pos` through getUnk148Vec()/getUnk124Vec() 96.5, and the
+	// copy folded into MsIsInSight's argument 96.1.
 	if (cue & CUE_ENTRY) {
 		offLiveFlag(LIVE_FLAG_UNK1000000);
-		JGeometry::TVec3<f32> diff;
-		diff.sub(mPosition, gpCamera->unk124);
-		if (diff.squared() > CLBSquared(mIndividualParams->mAllDLLockDist.get())
+		if (MsSquaredDist(mPosition, gpCamera->unk124) > CLBSquared(mIndividualParams->mAllDLLockDist.get())
 		    && !isSunflower()) {
 			getModel()->lock();
 		} else {
@@ -851,14 +890,11 @@ void TBaseNPC::setBalloonMessage(u32 param_1, s32 param_2)
 
 const GXColor* TBaseNPC::getPtrInitPollutionColor() const
 {
-
-	
-	
 	const GXColor* result = nullptr;
 
 	if (isPollutionNpc()) {
 		result = &unk174;
-	} else if (mActorType != 0x4000006
+	} else if (getActorType() != 0x4000006
 	           && (isSpecialMonte() || isSpecialMare())) {
 		result = &unk174;
 	}

@@ -5,7 +5,7 @@
 #include <JSystem/JUtility/JUTAssert.hpp>
 #include <string.h>
 
-JKRMemArchive::JKRMemArchive() { JUT_ASSERT_F(false, "UNIMPLEMENTED"); }
+JKRMemArchive::JKRMemArchive() { }
 
 JKRMemArchive::JKRMemArchive(s32 entryNum,
                              JKRArchive::EMountDirection mountDirection)
@@ -38,7 +38,7 @@ JKRMemArchive::JKRMemArchive(void* buffer, u32 bufferSize,
 }
 
 JKRMemArchive::JKRMemArchive(const char* path, EMountDirection mountDirection)
-    : JKRArchive(0, MOUNT_MEM)
+    : JKRArchive((s32)0, MOUNT_MEM)
 {
 	JUT_ASSERT_F(false, "UNIMPLEMENTED");
 }

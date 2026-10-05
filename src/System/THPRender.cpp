@@ -15,7 +15,7 @@ void TTHPRender::perform(u32 cue, JDrama::TGraphics* graphics)
 		SMS_DrawInit();
 		GXLoadPosMtxImm(graphics->mViewMtx, GX_PNMTX0);
 		GXSetCurrentMtx(GX_PNMTX0);
-		frameNumber = THPPlayerDrawCurrentFrame(0, mPos.x, mPos.y, mSize.mWidth,
-		                                        mSize.mHeight);
+		frameNumber = THPPlayerDrawCurrentFrame(0, mPos.x, mPos.y, mSize.x,
+		                                        mSize.y);
 	}
 }

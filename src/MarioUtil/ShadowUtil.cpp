@@ -1,10 +1,4 @@
 #include <MarioUtil/ShadowUtil.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
 #include <MarioUtil/GDUtil.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/ReinitGX.hpp>
@@ -29,231 +23,10 @@
 #include <dolphin/gx.h>
 #include <math.h>
 
-// ---------------------------------------------------------------------------
-// Known structural gaps in this TU.  All three are *not* codegen bugs, so
-// don't go looking for them in the expressions below.  Everything here was
-// re-measured on 2026-09-30; the previous version of this comment carried
-// wrong numbers (171/172/716) and a wrong root cause, both corrected below.
-//
-// 1) The `$NNNN` tag on TU-local names  --  4260 B of .text + 144 B of .data
-//    `TSetup1..TSetup5` / `TCylinder` (declared inside `drawShadowGD`) and
-//    their function-local statics (`setup1`, `cylinder`, ...) plus
-//    `calctablex` / `calctablez` inside `calcVtx` are all emitted with a
-//    `$<n>ShadowUtil_cpp` tag.  That `<n>` is a *global, source-order,
-//    monotonically increasing* counter of the local tags MWCC creates while
-//    elaborating the TU, and it is the **same** counter that names the
-//    unnamed constants (`@1974`, `@1411`, ...) and the unnamed `.bss`
-//    objects (`@2174`, ...) -- the numbering runs straight through from one
-//    to the next (see the nm dump of the target: ... @2149, @2150, then
-//    TCylinder$2171, TSetup1$2172, setup1$2173, @2174, init$2175, ...).
-//
-//    Measured experimentally on this file (each probe = one build, all of
-//    them reverted afterwards; the numbers below are the current build's):
-//      +1  a named local CLASS declared in a function body
-//      +3  a named function-local STATIC array declared in a function body
-//       0  a file-scope class definition (`class ProbeTUClass { int a; int b; };`)
-//       0  a named local VARIABLE, even one that survives codegen and grows
-//          the function: 10 chained live `f32` locals summing into a static
-//          sink took `TModelShadow::calc` from 0x1c to 0xa0 bytes of real code
-//          and left TCylinder on $891.  Repeating the same probe in the
-//          *called* `TMBindShadowParts::calc` (0x274 -> 0x2ec) also moved
-//          nothing.
-//       0  a comment line; renaming a local class
-//    So the counter tracks *named function-local entities that need a mangled
-//    name of their own* (local classes, function-local statics) plus the
-//    unnamed `@NNNN` constants - NOT the volume of code.  That is the crucial
-//    correction to the previous version of this note, which claimed the tag
-//    counted "elaborated local tags" and therefore that the +1284 could be
-//    owned by the 2724 B of dead `TModelShadow` code.  It cannot: see below.
-//
-//    Ours vs. the ROM, re-measured from the two objects with
-//    `powerpc-eabi-nm --print-size` (the previous table in this file was
-//    stale by 4 on every row):
-//        entity        ours   ROM    delta
-//        TCylinder      891    2171   +1280
-//        TSetup1        892    2172   +1280
-//        setup1         893    2173   +1280
-//        init$2175      895    2175   +1280
-//        cylinder       897    2177   +1280
-//        TSetup2        910    2190   +1280
-//        setup2         911    2191   +1280
-//        TSetup3        915    2195   +1280
-//        setup3         916    2196   +1280
-//        TSetup4        927    2207   +1280
-//        setup4         928    2208   +1280
-//        TSetup5        936    2216   +1280
-//        setup5         937    2217   +1280
-//        calctablex    1070    2412   +1342
-//        calctablez    1071    2413   +1342
-//    i.e. a flat +1280 over the whole `drawShadowGD` region (nothing at all
-//    is missing *inside* that function: the probe above shows a local class
-//    inserted there shifts every one of these rows by exactly 1, so the
-//    internal structure is identical and only the base is wrong), a further
-//    +62 across `drawShadow`/`request`/`forceRequest`, and nothing more in
-//    `calcVtx`.
-//
-//    Because the tag is part of the mangled name, objdiff reports the six
-//    `makeDL()`s, the six `~TSetupN()`s, the six `__vt__`s and `makeDL::vl`
-//    / `::fl` as *missing* even though our bodies are present (and
-//    byte-for-byte correct) under `$891...$937`.  Their sizes agree exactly
-//    with the ROM's, which is the proof that only the name is wrong:
-//        makeDL TCylinder 0xB44 = 2884 = 2884, TSetup1 0x104 = 260 = 260,
-//        TSetup2/4/5 0x60 = 96, TSetup3 0x54 = 84, all six ~TSetupN 0x64 = 100.
-//
-//    Where the missing +1284 can live: the +62 is consistent with the
-//    known frame excesses in (2) below, but the +1284 is accumulated
-//    entirely by the *pre-`drawShadowGD` half of the source*, whose emitted
-//    functions all match at 97-100 % and at exactly the ROM's size.
-//
-//    The previous version of this note proposed that the four dead
-//    `TModelShadow` methods (map sizes 0x2E8/0x24/0x370/0x428) owned the
-//    +1284, i.e. that the original elaborated ~1284 more *local tags* while
-//    compiling ~2724 B of dead method bodies.  **That is refuted by direct
-//    measurement** (see the probe table above): the counter does not move for
-//    code volume at all, only for named function-local *entities*.  2724 B
-//    of dead method bodies would have had to contain ~1280 local classes or
-//    function-local statics, which is not a plausible shape for four methods
-//    and is not what the map's 0x24 B `update()` (36 B total) can hold.
-//    Note also that the four sizes sum to 2724, not the 2728 previously
-//    quoted here.
-//
-//    What is left is a genuine but *unreachable* gap: to land TCylinder on
-//    2171 the source would have to declare ~1280 additional named
-//    function-local classes/statics before `drawShadowGD`, i.e. ~1280
-//    fabricated entities.  That is a fakematch by construction, and it would
-//    also have to be exact to the unit.  Treat the six `makeDL()`s, the six
-//    `~TSetupN()`s, the six `__vt__`s and `makeDL::vl`/`::fl` (4260 B) as
-//    permanently unmatched unless someone finds real source for them.
-//
-// 1b) The J3DMtxCalc family that `TModelShadow` pulls in
-//    The target object also emits, and we emit nothing for:
-//      getUseMtxIndex__11J3DShapeMtxCFus        8 B  (weak)
-//      getUseMtxNum__11J3DShapeMtxCFv           8 B  (weak)
-//      init__15J3DMtxCalcBasicFRC3VecRA3_A4_Cf 280 B  (weak)
-//      calc__18J3DMtxCalcBasicAnmFUs           36 B  (weak)
-//      __dt__18J3DMtxCalcBasicAnmFv            228 B  (weak)
-//      @104@4@{init,recursiveUpdate,recursiveCalc,recursiveEntry,
-//              calcTransform,calc}          20 B each (weak thunks)
-//      @80@{__dt__,calc}__18J3DMtxCalcBasicAnmFv  8 B each (weak thunks)
-//      __vt__18J3DMtxCalcBasicAnm              84 B  (weak, .data)
-//    `recursiveEntry/Calc/Update__J3DMtxCalcBasic`,
-//    `calcTransform__J3DMtxCalcBasic` and `calc__J3DMtxCalcAnm` are
-//    *undefined* in the target object, so they are only declared in the
-//    header; the six above are defined there and emitted because the
-//    `J3DMtxCalcBasicAnm` vtable is emitted (its constructor is elaborated in
-//    this TU, by `TModelShadow`'s constructor).  `J3DMtxCalc`,
-//    `J3DMtxCalcBasic`, `J3DMtxCalcAnm` and `J3DMtxCalcBasicAnm` are only
-//    forward-declared at `include/M3DUtil/M3UModel.hpp:11-13`; `J3DShapeMtx`
-//    lives in libs/ and already has both getters inline.
-//    Recovered verbatim from `build/GMSP01/asm/MarioUtil/ShadowUtil.s`:
-//      - `J3DMtxCalcBasic::init(const Vec& scale, const Mtx& mtx)`
-//          j3dSys.mCurrentS = scale;                       (3 word copies)
-//          j3dSys.mParentS  = <12-byte zero Vec in .data>  (word copies via
-//                             a stack bounce, i.e. a struct assignment)
-//          for (i = 0; i < 3; i++) {
-//              mCurrentMtx[i][0] = mtx[0][i][0] * scale.x;
-//              mCurrentMtx[i][1] = mtx[0][i][1] * scale.y;
-//              mCurrentMtx[i][2] = mtx[0][i][2] * scale.z;
-//              mCurrentMtx[i][3] = mtx[0][i][3];
-//          }
-//        fully unrolled, 0x28 frame, `stfsu` for element 0.
-//      - `J3DMtxCalcBasicAnm::calc(u16)` is `this += 0x50; bl
-//        J3DMtxCalcAnm::calc(idx)` -- i.e. a *qualified* (non-virtual) call
-//        with the J3DMtxCalcAnm subobject at +0x50.
-//      - `~J3DMtxCalcBasicAnm()` is 0x28 frame and writes 0x58=0, 0x5c=0,
-//        0x60=`@2743`, 0x64=`@2743`; its vptr fixups land at 0x4c and 0x54
-//        and it patches two 2-word blocks reached through `*(this+0x00)`
-//        and `*(this+0x50)` with `this+0x68` as the virtual-base address.
-//        Reproducing that layout (MWCC multiple + virtual inheritance) from
-//        one destructor is the hard part; the vtable is three groups of
-//        2 header words + 7 / 2 / 6 slots, the last two addressed through
-//        `@104@4@` and `@80@` adjustor thunks.
-//      - `TModelShadow` is *provably dead code* in the retail build: its
-//        constructor is UNUSED, nothing anywhere in `mario.MAP` references
-//        the class, and only `TModelShadowInfo`'s constructor is emitted.
-//        So there is no codegen feedback available for it at all.
-//
-// 2) Phantom stack slots
-//    Nearly every remaining non-matching function differs *only* in its frame
-//    size and the register numbering that follows from it, e.g.
-//      calcVtx              0x228 vs 0x198  (144 B = 36 words unused)
-//      drawShadowGD         0x400 vs 0x190  (624 B)
-//      TMBindShadowParts::calc 0x128 vs 0x90 (152 B)
-//      entryDrawShadow      0x98  vs 0x70  (40 B)
-//      TMBindShadowBody ctor 0x98 vs 0x88  (16 B)
-//    In `TMBindShadowParts::calc` the ROM's frame only ever touches 0xA0-0xB3
-//    (the `TCircleShadowRequest`) and 0x108/0x10C, so 0x8-0x9F is 152 bytes of
-//    slots for named locals whose values live in registers -- the original
-//    simply declared ~38 locals where we declare 22.  Reproducing that needs
-//    the original's exact local list, not a different expression.
-//
-// 3) Two missing .rodata tables shift every string offset
-//    The ROM's .rodata is: [12 zero bytes + the SJIS "メモリが足りません\n"]
-//    then `@1974 = {1,1,-1,-1}`, `@1975 = {1,-1,1,-1}` (16 B each), then
-//    `@2149`/`@2150` (the two `int[9]` index tables of `drawShadowVolume`),
-//    then the float literals, then the four "/common/*.bmd" strings at
-//    +0xA8/+0xC4/+0xE0/+0xF8.  We do not emit the two 16-byte tables, so our
-//    strings land at +0x88/+0xA4/+0xC0/+0xD8 and every string reference in
-//    `load()` is off by exactly 0x20 -- which is why `load` reads
-//    "100.0% but nonmatching" (the fuzzy score is already 100 %, so closing
-//    this gains no fuzzy points; it only clears the symbol bookkeeping).
-//    `@1974`/`@1975` are *never referenced* by any instruction in the target,
-//    so they are dead constants of an elaborated-but-dead function.  Their
-//    auto-numbers (1974/1975) sit between `@1809` and `@2149`, i.e. they are
-//    created after everything up to `TModelShadowInfo`'s constructor and
-//    before `drawShadowVolume`'s index tables, which is exactly where the four
-//    `TModelShadow` methods sit in source order.  They are also *unnamed*
-//    compiler constants, so whatever produced them was not a named
-//    `static const f32[4]`.  Not reconstructed: see 1b for why there is no
-//    codegen feedback to confirm a guess.
-//
-// 4) THE BYTE ACCOUNTING, reconciled (measured 2026-10-01)
-//    There is **no** byte-count gap.  The previously-recorded "2728 B
-//    dead-code counter gap" does not exist as a byte-accounting defect, and
-//    the four `TModelShadow` sizes sum to 2724, not 2728.  Full reconciliation
-//    against `orig/GMSP01/files/marioEU.MAP` (.text section layout, the
-//    `MarioUtil.a ShadowUtil.cpp` block) and both objects:
-//
-//      map .text block          : 61 symbols = 49 PLACED + 12 UNUSED
-//      sum of the 49 PLACED    : 21032 B
-//      placed address span      : 0x5228 = 21032 B   (0x2208A0..0x225AC8,
-//                                 and the next TU `gd-reinit-gx.cpp` starts
-//                                 at 0x225AC8, so the span is exact)
-//      target object .text      : 0x5228 = 21032 B
-//      target .text FUNC/OBJ    : 49 symbols, sizes sum to exactly 21032 B
-//      => the 21032 B that objdiff scores is FULLY and EXACTLY accounted
-//         for by the 49 ROM symbols that are actually in the ROM.  Every one
-//         of them is present in the target object with a size identical to
-//         the map's.  The 12 UNUSED symbols (3696 B) are absent from the
-//         target object entirely, so they are outside the denominator and
-//         can never move `fuzzy_match_percent`.
-//
-//      What we actually hold, of those 21032 B:
-//        27 symbols, 16268 B, byte-identical sizes except calcVtx (2792 vs
-//          2800) and TMBindShadowParts::calc (628 vs 632)
-//        22 symbols,  4752 B, MISSING from our object:
-//          6x ~TSetupN/TCylinder     600 B   wrong $NNNN tag (note 1)
-//          6x makeDL               3516 B   wrong $NNNN tag (note 1)
-//          2x J3DShapeMtx getters    16 B   libs/ (note 1b)
-//          3x J3DMtxCalc Basic/Anm   544 B   libs/ (note 1b)
-//          5x adjustor thunks        76 B   libs/ (note 1b)
-//        16268 + 4752 = 21020; the 12 B remainder is the two undersized
-//        functions above (8 + 4).
-//
-//      Per-section sizes (target / ours):
-//        .text 0x5228/0x5414  .rodata 0x110/0xEF  .data 0x120/0x100
-//        .bss 0x120/0x120  .sdata 0x10/0x18  .sbss 0x10/0x10  .sdata2 0x90/0x90
-//      The .text excess of 492 B is almost exactly the 12 UNUSED map symbols
-//      we emit as stubs/real code but the ROM dead-stripped, plus the
-//      4116 B of tag-mismatched makeDL/~TSetupN bodies that the ROM has too
-//      (under different names) - i.e. our .text is not "too big", it is
-//      *differently named*.
-//
-//      Conclusion: the unit's residual is 100 % explained by (a) 4752 B of
-//      un-emitted symbols, 4116 B of which are blocked on one unreconstructable
-//      integer and 636 B on `libs/`, and (b) 154 B of frame/ABI residue spread
-//      over 10 functions.  There is no third, hidden bucket.
-// ---------------------------------------------------------------------------
+// rogue include: the 12 zero bytes and the Shift-JIS memory-error string are
+// the object's first two .rodata entries (@1490/@1809).
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 
 TMBindShadowParts::TMBindShadowParts(J3DModel* param_1, u8 param_2,
                                      TMBindShadowBody* param_3, f32 param_4)
@@ -279,6 +52,10 @@ TMBindShadowParts::TMBindShadowParts(J3DModel* param_1, u8 param_2,
 	mMinRadius = param_4;
 }
 
+// TODO: instruction-identical (98.7%) but the frame is 0xa0 against retail's
+// 0x128 (getPosition() gives 0x10 of it): 40 bytes of named locals declared
+// before `request` and inline-expansion temporaries are missing, with no
+// evidence for either beyond the byte counts.
 void TMBindShadowParts::calc(f32 param_1)
 {
 	if (!unk14)
@@ -287,7 +64,7 @@ void TMBindShadowParts::calc(f32 param_1)
 	f32 y1 = param_1;
 	f32 y2 = param_1;
 
-	f32 dist = fabsf(mBody->mActor->mPosition.y - param_1);
+	f32 dist = fabsf(mBody->mActor->getPosition().y - param_1);
 
 	const JGeometry::TVec3<f32>& light = gpBindShadowManager->mLightDir;
 
@@ -346,15 +123,27 @@ void TMBindShadowParts::calc(f32 param_1)
 
 	if (!mIsCircle && mBody->mActor->getActorType() != 0x80000001
 	    && mBody->mActor->getActorType() != 0x8000002) {
-		f32 rotY = matan(z2 - z1, x2 - x1) * (360.0f / 65536.0f);
+		f32 angle = matan(z2 - z1, x2 - x1) * (360.0f / 65536.0f);
+		f32 rotY  = angle;
 		if (radiusX > radiusZ)
-			rotY -= 90.0f;
+			rotY = angle - 90.0f;
 		request.mRotationY = rotY;
 	} else {
 		request.mRotationY = 0.0f;
 	}
 
 	gpBindShadowManager->request(request, mBody->mActor->getActorType());
+}
+
+// Binding level worth +16 of low region, landing
+// TMBindShadowBody::TMBindShadowBody's frame at 0x98 (batch 121).
+// TODO: the inlined initEntry's push_back slots sit 0xc low (this at 0x54,
+// retail 0x60); a raw getJointNum() at either loop is -8 frame, a named
+// manager inert.
+static inline u16 ShadowUtilGetJointNum(const J3DModelData* p)
+{
+	u16 jointNum = p->getJointNum();
+	return jointNum;
 }
 
 TMBindShadowBody::TMBindShadowBody(THitActor* param_1, J3DModel* param_2,
@@ -389,7 +178,7 @@ TMBindShadowBody::TMBindShadowBody(THitActor* param_1, J3DModel* param_2,
 
 	J3DModelData* modelData = param_2->getModelData();
 
-	for (int i = 0; i < modelData->getJointNum(); i++) {
+	for (int i = 0; i < ShadowUtilGetJointNum(modelData); i++) {
 		if (modelData->getJointNodePointer((u8)i)->getKind() == 1
 		    && isUseThisJoint(i))
 			mPartsNum++;
@@ -398,7 +187,7 @@ TMBindShadowBody::TMBindShadowBody(THitActor* param_1, J3DModel* param_2,
 	mParts = new TMBindShadowParts*[mPartsNum];
 
 	int count = 0;
-	for (int i = 0; i < modelData->getJointNum(); i++) {
+	for (int i = 0; i < ShadowUtilGetJointNum(modelData); i++) {
 		if (modelData->getJointNodePointer((u8)i)->getKind() != 1
 		    || !isUseThisJoint(i))
 			continue;
@@ -472,7 +261,10 @@ void TMBindShadowBody::entryDrawShadow()
 {
 	f32 eps = JGeometry::TUtil<f32>::epsilon();
 
-	if (gpMarioPos->epsilonEquals(mActor->mPosition, eps)) {
+	// TODO: instruction-identical and frame-exact at 0x98 after calc() reads
+	// getPosition(); remaining residue is FPR colouring on epsilonEquals
+	// (f0/f1) and the inlined calc() TVec3 vs TBGCheckData* slot order.
+	if (gpMarioPos->epsilonEquals(mActor->getPosition(), eps)) {
 		if (!gpBindShadowManager->unk65) {
 			gpBindShadowManager->unk65 = true;
 			calc();
@@ -484,7 +276,7 @@ void TMBindShadowBody::entryDrawShadow()
 
 void TMBindShadowBody::calc()
 {
-	JGeometry::TVec3<f32> pos = mActor->mPosition;
+	JGeometry::TVec3<f32> pos = mActor->getPosition();
 
 	f32 y = pos.y;
 	f32 z = pos.z;
@@ -528,24 +320,34 @@ void TAlphaShadowQuad::reset()
 	mNext          = nullptr;
 }
 
-// `TModelShadow` is dead code in the retail build: `mario.MAP` lists its
-// constructor and all four methods as UNUSED, `__vt__12TModelShadow` is UNUSED,
-// and nothing in the whole link map references the class -- only
-// `TModelShadowInfo`'s constructor was ever emitted.  The bodies are
-// therefore still stubs on purpose: there is no emitted instruction, no call
-// site and no relocation anywhere that could validate a reconstruction, and
-// the only thing guessing here would move is the `$NNNN` local-tag counter
-// (see note 1 at the top of this file).  The map gives their compiled sizes
-// (0x2E8 / 0x24 / 0x370 / 0x428) and note 1b lists everything that *is*
-// recoverable about the J3DMtxCalc family they pull in.
-TModelShadow::TModelShadow(SDLModelData* param_1, void* param_2, int param_3) {
+TModelShadow::TModelShadow(SDLModelData* param_1, void* param_2, int param_3)
+{
+	// TODO: fabricated. UNUSED (map size 0x2e8), so no assembly survives; the
+	// one thing the map proves is that this TU instantiates
+	// J3DMtxCalcBasicAnm (its vtable, destructor and calc, plus
+	// J3DMtxCalcBasic::init and the five adjustor thunks, are weak symbols
+	// this object supplies).
+	J3DMtxCalcBasicAnm* mtxCalc = new J3DMtxCalcBasicAnm(nullptr);
+	(void)mtxCalc;
 }
 
 void TModelShadow::update() { }
 
 void TModelShadow::calc(int param_1, JDrama::TGraphics* param_2) { }
 
-void TModelShadow::draw(int param_1, JDrama::TGraphics* param_2) { }
+void TModelShadow::draw(int param_1, JDrama::TGraphics* param_2)
+{
+	// TODO: fabricated. UNUSED (map size 0x428), so no assembly survives.
+	// The only recoverable part is the pair of corner tables: they are the
+	// object's @1974/@1975 .rodata entries (16 bytes each, immediately before
+	// drawShadowVolume's index tables), and an aggregate initialiser's
+	// template is emitted at parse time even when the function is not, which
+	// is why they are in the retail .rodata blob at all.
+	f32 cornerX[4] = { 1.0f, 1.0f, -1.0f, -1.0f };
+	f32 cornerZ[4] = { 1.0f, -1.0f, 1.0f, -1.0f };
+	(void)cornerX;
+	(void)cornerZ;
+}
 
 TMBindShadowManager* gpBindShadowManager;
 
@@ -577,7 +379,7 @@ TMBindShadowManager::TMBindShadowManager(const char* name)
 	mShadowColor.b = 115;
 	mShadowColor.a = 180;
 
-	switch (SMSGetApplication()->mCurrArea.getStage()) {
+	switch (gpApplication.mCurrArea.getStage()) {
 	case 6:
 		mShadowColor.r = 9;
 		mShadowColor.g = 9;
@@ -751,7 +553,6 @@ static inline void loadPosMtxImm(MtxPtr mtx)
 void TMBindShadowManager::drawShadowVolume(bool param_1,
                                            TAlphaShadowQuad* param_2)
 {
-	f32 height = 50.0f;
 	if (param_2->mRequest->mShadowType == SHADOW_TYPE_SQUARE) {
 		if (param_2->mSquareOutline == nullptr) {
 			SMS_SettingDrawShape(mModelDatas[2]->getModelData(), 0);
@@ -759,6 +560,7 @@ void TMBindShadowManager::drawShadowVolume(bool param_1,
 		} else {
 			int topIndices[9]    = { 2, 1, 0, 3, 2, 0, 4, 3, 0 };
 			int bottomIndices[9] = { 0, 1, 2, 0, 2, 3, 0, 3, 4 };
+			f32 height           = 50.0f;
 
 			GXClearVtxDesc();
 			GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
@@ -982,20 +784,59 @@ void TMBindShadowManager::drawShadowVolume(bool param_1,
 		SMS_SettingDrawShape(mModelDatas[0]->getModelData(), 0);
 	else
 		SMS_SettingDrawShape(mModelDatas[1]->getModelData(), 0);
-
-
-	// were a uniform LEFT-RIGHT +4 - our two `int[9]` index tables sat 4 bytes
-	// below the ROM's, while the saved registers and the 0x1b0 frame already
-	// matched.  Declared LAST so MWCC gives it the bottom of the local area and
-	// pushes everything else up: 36 markers / 99.9 % -> 9 markers / 99.98 %.
-	// A pad declared *before* the tables is worse (it grows the frame to 0x1b8
-	// as well and leaves all 36 markers), and so is `short[2]`; MWCC rounds the
-	// frame to 8 regardless of the pad's declared size, so the last 0.4 B
-	// (the 9 saved-register markers) is not reachable this way.
-	
-	
 }
 
+// NOTE: the six local classes below are the TU's whole `missing`/`extra` list
+// (4116 bytes of .text, 96 bytes of .data).  Their bodies are byte-exact --
+// every word of all six `makeDL`s matches retail once the relocated fields are
+// masked -- and the only difference is the `$NNNN` id MWCC mangles into the
+// local-class name: we emit `$906`/`$907`/`$925`/`$930`/`$942`/`$951` where
+// retail has `$2171`/`$2172`/`$2190`/`$2195`/`$2207`/`$2216`.  The relative
+// spacing (0, 1, 19, 24, 36, 45) is identical, so nothing in this file is
+// wrong; the counter simply starts ~1265 too low, and it starts too low in the
+// precompiled header: an empty TU already reaches id 191, and the TU's first
+// three .data aggregates are numbered @136/@156/@165 against retail's
+// @1210/@1411/@1431.  Fixing it means growing include/SMS.pch, not this file.
+// The same offset is why every `@NNNN` and `calctablex$NNNN` here is renamed;
+// objdiff rescues those positionally but cannot rescue a mangled function name.
+
+// fabricated name; the immediate-mode twin of SMS_DrawCube (DrawUtil.cpp)
+static inline void drawCubeImm(const JGeometry::TVec3<f32>& min,
+                               const JGeometry::TVec3<f32>& max)
+{
+	GXCmd1u8(GX_QUADS | GX_VTXFMT0);
+	GXCmd1u16(24);
+	GXPosition3f32(min.x, min.y, min.z);
+	GXPosition3f32(min.x, min.y, max.z);
+	GXPosition3f32(max.x, min.y, max.z);
+	GXPosition3f32(max.x, min.y, min.z);
+	GXPosition3f32(min.x, min.y, min.z);
+	GXPosition3f32(max.x, min.y, min.z);
+	GXPosition3f32(max.x, max.y, min.z);
+	GXPosition3f32(min.x, max.y, min.z);
+	GXPosition3f32(min.x, min.y, min.z);
+	GXPosition3f32(min.x, max.y, min.z);
+	GXPosition3f32(min.x, max.y, max.z);
+	GXPosition3f32(min.x, min.y, max.z);
+	GXPosition3f32(max.x, max.y, max.z);
+	GXPosition3f32(min.x, max.y, max.z);
+	GXPosition3f32(min.x, max.y, min.z);
+	GXPosition3f32(max.x, max.y, min.z);
+	GXPosition3f32(max.x, max.y, max.z);
+	GXPosition3f32(max.x, min.y, max.z);
+	GXPosition3f32(min.x, min.y, max.z);
+	GXPosition3f32(min.x, max.y, max.z);
+	GXPosition3f32(max.x, max.y, max.z);
+	GXPosition3f32(max.x, max.y, min.z);
+	GXPosition3f32(max.x, min.y, min.z);
+	GXPosition3f32(max.x, min.y, max.z);
+	GXEnd();
+}
+
+// TODO: two instructions apart (98.8%) -- one GXPosition3f32 in the first cube
+// wants f25 where we emit f28, and one local-static registration pair is
+// ordered differently. The frame matches (0x400) once both cubes go through
+// drawCubeImm with named TVec3 corners, as drawShadow does via SMS_DrawCube.
 void TMBindShadowManager::drawShadowGD(u32 param_1, JDrama::TGraphics* param_2)
 {
 	class TCylinder : public TGDLStatic {
@@ -1129,36 +970,12 @@ void TMBindShadowManager::drawShadowGD(u32 param_1, JDrama::TGraphics* param_2)
 		minZ = blend->mMin.z;
 		maxX = blend->mMax.x;
 		maxZ = blend->mMax.z;
+		JGeometry::TVec3<f32> min(minX, y1, minZ);
+		JGeometry::TVec3<f32> max(maxX, y2, maxZ);
 
 		loadPosMtxImm(param_2->getViewMtx());
 
-		GXCmd1u8(GX_QUADS | GX_VTXFMT0);
-		GXCmd1u16(24);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXEnd();
+		drawCubeImm(min, max);
 
 		TAlphaShadowQuad* quad = mQuadArys[i].mQuadHead;
 		u8 lowPoly             = 0;
@@ -1245,33 +1062,7 @@ void TMBindShadowManager::drawShadowGD(u32 param_1, JDrama::TGraphics* param_2)
 
 		loadPosMtxImm(viewMtx);
 
-		GXCmd1u8(GX_QUADS | GX_VTXFMT0);
-		GXCmd1u16(24);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(minX, y1, minZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(minX, y2, minZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXPosition3f32(minX, y1, maxZ);
-		GXPosition3f32(minX, y2, maxZ);
-		GXPosition3f32(maxX, y2, maxZ);
-		GXPosition3f32(maxX, y2, minZ);
-		GXPosition3f32(maxX, y1, minZ);
-		GXPosition3f32(maxX, y1, maxZ);
-		GXEnd();
+		drawCubeImm(min, max);
 	}
 }
 
@@ -1302,6 +1093,13 @@ static inline void initShadowGX(const GXColor& color,
 
 void TMBindShadowManager::drawShadow(u32 param_1, JDrama::TGraphics* param_2)
 {
+	// TODO: instruction-identical but the frame is 0x128 against retail's
+	// 0xf8. Three dead 4-byte slots come from the named GXColor locals and
+	// the second initShadowGX colour temporary sits 0x18 lower than retail's
+	// (0x64 vs 0x7c). Trials that failed: dropping the JUtility::TColor cast
+	// (-2 instructions per site), a compound literal as the cast's argument
+	// or as a named TColor's initialiser (+6 instructions), `const` on the
+	// GXColor locals (no change).
 	if (!mTestSw) {
 		initShadowGX(mShadowColor, param_2);
 
@@ -1325,8 +1123,8 @@ void TMBindShadowManager::drawShadow(u32 param_1, JDrama::TGraphics* param_2)
 
 			TAlphaShadowBlendQuad* blend = mQuadArys[i].mBlendHead;
 
-			JGeometry::TVec3<f32> max;
 			JGeometry::TVec3<f32> min;
+			JGeometry::TVec3<f32> max;
 
 			min.set(blend->mMin.x, blend->mMin.y - blend->mMax.y,
 			        blend->mMin.z);
@@ -1510,9 +1308,10 @@ void TMBindShadowManager::drawShadow(u32 param_1, JDrama::TGraphics* param_2)
 void TMBindShadowManager::request(const TCircleShadowRequest& param_1,
                                   u32 param_2)
 {
+	f32 dist;
 	JGeometry::TVec3<f32> delta = param_1.mPosition;
-	delta -= gpCamera->unk124;
-	f32 dist = delta.squared();
+	delta -= gpCamera->getUnk124Vec();
+	dist = delta.squared();
 
 	f32 range = 6.0f;
 	if (param_1.mShadowType == SHADOW_TYPE_TREE)
@@ -1554,11 +1353,31 @@ void TMBindShadowManager::request(const TCircleShadowRequest& param_1,
 	}
 }
 
+// TODO: instruction-exact; the frame is 0x40 against retail's 0x58.  The
+// by-value TU-local accessor below restored retail's shape (the position copy
+// is an unnamed inline temporary, only `delta` is a named local), but 0x18 of
+// pool is still missing.  Measured rungs, all instruction-neutral: a one-local
+// `gpCamera` binder +8, nesting the position fork in a `const TVec3&` fork +8,
+// nesting the camera binder in a bare `gpCamera` fork +8 -- together they land
+// the frame at exactly 0x58 and `delta` at retail's 0x48/0x4c/0x50 (99.7%),
+// but they leave the position temporary at 0x38 where retail keeps it at 0x14,
+// so the pool is being grown below the temporary instead of above it and the
+// spelling is wrong.  Retail's pool is 8 bytes, then the temporary, then 0x28
+// dead -- 0x28 is align8(sizeof(TCircleShadowRequest)), so the carrier is
+// probably an unconsumed request object inside an inlined callee.  Retail also
+// forwards that low copy into the `mRequests[n] = param_1` struct assignment,
+// which we reload from r4.
+static inline JGeometry::TVec3<f32>
+ShadowUtilRequestPos(const TCircleShadowRequest& request)
+{
+	return request.mPosition;
+}
+
 void TMBindShadowManager::forceRequest(const TCircleShadowRequest& param_1,
                                        u32 param_2)
 {
-	JGeometry::TVec3<f32> pos   = param_1.mPosition;
-	JGeometry::TVec3<f32> delta = pos;
+	JGeometry::TVec3<f32> delta;
+	delta = ShadowUtilRequestPos(param_1);
 	delta -= gpCamera->getUnk124();
 	f32 dist = delta.squared();
 
@@ -1570,6 +1389,10 @@ void TMBindShadowManager::forceRequest(const TCircleShadowRequest& param_1,
 	}
 }
 
+// TODO: the frame is 0x90 short (0x198 against retail's 0x228) with
+// non-uniform slot deltas (oldPos +0x90, pos +0x5c, base +0x64), so inline
+// temporaries are missing around the square-shadow projection; the array
+// merge loop also indexes arrays[i]/[j] through byte offsets in retail.
 void TMBindShadowManager::calcVtx()
 {
 	static const f32 calctablex[4] = { -1.0f, 1.0f, 1.0f, -1.0f };
@@ -1585,11 +1408,13 @@ void TMBindShadowManager::calcVtx()
 	for (i = 0; i < mRequestNum; i++) {
 		request = &mRequests[i];
 
-		JGeometry::TVec3<f32> oldPos = request->mPosition;
+		JGeometry::TVec3<f32> oldPos;
+		oldPos = request->mPosition;
 
 		if (request->mShadowType == SHADOW_TYPE_SQUARE) {
-			JGeometry::TVec3<f32> foot = request->mPosition;
-			JGeometry::TVec3<f32> head = foot;
+			JGeometry::TVec3<f32> head, foot;
+			foot = request->mPosition;
+			head = foot;
 			head.y += mSquareShadowHeight;
 
 			const JGeometry::TVec3<f32>& light = gpBindShadowManager->mLightDir;
@@ -1633,12 +1458,15 @@ void TMBindShadowManager::calcVtx()
 		if (request->mRadiusX < request->mRadiusZ)
 			radius = request->mRadiusZ;
 
+		// The .sdata2 pool orders 90.0f before 0.08f, so the rotation was
+		// built before the scale terms.
+		JGeometry::TVec3<f32> rotation(90.0f, request->mRotationY, 0.0f);
+
 		f32 treeScale = 1.0f;
 		f32 sx        = 0.08f * request->mRadiusX;
 		f32 sy        = 0.08f * request->mRadiusZ;
 		f32 sz        = 0.08f * (radius * shrink);
 
-		JGeometry::TVec3<f32> rotation(90.0f, request->mRotationY, 0.0f);
 		JGeometry::TVec3<f32> scale(sx * treeScale, sy * treeScale,
 		                            treeScale * sz);
 
@@ -1678,7 +1506,8 @@ void TMBindShadowManager::calcVtx()
 			scale.z    = 1.0f;
 
 			if (oldPos.x >= pos.x && !(oldPos.z < pos.z)) {
-				JGeometry::TVec3<f32> base = oldPos;
+				JGeometry::TVec3<f32> base;
+				base = oldPos;
 				done                       = true;
 
 				f32 dx = pos.x;

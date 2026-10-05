@@ -1,10 +1,4 @@
 #include <GC2D/ProgSelect.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
 #include <stdio.h>
 #include <JSystem/J2D/J2DTextBox.hpp>
 #include <JSystem/JUtility/JUTResFont.hpp>
@@ -14,21 +8,26 @@
 #include <System/MarioGamePad.hpp>
 #include <GC2D/MessageUtil.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <version.h>
 
-void TProgSelect::setLang(s32 lang)
-{
-	static const char* filename[] = {
-	    "/nintendo/progmessage_en.bmg", "/nintendo/progmessage_ge.bmg",
-	    "/nintendo/progmessage_fr.bmg", "/nintendo/progmessage_sp.bmg",
-	    "/nintendo/progmessage_it.bmg",
-	};
+#ifdef VERSION_GMSP01
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
+#endif
 
-	const char* fileName = filename[lang];
-	unk130 = JKRFileLoader::getGlbResource(fileName);
-	snprintf(unk1C, 0x100, SMSGetMessageData(unk130, 0));
-	snprintf(unk120[0]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 4));
-	snprintf(unk120[1]->getStringPtr(), 0x20, SMSGetMessageData(unk130, 1));
-}
+#if defined(VERSION_GMSE01)
+static char strDispProg[] = "Would you like to display in\nprogressive scan mode?";
+static char strSetProg[] = "\033GM[0]Screen display has been set to\n"
+                          "\033FX[24]\033FY[24]\033CC[ffff00]"
+                          "progressive scan mode"
+                          "\033FX[20]\033FY[20]\033CC[ffffff].";
+static char strSetInter[] = "\033GM[0]Screen display has been set to\n"
+                           "\033FX[24]\033FY[24]\033CC[ffff00]"
+                           "interlace mode"
+                           "\033FX[20]\033FY[20]\033CC[ffffff].";
+static char strYes[] = "Yes";
+static char strNo[] = "No";
+#endif
 
 TProgSelect::TProgSelect(u8 param_1, const char* name)
     : JDrama::TViewObj(name)
@@ -40,12 +39,22 @@ TProgSelect::TProgSelect(u8 param_1, const char* name)
 	f32 sync     = SMSGetVSyncTimesPerSec();
 	unk128       = 0;
 	mRefreshRate = sync;
-	unk130       = nullptr;
-	char* yesText = new char[0x20];
-	unk120[0] = new J2DTextBox(gpSystemFont->getResFont(), yesText);
-	char* noText = new char[0x20];
-	unk120[1] = new J2DTextBox(gpSystemFont->getResFont(), noText);
+#if defined(VERSION_GMSE01)
+	snprintf(unk1C, 0x100, strDispProg);
+	unk120[0] = new J2DTextBox(gpSystemFont->getResFont(), strYes);
+	unk120[1] = new J2DTextBox(gpSystemFont->getResFont(), strNo);
+#elif defined(VERSION_GMSP01)
+	mMessageBmg = nullptr;
+	char* yes   = new char[0x20];
+	unk120[0]   = new J2DTextBox(gpSystemFont->getResFont(), yes);
+	char* no    = new char[0x20];
+	unk120[1]   = new J2DTextBox(gpSystemFont->getResFont(), no);
 	setLang(0);
+#else
+	snprintf(unk1C, 0x100, "プログレッシブモードで\n表示しますか？");
+	unk120[0] = new J2DTextBox(gpSystemFont->getResFont(), "はい");
+	unk120[1] = new J2DTextBox(gpSystemFont->getResFont(), "いいえ");
+#endif
 
 	unk120[0]->setFontSize(28, 28);
 	unk120[1]->setFontSize(28, 28);
@@ -57,6 +66,25 @@ TProgSelect::TProgSelect(u8 param_1, const char* name)
 		unk120[0]->setBlackWhite(0x7f7f7f00, 0x7f7f7fff);
 	}
 }
+
+#ifdef VERSION_GMSP01
+void TProgSelect::setLang(s32 lang)
+{
+	static const char* filename[] = {
+		"/nintendo/progmessage_en.bmg", "/nintendo/progmessage_ge.bmg",
+		"/nintendo/progmessage_fr.bmg", "/nintendo/progmessage_sp.bmg",
+		"/nintendo/progmessage_it.bmg",
+	};
+
+	const char* name = filename[lang];
+	mMessageBmg      = JKRFileLoader::getGlbResource(name);
+	snprintf(unk1C, 0x100, SMSGetMessageData(mMessageBmg, 0));
+	snprintf(unk120[0]->getStringPtr(), 0x20,
+	         SMSGetMessageData(mMessageBmg, 4));
+	snprintf(unk120[1]->getStringPtr(), 0x20,
+	         SMSGetMessageData(mMessageBmg, 1));
+}
+#endif
 
 void TProgSelect::perform(u32 cue, JDrama::TGraphics* graphics)
 {
@@ -75,28 +103,62 @@ void TProgSelect::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 		}
 
-		u32 prevSelection = mSelection;
-		if (mGamePad->checkFrameMeaning(TMarioGamePad::MEANING_MENU_LEFT)) {
+		// TODO: 8 bytes of uninitialised local the compiled function never
+		// touches. Size (8), position (the named region, above
+		// prevSelection) and the fact that the only 8-byte concept in the
+		// block is the black/white colour pair passed to setBlackWhite are
+		// the whole of the evidence.
+		u32 black;
+		u32 white;
+
+		u32 prevSelection = getSelection();
+		if (getGamePad()->checkFrameMeaning(0x8)) {
 			if (mSelection) {
 				mSelection = 0;
 				unk128     = 0;
 			}
-		} else if (mGamePad->checkFrameMeaning(
-		               TMarioGamePad::MEANING_MENU_RIGHT)) {
+		} else if (getGamePad()->checkFrameMeaning(0x10)) {
 			if (mSelection != 1) {
 				mSelection = 1;
 				unk128     = 0;
 			}
-		} else if (mGamePad->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A)
-		           || thing()) {
+		} else if (getGamePad()->checkFrameMeaning(0x20) || thing()) {
 			{
+#ifdef VERSION_GMSP01
 				if (!mSelection) {
-					snprintf(unk1C, 256, SMSGetMessageData(unk130, 3));
+					snprintf(unk1C, 256, SMSGetMessageData(mMessageBmg, 3));
 					OSSetEuRgb60Mode(1);
 				} else {
-					snprintf(unk1C, 256, SMSGetMessageData(unk130, 2));
+					snprintf(unk1C, 256, SMSGetMessageData(mMessageBmg, 2));
 					OSSetEuRgb60Mode(0);
 				}
+#else
+				if (!mSelection) {
+#if defined(VERSION_GMSE01)
+					snprintf(unk1C, 256, strSetProg);
+#else
+					snprintf(unk1C, 256,
+					         "GM[0]画面表示モードは\n"
+					         "FX[24]FY[24]CC[ffff00]"
+					         "プログレッシブモード"
+					         "FX[20]FY[20]CC[ffffff]に\n"
+					         "セットされました。");
+#endif
+					OSSetProgressiveMode(1);
+				} else {
+#if defined(VERSION_GMSE01)
+					snprintf(unk1C, 256, strSetInter);
+#else
+					snprintf(unk1C, 256,
+					         "GM[0]画面表示モードは\n"
+					         "FX[24]FY[24]CC[ffff00]"
+					         "インターレースモード"
+					         "FX[20]FY[20]CC[ffffff]に\n"
+					         "セットされました。");
+#endif
+					OSSetProgressiveMode(0);
+				}
+#endif
 				mHideTextBoxes = true;
 			}
 		}
@@ -117,13 +179,16 @@ void TProgSelect::perform(u32 cue, JDrama::TGraphics* graphics)
 		local_110.setup2D();
 		J2DPrint JStack_174(gpSystemFont, 0);
 		JStack_174.setUnk50(32);
-		JStack_174.printReturn(unk1C, 580, 160, HBIND_CENTER, VBIND_TOP, 35,
+		JStack_174.printReturn(unk1C,
+		                       VERSION_SELECT(GMSJ01(300), GMSP01(580),
+		                                      GMSE01(360)),
+		                       160, HBIND_CENTER, VBIND_TOP,
+		                       VERSION_SELECT(GMSJ01(175), GMSP01(35),
+		                                      GMSE01(145)),
 		                       300, 255);
 		if (!mHideTextBoxes) {
 			unk120[0]->draw(240, 400);
 			unk120[1]->draw(340, 400);
 		}
 	}
-
-	char trahs[0x10];
 }

@@ -133,6 +133,22 @@ s32 __CARDFormatRegionAsync(s32 chan, u16 encode, CARDCallback callback)
 	return result;
 }
 
+// UNUSED. CARDFormat with the encoding passed in.
+s32 __CARDFormatRegion(s32 chan, u16 encode)
+{
+	s32 result = __CARDFormatRegionAsync(chan, encode, __CARDSyncCallback);
+	if (result < 0) {
+		return result;
+	}
+	return __CARDSync(chan);
+}
+
+// UNUSED. The asynchronous CARDFormat.
+s32 CARDFormatAsync(s32 chan, CARDCallback callback)
+{
+	return __CARDFormatRegionAsync(chan, OSGetFontEncode(), callback);
+}
+
 s32 CARDFormat(s32 channel)
 {
 	s32 result = __CARDFormatRegionAsync(channel, OSGetFontEncode(),

@@ -26,6 +26,7 @@ public:
 	int getAnmNum() const { return mAnmNum; }
 	u16 getKeyCode(int i) { return mAnmKeyCodes[i]; }
 	const char* getName(int i) { return mAnmNames[i]; }
+	void setKeyCode(int i, u16 key) { mAnmKeyCodes[i] = key; }
 
 public:
 	/* 0x0 */ int mAnmNum;
@@ -41,31 +42,44 @@ public:
 	{
 	}
 
+	// TODO: fabricated name. The named step is what reserves the 8 bytes
+	// of low pool below the two path buffers in retail's
+	// loadAnmPtrArray frame (0x238); no caller-side spelling of
+	// `new J3DAnmBase*[mAnmNum]` produces them, and wrapping the whole
+	// `new` in a helper absorbs the step again. The step cannot move into
+	// MActorAnmDataBase::getAnmNum() because TFruitsBoat::setBckTrack
+	// reads the count through that accessor and stops matching; retail
+	// most likely read `mAnmNum` raw there.
+	int getAnmArraySize() const
+	{
+		int n = mAnmNum;
+		return n;
+	}
+
 	// TODO: fake, get rid of it
 	void loadAnmPtrArray2(const char* param_1, const char* param_2)
 	{
 		loadAnmPtrArray(param_1, param_2);
 	}
 
-void loadAnmPtrArray(const char* directory, const char* extension)
- 	{
- 		mAnimations = new J3DAnmBase*[mAnmNum];
- 		for (int i = 0; i < mAnmNum; ++i) {
- 			char buf[256];
- 			if (*mAnmNames[i] != '/') {
- 				char tmp[256];
- 				snprintf(tmp, 0xff, "%s%s", directory, mAnmNames[i]);
- 				snprintf(buf, 0xff, "%s%s", tmp, extension);
- 			} else {
- 				snprintf(buf, 0xff, "%s%s", mAnmNames[i], extension);
- 			}
- 			void* res = JKRGetResource(buf);
- 			if (res)
- 				mAnimations[i] = J3DAnmLoaderDataBase::load(res);
- 		}
+	void loadAnmPtrArray(const char* directory, const char* extension)
+	{
+		mAnimations = new J3DAnmBase*[getAnmArraySize()];
+		for (int i = 0; i < mAnmNum; ++i) {
+			char buf[256];
+			if (*mAnmNames[i] != '/') {
+				char tmp[256];
+				snprintf(tmp, 0xff, "%s%s", directory, mAnmNames[i]);
+				snprintf(buf, 0xff, "%s%s", tmp, extension);
+			} else {
+				snprintf(buf, 0xff, "%s%s", mAnmNames[i], extension);
+			}
+			void* res = JKRGetResource(buf);
+			if (res)
+				mAnimations[i] = J3DAnmLoaderDataBase::load(res);
+		}
 
-sortByFileNameRaw((void**)mAnimations);
-
+		sortByFileNameRaw((void**)mAnimations);
 	}
 
 	T* getAnmPtr(int idx) const
@@ -91,7 +105,7 @@ public:
 
 	void createSampleModelData(J3DModelData*);
 	void addFileTable(const char*);
-	inline char* getSimpleName(const char*);
+	char* getSimpleName(const char*);
 	void addFileNum(const char*);
 	void init(const char*, const char**);
 	void addIncidentalAnm(const char*, int);

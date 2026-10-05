@@ -1,10 +1,5 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Map/MapEventSink.hpp>
 #include <Map/PollutionManager.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <Map/MapStaticObject.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/ItemManager.hpp>
@@ -22,10 +17,15 @@
 #include <System/Particles.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
 #include <JSystem/JParticle/JPAResourceManager.hpp>
-#include <Jsystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and this unit's own strings (c-r35).
+#include <Map/MapCollisionEntry.hpp>
 
 u32 TMapEventSink::mCleanedDegree = 10;
 
@@ -44,9 +44,17 @@ f32 TMapEventSink::getSinkOffsetY() const
 	return unk30->getMax().y - unk30->getMin().y;
 }
 
+// Binder over the pollution singleton.
+static inline TPollutionManager* MapEventSinkPollution()
+{
+	TPollutionManager* m = gpPollution;
+	return m;
+}
+
 TPollutionObj* TMapEventSink::getPollutionObj(int i)
 {
-	return gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2);
+	TMapEventSink::Unk60Struct* e = unk60;
+	return MapEventSinkPollution()->getLayer(e[i].unk0)->getObj(e[i].unk2);
 }
 
 bool TMapEventSink::isFinishedAll() const
@@ -117,10 +125,18 @@ bool TMapEventSink::control()
 	}
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TMapEventSink::startControl (batch 127).
+static inline MActor* MapEventSinkActor(const TJointModel* p)
+{
+	MActor* actor = p->mActor;
+	return actor;
+}
+
 void TMapEventSink::startControl()
 {
 	unk18 = 2;
-	unk2C = getBuilding(getRaisingBuildingIdx());
+	unk2C = getBuilding(mRaisingBuildingIdx);
 	unk2C->alive();
 	unk30 = getBuilding(getRaisingBuildingIdx())->getJoint();
 
@@ -136,13 +152,14 @@ void TMapEventSink::startControl()
 	info.mTranslate.y -= dVar4;
 	unk30->setTransformInfo(info);
 
-	unk1C->mActor->mModel->calc();
+	MapEventSinkActor(unk1C)->mModel->calc();
 	int iVar3 = (unk40 - unk44) - unk48;
 	unk3C     = dVar4 / iVar3;
 	unk4C     = unk40;
 
-	unk5C[mRaisingBuildingIdx]->moveTrans(JGeometry::TVec3<f32>(
-	    info.mTranslate.x, info.mTranslate.y, info.mTranslate.z));
+	unk5C[mRaisingBuildingIdx]->setUpTrans(
+	    JGeometry::TVec3<f32>(info.mTranslate.x, info.mTranslate.y,
+	                          info.mTranslate.z));
 }
 
 void TMapEventSink::initBuilding(int index, JSUMemoryInputStream& stream)
@@ -181,10 +198,10 @@ void TMapEventSink::load(JSUMemoryInputStream& stream)
 		initBuilding(i, stream);
 	}
 
-	if (gpMarDirector->mMap == 0) {
+	if (SMSGetMarDirector()->getCurrentMap() == 0) {
 		mCleanedDegree = 30;
 		unk38          = 200.0f;
-	} else if (gpMarDirector->mMap == 2) {
+	} else if (SMSGetMarDirector()->getCurrentMap() == 2) {
 		mCleanedDegree = 30;
 	}
 }
@@ -214,9 +231,6 @@ TMapEventSink::TMapEventSink(const char* name)
 
 bool TMapEventSinkInPollution::watch()
 {
-
-	
-	
 	for (int i = 0; i < mBuildingNum; ++i) {
 		if (!mIsBuildingRecovered[i] && getPollutionObj(i)->isCleaned()) {
 			mRaisingBuildingIdx = i;
@@ -228,53 +242,64 @@ bool TMapEventSinkInPollution::watch()
 
 void TMapEventSinkInPollution::initBuriedBuilding()
 {
-
-	
-	
 	for (int i = 0; i < mBuildingNum; ++i)
 		if (getPollutionObj(i)->isCleaned())
 			makeBuildingRecovered(i);
 }
 
-#pragma dont_inline on
+// Two named steps put this body at cost 10: TMapEventSinkInPollutionReset::loadAfter
+// still expands it at depth 1, while TMapEventSinkBianco::loadAfter reaches it at
+// depth 2 through the Reset body and calls it, as retail does.
+// TODO: frame 0x18 short (0xa0 vs 0xb8). A binder on the first
+// getPollutionObj(i) lands it exactly but pushes the accessors in the Reset
+// expansion to depth 5 (called out of line); raw gpPollution, SMSGetPollution(),
+// a pointer counter, raw unk1EC and a named counter address are 0 or negative.
 void TMapEventSinkInPollution::loadAfter()
 {
 	TMapEventSink::loadAfter();
 	for (int i = 0; i < mBuildingNum; ++i) {
-		gpPollution->getCounterObj().registerPollutionObj(
-		    getPollutionObj(i), &getPollutionObj(i)->mCounter);
+		TPollutionManager* pollution  = MapEventSinkPollution();
+		TPollutionCounterObj& counter = pollution->getCounterObj();
+		counter.registerPollutionObj(getPollutionObj(i),
+		                             &getPollutionObj(i)->mCounter);
 	}
 }
-#pragma dont_inline off
 
 TPollutionObj* TMapEventSinkInPollutionReset::getResetPollutionObj(int i)
 {
-	return gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2 + 1);
+	TMapEventSink::Unk60Struct* e = unk60;
+	return MapEventSinkPollution()->getLayer(e[i].unk0)->getObj(e[i].unk2 + 1);
 }
 
 void TMapEventSinkInPollutionReset::makeBuildingRecovered(int i)
 {
-
-	
-	
 	TMapEventSinkInPollution::makeBuildingRecovered(i);
 	getPollutionObj(i)->kill();
 	getResetPollutionObj(i)->alive();
 	getResetPollutionObj(i)->updateDepthMap();
 }
 
+// TODO: frame 0x38 short (0x120 vs 0x158), 0x18 of it the InPollution
+// expansion's; binders or forks on either loop call push this body over the
+// inline budget in TMapEventSinkBianco::loadAfter.
 void TMapEventSinkInPollutionReset::loadAfter()
 {
-
-	
-	
 	TMapEventSinkInPollution::loadAfter();
 	for (int i = 0; i < mBuildingNum; ++i) {
-		getPollutionObj(i)->alive();
-		getResetPollutionObj(i)->kill();
+		TPollutionObj* obj = getPollutionObj(i);
+		obj->alive();
+		TPollutionObj* reset = getResetPollutionObj(i);
+		reset->kill();
 	}
 }
 
+// TODO: `this` and the string-pool base are swapped (r31/r30, the known-open
+// this-vs-pool-base class) and the frame is 0x20 short (the buffer sits 0x1c
+// low). A block-scoped buffer, named search results and calling
+// TMapEventSink::finishControl directly are inert or worse. The frame is
+// exact with a TU-local binder returning a named search<T> result at both
+// sites (+12 each) plus SMSGetPollution() in the stopDecay loop (+8), 97.74,
+// but that binder is a bare forwarder, so it is not used.
 void TMapEventSinkBianco::finishControl()
 {
 	char buffer[64];
@@ -282,16 +307,14 @@ void TMapEventSinkBianco::finishControl()
 		TMapObjBase::setJointTransY(unk64, 0.0f);
 		for (int i = 0; i < 6; ++i) {
 			snprintf(buffer, 0x40, "バナナツリー（スケール） %d", i);
-			static_cast<TLiveActor*>(JDrama::TNameRefGen::search(buffer))
-			    ->receiveMessage(gpModelWaterManager->unk2514[0],
-			                     HIT_MESSAGE_SPRAYED_BY_WATER);
+			JDrama::TNameRefGen::search<TLiveActor>(buffer)->receiveMessage(
+			    gpModelWaterManager->unk2514[0], HIT_MESSAGE_SPRAYED_BY_WATER);
 		}
 
 		for (int i = 0; i < 7; ++i) {
 			snprintf(buffer, 0x40, "落書き内%02d", i);
-			static_cast<TLiveActor*>(JDrama::TNameRefGen::search(buffer))
-			    ->receiveMessage(gpModelWaterManager->unk2514[0],
-			                     HIT_MESSAGE_SPRAYED_BY_WATER);
+			JDrama::TNameRefGen::search<TLiveActor>(buffer)->receiveMessage(
+			    gpModelWaterManager->unk2514[0], HIT_MESSAGE_SPRAYED_BY_WATER);
 		}
 	}
 
@@ -301,22 +324,35 @@ void TMapEventSinkBianco::finishControl()
 		gpPollution->getLayer(i)->stopDecay();
 }
 
+// Binder over the bell joint.
+static inline J3DJoint* MapEventSinkBiancoJoint(const TMapEventSinkBianco* p)
+{
+	J3DJoint* joint = p->unk64;
+	return joint;
+}
+
 void TMapEventSinkBianco::rising()
 {
-
-	
-	
 	TMapEventSinkInPollutionReset::rising();
-	if (mRaisingBuildingIdx == 0)
-		TMapObjBase::moveJoint(unk64, 0.0f, unk3C, 0.0f);
+	if (getRaisingBuildingIdx() == 0)
+		TMapObjBase::moveJoint(MapEventSinkBiancoJoint(this), 0.0f, unk3C,
+		                       0.0f);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TMapEventSinkBianco::control (batch 127).
+static inline JGeometry::TVec3<f32>* MapEventSinkUnk50(const TMapEventSinkBianco* p)
+{
+	JGeometry::TVec3<f32>* v50 = p->unk50;
+	return v50;
 }
 
 bool TMapEventSinkBianco::control()
 {
 	if (mRaisingBuildingIdx == 0 && unk4C == unk7C) {
 		gpItemManager->makeShineAppearWithTime(
-		    "シャイン（坂上げ用）", 300, unk50[mRaisingBuildingIdx].x,
-		    unk50[mRaisingBuildingIdx].y, unk50[mRaisingBuildingIdx].z, 0, 0x3C,
+		    "シャイン（坂上げ用）", 300, MapEventSinkUnk50(this)[mRaisingBuildingIdx].x,
+		    MapEventSinkUnk50(this)[mRaisingBuildingIdx].y, MapEventSinkUnk50(this)[mRaisingBuildingIdx].z, 0, 0x3C,
 		    0x3C);
 	}
 	return TMapEventSinkInPollutionReset::control();
@@ -324,7 +360,7 @@ bool TMapEventSinkBianco::control()
 
 void TMapEventSinkBianco::startControl()
 {
-	switch (mRaisingBuildingIdx) {
+	switch (getRaisingBuildingIdx()) {
 	case 0: {
 		unk40 = 1320;
 		unk44 = 120;
@@ -354,11 +390,12 @@ void TMapEventSinkBianco::startControl()
 		SMS_ShowJoint(unk64->getMesh(), true);
 		SMS_MarioWarpRequest(unk6C, unk78);
 		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0,
-		                                  nullptr, 0);
+		                                   nullptr, 0);
 		unk50[mRaisingBuildingIdx].set(7170.0f, 3675.0f, -185.0f);
-		SMSGetMarDirector()->fireStartDemoCamera(
-		    "bianco0_event0", nullptr, -1, 0.0f, true, nullptr, 0, nullptr,
-		    JDrama::TFlagT<u16>(0));
+		TMarDirector* director = SMSGetMarDirector();
+		director->fireStartDemoCamera("bianco0_event0", nullptr, -1, 0.0f,
+		                              true, nullptr, 0, nullptr,
+		                              JDrama::TFlagT<u16>(0));
 	}
 }
 
@@ -374,9 +411,7 @@ bool TMapEventSinkBianco::watch()
 
 	for (int i = 1; i < mBuildingNum; ++i) {
 		if (!mIsBuildingRecovered[i]) {
-			if (gpPollution->getLayer(unk60[i].unk0)
-			        ->getObj(unk60[i].unk2)
-			        ->isCleaned()) {
+			if (getPollutionObj(i)->isCleaned()) {
 				mRaisingBuildingIdx = i;
 				return true;
 			}
@@ -388,27 +423,15 @@ bool TMapEventSinkBianco::watch()
 
 void TMapEventSinkBianco::loadAfter()
 {
+	TMapEventSinkInPollutionReset::loadAfter();
 
-	
-	
-	TMapEventSinkInPollution::loadAfter();
-	// The target has a single loop issuing two virtual calls (vtable +0x0c and
-	// +0x18). The registerPollutionObj pass belongs to the base loadAfter and
-	// must not be repeated here.
-	for (int i = 0; i < mBuildingNum; ++i) {
-		gpPollution->getLayer(unk60[i].unk0)->getObj(unk60[i].unk2)->alive();
-		gpPollution->getLayer(unk60[i].unk0)
-		    ->getObj(unk60[i].unk2 + 1)
-		    ->kill();
-	}
-
-	TMapStaticObj* ref
-	    = static_cast<TMapStaticObj*>(JDrama::TNameRefGen::search("鏡内地形"));
-	unk64 = ref->getModelData()->getJointNodePointer(2);
-	TMapObjBase::moveJoint(unk64, 0.0f, -1700.0f, 0.0f);
-	SMS_ShowJoint(unk64->getMesh(), false);
-	mGateKeeper = static_cast<TGateKeeperBase*>(
-	    JDrama::TNameRefGen::search("ゲートキーパー"));
+	TMapStaticObj* ref = JDrama::TNameRefGen::search<TMapStaticObj>("鏡内地形");
+	unk64              = ref->getModelData()->getJointNodePointer(2);
+	TMapObjBase::moveJoint(MapEventSinkBiancoJoint(this), 0.0f, -1700.0f, 0.0f);
+	SMS_ShowJoint(MapEventSinkBiancoJoint(this)->getMesh(), false);
+	TGateKeeperBase* keeper
+	    = JDrama::TNameRefGen::search<TGateKeeperBase>("ゲートキーパー");
+	mGateKeeper = keeper;
 }
 
 void TMapEventSinkBianco::load(JSUMemoryInputStream& stream)
@@ -426,10 +449,20 @@ void TMapEventSinkBianco::load(JSUMemoryInputStream& stream)
 	                 MAP_MAP_MS_OBJUP_SLOPE_B);
 }
 
+// Binder over the raising building's placement.
+static inline JGeometry::TVec3<f32>*
+MapEventSinkRaisingPos(const TMapEventSinkShadowMario* p)
+{
+	int idx                    = p->mRaisingBuildingIdx;
+	JDrama::TPlacement* obj    = p->unk64[idx];
+	JGeometry::TVec3<f32>* pos = &obj->mPosition;
+	return pos;
+}
+
 void TMapEventSinkShadowMario::rising()
 {
 	TMapEventSink::rising();
-	unk64[mRaisingBuildingIdx]->mPosition.y += unk3C;
+	MapEventSinkRaisingPos(this)->y += unk3C;
 }
 
 void TMapEventSinkShadowMario::raiseBuilding(int i)
@@ -438,15 +471,18 @@ void TMapEventSinkShadowMario::raiseBuilding(int i)
 	startControl();
 }
 
+// TODO: frame exact; retail copies the search result out of r3
+// (`addi r0, r3, 0; addi r3, r27, 0`) before the store so `this` is set up for
+// the getBuilding vcall ahead of `i`. Inert: a named TPlacement result, search2
+// with a cast, binding/forwarding search wrappers, a const joint, a
+// whole-body helper, height helpers.
 void TMapEventSinkShadowMario::loadAfter()
 {
 	TMapEventSink::loadAfter();
 	for (int i = 0; i < mBuildingNum; ++i) {
-		unk64[i] = static_cast<JDrama::TPlacement*>(
-		    JDrama::TNameRefGen::search(unk68[i]));
-		TJointObj* obj = getBuilding(i);
-		unk64[i]->mPosition.y
-		    -= obj->getJoint()->getMax().y - obj->getJoint()->getMin().y;
+		unk64[i] = JDrama::TNameRefGen::search<JDrama::TPlacement>(unk68[i]);
+		J3DJoint* joint = getBuilding(i)->getJoint();
+		unk64[i]->mPosition.y -= joint->getMax().y - joint->getMin().y;
 	}
 }
 

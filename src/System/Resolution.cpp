@@ -25,7 +25,7 @@ u16 SMSGetGameVideoHeight(u32 tvFormat)
 u16 SMSGetGameVideoHeight()
 {
 	u16 ret = 448;
-	switch (fmt) {
+	switch (VIGetTvFormat()) {
 	case VI_MPAL:
 	case VI_NTSC:
 	case VI_EURGB60:

@@ -1,103 +1,76 @@
 #ifndef ENEMY_BOSS_HANACHAN_HPP
 #define ENEMY_BOSS_HANACHAN_HPP
 
+#include <Strategic/Spine.hpp>
+#include <Strategic/Nerve.hpp>
+#include <Strategic/LiveActor.hpp>
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
-#include <JSystem/JGeometry/JGVec3.hpp>
 #include <Player/ModelWaterManager.hpp>
-#include <Strategic/Nerve.hpp>
 
-class TLiveActor;
-class MActor;
+class TBossHanachan;
 class TIdxGroupObj;
 class TMapCollisionMove;
-class TBossHanachan;
+class TNpcInbetween;
+class JUTNameTab;
+class TBossHanachanPartsBody;
+class TBossHanachanPartsHead;
 class TBossHanachanCommonSaveParams;
 class TBossHanachanChangeSaveParams;
+class TSphereLink;
 
-DECLARE_NERVE(TNerveSBH_Fall, TLiveActor);
-DECLARE_NERVE(TNerveSBH_SleepContinue, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanDead, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanSnort, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanDamage, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanGetUp, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanDown, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanTumble, TLiveActor);
-DECLARE_NERVE(TNerveBossHanachanGraphWander, TLiveActor);
+extern const char* cSandPillarModelName;
+extern const char* cHitPoint1_RailName;
+extern const char* cHitPoint2_RailName;
+extern const char* cSandTextureName;
+extern const char* cDummyTextureName;
 
-// TODO: enumerand names are unknown
-enum EnumBossHanachanAnmKind {
-	BH_ANM_KIND_UNK0,
-	BH_ANM_KIND_UNK1,
-	BH_ANM_KIND_UNK2,
-	BH_ANM_KIND_UNK3,
-	BH_ANM_KIND_UNK4,
-	BH_ANM_KIND_UNK5,
-	BH_ANM_KIND_UNK6,
-	BH_ANM_KIND_UNK7,
-	BH_ANM_KIND_UNK8,
-	BH_ANM_KIND_UNK9,
-	BH_ANM_KIND_UNKA,
-	BH_ANM_KIND_UNKB,
-	BH_ANM_KIND_UNKC,
-	BH_ANM_KIND_UNKD,
-	BH_ANM_KIND_UNKE,
-	BH_ANM_KIND_UNKF,
-	BH_ANM_KIND_UNK10,
-	BH_ANM_KIND_UNK11,
-	BH_ANM_KIND_UNK12,
+extern const char* cMapCollisionJointName;
+extern const char* cBodyMapCollisionFileName;
+extern const char* cHeadMapCollisionFileName;
+extern const char* cLegJointName_L3;
+extern const char* cLegJointName_R3;
+extern const char* cNoseHallJointName_L;
+extern const char* cNoseHallJointName_R;
+
+void CalcMtxPtrFromJointName(JUTNameTab*, const char*, J3DModel*, MtxPtr*);
+
+// TODO: recover descriptive names for the animation states.
+enum EnumBossHanachanNerveAnm {
+	BOSS_HANACHAN_NERVE_ANM_UNK0 = 0,
+	BOSS_HANACHAN_NERVE_ANM_UNK1 = 1,
+	BOSS_HANACHAN_NERVE_ANM_UNK2 = 2,
+	BOSS_HANACHAN_NERVE_ANM_UNK3 = 3,
+	BOSS_HANACHAN_NERVE_ANM_UNK4 = 4,
+	BOSS_HANACHAN_NERVE_ANM_UNK5 = 5,
 };
 
-// TODO: enumerand names are guesses based on the nerve that uses them
-enum EnumBossHanachanNerveAnm {
-	BH_NERVE_ANM_TUMBLE,
-	BH_NERVE_ANM_DOWN,
-	BH_NERVE_ANM_GET_UP,
-	BH_NERVE_ANM_DAMAGE,
-	BH_NERVE_ANM_SNORT,
-	BH_NERVE_ANM_DEAD,
+enum EnumBossHanachanAnmKind {
+	BOSS_HANACHAN_ANM_UNK0 = 0,
+	BOSS_HANACHAN_ANM_UNK1 = 1,
+	BOSS_HANACHAN_ANM_UNK2 = 2,
+	BOSS_HANACHAN_ANM_UNK3 = 3,
+	BOSS_HANACHAN_ANM_UNK4 = 4,
+	BOSS_HANACHAN_ANM_UNK5 = 5,
+	BOSS_HANACHAN_ANM_UNK6 = 6,
+	BOSS_HANACHAN_ANM_UNK7 = 7,
+	BOSS_HANACHAN_ANM_UNK8 = 8,
+	BOSS_HANACHAN_ANM_UNK9 = 9,
+	BOSS_HANACHAN_ANM_UNK10 = 10,
+	BOSS_HANACHAN_ANM_UNK11 = 11,
+	BOSS_HANACHAN_ANM_UNK12 = 12,
+	BOSS_HANACHAN_ANM_UNK13 = 13,
+	BOSS_HANACHAN_ANM_UNK14 = 14,
+	BOSS_HANACHAN_ANM_UNK15 = 15,
+	BOSS_HANACHAN_ANM_UNK16 = 16,
+	BOSS_HANACHAN_ANM_UNK17 = 17,
+	BOSS_HANACHAN_ANM_UNK18 = 18,
 };
 
 enum EnumBossHanachanStopMotionBlendOnOff {
-	BH_STOP_MOTION_BLEND_OFF,
-	BH_STOP_MOTION_BLEND_ON,
+	BOSS_HANACHAN_STOP_MOTION_BLEND_OFF = 0,
+	BOSS_HANACHAN_STOP_MOTION_BLEND_ON = 1,
 };
-
-class TSpherePoint {
-public:
-	TSpherePoint() { }
-
-public:
-	/* 0x0 */ JGeometry::TVec3<f32> unk0;
-	/* 0xC */ JGeometry::TVec3<f32> unkC;
-	/* 0x18 */ JGeometry::TVec3<f32> unk18;
-	/* 0x24 */ f32 unk24;
-	/* 0x28 */ f32 unk28;
-};
-
-class TSphereLink {
-public:
-	TSphereLink(u16, const JGeometry::TVec3<f32>&, f32, f32, f32, f32, f32,
-	            f32);
-
-	BOOL setDegreeZAndRevisionPosXZ(int, f32);
-	void moveHead(const JGeometry::TVec3<f32>&);
-	void execMapCollision_(JGeometry::TVec3<f32>*);
-
-public:
-	/* 0x0 */ u16 mPointNum;
-	/* 0x4 */ TSpherePoint* mPoints;
-	/* 0x8 */ f32 unk8;
-	/* 0xC */ f32 unkC;
-	/* 0x10 */ f32 unk10;
-	/* 0x14 */ f32 unk14;
-	/* 0x18 */ f32 unk18;
-};
-
-void BHSCalcRevisionDistXZByRotateZ(f32, f32, f32, f32*, f32*);
-f32 BHSCalcCentrifugalForce(const JGeometry::TVec3<f32>&,
-                            const JGeometry::TVec3<f32>&,
-                            const JGeometry::TVec3<f32>&, f32);
 
 class TFootHitActor : public TWaterHitActor {
 public:
@@ -106,58 +79,22 @@ public:
 	{
 	}
 	virtual ~TFootHitActor() { }
-
-public:
-	/* 0x6C */ MtxPtr unk6C;
-};
-
-// fabricated
-// TODO: this 0x2C sized object hanging off of every part has no symbols of
-// its own, the name is made up
-struct TBHNonstopMotionBlend {
-	TBHNonstopMotionBlend(int frames)
-	    : unk0(1)
-	    , unk4(frames)
-	    , unk8(0)
-	    , unkC(0.0f)
-	    , unk10(0.0f)
-	    , unk14(0.0f)
-	    , unk18(0.0f)
-	    , unk1C(0.0f)
-	    , unk20(0.0f)
-	    , unk24(0)
-	    , unk28(0.0f)
-	{
-	}
-
-	/* 0x0 */ int unk0;
-	/* 0x4 */ int unk4;
-	/* 0x8 */ int unk8;
-	/* 0xC */ f32 unkC;
-	/* 0x10 */ f32 unk10;
-	/* 0x14 */ f32 unk14;
-	/* 0x18 */ f32 unk18;
-	/* 0x1C */ f32 unk1C;
-	/* 0x20 */ f32 unk20;
-	/* 0x24 */ int unk24;
-	/* 0x28 */ f32 unk28;
+	/* 0x6C */ MtxPtr mJointMtx;
 };
 
 class TBossHanachanPartsBase : public TLiveActor {
 public:
 	TBossHanachanPartsBase(TBossHanachan*, u32, int, const char*);
 	virtual ~TBossHanachanPartsBase() { }
-
 	virtual const char** getBasNameTable() const;
-	virtual BOOL setAnm_(EnumBossHanachanAnmKind,
-	                     EnumBossHanachanStopMotionBlendOnOff)
-	    = 0;
+	virtual bool setAnm_(EnumBossHanachanAnmKind,
+	                     EnumBossHanachanStopMotionBlendOnOff) = 0;
 
 	void considerSetAnm_(EnumBossHanachanNerveAnm);
 	bool isReactToTrampleOrHipDrop_() const;
 	void calcRotateZWhenGetUp_();
 	bool isMarioOn_() const;
-	TLiveActor* getSandActor_() const;
+	const TLiveActor* getSandActor_() const;
 	void copyFrameFromOldAnmToNewAnm_();
 	bool isCurBckAlreadyEnd_() const;
 	void setDamageFog_(JDrama::TGraphics*);
@@ -170,76 +107,164 @@ public:
 	void initMapCollisionAndHitActor_(TIdxGroupObj*);
 
 public:
-	/* 0xF4 */ EnumBossHanachanAnmKind mCurAnm;
-	/* 0xF8 */ EnumBossHanachanAnmKind mOldAnm;
-	/* 0xFC */ TBossHanachan* mOwner;
-	/* 0x100 */ TWaterHitActor* mHitActor;
-	/* 0x104 */ TMapCollisionMove* mMapCollision;
-	/* 0x108 */ MtxPtr mMapCollisionJointMtx;
-	/* 0x10C */ int unk10C;
-	/* 0x110 */ TBHNonstopMotionBlend* mNonstopMotionBlend;
-};
-
-class TBossHanachanPartsHead : public TBossHanachanPartsBase {
-public:
-	TBossHanachanPartsHead(TBossHanachan*, const char*);
-	virtual ~TBossHanachanPartsHead() { }
-
-	virtual BOOL receiveMessage(THitActor*, u32);
-	virtual BOOL setAnm_(EnumBossHanachanAnmKind,
-	                     EnumBossHanachanStopMotionBlendOnOff);
-
-public:
-	/* 0x114 */ MtxPtr mNoseHallMtxL;
-	/* 0x118 */ MtxPtr mNoseHallMtxR;
+	/* 0xF4 */ EnumBossHanachanAnmKind mCurrentAnm;
+	/* 0xF8 */ EnumBossHanachanAnmKind mPreviousAnm;
+	/* 0xFC */ TBossHanachan* unkFC;
+	/* 0x100 */ TWaterHitActor* unk100;
+	/* 0x104 */ TMapCollisionMove* unk104;
+	/* 0x108 */ MtxPtr unk108;
+	/* 0x10C */ s32 unk10C;
+	/* 0x110 */ TNpcInbetween* mInbetween;
 };
 
 class TBossHanachanPartsBody : public TBossHanachanPartsBase {
 public:
 	TBossHanachanPartsBody(TBossHanachan*, const char*);
 	virtual ~TBossHanachanPartsBody() { }
-
 	virtual BOOL receiveMessage(THitActor*, u32);
-	virtual BOOL setAnm_(EnumBossHanachanAnmKind,
+	virtual bool setAnm_(EnumBossHanachanAnmKind,
 	                     EnumBossHanachanStopMotionBlendOnOff);
-
 	void initFootHitActor_(TIdxGroupObj*);
 
 public:
-	/* 0x114 */ int mBodyIndex;
-	/* 0x118 */ TFootHitActor* mFootHitActor[2];
-	// The 0x124/0x130 pair are swapped with a three-word copy each other
-	// in TBossHanachan::perform, and 0x124 then receives a three-word copy
-	// of mPosition, so they are TVec3<f32>s and not part of a bigger one
-	// starting at 0x120. 0x120 is only ever touched as a bare scalar.
+	/* 0x114 */ s32 unk114;
+	/* 0x118 */ TFootHitActor* mFeet[2];
 	/* 0x120 */ f32 unk120;
-	/* 0x124 */ JGeometry::TVec3<f32> unk124;
-	/* 0x130 */ JGeometry::TVec3<f32> unk130;
-	/* 0x13C */ f32 unk13C;
-	/* 0x140 */ f32 unk140;
+	/* 0x124 */ JGeometry::TVec3<f32> mPreviousPosition;
+	/* 0x130 */ JGeometry::TVec3<f32> mOlderPosition;
+	/* 0x13C */ f32 mPreviousRoll;
+	/* 0x140 */ f32 mOlderRoll;
 	/* 0x144 */ f32 unk144;
 	/* 0x148 */ f32 unk148;
-	// indexed by foot in TBossHanachan::emitParticle_, so this is an array:
-	// [0] is the L3 leg joint, [1] the R3 one (same order as mFootHitActor)
 	/* 0x14C */ MtxPtr mLegMtx[2];
 	/* 0x154 */ JGeometry::TVec3<f32> unk154;
 };
 
+class TBossHanachanPartsHead : public TBossHanachanPartsBase {
+public:
+	TBossHanachanPartsHead(TBossHanachan*, const char*);
+	virtual ~TBossHanachanPartsHead() { }
+	virtual BOOL receiveMessage(THitActor*, u32);
+	virtual bool setAnm_(EnumBossHanachanAnmKind,
+	                     EnumBossHanachanStopMotionBlendOnOff);
+
+public:
+	/* 0x114 */ MtxPtr mLeftNoseMtx;
+	/* 0x118 */ MtxPtr mRightNoseMtx;
+};
+
+class TBossHanachanCommonSaveParams : public TParams {
+public:
+	TBossHanachanCommonSaveParams(const char*);
+
+	/* 0x8 */ TParamRT<f32> mSLViewClipFar;
+	/* 0x1C */ TParamRT<f32> mSLViewClipRadius;
+	/* 0x30 */ TParamRT<f32> mSLHeadHitOffsetY;
+	/* 0x44 */ TParamRT<f32> mSLHeadAttackRadius;
+	/* 0x58 */ TParamRT<f32> mSLHeadAttackHeight;
+	/* 0x6C */ TParamRT<f32> mSLHeadDamageRadius;
+	/* 0x80 */ TParamRT<f32> mSLHeadDamageHeight;
+	/* 0x94 */ TParamRT<f32> mSLBodyHitOffsetY;
+	/* 0xA8 */ TParamRT<f32> mSLBodyAttackRadius;
+	/* 0xBC */ TParamRT<f32> mSLBodyAttackHeight;
+	/* 0xD0 */ TParamRT<f32> mSLBodyDamageRadius;
+	/* 0xE4 */ TParamRT<f32> mSLBodyDamageHeight;
+	/* 0xF8 */ TParamRT<f32> mSLFootHitOffsetY;
+	/* 0x10C */ TParamRT<f32> mSLFootAttackRadius;
+	/* 0x120 */ TParamRT<f32> mSLFootAttackHeight;
+	/* 0x134 */ TParamRT<f32> mSLFootDamageRadius;
+	/* 0x148 */ TParamRT<f32> mSLFootDamageHeight;
+	/* 0x15C */ TParamRT<f32> mSLHeadLength;
+	/* 0x170 */ TParamRT<f32> mSLBodyLength;
+	/* 0x184 */ TParamRT<f32> mSLHeadShadowSize;
+	/* 0x198 */ TParamRT<f32> mSLBodyShadowSize;
+	/* 0x1AC */ TParamRT<f32> mSLHeadPlusYByRotateZ;
+	/* 0x1C0 */ TParamRT<f32> mSLBodyPlusYByRotateZ;
+	/* 0x1D4 */ TParamRT<f32> mSLRecoverSearchDist;
+	/* 0x1E8 */ TParamRT<f32> mSLRecoverSearchDegree;
+	/* 0x1FC */ TParamRT<f32> mSLShineAppearOffsetY;
+	/* 0x210 */ TParamRT<f32> mSLCamShakeZeroDist;
+	/* 0x224 */ TParamRT<f32> mSLCamShakeMaxDist;
+	/* 0x238 */ TParamRT<s16> mSLMotionBlendFrames;
+};
+
+class TBossHanachanChangeSaveParams : public TParams {
+public:
+	TBossHanachanChangeSaveParams(const char*);
+
+	/* 0x8 */ TParamRT<f32> mSLWalkBckRateMagnif;
+	/* 0x1C */ TParamRT<f32> mSLWalkBckRateMin;
+	/* 0x30 */ TParamRT<f32> mSLWalkAnmMarchSpeed;
+	/* 0x44 */ TParamRT<f32> mSLRunAnmMarchSpeed;
+	/* 0x58 */ TParamRT<f32> mSLMaxMarchSpeed;
+	/* 0x6C */ TParamRT<f32> mSLMarchAccel;
+	/* 0x80 */ TParamRT<f32> mSLMarchDecrease;
+	/* 0x94 */ TParamRT<f32> mSLWalkTurnSpeed;
+	/* 0xA8 */ TParamRT<f32> mSLFallDecideRotateZ;
+	/* 0xBC */ TParamRT<f32> mSLWaveFallDownSpeed;
+	/* 0xD0 */ TParamRT<f32> mSLFallDecideMinSpeed;
+	/* 0xE4 */ TParamRT<f32> mSLSandSlopeForce;
+	/* 0xF8 */ TParamRT<f32> mSLMaxRotateZNotSand;
+	/* 0x10C */ TParamRT<f32> mSLRotateZLeanSpeed;
+	/* 0x120 */ TParamRT<f32> mSLRotateZRestorationSpeed;
+	/* 0x134 */ TParamRT<f32> mSLDiffMaxRotateZ;
+	/* 0x148 */ TParamRT<f32> mSLCentrifugalForce;
+	/* 0x15C */ TParamRT<f32> mSLCentrifugalSpeed;
+	/* 0x170 */ TParamRT<f32> mSLWaveVelocity;
+	/* 0x184 */ TParamRT<f32> mSLWaveDecrease;
+	/* 0x198 */ TParamRT<s16> mSLDownFrames;
+	/* 0x1AC */ TParamRT<s16> mSLDamageFrames;
+	/* 0x1C0 */ TParamRT<s16> mSLNotFallDownFrames;
+	/* 0x1D4 */ TParamRT<u8> mSLNormalBckFrameDiff;
+	/* 0x1E8 */ TParamRT<u8> mSLGetUpFrameDiff;
+	/* 0x1FC */ TParamRT<u8> mSLSnortFrameDiff;
+	/* 0x210 */ TParamRT<u8> mSLDamageFrameDiff;
+	/* 0x224 */ TParamRT<u8> mSLDeadFrameDiff;
+	/* 0x238 */ TParamRT<f32> mSLParticleProbability;
+	/* 0x24C */ TParamRT<f32> mSLThrowTotalPower;
+	/* 0x260 */ TParamRT<f32> mSLThrowSpeedMin;
+	/* 0x274 */ TParamRT<f32> mSLThrowSpeedMax;
+	/* 0x288 */ TParamRT<f32> mSLThrowMoveDirPower;
+	/* 0x29C */ TParamRT<f32> mSLThrowVecY;
+
+	// Fabricated per-field unwrappers. Their inline level is worth +24 of
+	// frame in TBossHanachan::changeAnmRateAndFrameUpdate_ over a raw
+	// `.get()`, which is how the set was chosen; mSLWalkBckRateMagnif and
+	// mSLWalkBckRateMin deliberately have none, because wrapping their three
+	// sites swaps the magnif/min float registers there.
+	f32 getSLWalkAnmMarchSpeed() const { return mSLWalkAnmMarchSpeed.get(); }
+	f32 getSLRunAnmMarchSpeed() const { return mSLRunAnmMarchSpeed.get(); }
+	u8 getSLNormalBckFrameDiff() const { return mSLNormalBckFrameDiff.get(); }
+	u8 getSLGetUpFrameDiff() const { return mSLGetUpFrameDiff.get(); }
+	u8 getSLSnortFrameDiff() const { return mSLSnortFrameDiff.get(); }
+	u8 getSLDamageFrameDiff() const { return mSLDamageFrameDiff.get(); }
+	u8 getSLDeadFrameDiff() const { return mSLDeadFrameDiff.get(); }
+};
+
+class TBossHanachanManager : public TEnemyManager {
+public:
+	TBossHanachanManager(const char*);
+	virtual ~TBossHanachanManager() { }
+	virtual void loadAfter();
+	virtual void createModelData();
+	virtual void clipEnemies(JDrama::TGraphics*);
+	virtual BOOL hasMapCollision() const;
+
+public:
+	/* 0x54 */ TBossHanachanCommonSaveParams* mCommonParams;
+	/* 0x58 */ TBossHanachanChangeSaveParams* mChangeParams[3];
+};
+
 class TBossHanachan : public TSpineEnemy {
 public:
-	TBossHanachan(const char* name = "ボスハナチャン");
+	TBossHanachan(const char*);
 	virtual ~TBossHanachan() { }
-
-	// TODO: kill() is declared first so that it is the key function and the
-	// vtable (+ inline dtor) gets emitted in BossHanachanMain.cpp while
-	// perform() is not decompiled yet. All of these are overrides, so the
-	// order does not affect the vtable layout.
-	virtual void kill();
-	virtual BOOL hasMapCollision() const;
 	virtual void perform(u32, JDrama::TGraphics*);
 	virtual void init(TLiveManager*);
 	virtual void bind();
 	virtual void moveObject();
+	virtual void kill();
+	virtual BOOL hasMapCollision() const;
 
 	void removeAllMapCollision();
 	void execDamage();
@@ -254,7 +279,7 @@ public:
 	void execHeadCalcAnim_();
 	void throwMario_(THitActor*);
 	void setRandomWeakBodyIndex();
-
+	s32 getWeakBodyIndex() const { return mWeakBodyIndex; }
 	void changeAnmRateAndFrameUpdate_();
 	void copyFrameFromOldAnmToNewAnm_();
 	void setHeadAndBodyNonstopMotionBlendRatio_(f32);
@@ -267,11 +292,31 @@ public:
 	void setAnmTimerWhenSnort();
 	void setAnmTimerWhenGetUp();
 	void setTumbleAnm(EnumBossHanachanStopMotionBlendOnOff);
-	// The target build never emits an out-of-line copy of this (marioEU.MAP
-	// lists the symbol as UNUSED), so it is declared inline here.
-	inline void setTumbleBckRate_(TBossHanachanPartsBase*);
+	void setTumbleBckRate_(TBossHanachanPartsBase*);
 	void setHeadAndBodyAnm(EnumBossHanachanAnmKind,
 	                       EnumBossHanachanStopMotionBlendOnOff);
+	// fabricated, and the inline level is the point of it: retail calls
+	// TSpineBase<TLiveActor>::getLatestNerve() (weak, 0x1c) from both hit
+	// handlers and from setDamageFog_, while a direct
+	// unkFC->mSpine->getLatestNerve() expands it. TBossGesso and TBossWanwan
+	// carry the same one-line forwarder.
+	const TNerveBase<TLiveActor>* getLatestNerve() const
+	{
+		return mSpine->getLatestNerve();
+	}
+
+	// Fabricated accessors. Each is an inline level that
+	// changeAnmRateAndFrameUpdate_ needs and that a raw member read does not
+	// supply (measured from frame 0xc0 towards retail's 0x118:
+	// getChangeParams() +32 over its twelve sites, getHead() +24,
+	// getSpine() +8, getMarchSpeed() +8 at the two march-speed compares).
+	// TTinKoopa already carries exactly this getSpine().
+	TBossHanachanChangeSaveParams* getChangeParams() const
+	{
+		return mChangeParams;
+	}
+	TBossHanachanPartsHead* getHead() const { return mHead; }
+	f32 getMarchSpeed() const { return mMarchSpeed; }
 
 	void emitCamShake_();
 	void emitOneTimeSandPillar_(TBossHanachanPartsBody*);
@@ -279,35 +324,29 @@ public:
 	static void staticLoadParticle();
 
 public:
-	/* 0x150 */ TBossHanachanPartsBody* mBody[8];
+	/* 0x150 */ TBossHanachanPartsBody* mBodies[8];
 	/* 0x170 */ TBossHanachanPartsHead* mHead;
-	/* 0x174 */ int mWeakBodyIndex;
-	/* 0x178 */ TSphereLink* mSphereLink;
-	/* 0x17C */ JGeometry::TVec3<f32> unk17C;
-	/* 0x188 */ JGeometry::TVec3<f32> unk188;
+	/* 0x174 */ s32 mWeakBodyIndex;
+	// TODO: recover the remaining field meanings from their consumers.
+	/* 0x178 */ TSphereLink* unk178;
+	/* 0x17C */ JGeometry::TVec3<f32> mCollisionPosition;
+	/* 0x188 */ JGeometry::TVec3<f32> mPreviousLinearVelocity;
 	/* 0x194 */ f32 unk194;
 	/* 0x198 */ f32 unk198;
-	/* 0x19C */ MActor* mSandPillar;
-	/* 0x1A0 */ JGeometry::TVec3<f32> unk1A0;
-	/* 0x1AC */ JGeometry::TVec3<f32> unk1AC;
-	/* 0x1B8 */ int unk1B8;
-	/* 0x1BC */ TBossHanachanCommonSaveParams* mCommonSaveParams;
-	/* 0x1C0 */ TBossHanachanChangeSaveParams* mChangeSaveParams;
+	/* 0x19C */ MActor* mSandPillarActor;
+	/* 0x1A0 */ JGeometry::TVec3<f32> mSandPillarPosition;
+	/* 0x1AC */ JGeometry::TVec3<f32> mDeathSoundPosition;
+	/* 0x1B8 */ s32 unk1B8;
+	/* 0x1BC */ TBossHanachanCommonSaveParams* mCommonParams;
+	/* 0x1C0 */ TBossHanachanChangeSaveParams* mChangeParams;
 };
 
-class TBossHanachanManager : public TEnemyManager {
-public:
-	TBossHanachanManager(const char*);
-	virtual ~TBossHanachanManager() { }
-
-	virtual void loadAfter();
-	virtual void createModelData();
-	virtual BOOL hasMapCollision() const;
-	virtual void clipEnemies(JDrama::TGraphics*);
-
-public:
-	/* 0x54 */ TBossHanachanCommonSaveParams* mCommonSaveParams;
-	/* 0x58 */ TBossHanachanChangeSaveParams* mChangeSaveParams[3];
-};
+DECLARE_NERVE(TNerveBossHanachanDead, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanSnort, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanDamage, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanGetUp, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanDown, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanTumble, TLiveActor);
+DECLARE_NERVE(TNerveBossHanachanGraphWander, TLiveActor);
 
 #endif

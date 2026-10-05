@@ -11,32 +11,6 @@
 
 class TMultiMtxEffect;
 
-class TWaterGunParams : public TParams {
-public:
-	TWaterGunParams(const char* prm)
-	    : TParams(prm)
-	    , PARAM_INIT(mRocketHeight, 1500.0f)
-	    , PARAM_INIT(mHoverHeight, 160.0f)
-	    , PARAM_INIT(mLAngleNormal, 60.0f)
-	    , PARAM_INIT(mNozzleAngleYSpeed, 1.0f)
-	    , PARAM_INIT(mNozzleAngleYBrake, 0.995f)
-	    , PARAM_INIT(mNozzleAngleYSpeedMax, 0x2000)
-	    , PARAM_INIT(mHoverRotMax, 0x2000)
-	    , PARAM_INIT(mHoverSmooth, 0.05f)
-	    , PARAM_INIT(mChangeSpeed, 0.1f)
-	{
-	}
-	TParamRT<f32> mRocketHeight;
-	TParamRT<f32> mHoverHeight;
-	TParamRT<f32> mLAngleNormal;
-	TParamRT<f32> mNozzleAngleYSpeed;
-	TParamRT<f32> mNozzleAngleYBrake;
-	TParamRT<s16> mNozzleAngleYSpeedMax;
-	TParamRT<s16> mHoverRotMax;
-	TParamRT<f32> mHoverSmooth;
-	TParamRT<f32> mChangeSpeed;
-};
-
 struct NozzleJointData {
 	u8 flags; // TODO: This is likely an enum. 0x1 is used, 0x4 is disabled.
 	u8 jointIndex;
@@ -83,8 +57,48 @@ public:
 
 extern TNozzleBmdData nozzleBmdData;
 
+// Abandoned: every member and the vtable are UNUSED in the map, and the
+// turbo nozzle that shipped is a TNozzleTrigger (mNozzleTurbo). The base is
+// TNozzleDeform: the UNUSED constructor is exactly 0xd0 as TNozzleDeform's
+// shape plus init(), and TMario::checkController still stores the prop
+// rotation through this type at 0x714 == sizeof(TNozzleDeform), i.e. past the
+// end of the TNozzleTrigger it actually points to.
+class TNozzleTurbo : public TNozzleDeform {
+public:
+	TNozzleTurbo(const char* name, const char* prm, TWaterGun* fludd);
+
+	virtual s32 getNozzleKind() const;
+	virtual void movement(const TMarioControllerWork&);
+	virtual void animation(int);
+
+	/* 0x714 */ f32 unk714; // prop rotation
+};
+
 class TWaterGun {
 public:
+	// The map has __ct__Q29TWaterGun9TDeParamsFv (UNUSED 0x1f8) rather than
+	// a constructor taking the .prm path, so the class is TWaterGun's own
+	// nested TDeParams -- like TMario::TDeParams -- and it carries
+	// "/Mario/WaterGun.prm" itself. The body lives in WaterGun.cpp between
+	// initInLoadAfter and getEmitMtx, which is where the map's emission
+	// order puts it and what gives its literals their @4093-@4107 ids.
+	class TDeParams : public TParams {
+	public:
+		TDeParams();
+
+		TParamRT<f32> mRocketHeight;
+		// Two H's: PARAM_INIT stringifies the member and WaterGun.cpp's
+		// .rodata @4096 is literally "mHHoverHeight", a typo in the ROM.
+		TParamRT<f32> mHHoverHeight;
+		TParamRT<f32> mLAngleNormal;
+		TParamRT<f32> mNozzleAngleYSpeed;
+		TParamRT<f32> mNozzleAngleYBrake;
+		TParamRT<s16> mNozzleAngleYSpeedMax;
+		TParamRT<s16> mHoverRotMax;
+		TParamRT<f32> mHoverSmooth;
+		TParamRT<f32> mChangeSpeed;
+	};
+
 	enum TNozzleType {
 		Spray            = 0,
 		Rocket           = 1,
@@ -124,9 +138,23 @@ public:
 	BOOL suck();
 	void triggerPressureMovement(const TMarioControllerWork&);
 
-	J3DModel* getModel() { return mFluddModel->mModel; }
+	J3DModel* getModel();
 
-	// Fabricated
+	// UNUSED in the map, so defined in WaterGun.cpp rather than here.
+	void createGunBody();
+	void entryAll();
+	void finalDrawInitialize();
+	void setEmitPt();
+	void getWaterGunAnmID(int);
+	void getWillBeEmitted();
+	u32 getMarioUpperStatus();
+	void startDashEffect();
+	void endDashEffect();
+
+	// Fabricated. Two spellings because the call sites disagree about the
+	// materialised result's type: TWaterGun::emit tests it with `clrlwi.`
+	// (a `bool`) while the three nozzle emit() overrides use `cmpwi r0, 0`
+	// (a `BOOL`/int). Names are guesses; the flag word itself is real.
 	inline bool hasFlag(u16 flag)
 	{
 		bool hasFlag;
@@ -136,6 +164,18 @@ public:
 			hasFlag = false;
 		}
 		return hasFlag;
+	}
+
+	// Fabricated
+	inline BOOL checkFlag(u16 flag)
+	{
+		BOOL checkFlag;
+		if ((mFlags & flag) != 0) {
+			checkFlag = TRUE;
+		} else {
+			checkFlag = FALSE;
+		}
+		return checkFlag;
 	}
 
 	// Fabricated
@@ -152,6 +192,11 @@ public:
 	// Fabricated
 	TNozzleBase* getNozzle(u8 index) { return mNozzleList[index]; }
 	TNozzleBase* getCurrentNozzle() { return mNozzleList[mCurrentNozzle]; }
+	// Fabricated. The signed return type is evidence, not decoration:
+	// TMario::hitNormal compares the nozzle index with a signed `cmpwi` and
+	// wants the 8 bytes of frame this accessor level carries, which a raw
+	// `(int)mCurrentNozzle` at the call site does not supply.
+	s32 getCurrentNozzleIndex() const { return mCurrentNozzle; }
 	const TNozzleBase::TEmitParams& getEmitParams() const
 	{
 		return getCurrentNozzle()->mEmitParams;
@@ -185,17 +230,37 @@ public:
 	// Fabricated
 	s32 getCurrentWater() const { return mCurrentWater; }
 
+	// Fabricated: the hover nozzle's two speeds are f32 members, but the
+	// diving callbacks truncate them before negating into an s16, i.e. retail
+	// read them through an s32-returning accessor (accessor sweep 304).
+	s32 getNozzleSpeedY() const { return unk1CC8; }
+	s32 getNozzleSpeedZ() const { return unk1CCC; }
+
+	// Fabricated
+	s16 getHoverAngle() const { return unk1CD0; }
+
+	// Fabricated: mIsEmitWater is a u8 but every reader tests it with a
+	// signed cmpwi and no extsb, i.e. retail read it through an int-returning
+	// accessor.
+	int isEmitWater() const { return mIsEmitWater; }
+
 	// Fabricated
 	void updateUnk1C88(u8 emittedWater)
 	{
 		mIsEmitWater = emittedWater;
 		// TODO: one more inline for getting emit params
 		// rather than separate getMaxWater, getDecRate, etc. functions?
-		s16 decRate = (((const TWaterGun*)this)->getCurrentNozzle())
-		                  ->mEmitParams.mDecRate.get();
-
+		// The decrement rate is read inside the one expression (no named
+		// local): gunExec needs it, and the emit functions are unchanged.
+		// TODO: the const receiver is load-bearing. Plain getCurrentNozzle()
+		// in this form: TNozzleTrigger::emit +0.64, TNozzleDeform::emit
+		// +0.54, but TNozzleBase::emit -0.14 and TMario::gunExec -4.6, so
+		// retail's `add` + `lwz 0x1c68` indexing is still open.
 		unk1C88 += 10.0f
-		           * ((f32)emittedWater * (f32)decRate
+		           * ((f32)emittedWater
+		              * (f32)((const TWaterGun*)this)
+		                    ->getCurrentNozzle()
+		                    ->mEmitParams.mDecRate.get()
 		              / mNozzleList[0]->mEmitParams.mAmountMax.get());
 	}
 
@@ -205,9 +270,10 @@ public:
 		return getCurrentNozzle()->mEmitParams.mAmountMax.get();
 	}
 
-	// TODO: get rid of this -- it's real name is isEmitting() and it
-	// wasn't stripped in MarioRun.cpp
-	// //Fabricated
+	// Fabricated and now unreferenced: every known call site turned out to
+	// be the out-of-line TWaterGun::isEmitting() (which also rejects the
+	// demo/talk director modes). Kept only until something is shown to need
+	// a director-mode-agnostic spray predicate.
 	bool canSpray() const
 	{
 		if (mCurrentWater == 0)
@@ -215,7 +281,7 @@ public:
 
 		if (getCurrentNozzle()->getNozzleKind() == 1) {
 			TNozzleTrigger* triggerNozzle = (TNozzleTrigger*)getCurrentNozzle();
-			if (triggerNozzle->unk385 == TNozzleTrigger::ACTIVE)
+			if (triggerNozzle->getSprayState() == TNozzleTrigger::ACTIVE)
 				return true;
 
 			return false;
@@ -254,11 +320,13 @@ public:
 	// Fabricated
 	bool checkCurrentNozzleTriggerSprayState(s32 pState) const
 	{
-		return ((TNozzleTrigger*)getCurrentNozzle())->unk385 == pState;
+		return ((TNozzleTrigger*)getCurrentNozzle())->getSprayState() == pState;
 	}
 
 	// Fabricated (maybe should be indexed?)
 	const JGeometry::TVec3<f32>& getEmitPos0() const { return mEmitPos[0]; }
+	// Invented name: plain accessor for the owner (c-k15).
+	TMario* getMario() const { return mMario; }
 
 public:
 	enum {
@@ -286,7 +354,12 @@ public:
 	/* 0x1C8D */ u8 mPreviousPressure;
 	/* 0x1C8E */ u8 unk1C8E;
 	/* 0x1C8F */ u8 unk1C8F;
-	/* 0x1C90 */ JGeometry::TVec3<f32> mEmitPos[4];
+	/* 0x1C90 */ JGeometry::TVec3<f32> mEmitPos[3];
+	// Mario's position, latched in init(). Not part of mEmitPos: the
+	// ctor's __construct_array only runs TVec3's ctor three times, and
+	// init() copies it word-wise, i.e. through Vec's aggregate
+	// assignment rather than a TVec3 member function.
+	/* 0x1CBC */ Vec unk1CBC;
 	/* 0x1CC0 */ s16 unk1CC0;
 	/* 0x1CC2 */ s16 unk1CC2;
 	/* 0x1CC4 */ s16 unk1CC4;
@@ -315,7 +388,7 @@ public:
 	/* 0x1D08 */ s16 unk1D08;
 	/* 0x1D0C */ TWaterEmitInfo* mEmitInfo; // TWaterEmitInfo
 	/* 0x1D10 */ TMirrorActor* unk1D10;
-	/* 0x1D14 */ TWaterGunParams mWatergunParams;
+	/* 0x1D14 */ TDeParams mWatergunParams;
 };
 
 #endif

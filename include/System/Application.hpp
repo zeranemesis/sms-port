@@ -28,17 +28,14 @@ void load2DResource2Aram();
 #endif
 f32 SMSGetAnmFrameRate();
 void* SMSLoadArchive(const char*, void*, u32, JKRHeap*);
-#ifdef VERSION_GMSP01
-void load2DResource2Aram();
-#endif
 
 struct TARAMBlock {
-	/* 0x0 */ JKRAramBlock* mBlock;
-	/* 0x4 */ bool mIsCompressed;
+	/* 0x0 */ JKRAramBlock* unk0;
+	/* 0x4 */ bool unk4;
 };
-void SMSLoadArchiveARAM(TARAMBlock* out_block, const char* path);
-void SMSMountAramArchive(JKRMemArchive* archive, TARAMBlock& block);
-JKRArchive* SMSSwitch2DArchive(const char* arc_path, TARAMBlock& block);
+void SMSLoadArchiveARAM(TARAMBlock*, const char*);
+void SMSMountAramArchive(JKRMemArchive*, TARAMBlock&);
+JKRArchive* SMSSwitch2DArchive(const char*, TARAMBlock&);
 extern TARAMBlock gArBkConsole;
 extern TARAMBlock gArBkGuide;
 extern JUTResFont* gpSystemFont;
@@ -63,7 +60,16 @@ public:
 	void setNextArea(const TGameSequence& next_area) { mNextArea = next_area; }
 	u32 getMovie() const { return mMovie; }
 
-	TSMSFader* getFader() const { return mFader; }
+	// Same shape as TSelectDir::getGamePad(): the named pointer is one dead
+	// word per site. With it at the directors' fader sites every director
+	// frame moves toward retail and none overshoots (TMovieDirector::direct
+	// becomes instruction-exact); a plain or `const&` return is inert
+	// (research c-r29).
+	TSMSFader* getFader() const
+	{
+		TSMSFader* fader = mFader;
+		return fader;
+	}
 	void setMovie(u32 v) { mMovie = v; }
 
 public:
@@ -101,7 +107,10 @@ public:
 
 extern TApplication gpApplication;
 
-// fabricated
+// fabricated name. MarDirectorEvent, MarDirectorDirect and MenuDir each need
+// this level (retail folds setNextArea's stores onto the &gpApplication base
+// and the movie stores cost one pool word per site), which the raw global
+// does not give.
 inline TApplication* SMSGetApplication() { return &gpApplication; }
 
 class TCardManager;

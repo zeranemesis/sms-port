@@ -24,6 +24,15 @@ class THamuKuriSaveLoadParams : public TWalkerEnemyParams {
 public:
 	THamuKuriSaveLoadParams(const char* path);
 
+	f32 getWaterCoeff() const { return mSLWaterCoeff.get(); }
+	f32 getWaterAttackCoeff() const { return mSLWaterAttackCoeff.get(); }
+	f32 getFirstVelocityY() const { return mSLFirstVelocityY.get(); }
+	f32 getVelocityRate() const { return mSLVelocityRate.get(); }
+	s32 getBoundNum() const { return mSLBoundNum.get(); }
+	s32 getFlyTimer() const { return mSLFlyTimer.get(); }
+	f32 getFirstKickVelocityY() const { return mSLFirstKickVelocityY.get(); }
+	s32 getKyoroTimer() const { return mSLKyoroTimer.get(); }
+	s32 getTrampleBonusNum() const { return mSLTrampleBonusNum.get(); }
 	s32 getCrashBonusNum() const { return mSLCrashBonusNum.get(); }
 	s32 getSerialCrashFrame() const { return mSLSerialCrashFrame.get(); }
 
@@ -47,6 +56,13 @@ class THaneHamuKuriSaveLoadParams : public THamuKuriSaveLoadParams {
 public:
 	THaneHamuKuriSaveLoadParams(const char* path);
 
+	// fabricated
+	f32 getSLNormalJumpVy() const { return mSLNormalJumpVy.get(); }
+	f32 getSLAttackJumpVy() const { return mSLAttackJumpVy.get(); }
+	f32 getSLFlyBaseHeight() const { return mSLFlyBaseHeight.get(); }
+	f32 getSLFlyBaseAmplitude() const { return mSLFlyBaseAmplitude.get(); }
+	f32 getSLFlyBaseFrequency() const { return mSLFlyBaseFrequency.get(); }
+
 	/* 0x444 */ TParamRT<f32> mSLNormalJumpVy;
 	/* 0x458 */ TParamRT<f32> mSLAttackJumpVy;
 	/* 0x46C */ TParamRT<f32> mSLFlyBaseHeight;
@@ -57,6 +73,8 @@ public:
 class TBossDangoHamuKuriSaveLoadParams : public THamuKuriSaveLoadParams {
 public:
 	TBossDangoHamuKuriSaveLoadParams(const char* path);
+
+	s32 getNumArray() const { return mSLNumArray.get(); }
 
 public:
 	/* 0x444 */ TParamRT<s32> mSLNumArray;
@@ -243,14 +261,14 @@ public:
 	void setSearchActor(THitActor*);
 	bool isGiveUpSearchActor();
 	void jumpToSearchActor();
-	void canGoForSearchActor();
+	bool canGoForSearchActor();
 	void changeCapHolder();
 	void selectCapHolder();
 	void makeCapFly(TMapObjBase*);
 	void setWallDeadEffect();
 	void setAppearAnm();
-	void isAttackToHam();
-	void isSerialWallDie();
+	bool isAttackToHam();
+	bool isSerialWallDie();
 	void forceRoll(JGeometry::TVec3<f32>, bool);
 
 	static f32 mCapGravityY;
@@ -259,7 +277,10 @@ public:
 	static f32 mLandAnmFrameNum;
 
 	// fabricated
-	THamuKuriManager* getManager() { return (THamuKuriManager*)mManager; }
+	THamuKuriManager* getManager()
+	{
+		return (THamuKuriManager*)TLiveActor::getManager();
+	}
 	bool isUnk198() const { return unk198 ? true : false; }
 
 public:
@@ -273,7 +294,7 @@ public:
 	/* 0x1A4 */ u8 unk1A4;
 	/* 0x1A8 */ int unk1A8;
 	/* 0x1AC */ u8 unk1AC;
-	/* 0x1B0 */ Mtx unk1B0;
+	/* 0x1B0 */ TPosition3f unk1B0;
 	/* 0x1E0 */ int unk1E0;
 	/* 0x1E4 */ JGeometry::TVec3<f32> unk1E4;
 	/* 0x1F0 */ u8 unk1F0;
@@ -312,6 +333,13 @@ public:
 
 	void resetFlyParam();
 
+	// fabricated: retail reads this flag through a const accessor (the member
+	// lands in the destination register, so it is loaded before the 0.0f
+	// literal), while the neighbouring raw reads of unk214 load the literal
+	// first -- see docs/catalog/codegen-tells.md, `pakkun` const-accessor rule.
+	// fabricated
+	THaneHamuKuriSaveLoadParams* getSaveLoadParam() const { return unk22C; }
+
 	static bool mBoundFly;
 
 public:
@@ -320,7 +348,7 @@ public:
 	/* 0x214 */ f32 unk214;
 	/* 0x218 */ f32 unk218;
 	/* 0x21C */ f32 unk21C;
-	/* 0x220 */ Vec unk220;
+	/* 0x220 */ JGeometry::TVec3<f32> unk220;
 	/* 0x22C */ THaneHamuKuriSaveLoadParams* unk22C;
 	/* 0x230 */ f32 unk230;
 	/* 0x234 */ f32 unk234;
@@ -419,8 +447,8 @@ public:
 
 	bool isDead();
 	void generateBody();
-	void isNowAttack();
-	void isNowGenerate();
+	bool isNowAttack();
+	bool isNowGenerate();
 
 public:
 	/* 0x238 */ int unk238;
@@ -468,7 +496,15 @@ public:
 	virtual void attackToMario();
 	virtual void setMActorAndKeeper();
 	virtual bool isCollidMove(THitActor*);
-	virtual void onHaveCap();
+
+	// Weak in the map, so it was defined in the class.
+	virtual void onHaveCap()
+	{
+		unk198                    = 1;
+		TDoroHamuKuriManager* man = (TDoroHamuKuriManager*)getManager();
+		man->unk70                = this;
+		man->unk74->setOwner(this);
+	}
 };
 
 // ============= nerves =============

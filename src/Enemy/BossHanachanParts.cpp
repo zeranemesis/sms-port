@@ -1,234 +1,213 @@
 #include <Enemy/BossHanachan.hpp>
-#include <Enemy/BossHanachanChangeSaveParams.hpp>
 #include <Camera/cameralib.hpp>
-#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
 #include <M3DUtil/MActor.hpp>
-#include <Strategic/ObjModel.hpp>
-#include <Strategic/Spine.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <Map/MapData.hpp>
-#include <MarioUtil/DrawUtil.hpp>
+#include <M3DUtil/MActorAnm.hpp>
 #include <MarioUtil/MapUtil.hpp>
+#include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/ShadowUtil.hpp>
-#include <Player/MarioAccess.hpp>
+#include <Strategic/Spine.hpp>
 #include <Strategic/Strategy.hpp>
+#include <Strategic/ObjModel.hpp>
 #include <System/MarDirector.hpp>
+#include <NPC/NpcInbetween.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Map/MapData.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and the collision file names (c-k29).
+#include <Map/MapCollisionEntry.hpp>
 
-const char* cMapCollisionJointName    = "center";
-const char* cBodyMapCollisionFileName = "body_col.col";
-const char* cHeadMapCollisionFileName = "head_col.col";
-const char* cLegJointName_L3          = "leg_L3";
-const char* cLegJointName_R3          = "leg_R3";
-const char* cNoseHallJointName_L      = "L_hall";
-const char* cNoseHallJointName_R      = "R_hall";
+const char* cMapCollisionJointName = "center";
+const char* cBodyMapCollisionFileName = "/scene/bosshanachan/hanabody_col.col";
+const char* cHeadMapCollisionFileName = "/scene/bosshanachan/hanahead_col.col";
+const char* cLegJointName_L3 = "leg_L3";
+const char* cLegJointName_R3 = "leg_R3";
+const char* cNoseHallJointName_L = "L_hall";
+const char* cNoseHallJointName_R = "R_hall";
 
-// TODO: the four tables below carry a `$NNNN` suffix in the linker map, so in
-// the original they were function-local statics of the two setAnm_ overrides
-// rather than file-scope ones. They have no effect on codegen here.
-static const int sBodyBckIndex[]
-    = { 0x13, 0x0F, 0x0A, 0x0D, 0x00, 0x0C, 0x09, 0x02, 0x03,
-        0x04, 0x05, 0x06, 0x07, 0x08, 0x10, 0x01, 0x11, 0x12 };
-static const int sHeadBckIndex[]
-    = { 0x24, 0x20, 0x1D, 0x1F, 0x14, 0x1E, 0x1C, 0x16, 0x17,
-        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x21, 0x15, 0x22, 0x23 };
-static const int sHeadBtpIndex[]
-    = { 0x00, 0x00, 0x01, 0x02, 0x01, 0x02, 0x02, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x01, 0x01 };
-static const int sHeadBtkIndex[]
-    = { 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-
-// TODO: reconstructed from the inlined bodies only; the exact original is
-// unknown. UNUSED in the map, so nothing depends on the body but its size.
-static void CalcMtxPtrFromJointName(JUTNameTab* joint_names,
-                                    const char* joint_name, J3DModel* model,
-                                    MtxPtr* out_mtx)
+void CalcMtxPtrFromJointName(JUTNameTab* names, const char* name,
+                           J3DModel* model, MtxPtr* result)
 {
-	// the index is truncated to 16 bits before it scales the matrix stride
-	u16 index = (u16)joint_names->getIndex(joint_name);
-	*out_mtx = model->getAnmMtx(index);
+	u16 index = names->getIndex(name);
+	*result = model->getAnmMtx(index);
 }
 
-TBossHanachanPartsBase::TBossHanachanPartsBase(TBossHanachan* owner,
-                                               u32 instance_index,
-                                               int anm_data_index,
-                                               const char* name)
-    : TLiveActor(name)
+// Binding level over a raw member read, worth +8 of low region in
+// TBossHanachanPartsBase::TBossHanachanPartsBase (batch 127).
+static inline TBossHanachan* BossHanachanPartsUnkFC(const TBossHanachanPartsBase* p)
 {
-	mCurAnm      = BH_ANM_KIND_UNK12;
-	mOldAnm      = BH_ANM_KIND_UNK12;
-	mOwner       = owner;
-	mHitActor    = nullptr;
-	mMapCollision          = nullptr;
-	mMapCollisionJointMtx  = nullptr;
-	unk10C                  = 0;
-	mNonstopMotionBlend    = nullptr;
+	TBossHanachan* vFC = p->unkFC;
+	return vFC;
+}
 
-	mMActorKeeper  = owner->mMActorKeeper;
-	mMActor        = mMActorKeeper->createMActorFromNthData(anm_data_index, 0);
-	if (mMActor->mAnmBck != nullptr)
-		mMActor->mAnmBck->initNormalMotionBlend();
-
-	initHitActor(instance_index, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+TBossHanachanPartsBase::TBossHanachanPartsBase(TBossHanachan* boss,
+                                             u32 actorType, int modelIndex,
+                                             const char* name)
+    : TLiveActor(name)
+    , mCurrentAnm(BOSS_HANACHAN_ANM_UNK18)
+    , mPreviousAnm(BOSS_HANACHAN_ANM_UNK18)
+    , unkFC(boss)
+    , unk100(nullptr)
+    , unk104(nullptr)
+    , unk108(nullptr)
+    , unk10C(0)
+    , mInbetween(nullptr)
+{
+	mMActorKeeper = BossHanachanPartsUnkFC(this)->mMActorKeeper;
+	mMActor = mMActorKeeper->createMActorFromNthData(modelIndex, 0);
+	mMActor->initNormalMotionBlend();
+	initHitActor(actorType, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
 	onHitFlag(HIT_FLAG_NO_COLLISION);
-
-	switch (instance_index) {
-	case 0x80000015:
-		mScaledBodyRadius
-		    = owner->mCommonSaveParams->mSLBodyShadowSize.get();
+	switch ((int)actorType) {
+	case 0x08000015:
+		mScaledBodyRadius = unkFC->mCommonParams->mSLBodyShadowSize.get();
 		break;
-	case 0x80000014:
-		mScaledBodyRadius
-		    = owner->mCommonSaveParams->mSLHeadShadowSize.get();
+	case 0x08000014:
+		mScaledBodyRadius = unkFC->mCommonParams->mSLHeadShadowSize.get();
 		break;
 	}
-
 	onLiveFlag(LIVE_FLAG_UNK8);
 	initAnmSound();
 	mMActor->setLightType(1);
-	mNonstopMotionBlend = new TBHNonstopMotionBlend(
-	    CLBPalFrame<s16>(
-	        owner->mCommonSaveParams->mSLMotionBlendFrames.get()));
+	mInbetween = new TNpcInbetween(
+	    1, CLBPalFrame(unkFC->mCommonParams->mSLMotionBlendFrames.get()));
 }
 
-TBossHanachanPartsBody::TBossHanachanPartsBody(TBossHanachan* owner,
-                                               const char* name)
-    : TBossHanachanPartsBase(owner, 0x80000015, 0, name)
+TBossHanachanPartsBody::TBossHanachanPartsBody(TBossHanachan* boss,
+                                             const char* name)
+    : TBossHanachanPartsBase(boss, 0x08000015, 0, name)
+    , unk114(0)
+    , unk120(0.0f)
+    , mPreviousPosition(0.0f, 0.0f, 0.0f)
+    , mOlderPosition(0.0f, 0.0f, 0.0f)
+    , mPreviousRoll(0.0f)
+    , mOlderRoll(0.0f)
+    , unk144(0.0f)
+    , unk148(0.0f)
+    , unk154(0.0f, 0.0f, 0.0f)
 {
-	mBodyIndex = 0;
-	unk120 = 0.0f;
-	unk124.set(0.0f, 0.0f, 0.0f);
-	unk130.set(0.0f, 0.0f, 0.0f);
-	unk13C = 0.0f;
-	unk140 = 0.0f;
-	unk144 = 0.0f;
-	unk148 = 0.0f;
-	unk154.set(0.0f, 0.0f, 0.0f);
-
-	J3DModel* model  = getModel();
-	JUTNameTab* jnts = model->getModelData()->getJointName();
-	CalcMtxPtrFromJointName(jnts, cLegJointName_L3, model, &mLegMtx[0]);
-	CalcMtxPtrFromJointName(jnts, cLegJointName_R3, model, &mLegMtx[1]);
+	J3DModel* model = getModel();
+	JUTNameTab* names = model->getModelData()->getJointName();
+	CalcMtxPtrFromJointName(names, cLegJointName_L3, model, &mLegMtx[0]);
+	CalcMtxPtrFromJointName(names, cLegJointName_R3, model, &mLegMtx[1]);
 }
 
-TBossHanachanPartsHead::TBossHanachanPartsHead(TBossHanachan* owner,
-                                               const char* name)
-    : TBossHanachanPartsBase(owner, 0x80000014, 1, name)
+TBossHanachanPartsHead::TBossHanachanPartsHead(TBossHanachan* boss,
+                                             const char* name)
+    : TBossHanachanPartsBase(boss, 0x08000014, 1, name)
 {
-	J3DModel* model  = getModel();
-	JUTNameTab* jnts = model->getModelData()->getJointName();
-	CalcMtxPtrFromJointName(jnts, cNoseHallJointName_L, model, &mNoseHallMtxL);
-	CalcMtxPtrFromJointName(jnts, cNoseHallJointName_R, model, &mNoseHallMtxR);
+	J3DModel* model = getModel();
+	JUTNameTab* names = model->getModelData()->getJointName();
+	CalcMtxPtrFromJointName(names, cNoseHallJointName_L, model, &mLeftNoseMtx);
+	CalcMtxPtrFromJointName(names, cNoseHallJointName_R, model, &mRightNoseMtx);
 }
 
 void TBossHanachanPartsBase::initMapCollisionAndHitActor_(TIdxGroupObj* group)
 {
-	const char* col_file;
-	f32 attack_radius;
-	f32 attack_height;
-	f32 damage_radius;
-	f32 damage_height;
-	f32 hit_offset_y;
-
-	if (getInstanceIndex() == 0x80000015) {
-		col_file      = cBodyMapCollisionFileName;
-		hit_offset_y  = mOwner->mCommonSaveParams->mSLBodyHitOffsetY.get();
-		attack_radius = mOwner->mCommonSaveParams->mSLBodyAttackRadius.get();
-		attack_height = mOwner->mCommonSaveParams->mSLBodyAttackHeight.get();
-		damage_radius = mOwner->mCommonSaveParams->mSLBodyDamageRadius.get();
-		damage_height = mOwner->mCommonSaveParams->mSLBodyDamageHeight.get();
-	} else {
-		col_file      = cHeadMapCollisionFileName;
-		hit_offset_y  = mOwner->mCommonSaveParams->mSLHeadHitOffsetY.get();
-		attack_radius = mOwner->mCommonSaveParams->mSLHeadAttackRadius.get();
-		attack_height = mOwner->mCommonSaveParams->mSLHeadAttackHeight.get();
-		damage_radius = mOwner->mCommonSaveParams->mSLHeadDamageRadius.get();
-		damage_height = mOwner->mCommonSaveParams->mSLHeadDamageHeight.get();
+	TBossHanachanCommonSaveParams* params = unkFC->mCommonParams;
+	const char* collisionFile = cBodyMapCollisionFileName;
+	f32 attackRadius = params->mSLBodyAttackRadius.get();
+	f32 attackHeight = params->mSLBodyAttackHeight.get();
+	f32 damageRadius = params->mSLBodyDamageRadius.get();
+	f32 damageHeight = params->mSLBodyDamageHeight.get();
+	f32 offsetY = params->mSLBodyHitOffsetY.get();
+	switch ((int)getActorType()) {
+	case 0x08000015:
+		break;
+	case 0x08000014:
+		collisionFile = cHeadMapCollisionFileName;
+		attackRadius = params->mSLHeadAttackRadius.get();
+		attackHeight = params->mSLHeadAttackHeight.get();
+		damageRadius = params->mSLHeadDamageRadius.get();
+		damageHeight = params->mSLHeadDamageHeight.get();
+		offsetY = params->mSLHeadHitOffsetY.get();
+		break;
 	}
+	J3DModel* model = mMActor->getModel();
+	JUTNameTab* names = model->getModelData()->getJointName();
+	u16 joint = names->getIndex(cMapCollisionJointName);
+	unk108 = getMActor()->getModel()->getAnmMtx(joint);
+	unk104 = new TMapCollisionMove;
+	unk104->init(collisionFile, 0x8000, this);
+	unk100 = new TWaterHitActor("ボスハナチャンのパーツ");
+	unk100->initHitActor(getActorType(), 1, ACTOR_TYPE_PLAYER, attackRadius,
+	                     attackHeight, damageRadius, damageHeight);
+	group->getChildren().push_back(unk100);
+	unk100->offHitFlag(HIT_FLAG_NO_COLLISION);
+	MtxPtr mtx = unk108;
+	unk100->mPosition.set(mtx[0][3], mtx[1][3] - offsetY, mtx[2][3]);
+}
 
-	CalcMtxPtrFromJointName(
-	    mMActor->getModel()->getModelData()->getJointName(),
-	    cMapCollisionJointName, mMActor->getModel(), &mMapCollisionJointMtx);
-
-	mMapCollision = new TMapCollisionMove();
-	mMapCollision->init(col_file, 0x8000, this);
-
-	mHitActor = new TWaterHitActor("ボスハナチャンの足パーツ");
-	mHitActor->initHitActor(getInstanceIndex(), 1, 0x8000, attack_radius,
-	                         attack_height, damage_radius, damage_height);
-	group->getChildren().push_back(mHitActor);
-
-	offHitFlag(HIT_FLAG_NO_COLLISION);
-	mHitActor->mPosition.x = mMapCollisionJointMtx[3][0];
-	mHitActor->mPosition.y = mMapCollisionJointMtx[3][1] - hit_offset_y;
-	mHitActor->mPosition.z = mMapCollisionJointMtx[3][2];
+// Binding level worth +16 of low region, landing
+// TBossHanachanPartsBody::initFootHitActor_'s frame at 0xf0 (batch 121).
+static inline J3DModel* BossHanachanPartsGetModel(const MActor* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
 }
 
 void TBossHanachanPartsBody::initFootHitActor_(TIdxGroupObj* group)
 {
 	static const char* sFootJointName[] = { "foot_L", "foot_R" };
-
-	J3DFrameCtrl* unused_ctrl;
-	const TBossHanachanCommonSaveParams* p = mOwner->mCommonSaveParams;
-	(void)unused_ctrl;
-
-	for (int i = 0; i < 2; i++) {
-		u16 joint_index
-		    = getModel()->getModelData()->getJointName()->getIndex(
-		        sFootJointName[i]);
-		mFootHitActor[i] = new TFootHitActor("ボスハナチャンの足");
-		mFootHitActor[i]->initHitActor(
-		    getInstanceIndex(), 1, 0x8000,
-		    p->mSLFootAttackRadius.get(), p->mSLFootAttackHeight.get(),
-		    p->mSLFootDamageRadius.get(), p->mSLFootDamageHeight.get());
-		group->getChildren().push_back(mFootHitActor[i]);
-		offHitFlag(HIT_FLAG_NO_COLLISION);
-
-		MtxPtr mtx = getModel()->getAnmMtx(joint_index);
-		mFootHitActor[i]->unk6C = mtx;
-		mFootHitActor[i]->mPosition.set(mtx[3][0], mtx[3][1], mtx[3][2]);
+	int i;
+	J3DModel* model;
+	int joints[2];
+	TBossHanachanCommonSaveParams* params = unkFC->mCommonParams;
+	model = BossHanachanPartsGetModel(getMActor());
+	JUTNameTab* names = model->getModelData()->getJointName();
+	for (i = 0; i < 2; ++i) {
+		joints[i] = names->getIndex(sFootJointName[i]);
+		mFeet[i] = new TFootHitActor("ボスハナチャンの足");
+		mFeet[i]->initHitActor(getActorType(), 1, ACTOR_TYPE_PLAYER,
+		                      params->mSLFootAttackRadius.get(),
+		                      params->mSLFootAttackHeight.get(),
+		                      params->mSLFootDamageRadius.get(),
+		                      params->mSLFootDamageHeight.get());
+		group->getChildren().push_back(mFeet[i]);
+		mFeet[i]->offHitFlag(HIT_FLAG_NO_COLLISION);
+		MtxPtr mtx
+		    = BossHanachanPartsGetModel(mMActor)->getAnmMtx((u16)joints[i]);
+		mFeet[i]->mJointMtx = mtx;
+		mFeet[i]->mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 	}
 }
 
 void TBossHanachanPartsBase::offNonstopMotionBlend_()
 {
-	mNonstopMotionBlend->unk24 = 0;
+	mInbetween->mForcedBlendRatio = 0.0f;
 }
 
 void TBossHanachanPartsBase::setNonstopMotionBlendRatio_(f32 ratio)
 {
-	mNonstopMotionBlend->unk28 = ratio;
+	mInbetween->mForcedBlendRatio = ratio;
 }
 
-// TODO: UNUSED (0x30 bytes in the map), body is a guess.
 void TBossHanachanPartsBase::restartBck_()
 {
-	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-	ctrl->setFrame(0.0f);
-	ctrl->setRate(1.0f);
+	mMActor->getFrameCtrl(0)->setFrame(0.0f);
 }
 
 void TBossHanachanPartsBase::changeTumbleAnmRate_()
 {
 	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-	switch (mCurAnm) {
-	case BH_ANM_KIND_UNK10:
-	case BH_ANM_KIND_UNK11:
-		if (ctrl->getFrame() >= 40.0f) {
-			f32 target = (f32)ctrl->getEnd() - ctrl->getFrame();
-			f32 rate   = ctrl->getRate();
-			CLBChaseConstantSpecifyFrame<f32>(&rate, SMSGetAnmFrameRate(),
-			                                 target);
-			ctrl->setRate(rate);
-		}
+	switch (mCurrentAnm) {
+	case BOSS_HANACHAN_ANM_UNK16:
+	case BOSS_HANACHAN_ANM_UNK17: {
+		if (ctrl->getFrame() <= 40.0f)
+			return;
+		f32 remaining = ctrl->getEnd() - ctrl->getFrame();
+		f32 rate = ctrl->getRate();
+		CLBChaseConstantSpecifyFrame(&rate, SMSGetAnmFrameRate(), remaining);
+		ctrl->setRate(rate);
 		break;
+	}
 	default:
 		ctrl->setRate(SMSGetAnmFrameRate());
 		break;
@@ -237,443 +216,438 @@ void TBossHanachanPartsBase::changeTumbleAnmRate_()
 
 void TBossHanachanPartsBase::moveMapCollision_()
 {
-	MtxPtr mtx = mMapCollisionJointMtx;
-	JGeometry::TVec3<f32> trans(mtx[3][0], mtx[3][1], mtx[3][2]);
-	mMapCollision->moveTrans(trans);
+	JGeometry::TVec3<f32> position(unk108[0][3], unk108[1][3], unk108[2][3]);
+	unk104->moveTrans(position);
 }
 
 void TBossHanachanPartsBase::entryCircleShadow_()
 {
-	if (mOwner->mSpine->getCurrentNerve() == &TNerveBossHanachanDead::theNerve()
-	    && mOwner->mSpine->getTime() > 200) {
+	if (unkFC->getSpine()->getCurrentNerve() == &TNerveBossHanachanDead::theNerve()
+	    && unkFC->getSpine()->getTime() > 200)
 		return;
-	}
 
 	TCircleShadowRequest request;
-	request.mPosition.set(mMapCollisionJointMtx[3][0],
-	                      mMapCollisionJointMtx[3][1],
-	                      mMapCollisionJointMtx[3][2]);
-	request.mRadiusZ = request.mRadiusX = mScaledBodyRadius;
-	gpBindShadowManager->forceRequest(request, getInstanceIndex());
+	request.mPosition.set(unk108[0][3], unk108[1][3], unk108[2][3]);
+	request.mRadiusX = request.mRadiusZ = mScaledBodyRadius;
+	gpBindShadowManager->forceRequest(request, getActorType());
 }
 
 void TBossHanachanPartsBase::setDamageFog_(JDrama::TGraphics* graphics)
 {
-	bool fog = true;
-	if (getInstanceIndex() - 0x80000000 != 0x14) {
-		fog = false;
-	}
-
+	bool isBody = true;
+	if (getActorType() == 0x08000014)
+		isBody = false;
 	J3DModelData* data = mMActor->getModel()->getModelData();
-	u16 num            = data->mMaterialNum;
-	JGeometry::TVec3<f32> pos(mMapCollisionJointMtx[3][0],
-	                          mMapCollisionJointMtx[3][1],
-	                          mMapCollisionJointMtx[3][2]);
-
-	if (mOwner->mSpine->getLatestNerve()
-	    == &TNerveBossHanachanDamage::theNerve()) {
-		SMS_AddDamageFogEffect(data, pos, graphics);
-		if (fog) {
-			for (u16 i = 0; i < num; i++) {
-				data->mMaterials[i]->change();
-			}
-		}
-		if (unk10C == 0) {
-			mMActor->getModel()->unlock();
-		}
+	u16 materialCount = data->getMaterialNum();
+	JGeometry::TVec3<f32> position(unk108[0][3], unk108[1][3], unk108[2][3]);
+	if (unkFC->getLatestNerve() == &TNerveBossHanachanDamage::theNerve()) {
+		SMS_AddDamageFogEffect(data, position, graphics);
+		if (isBody)
+			for (u16 i = 0; i < materialCount; ++i)
+				data->getMaterialNodePointer(i)->change();
+		if (unk10C == 0)
+			getMActor()->getModel()->unlock();
 	} else {
 		SMS_ResetDamageFogEffect(data);
 	}
 }
 
+// Binding level worth +8 of low region, landing
+// TBossHanachanPartsBase::isCurBckAlreadyEnd_'s frame at 0x30 (batch 121).
+static inline s16 BossHanachanPartsGetEnd(const J3DFrameCtrl* p)
+{
+	s16 end = p->getEnd();
+	return end;
+}
+
 bool TBossHanachanPartsBase::isCurBckAlreadyEnd_() const
 {
 	bool result = true;
-	if (mMActor != nullptr) {
-		J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-		if (ctrl != nullptr) {
-			bool reached_end
-			    = ctrl->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE)
-			      || ctrl->checkState(J3DFrameCtrl::STATE_LOOPED_ONCE);
-			if (!reached_end) {
-				if (!(0.1f + ctrl->getFrame() >= (f32)ctrl->getEnd()))
-					result = false;
-			}
+	if (mMActor) {
+		J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(0);
+		if (ctrl) {
+			result = (ctrl->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE)
+			          || ctrl->checkState(J3DFrameCtrl::STATE_LOOPED_ONCE))
+			                 || ctrl->getFrame() + 0.1f
+			                        >= BossHanachanPartsGetEnd(ctrl);
 		}
 	}
 	return result;
 }
 
+// Binding level over a raw mMActor read. Two sites in
+// copyFrameFromOldAnmToNewAnm_ target +0x10 of frame.
+static inline MActor*
+BossHanachanPartsGetActor(const TBossHanachanPartsBase* p)
+{
+	MActor* actor = p->mMActor;
+	return actor;
+}
+
 void TBossHanachanPartsBase::copyFrameFromOldAnmToNewAnm_()
 {
-	J3DAnmTransformKey* old_anm = nullptr;
-	if (mMActor->mAnmBck != nullptr)
-		old_anm = mMActor->mAnmBck->unk24;
-
-	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-	if (old_anm != nullptr && ctrl != nullptr) {
-		f32 frame;
-		if (mMActor->mAnmBck == nullptr) {
-			frame = 0.0f;
-		} else {
-			frame = mMActor->mAnmBck->getOldMotionBlendFrame();
-		}
-		old_anm->setFrame(frame);
+	J3DAnmTransform* anm = BossHanachanPartsGetActor(this)->getBckAnm();
+	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(0);
+	if (anm && ctrl) {
+		f32 frame = BossHanachanPartsGetActor(this)->getBckOldMotionBlendFrame();
+		anm->setFrame(frame);
 		ctrl->setFrame(frame);
 	}
 }
 
-TLiveActor* TBossHanachanPartsBase::getSandActor_() const
+const TLiveActor* TBossHanachanPartsBase::getSandActor_() const
 {
 	const TLiveActor* actor = SMS_GetGroundActor(mGroundPlane, 0x400000CD);
-	if (actor == nullptr)
+	if (!actor)
 		actor = SMS_GetGroundActor(mGroundPlane, 0x400000CB);
-	return const_cast<TLiveActor*>(actor);
+	return actor;
 }
 
-// TODO: UNUSED (0x64 bytes in the map), body is a guess.
 bool TBossHanachanPartsBase::isMarioOn_() const
 {
-	if (!SMS_IsMarioTouchGround4cm())
-		return false;
-	const TBGCheckData* ground = *gpMarioGroundPlane;
-	if (ground == nullptr)
-		return false;
-	return ground->getActor() == this;
+	bool result = false;
+	if (SMS_IsMarioTouchGround4cm()) {
+		const TBGCheckData* ground = SMS_GetMarioGroundPlane();
+		if (ground && ground->getActor() == this)
+			result = true;
+	}
+	return result;
 }
 
 void TBossHanachanPartsBase::calcRotateZWhenGetUp_()
 {
 	if (unk10C == 0) {
-		switch (mCurAnm) {
-		case BH_ANM_KIND_UNKB:
-		case BH_ANM_KIND_UNK8: {
-			J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-			f32 target
-			    = ((f32)ctrl->getEnd() - ctrl->getFrame()) * 2.0f;
-			if (target < 0.001f) {
+		switch (mCurrentAnm) {
+		case BOSS_HANACHAN_ANM_UNK8:
+		case BOSS_HANACHAN_ANM_UNK11: {
+			J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(0);
+			f32 frames = 2.0f * (ctrl->getEnd() - ctrl->getFrame());
+			if (frames < 0.001f) {
 				mRotation.z = 0.0f;
-			} else {
-				CLBChaseConstantSpecifyFrame<f32>(&mRotation.z, 0.0f, target);
+				return;
 			}
+			CLBChaseConstantSpecifyFrame(&mRotation.z, 0.0f, frames);
 			break;
 		}
 		}
 	}
 }
 
-// TODO: UNUSED (0xC4 bytes in the map). Body is a guess: it never had a live
-// call site, so only its presence is load-bearing.
 bool TBossHanachanPartsBase::isReactToTrampleOrHipDrop_() const
 {
-	return getInstanceIndex() - 0x80000000 <= 0x15
-	    && (getRotation().z == -179.0f || getRotation().z == 179.0f);
+	bool result = false;
+	const TNerveBase<TLiveActor>* nerve = unkFC->getLatestNerve();
+	if (nerve == &TNerveBossHanachanTumble::theNerve()
+	    || nerve == &TNerveBossHanachanDown::theNerve()) {
+		if (getActorType() == 0x08000015) {
+			bool overturned = (mRotation.z == -179.0f || mRotation.z == 179.0f)
+			                      ? true : false;
+			if (overturned)
+				result = true;
+		} else {
+			result = true;
+		}
+	}
+	return result;
 }
 
-void TBossHanachanPartsBase::considerSetAnm_(EnumBossHanachanNerveAnm anm)
+// The blend test as its own inline level: retail CSEs its `true` with the
+// isMotionBlending() result, which the open-coded test does not.
+static inline bool BossHanachanIsBlending(const TNpcInbetween* p)
 {
-	bool on_ground = false;
+	bool blending = true;
+	if (!p->isMotionBlending() && !p->isForcedBlendRatio())
+		blending = false;
+	return blending;
+}
 
-	switch (anm) {
-	case BH_NERVE_ANM_TUMBLE:
-		switch (mCurAnm) {
-		case BH_ANM_KIND_UNK5:
-		case BH_ANM_KIND_UNK6:
-		case BH_ANM_KIND_UNKD:
-		case BH_ANM_KIND_UNK10:
-		case BH_ANM_KIND_UNK11:
-			if (isCurBckAlreadyEnd_()) {
-				setAnm_(BH_ANM_KIND_UNK3, BH_STOP_MOTION_BLEND_OFF);
-			}
+// TODO: every instruction matches; the frame is 0x110 in retail against our
+// 0xe8, so 0x28 of inline temporaries is still missing (structural).
+// c-k6 (debugger): only the conversion temporary above the named block is
+// visible in retail (0xf8, ours 0xd0), so the 40 bytes cannot be placed.
+// Measured: `getRotation().z` in the nerve-2 default case is +8 (0xf0);
+// `getMActor()` in isCurBckAlreadyEnd_ is +0 (call receiver); dropping its
+// end binder is -8 per expansion (0xc8); early-return and named-end bodies
+// change the out-of-line isCurBckAlreadyEnd_. Four expansions at +8 plus the
+// getRotation +8 would be exactly 0x28, so the lead is a body shape that is
+// +8 per inlined copy but +0 in the emitted copy (frame 0x30).
+// Also measured: the blend helper taking the part (`p->mInbetween->...`)
+// instead of the TNpcInbetween is +8 (0xf0, 0xf8 with getRotation); a
+// parked mCurrentAnm accessor at every read another +8 (0x100). Not
+// committed: none closes, and a frame that only moves toward 0x110 does
+// not show which objects retail has. In the inlined copies `ctrl` is an
+// inliner object, so every J3DFrameCtrl accessor on it gets a dead
+// receiver binding that the emitted copy (named `ctrl`) does not have.
+void TBossHanachanPartsBase::considerSetAnm_(EnumBossHanachanNerveAnm nerve)
+{
+	if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK0) {
+		switch (mCurrentAnm) {
+		case BOSS_HANACHAN_ANM_UNK5:
+		case BOSS_HANACHAN_ANM_UNK6:
+		case BOSS_HANACHAN_ANM_UNK13:
+		case BOSS_HANACHAN_ANM_UNK16:
+		case BOSS_HANACHAN_ANM_UNK17:
+			if (isCurBckAlreadyEnd_())
+				setAnm_(BOSS_HANACHAN_ANM_UNK3,
+				        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 			break;
 		}
-		break;
-
-	case BH_NERVE_ANM_DOWN:
-		if (SMS_IsMarioTouchGround4cm()) {
-			const TBGCheckData* ground = *gpMarioGroundPlane;
-			if (ground != nullptr && ground->getActor() == this) {
-				on_ground = true;
-			}
-		}
-		switch (mCurAnm) {
-		case BH_ANM_KIND_UNK5:
-		case BH_ANM_KIND_UNK6:
-		case BH_ANM_KIND_UNKD:
-		case BH_ANM_KIND_UNK10:
-		case BH_ANM_KIND_UNK11:
+	} else if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK1) {
+		bool marioOn = isMarioOn_();
+		switch (mCurrentAnm) {
+		case BOSS_HANACHAN_ANM_UNK5:
+		case BOSS_HANACHAN_ANM_UNK6:
+		case BOSS_HANACHAN_ANM_UNK13:
+		case BOSS_HANACHAN_ANM_UNK16:
+		case BOSS_HANACHAN_ANM_UNK17:
 			if (isCurBckAlreadyEnd_()) {
-				if (getInstanceIndex() - 0x80000000 <= 0x15 && on_ground) {
-					setAnm_(BH_ANM_KIND_UNK2, BH_STOP_MOTION_BLEND_ON);
-				} else {
-					setAnm_(BH_ANM_KIND_UNK3, BH_STOP_MOTION_BLEND_OFF);
-				}
+				if (getActorType() == 0x08000015 && marioOn)
+					setAnm_(BOSS_HANACHAN_ANM_UNK2,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+				else
+					setAnm_(BOSS_HANACHAN_ANM_UNK3,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 			}
 			break;
 		default:
-			if (getInstanceIndex() - 0x80000000 <= 0x15) {
-				bool blend = mNonstopMotionBlend->unk24 > 0
-				             && mNonstopMotionBlend->unk28 > 0.0f;
-				if (blend) {
-					if (mCurAnm == BH_ANM_KIND_UNK2 && on_ground) {
-						setAnm_(BH_ANM_KIND_UNK3,
-						        BH_STOP_MOTION_BLEND_ON);
-					} else if (on_ground) {
-						setAnm_(BH_ANM_KIND_UNK2,
-						        BH_STOP_MOTION_BLEND_ON);
+			if (getActorType() == 0x08000015) {
+				bool blending = BossHanachanIsBlending(mInbetween);
+				if (!blending) {
+					if (mCurrentAnm == BOSS_HANACHAN_ANM_UNK2) {
+						if (!marioOn)
+							setAnm_(BOSS_HANACHAN_ANM_UNK3,
+							        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+					} else if (marioOn) {
+						setAnm_(BOSS_HANACHAN_ANM_UNK2,
+						        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
 					}
 				}
 			}
 			break;
 		}
-		break;
-
-	case BH_NERVE_ANM_GET_UP:
-		if (unk10C > 0) {
-			unk10C--;
-		}
-		if (unk10C == 0 && isCurBckAlreadyEnd_()) {
-			switch (mCurAnm) {
-			case BH_ANM_KIND_UNK7:
-				setAnm_(BH_ANM_KIND_UNK8, BH_STOP_MOTION_BLEND_OFF);
+	} else if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK2) {
+		if (unk10C > 0)
+			--unk10C;
+		if (unk10C == 0) {
+			bool ended = isCurBckAlreadyEnd_();
+			switch (mCurrentAnm) {
+			case BOSS_HANACHAN_ANM_UNK7:
+				if (ended)
+					setAnm_(BOSS_HANACHAN_ANM_UNK8,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 				break;
-			case BH_ANM_KIND_UNK8:
-				setAnm_(BH_ANM_KIND_UNK9, BH_STOP_MOTION_BLEND_OFF);
+			case BOSS_HANACHAN_ANM_UNK8:
+				if (ended)
+					setAnm_(BOSS_HANACHAN_ANM_UNK9,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 				break;
-			case BH_ANM_KIND_UNKA:
-				setAnm_(BH_ANM_KIND_UNKB, BH_STOP_MOTION_BLEND_OFF);
+			case BOSS_HANACHAN_ANM_UNK10:
+				if (ended)
+					setAnm_(BOSS_HANACHAN_ANM_UNK11,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 				break;
-			case BH_ANM_KIND_UNKB:
-				setAnm_(BH_ANM_KIND_UNKC, BH_STOP_MOTION_BLEND_OFF);
+			case BOSS_HANACHAN_ANM_UNK11:
+				if (ended)
+					setAnm_(BOSS_HANACHAN_ANM_UNK12,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+				break;
+			case BOSS_HANACHAN_ANM_UNK9:
+			case BOSS_HANACHAN_ANM_UNK12:
 				break;
 			default:
-				if (mRotation.z < 0.0f) {
-					setAnm_(BH_ANM_KIND_UNK7, BH_STOP_MOTION_BLEND_ON);
-				} else {
-					setAnm_(BH_ANM_KIND_UNKA, BH_STOP_MOTION_BLEND_ON);
-				}
+				if (mRotation.z < 0.0f)
+					setAnm_(BOSS_HANACHAN_ANM_UNK7,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+				else
+					setAnm_(BOSS_HANACHAN_ANM_UNK10,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
 				break;
 			}
 		}
-		break;
-
-	case BH_NERVE_ANM_DAMAGE:
+	} else if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK3) {
 		if (unk10C > 0) {
-			unk10C--;
-			if (unk10C == 0) {
-				setAnm_(BH_ANM_KIND_UNK6, BH_STOP_MOTION_BLEND_OFF);
-			}
-		} else if (mCurAnm == BH_ANM_KIND_UNK6 && isCurBckAlreadyEnd_()) {
-			setAnm_(BH_ANM_KIND_UNK4, BH_STOP_MOTION_BLEND_OFF);
+			--unk10C;
+			if (unk10C == 0)
+				setAnm_(BOSS_HANACHAN_ANM_UNK6,
+				        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+		} else if (mCurrentAnm == BOSS_HANACHAN_ANM_UNK6 && isCurBckAlreadyEnd_()) {
+			setAnm_(BOSS_HANACHAN_ANM_UNK4,
+			        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 		}
-		break;
-
-	case BH_NERVE_ANM_SNORT:
-		if (unk10C > 0) {
-			unk10C--;
-		}
-		if (unk10C == 0 && mCurAnm != BH_ANM_KIND_UNKE) {
-			setAnm_(BH_ANM_KIND_UNKE, BH_STOP_MOTION_BLEND_ON);
-		}
-		break;
-
-	case BH_NERVE_ANM_DEAD:
-		if (unk10C > 0) {
-			unk10C--;
-		}
-		if (unk10C == 0) {
-			setAnm_(BH_ANM_KIND_UNKF, BH_STOP_MOTION_BLEND_OFF);
-		}
-		break;
+	} else if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK4) {
+		if (unk10C > 0)
+			--unk10C;
+		if (unk10C == 0 && mCurrentAnm != BOSS_HANACHAN_ANM_UNK14)
+			setAnm_(BOSS_HANACHAN_ANM_UNK14,
+			        BOSS_HANACHAN_STOP_MOTION_BLEND_ON);
+	} else if (nerve == BOSS_HANACHAN_NERVE_ANM_UNK5) {
+		if (unk10C > 0)
+			--unk10C;
+		if (unk10C == 0)
+			setAnm_(BOSS_HANACHAN_ANM_UNK15,
+			        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 	}
 }
 
-BOOL TBossHanachanPartsBody::setAnm_(
-    EnumBossHanachanAnmKind anm, EnumBossHanachanStopMotionBlendOnOff blend)
+bool TBossHanachanPartsBody::setAnm_(EnumBossHanachanAnmKind anm,
+                                    EnumBossHanachanStopMotionBlendOnOff blend)
 {
-	BOOL result = false;
-	if (mCurAnm != anm) {
-		mOldAnm = mCurAnm;
-		mCurAnm = anm;
-		if (mMActor->getCurAnmIdx(ANM_TYPE_BCK) != sBodyBckIndex[anm]) {
+	static const int sBodyBckIndex[] = {
+		19, 15, 10, 13, 0, 12, 9, 2, 3, 4, 5, 6, 7, 8, 16, 1, 17, 18
+	};
+	bool changed = false;
+	if (mCurrentAnm != anm) {
+		mPreviousAnm = mCurrentAnm;
+		mCurrentAnm = anm;
+		if (sBodyBckIndex[anm] != getMActor()->getCurAnmIdx(ANM_TYPE_BCK)) {
 			int index = sBodyBckIndex[anm];
-			if (mBodyIndex == mOwner->mWeakBodyIndex) {
+			if (unk114 == unkFC->getWeakBodyIndex()) {
 				switch (anm) {
-				case BH_ANM_KIND_UNK2:
-					index = 0xB;
-					break;
-				case BH_ANM_KIND_UNK3:
-					index = 0xE;
-					break;
+				case BOSS_HANACHAN_ANM_UNK2: index = 11; break;
+				case BOSS_HANACHAN_ANM_UNK3: index = 14; break;
 				}
 			}
-			mMActor->setBckFromIndex(index);
-			result = true;
-			if (blend == BH_STOP_MOTION_BLEND_ON) {
-				mNonstopMotionBlend->unk24 = mNonstopMotionBlend->unk4;
-			} else {
-				mNonstopMotionBlend->unk24 = 0;
-			}
+			getMActor()->setBckFromIndex(index);
+			changed = true;
+			if (blend == BOSS_HANACHAN_STOP_MOTION_BLEND_ON)
+				mInbetween->startMotionBlend();
+			else
+				mInbetween->stopMotionBlend();
 			setCurAnmSound();
-			result = true;
+		}
+		if (anm == BOSS_HANACHAN_ANM_UNK15) {
+			getMActor()->setBrkFromIndex(0);
+			getMActor()->getFrameCtrl(ANM_TYPE_BRK)->setAttribute(J3DFrameCtrl::ATTR_ONCE);
+			getMActor()->getModel()->unlock();
 		}
 	}
-
-	if (anm == BH_ANM_KIND_UNKF) {
-		mMActor->setBrkFromIndex(0);
-		mMActor->getFrameCtrl(5)->setAttribute(0);
-		mMActor->getModel()->unlock();
-	}
-	return result;
+	return changed;
 }
 
-BOOL TBossHanachanPartsHead::setAnm_(
-    EnumBossHanachanAnmKind anm, EnumBossHanachanStopMotionBlendOnOff blend)
+// TODO: 97.7%, frame exact; the known-open this-vs-pool-base rotation
+// (retail: changed, anm, this, table base, anm*4, blend from r31 down). Inert or
+// worse: a one-line returning table-index helper, a blend helper, a named
+// mCurrentAnm, non-static const tables.
+bool TBossHanachanPartsHead::setAnm_(EnumBossHanachanAnmKind anm,
+                                    EnumBossHanachanStopMotionBlendOnOff blend)
 {
-	BOOL result = false;
-	if (mCurAnm != anm) {
-		mOldAnm = mCurAnm;
-		mCurAnm = anm;
-		if (mMActor->getCurAnmIdx(ANM_TYPE_BCK) != sHeadBckIndex[anm]) {
-			mMActor->setBckFromIndex(sHeadBckIndex[anm]);
-			if (blend == BH_STOP_MOTION_BLEND_ON) {
-				mNonstopMotionBlend->unk24 = mNonstopMotionBlend->unk4;
-			} else {
-				mNonstopMotionBlend->unk24 = 0;
-			}
+	static const int sHeadBckIndex[] = {
+		36, 32, 29, 31, 20, 30, 28, 22, 23, 24, 25, 26, 27, 28, 33, 21, 34, 35
+	};
+	static const int sHeadBtpIndex[] = {
+		0, 0, 1, 2, 1, 2, 2, 0, 0, 0, 0, 0, 0, 2, 0, 0, 1, 1
+	};
+	static const int sHeadBtkIndex[] = {
+		0, 0, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+	};
+	bool changed = false;
+	if (mCurrentAnm != anm) {
+		mPreviousAnm = mCurrentAnm;
+		mCurrentAnm = anm;
+		if (sHeadBckIndex[anm] != getMActor()->getCurAnmIdx(ANM_TYPE_BCK)) {
+			getMActor()->setBckFromIndex(sHeadBckIndex[anm]);
+			changed = true;
+			if (blend == BOSS_HANACHAN_STOP_MOTION_BLEND_ON)
+				mInbetween->startMotionBlend();
+			else
+				mInbetween->stopMotionBlend();
 			setCurAnmSound();
-			result = true;
+		}
+		if (sHeadBtpIndex[anm] != getMActor()->getCurAnmIdx(ANM_TYPE_BTP))
+			getMActor()->setBtpFromIndex(sHeadBtpIndex[anm]);
+		if (sHeadBtkIndex[anm] != getMActor()->getCurAnmIdx(ANM_TYPE_BTK))
+			getMActor()->setBtkFromIndex(sHeadBtkIndex[anm]);
+		if (anm == BOSS_HANACHAN_ANM_UNK15) {
+			getMActor()->setBrkFromIndex(1);
+			getMActor()->getFrameCtrl(ANM_TYPE_BRK)->setAttribute(J3DFrameCtrl::ATTR_ONCE);
 		}
 	}
-	if (mMActor->getCurAnmIdx(ANM_TYPE_BTP) != sHeadBtpIndex[anm]) {
-		mMActor->setBtpFromIndex(sHeadBtpIndex[anm]);
-	}
-	if (mMActor->getCurAnmIdx(ANM_TYPE_BTK) != sHeadBtkIndex[anm]) {
-		mMActor->setBtkFromIndex(sHeadBtkIndex[anm]);
-	}
-	if (anm == BH_ANM_KIND_UNKF) {
-		mMActor->setBrkFromIndex(1);
-		mMActor->getFrameCtrl(5)->setAttribute(0);
-	}
-	return result;
+	return changed;
 }
 
-BOOL TBossHanachanPartsBody::receiveMessage(THitActor* sender, u32 message)
+// Two-local binder over unkFC + mWeakBodyIndex, +0x10 of
+// TBossHanachanPartsBody::receiveMessage. Pair with RecvIdx for +0x18.
+static inline s32
+BossHanachanPartsRecvWeak(const TBossHanachanPartsBody* p)
 {
-	// the target returns false in game states 1, 2 and 4, so the body only
-	// runs in every other state. Assigning the `||` chain to a bool is what
-	// makes MWCC synthesise the two intermediate flag registers (r3, r4) and
-	// hoist the leading `li r4, 1`. Reading the director into a local is what
-	// keeps one register live across the reload for the third comparison.
-	TMarDirector* director = gpMarDirector;
-	bool blocked            = director->unk124 == 1 || director->unk124 == 2
-	               || director->unk124 == 4;
-	if (blocked) {
-		return false;
-	}
+	TBossHanachan* owner = p->unkFC;
+	s32 weak = owner->mWeakBodyIndex;
+	return weak;
+}
 
-	BOOL result      = false;
-	bool can_receive = false;
-	// the target calls getLatestNerve() once and keeps the nerve in a register
-	// across both comparisons
-	TSpineBase<TLiveActor>::Nerve latest = mOwner->mSpine->getLatestNerve();
-	if (latest == &TNerveBossHanachanTumble::theNerve()
-	    || latest == &TNerveBossHanachanDown::theNerve()) {
-		if (getActorType() - 0x80000000 > 0x15) {
-			can_receive = true;
-		} else if (getRotation().z == -179.0f ? true : false
-		           || getRotation().z == 179.0f ? true : false) {
-			can_receive = true;
-		}
-	}
-	if (!can_receive) {
-		return false;
-	}
-
-	switch (message) {
-	case 0:
-		if (mCurAnm == BH_ANM_KIND_UNK5) {
-			mMActor->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
-		} else {
-			setAnm_(BH_ANM_KIND_UNK5, BH_STOP_MOTION_BLEND_OFF);
-		}
-		result = true;
-		break;
-	case 1: {
-		bool weak = mBodyIndex == mOwner->mWeakBodyIndex;
-		switch (mCurAnm) {
-		case BH_ANM_KIND_UNK2:
-		case BH_ANM_KIND_UNK3:
-		case BH_ANM_KIND_UNK5:
-		case BH_ANM_KIND_UNKD:
-		case BH_ANM_KIND_UNK10:
-		case BH_ANM_KIND_UNK11:
-			if (!weak) {
-				if (mCurAnm == BH_ANM_KIND_UNKD) {
-					mMActor->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
+BOOL TBossHanachanPartsBody::receiveMessage(THitActor*, u32 message)
+{
+	if (gpMarDirector->isThing())
+		return FALSE;
+	bool received = false;
+	if (isReactToTrampleOrHipDrop_()) {
+		switch ((int)message) {
+		case HIT_MESSAGE_TRAMPLE:
+			if (mCurrentAnm == BOSS_HANACHAN_ANM_UNK5)
+				restartBck_();
+			else
+				setAnm_(BOSS_HANACHAN_ANM_UNK5,
+				        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+			received = true;
+			break;
+		case HIT_MESSAGE_HIP_DROP: {
+			bool weak;
+			s32 idx = unk114;
+			if (idx == BossHanachanPartsRecvWeak(this))
+				weak = true;
+			else
+				weak = false;
+			EnumBossHanachanAnmKind anm = mCurrentAnm;
+			switch (anm) {
+			case BOSS_HANACHAN_ANM_UNK2:
+			case BOSS_HANACHAN_ANM_UNK3:
+			case BOSS_HANACHAN_ANM_UNK5:
+			case BOSS_HANACHAN_ANM_UNK13:
+			case BOSS_HANACHAN_ANM_UNK16:
+			case BOSS_HANACHAN_ANM_UNK17:
+				if (weak) {
+					setAnm_(BOSS_HANACHAN_ANM_UNK6,
+					        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+					unkFC->execDamage();
 				} else {
-					setAnm_(BH_ANM_KIND_UNKD,
-					        BH_STOP_MOTION_BLEND_OFF);
+					if (anm == BOSS_HANACHAN_ANM_UNK13)
+						restartBck_();
+					else
+						setAnm_(BOSS_HANACHAN_ANM_UNK13,
+						        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
 				}
-			} else {
-				setAnm_(BH_ANM_KIND_UNK6, BH_STOP_MOTION_BLEND_OFF);
-				mOwner->execDamage();
+				received = true;
+				break;
 			}
-			result = true;
 			break;
 		}
-		break;
+		}
 	}
-	}
-	return result;
+	return received;
 }
 
-BOOL TBossHanachanPartsHead::receiveMessage(THitActor* sender, u32 message)
+BOOL TBossHanachanPartsHead::receiveMessage(THitActor*, u32 message)
 {
-	// the target returns false in game states 1, 2 and 4, so the body only
-	// runs in every other state. Assigning the `||` chain to a bool is what
-	// makes MWCC synthesise the two intermediate flag registers (r3, r4) and
-	// hoist the leading `li r4, 1`. Reading the director into a local is what
-	// keeps one register live across the reload for the third comparison.
-	TMarDirector* director = gpMarDirector;
-	bool blocked            = director->unk124 == 1 || director->unk124 == 2
-	               || director->unk124 == 4;
-	if (blocked) {
-		return false;
-	}
-
-	BOOL result      = false;
-	bool can_receive = false;
-	// the target calls getLatestNerve() once and keeps the nerve in a register
-	// across both comparisons
-	TSpineBase<TLiveActor>::Nerve latest = mOwner->mSpine->getLatestNerve();
-	if (latest == &TNerveBossHanachanTumble::theNerve()
-	    || latest == &TNerveBossHanachanDown::theNerve()) {
-		if (getActorType() - 0x80000000 > 0x15) {
-			can_receive = true;
-		} else if (getRotation().z == -179.0f ? true : false
-		           || getRotation().z == 179.0f ? true : false) {
-			can_receive = true;
+	if (SMSGetMarDirector()->isThing())
+		return FALSE;
+	bool received = false;
+	if (isReactToTrampleOrHipDrop_()) {
+		switch ((int)message) {
+		case HIT_MESSAGE_TRAMPLE:
+			if (mCurrentAnm == BOSS_HANACHAN_ANM_UNK5)
+				restartBck_();
+			else
+				setAnm_(BOSS_HANACHAN_ANM_UNK5,
+				        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+			received = true;
+			break;
+		case HIT_MESSAGE_HIP_DROP:
+			setAnm_(BOSS_HANACHAN_ANM_UNK6,
+			        BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+			unk100->onWaterHitCounter();
+			received = true;
+			break;
 		}
 	}
-	if (!can_receive) {
-		return false;
-	}
-
-	switch (message) {
-	case 0:
-		if (mCurAnm == BH_ANM_KIND_UNK5) {
-			mMActor->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
-		} else {
-			setAnm_(BH_ANM_KIND_UNK5, BH_STOP_MOTION_BLEND_OFF);
-		}
-		result = true;
-		break;
-	case 1:
-		setAnm_(BH_ANM_KIND_UNK6, BH_STOP_MOTION_BLEND_OFF);
-		mHitActor->onWaterHitCounter();
-		result = true;
-		break;
-	}
-	return result;
+	return received;
 }

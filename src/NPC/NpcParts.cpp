@@ -22,71 +22,102 @@
 #include <M3DUtil/InfectiousStrings.hpp>
 
 // TODO: figure out the odr violations with this symbol
+// Defined in both NpcAnm and NpcParts, as retail keeps the string in both; the
+// linker keeps the first. A PC build must give it internal or weak linkage.
 const char* cNpcPartsNameRootJoint = "__ROOT_JOINT__";
 const char* cPeachPartsTextureName = "H_peach_main_dummy";
 const char* cPeachHostTextureName  = "H_peach_main_s3tc";
 
-void SetMActorAnmFrame(MActor* param_1, f32 param_2, bool param_3, bool param_4)
+void SetMActorAnmFrame(MActor* actor, f32 frame, bool set_bck, bool set_btp)
 {
+	if (actor == nullptr)
+		return;
+
+	J3DFrameCtrl* ctrl;
+
+	if (set_bck) {
+		ctrl = actor->getFrameCtrl(ANM_TYPE_BCK);
+		if (ctrl)
+			ctrl->setFrame(frame);
+	}
+
+	if (set_btp) {
+		ctrl = actor->getFrameCtrl(ANM_TYPE_BTP);
+		if (ctrl)
+			ctrl->setFrame(frame);
+	}
 }
 
+// Starts a simple motion blend on one part; -1 takes the NPCs' shared
+// blend length. `frame` is `s32` like the TParamRT it defaults to: MWCC does
+// not fold the resulting `frame == -1` test, which retail keeps at both
+// defaulted sites and schedules the `20` ahead of the parts load.
+static inline void NpcPartsInitMotionBlend(TNpcParts* parts, int i, int j,
+                                           s32 frame = -1)
+{
+	if (frame == -1)
+		frame = TBaseNPC::mPtrSaveNormal->mMotionBlendFrame.get();
+	parts->unk0[j][i]->getMActor()->initSimpleMotionBlend(frame);
+}
+
+// TODO: 99.6%, frame 0x198 vs retail 0x1f8 (0x60 short) and an r26/r27 swap
+// (the hoisted `&initInfo->unk4[i]` against the parts/model temporaries).
+// An `int` frame, or a `TSharedParts*`/`MActor*` parameter in place of the
+// indices, lets MWCC fold or reorder the blend sites (93.7-96.8%).
+// Re-reading `unk8[j]` for getPartsSDLModelData instead of passing `puVar3`
+// fixes the swap but drops retail's `mr r25` copy (98.6%); lever-search's
+// accessor levers move the frame in 8s only (best 0x1b0) with the swap intact.
 TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
                      TBaseNPC* param_3)
     : unk60(param_3)
 {
-
-	
-	
-
 	const TNpcInitInfo* initInfo
 	    = SMSGetNpcInitData(unk60->getActorType() - 0x4000001);
 
-	// TODO: the ROM keeps a 3-iteration `bdnz` loop here (li r0,3 / mtctr /
-	// 8 stores / addi r3,r3,0x20 / bdnz), i.e. the inner 8 was unrolled and
-	// the outer 3 was NOT. MWCC unrolls all 24 stores for every spelling tried
-	// (3x8 nested, 3x8 with a flat index, single 24-iteration loop), so this
-	// costs ~9 instructions. Not a fakematch: the stores are the same 24
-	// pointers, just emitted inline.
-	for (int i = 0; i < 24; ++i)
-		unk0[0][i] = nullptr;
+	// The clearing loop is a flat 24-trip pointer walk with the increment in
+	// the `for`'s third clause: that is the only spelling MWCC unrolls by
+	// eight into a `bdnz` with ctr = 3 and no remainder path, as retail does.
+	// `*slot++ = nullptr` as the body, `slot[i] = nullptr`, and a nested
+	// 2x12 walk are all different (82.0%, 82.0%, 84.8%); a pointer-compare
+	// `while` is 90.5%.
+	TSharedParts** slot = unk0[0];
+	for (int i = 0; i < 24; ++i, ++slot)
+		*slot = nullptr;
 
 	for (int i = 0; i < 12; ++i) {
-		const TNpcModelData* iVar10 = initInfo->unk4[i];
-		if (iVar10 == nullptr || !(param_1 & (1 << i)))
+		if (initInfo->unk4[i] == nullptr || !(param_1 & (1 << i)))
 			continue;
 
-		u32 param3 = (&param_2->color.r)[iVar10->unk28];
+		u32 param3 = (&param_2->color.r)[initInfo->unk4[i]->unk28];
 
 		const GXColor* param4 = nullptr;
-		if (iVar10->unk2A)
+		if (initInfo->unk4[i]->unk2A)
 			param4 = unk60->getPtrInitPollutionColor();
 
 		for (int j = 0; j < 2; ++j) {
 			if (j >= unk60->getManager()->unk28)
 				break;
 
-			// The ROM builds this as a byte offset into the pointer
-			// initInfo->unk4[i] (add r3,r0,r28 / lwz r0,8(r3) / lwz r3,0(r3)),
-			// i.e. it indexes unk4[i] as an array of 4-byte elements rather
-			// than walking TNpcModelData objects.
-			const TNpcModelData* puVar6
-			    = (const TNpcModelData*)((const u8*)initInfo->unk4[i] + 4 * j);
-			const char* puVar3          = puVar6->unk8[0];
+			const char* puVar3 = initInfo->unk4[i]->unk8[j];
 			if (puVar3 == nullptr)
 				continue;
 
-			int iVar6 = strcmp(puVar6->unk0, cNpcPartsNameRootJoint) == 0
-			                ? -1
-			                : unk60->mMActorKeeper->getMActor(j)
-			                      ->getModel()
-			                      ->getModelData()
-			                      ->getJointName()
-			                      ->getIndex(initInfo->unk4[i + j]->unk0);
+			int iVar6;
+			if (strcmp(initInfo->unk4[i]->unk0[j], cNpcPartsNameRootJoint)
+			    == 0) {
+				iVar6 = -1;
+			} else {
+				iVar6 = unk60->mMActorKeeper->getMActor(j)
+				            ->getModel()
+				            ->getModelData()
+				            ->getJointName()
+				            ->getIndex(initInfo->unk4[i]->unk0[j]);
+			}
 
 			TNPCManager* manager    = (TNPCManager*)unk60->getManager();
 			SDLModelData* modelData = manager->getPartsSDLModelData(puVar3);
 			unk0[j][i] = new TSharedParts(unk60, iVar6, modelData, 3);
-			if (puVar6->unk2B)
+			if (initInfo->unk4[i]->unk2B)
 				SMS_UnifyMaterial(unk0[j][i]->getMActor()->getModel());
 
 			switch (unk60->getActorType()) {
@@ -111,41 +142,27 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 					case 0:
 					case 3:
 					case 4:
-						// TODO: the ROM keeps `li r4,-1 / cmpwi r4,-1 /
-						// bne` here (and at the 0x4000015 site), i.e. it
-						// does NOT constant-fold the test. MWCC folds it for
-						// every spelling tried: block-scope `int = -1` + if,
-						// the same as a ?:, and the same with the variable at
-						// function scope. Worth ~6 instructions.
-						int iVar6 = -1;
-						if (iVar6 == -1)
-							iVar6 = TBaseNPC::mPtrSaveNormal->mMotionBlendFrame
-							            .get();
-						unk0[j][i]->getMActor()->initSimpleMotionBlend(iVar6);
+						NpcPartsInitMotionBlend(this, i, j);
 						break;
 					}
 				}
 				break;
 
 			case 0x4000010:
-				if (i == 0 && j == 9)
-					unk0[j][i]->getMActor()->initSimpleMotionBlend(20);
+				if (j == 0 && i == 9)
+					NpcPartsInitMotionBlend(this, i, j, 20);
 				break;
 
 			case 0x4000015:
 				if (j == 0 && i == 10) {
-					int iVar6 = -1;
-					if (iVar6 == -1)
-						iVar6
-						    = TBaseNPC::mPtrSaveNormal->mMotionBlendFrame.get();
-					unk0[j][i]->getMActor()->initSimpleMotionBlend(iVar6);
+					NpcPartsInitMotionBlend(this, i, j);
 				}
 				break;
 			}
 
 			for (int k = 0; k < 3; ++k) {
 				const TColorChangeInfo* ccInfo
-				    = initInfo->unk4[i][j].unk10[k].unk0;
+				    = initInfo->unk4[i]->unk10[k][j];
 				if (ccInfo != nullptr)
 					SMS_InitChangeNpcColor(unk0[j][i]->getMActor(), ccInfo,
 					                       param3, param4);
@@ -173,10 +190,11 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
 
 void TNpcParts::addJellyFishParts(f32 param_1)
 {
-	TSharedParts** slot = &unk0[5][1];
+	TSharedParts** slot = &unk0[0][11];
 
 	int iVar2 = gpMareJellyFishManager->getModelDataKeeper()->getModelDataNum();
-	int iVar3 = MsRandF() * iVar2;
+	f32 fVar1 = MsRandF() * iVar2;
+	int iVar3 = fVar1;
 
 	SDLModelData* data
 	    = gpMareJellyFishManager->getModelDataKeeper()->getNthData(iVar3);
@@ -196,36 +214,19 @@ void TNpcParts::addJellyFishParts(f32 param_1)
 
 void TNpcParts::setPartsAnmFrame(f32 param_1)
 {
-
-	
-	
-
 	switch (unk60->getActorType()) {
-	case 0x4000010: {
-		if (MActor* mactor = getPartsMActor(9, 0))
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BCK))
-				ctrl->setFrame(param_1);
-	} break;
+	case 0x4000010:
+		SetMActorAnmFrame(getPartsMActor(9, 0), param_1, true, false);
+		break;
 
-	case 0x4000015: {
-		if (MActor* mactor = getPartsMActor(10, 0)) {
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BCK))
-				ctrl->setFrame(param_1);
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BTP))
-				ctrl->setFrame(param_1);
-		}
-	} break;
+	case 0x4000015:
+		SetMActorAnmFrame(getPartsMActor(10, 0), param_1, true, true);
+		break;
 
 	case 0x4000018:
-		if (MActor* mactor = getPartsMActor(0, 0))
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BCK))
-				ctrl->setFrame(param_1);
-		if (MActor* mactor = getPartsMActor(3, 0))
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BCK))
-				ctrl->setFrame(param_1);
-		if (MActor* mactor = getPartsMActor(4, 0))
-			if (J3DFrameCtrl* ctrl = mactor->getFrameCtrl(ANM_TYPE_BCK))
-				ctrl->setFrame(param_1);
+		SetMActorAnmFrame(getPartsMActor(0, 0), param_1, true, false);
+		SetMActorAnmFrame(getPartsMActor(3, 0), param_1, true, false);
+		SetMActorAnmFrame(getPartsMActor(4, 0), param_1, true, false);
 		break;
 	}
 }
@@ -240,24 +241,55 @@ MActor* TNpcParts::getPartsMActor(int param_1, int param_2)
 
 void TNpcParts::partsFrameUpdate()
 {
-
-	
-	
 	int i = 0;
 
-	TSharedParts** it = unk0[unk60->getLodAnm()->unk8];
+	TLodAnm* lodAnm   = unk60->getLodAnm();
+	int lod           = lodAnm->unk8;
+	TSharedParts** it = unk0[lod];
 
 	for (; i < 12; i++, ++it)
-		if (*it)
-			(*it)->getMActor()->frameUpdate();
+		if (*it) {
+			MActor* mactor = (*it)->getMActor();
+			mactor->frameUpdate();
+		}
+}
+
+// Which of Peach's parts show in her current pose. As a predicate level its
+// `result` is a callee object, so the flag load and the `li 1` take retail's
+// r5/r4 (spelled in the loop they swap); the frame goes 0xd0 -> 0xc8.
+static inline bool NpcPartsIsPeachPartShown(const TBaseNPC* npc, int part)
+{
+	bool result = true;
+	if (npc->checkUnk1D8(TBaseNPC::UNK1D8_FLAG_UNK4)) {
+		switch (part) {
+		case 1:
+		case 2:
+		case 4:
+			result = false;
+			break;
+		}
+	} else if (npc->checkUnk1D8(TBaseNPC::UNK1D8_FLAG_UNK1)) {
+		switch (part) {
+		case 1:
+		case 2:
+			result = false;
+			break;
+		}
+	} else {
+		switch (part) {
+		case 4:
+		case 5:
+		case 6:
+			result = false;
+			break;
+		}
+	}
+
+	return result;
 }
 
 void TNpcParts::partsPerform(u32 param_1, JDrama::TGraphics* param_2)
 {
-
-	
-	
-
 	int i = 0;
 
 	TSharedParts** it = unk0[unk60->getLodAnm()->unk8];
@@ -266,42 +298,34 @@ void TNpcParts::partsPerform(u32 param_1, JDrama::TGraphics* param_2)
 		if (*it == nullptr)
 			continue;
 
-		if (unk60->getActorType() == 0x4000018) {
-			// Peach stuff
-			bool r4 = true;
-			if (unk60->checkUnk1D8(TBaseNPC::UNK1D8_FLAG_UNK4)) {
-				switch (i) {
-				case 1:
-				case 2:
-				case 4:
-					r4 = false;
-					break;
-				}
-			} else if (unk60->checkUnk1D8(TBaseNPC::UNK1D8_FLAG_UNK1)) {
-				switch (i) {
-				case 1:
-				case 2:
-					r4 = false;
-					break;
-				}
-			} else {
-				switch (i) {
-				case 4:
-				case 5:
-				case 6:
-					r4 = false;
-					break;
-				}
-			}
-
-			if (!r4)
-				continue;
-		}
+		if (unk60->getActorType() == 0x4000018
+		    && !NpcPartsIsPeachPartShown(unk60, i))
+			continue;
 
 		if (param_1 & 2) {
 			if (unk60->isJellyFishMare() && i == 11) {
 				MActor* mactor = (*it)->getMActor();
-				Mtx mtx;
+				// TODO: still 40 bytes of frame short of the ROM after
+				// the 4x4 fix (0xd0 vs 0xf8): 24 bytes below `mtx` and
+				// 16 above it. The register permutation on top of that
+				// is retail ranking these inner-block locals *below*
+				// `this` (r23 starglowMatIdx, r22 j, r21 matNum, under
+				// r24 this / r25 param_1 / r26 param_2) where we lift
+				// matNum and j above the parameters. Declaration order
+				// is inert on it -- `u16 j` at four positions and `mtx`
+				// ahead of `mactor` all give 31 markers (batch 145,
+				// docs/catalog/frame-gaps.md).
+				// cc27: moving this block into a TU-local static inline
+				// taking `*it` lands `mtx` and j/matNum/starglowMatIdx at
+				// retail's ranks but hoists the "_starglow1" address into
+				// r23 (retail r31), shifting every outer register by one
+				// (97.9%, frame 0xe8); passing the string, the MActor or
+				// the model data as the parameter, a named J3DTexMtx or
+				// J3DModel, `u16 matNum` and `mtx` first are no better.
+				// c-k19: with the Peach predicate level the frame is
+				// 0xc8 (0x30 short); the starglow block as a helper on
+				// top of it is 98.3 (0xe0), taking the parts or MActor.
+				Mtx44 mtx;
 				SMS_GetLightPerspectiveForEffectMtx(mtx);
 				J3DModelData* data = mactor->getModel()->getModelData();
 				int starglowMatIdx

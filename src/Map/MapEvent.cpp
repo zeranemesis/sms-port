@@ -17,6 +17,10 @@ void TMapEvent::finishControl()
 		unk18 = 1;
 }
 
+void TMapEvent::controlMapEvent() { }
+
+void TMapEvent::watchMapEvent() { }
+
 void TMapEvent::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (!stateIs(0) && (cue & CUE_MOVE)) {

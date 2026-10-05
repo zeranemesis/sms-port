@@ -27,12 +27,13 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-static int sWaitTime                      = 1;
-f32 TMapObjTreeScale::mScaleMin           = 0.1f;
-f32 TMapObjTreeScale::mScaleSpeedXZ       = 0.007f;
-f32 TMapObjTreeScale::mStatusChangeScaleY = 0.3f;
-f32 TMapObjTreeScale::mScaleSpeedY        = 0.005f;
+// .sdata order follows marioUS.MAP.
 f32 TMapObjTree::mBananaTreeJumpPower     = 1000.0f;
+f32 TMapObjTreeScale::mScaleSpeedY        = 0.005f;
+f32 TMapObjTreeScale::mStatusChangeScaleY = 0.3f;
+f32 TMapObjTreeScale::mScaleSpeedXZ       = 0.007f;
+f32 TMapObjTreeScale::mScaleMin           = 0.1f;
+static int sWaitTime                      = 1;
 
 TMapObjLeaf::TMapObjLeaf()
     : mAngle(0.0f)
@@ -92,7 +93,12 @@ int TMapObjTree::controlLeaf(int index)
 		leaf.mCollision->moveMtx(mtx);
 
 	// BUG: they probably meant to compare both angle and velocity here, but
-	// forgot to change it after copy-pasting?
+	// forgot to change it after copy-pasting? The magnitude the second term
+	// should have used is declared and never written, which is also the
+	// last four bytes of retail's frame: every local above it sits exactly
+	// 4 bytes higher there, and the slot is unreferenced. Positional
+	// evidence only, but it fits the copy-paste story.
+	f32 absAngularVelocity;
 	if (abs(leaf.mAngle) < mLeafTouchImpulse
 	    && abs(leaf.mAngle) < mLeafTouchImpulse)
 		return 1;
@@ -166,6 +172,49 @@ void TMapObjTree::initEach()
 	return;
 }
 
+// TODO: the only residue is the callee-saved register holding the leaf count
+// across `new TMapObjLeaf[mLeafNum]` (retail r25, ours r26; three `~`
+// instructions, frame exact). The count's live range ends before the two
+// format-string bases are materialised, and retail coalesces it with the
+// per-iteration `new` result while we coalesce it with the first string base.
+// Measured and rejected: a named s32/int, declaration-then-assignment, a named
+// `new` result, a named loop bound, named `const char*` locals for either
+// format string (in both orders, +2 instructions), a named collision pointer,
+// a named joint index, hoisting `char buffer[64]`, inverting the if/else, and
+// a TU-local binding level on the count (that one grows the frame).
+// Closure batch 129, all still three `~` at frame 0x90: a TU-local binding
+// level reading `mLeafNum` by pointer (frame-neutral now, and inert on the
+// register -- so batch 110's "a binding level is also a register lever" does
+// not reach this shape), the same level on the loop bound or on `mLeafNum - i`,
+// `i++` for `++i`, an `(s32)` cast on the `new[]` count, and a named `MtxPtr`
+// for the anm matrix. The `-8` lever in this function is the raw
+// `mMapCollisionManager` read (frame 0x88), which also leaves the register
+// alone, so the count's rank is not bought with frame. Retail merges the
+// count's live range with the loop's scratch register and we merge it with the
+// second format-string base; both merges are legal, so the tie-break is
+// allocator-internal and no source spelling found reaches it.
+// Batch 151 checked the residue against batch 144/145's ranking rule and it is
+// not reachable by either knob: the function holds exactly one function-scope
+// named scalar (`i`), so the named-scalar count that moves the pool-vs-`this`
+// boundary cannot be exercised, and declaration order is inert with a single
+// competitor. The frame is exact, so none of the new inline-temp price rules
+// applies either. Three operand-only markers, left as allocator-internal.
+// Closure batch 211: research 210's rule does not reach this shape either.
+// The count is not half of a rotation of two live values -- it dies before the
+// two format-string bases are materialised, so both spellings are legal
+// dead-range reuses (retail coalesces it with the loop scratch r25, we with
+// the @3182 base r26) and there is no second value to pair it with as an
+// inlined call's `this` and parameter. An inlined `getLeafNum()` accessor for
+// the `new[]` count is worse (3 -> 6 markers).
+// Batch cc22, all worse or inert: zero-cost `static inline` factories for
+// `new TMapCollisionMove` and/or `new TMapObjLeaf[n]` (6-7 markers; the array
+// one +8 frame, cancelled by the raw manager read back to 3 markers).
+// Register model (c-g4): the new[] count is the parse-time object @1206, the
+// first-created `@` object, so it is coloured first and takes r26; the replay
+// gives retail exactly once it is coloured after the loop's @1473/@1475
+// (created later). A named count is forward-substituted (inert); a
+// `new TMapObjLeaf[tree->mLeafNum]` static inline keeps it first (and moves
+// buffer by 4).
 void TMapObjTree::initMapObj()
 {
 	TMapObjGeneral::initMapObj();
@@ -179,14 +228,7 @@ void TMapObjTree::initMapObj()
 		if (isActorType(0x40000038)) {
 			snprintf(buffer, 0x100, "/mapObj/palmLeaf%02d", i + 1);
 		} else {
-			snprintf(buffer, 0x100, "/mapObj/%sLeaf%02d", unkF4, i + 1);
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+			snprintf(buffer, 0x100, "/mapObj/%sLeaf%02d", getUnkF4(), i + 1);
 		}
 		leaf.mCollision->init(buffer, 0, this);
 		leaf.mCollision->setAllData(i);
@@ -196,8 +238,8 @@ void TMapObjTree::initMapObj()
 		leaf.mCollision->setUpMtx(leaf.mTransform);
 	}
 
-	if (mMapCollisionManager != nullptr)
-		mMapCollisionManager->unk10 = nullptr;
+	if (getMapCollisionManager() != nullptr)
+		getMapCollisionManager()->unk10 = nullptr;
 }
 
 TMapObjTree::TMapObjTree(const char* name)
@@ -225,10 +267,7 @@ void TMapObjTreeScale::startScaleUp()
 
 u32 TMapObjTreeScale::touchWater(THitActor* water)
 {
-
-	
-	
-	if (mScaling.x == 1.0f)
+	if (getScaling().x == 1.0f)
 		return TMapObjGeneral::touchWater(water);
 
 	if (isState(STATE_SMALL))
@@ -239,19 +278,16 @@ u32 TMapObjTreeScale::touchWater(THitActor* water)
 
 void TMapObjTreeScale::control()
 {
-
-	
-	
 	switch (mState) {
 	case STATE_SMALL:
 		if (SMSGetMarDirector()->getCurrentMap() != 4
-		    && !gpPollution->isPolluted(mPosition.x, mPosition.y, mPosition.z))
+		    && !gpPollution->isPolluted(getPosition().x, getPosition().y,
+		                                getPosition().z))
 			startScaleUp();
 		break;
 
 	case STATE_SCALING_UP_Y_ONLY:
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_TREE_APPEAR, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_TREE_APPEAR, &mPosition);
 		mScaling.y += mScaleSpeedY;
 		// TODO: does this mean that the naming scheme for map obj states is
 		// actually same as Mario, "status" being the preferred term?
@@ -260,8 +296,7 @@ void TMapObjTreeScale::control()
 		break;
 
 	case STATE_SCALING_UP:
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_TREE_APPEAR, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_TREE_APPEAR, &mPosition);
 		if (mScaling.y < 1.0f)
 			mScaling.y += mScaleSpeedY;
 		else
@@ -292,14 +327,14 @@ void TMapObjTreeScale::control()
 		    || (!SMSGetMarDirector()->isDemoModeNow()
 		        && (unk2E0 == nullptr || unk2E0->isBuried(1)))) {
 			SMSRumbleMgr->start(0x13, &mPosition);
-			gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 1.0f);
+			gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 1.0f);
 		}
 
 		if (mParticleEmitTimer > sWaitTime) {
 			// circular buffer of particle positions
 			mParticlePositions[mNextFreeParticlePos].set(
-			    mPosition.x + 400.0f * MsRandF() - 200.0f, mPosition.y,
-			    mPosition.z + 400.0f * MsRandF() - 200.0f);
+			    getPosition().x + 400.0f * MsRandF() - 200.0f, getPosition().y,
+			    getPosition().z + 400.0f * MsRandF() - 200.0f);
 
 			gpMarioParticleManager->emit(
 			    PARTICLE_MS_RAKU_KIE, &mParticlePositions[mNextFreeParticlePos],
@@ -320,7 +355,7 @@ void TMapObjTreeScale::beSmall()
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	onHitFlag(HIT_FLAG_CANNOT_ATTACK);
 	setObjHitData(0);
-	mDamageRadius = mAttackRadius;
+	mDamageRadius = getAttackRadius();
 	calcEntryRadius();
 	mDamageHeight = 30.0f;
 	calcEntryRadius();
@@ -331,11 +366,20 @@ void TMapObjTreeScale::beSmall()
 	SMS_HideAllShapePacket(getModel());
 }
 
+// TODO: this is JDrama::TNameRefGen::search2 with its result bound to a local
+// before returning; the binding is worth 8 bytes of loadAfter's frame and
+// getAttackRadius() below is the other half of the pair. Binding inside
+// search2 itself costs eighteen exact functions elsewhere (header round 19),
+// so it is parked here until the right carrier is found.
+static inline JDrama::TNameRef* MapObjTreeSearch(const char* name)
+{
+	JDrama::TNameRef* ref
+	    = JDrama::TNameRefGen::getInstance()->getRootNameRef()->search(name);
+	return ref;
+}
+
 void TMapObjTreeScale::loadAfter()
 {
-
-	
-	
 	TMapObjGeneral::loadAfter();
 
 	if (SMSGetMarDirector()->getCurrentMap() == 4
@@ -344,9 +388,8 @@ void TMapObjTreeScale::loadAfter()
 	}
 
 	// Translated: "Event (Bianco terrain sinking)"
-	unk2E0 = (TMapEventSink*)JDrama::TNameRefGen::getInstance()
-	             ->getRootNameRef()
-	             ->search("イベント（地形沈むビアンコ）");
+	unk2E0 = (TMapEventSink*)MapObjTreeSearch(
+	    "イベント（地形沈むビアンコ）");
 }
 
 TMapObjTreeScale::TMapObjTreeScale(const char* name)

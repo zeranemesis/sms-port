@@ -5,6 +5,42 @@
 #include <JSystem/JAudio/JAInterface/JAIConst.hpp>
 #include <math.h>
 
+// TODO: 99.3%, frame 0x190 and every instruction exact; three GPR webs differ.
+// Closure c-k4 (debugger): retail loads the category's mMaxPlaying straight
+// into the register of the candidate counter (r26), so the two are one u8
+// local (`num`, counted up while candidates are ranked, then reloaded with
+// the category maximum). A separate `maxPlaying` is initialised once from a
+// load, so the IR optimiser splits it (`maxPlaying = @250 = load`) and the
+// hoisted `maxPlaying + 1` reads @250: that cost the extra `addi r29, r3, 0`
+// and a whole-function callee-saved rotation (the four pool/base temps were
+// pushed in the second simplify sweep, before the locals). With one `num`
+// (two definitions, never split) the rotation and the copy are gone.
+// Left: `it` r27 (retail r18), `pi` r18 (r20), the hoisted `(u8)camEnd` r20
+// (r27). In the replay `it` reaches the second sweep with remaining degree 30
+// (one over K after `cam` is pushed), so it is deferred and coloured at
+// position 8; retail colours it between @245 and `pi` (positions 19-24), and
+// then needs `cam` coloured before `pi`. Inert here: `u8 cam` declared at the
+// top ahead of `pi` (69 markers), `it` declared at the top first (90) or
+// after `pi` (68), and both together (85, 73).
+// The replay closes with two changes together: C-style top declarations
+// `..., bVar18; JAISound* it; u8 cam; ...* pi; u8 num;` (numbering pi < cam <
+// it so `it` is pushed in the second sweep; alone 85 markers, because the
+// four hoisted pool temps -- &candidates, 0x4330, &dummyZeroVec, 0x7fffffff --
+// then drop below K in that sweep too) plus one more coalesced "ghost" web
+// neighbouring those four pool temps but not `it`: `regalloc.py`-style replay
+// with that ghost misses 0 webs. So retail has one extra coalesced copy (an
+// IRO split temp like `snd`'s @242, or an argument copy) live across the i
+// loop outside the `while (it)` loop; which statement carries it is unknown.
+// c-k25 (replay with c-k4's top declarations): the ghost may neighbour every
+// web except `it`, `l` and the F-loop `k` split (@254), so it is live outside
+// `while (it)`, the `l` loop and the `else` branch's `k` loop. Inert on top of
+// those declarations: all 107 reassignments of j/k/l across the eight loops
+// (85 markers each), a `head` copy of mUsedHead, local `s` copies of
+// candidates[k].sound or mSeTrack[i][j].mSound (72-85, whole rotation), a
+// bVar18 hop for the second `num`, and `k == (u8)num`.
+// Older readings: batch 145 (25 declaration orders, eight relocations into
+// the `for (i...)` body) and c-jai (ternary `fVar3`/`fVar1`, a named `s16
+// adjust`) were all measured against the split `maxPlaying` and are void now.
 void JAIBasic::checkNextFrameSe()
 {
 	JAISound sound;
@@ -26,7 +62,6 @@ void JAIBasic::checkNextFrameSe()
 	u8 j;
 	u8 bVar7;
 	u8 bVar18;
-	u8 maxPlaying;
 	JAISound::FabricatedPositionInfo* pi;
 
 	f32 fVar6
@@ -43,7 +78,7 @@ void JAIBasic::checkNextFrameSe()
 			candidates[j].state = 0xff;
 		}
 
-		u8 bVar19 = 0;
+		u8 num = 0;
 
 		JAISound* it = unk0->mSeRegist[i].mUsedHead;
 		while (it) {
@@ -137,8 +172,8 @@ void JAIBasic::checkNextFrameSe()
 						if (it->mPriority < candidates[j].score
 						    || (it->mPriority == candidates[j].score
 						        && candidates[j].state >= it->mState)) {
-							if (bVar19 < bVar18)
-								++bVar19;
+							if (num < bVar18)
+								++num;
 							for (k = bVar18 - 1; k > j; --k) {
 								candidates[k].score = candidates[k - 1].score;
 								candidates[k].sound = candidates[k - 1].sound;
@@ -157,7 +192,7 @@ void JAIBasic::checkNextFrameSe()
 				it = it->mNextSound;
 		}
 
-		for (k = 0; k < bVar19; ++k) {
+		for (k = 0; k < num; ++k) {
 			snd = candidates[k].sound;
 			if (snd->mState == SOUNDSTATE_Stored) {
 				snd->mState = SOUNDSTATE_Prepared;
@@ -166,8 +201,8 @@ void JAIBasic::checkNextFrameSe()
 			}
 		}
 
-		maxPlaying = unk0->mCategoryInfoTable[mSoundScene][i].mMaxPlaying;
-		for (j = 0; j < maxPlaying; ++j) {
+		num = unk0->mCategoryInfoTable[mSoundScene][i].mMaxPlaying;
+		for (j = 0; j < num; ++j) {
 			snd   = unk0->mSeTrack[i][j].mSound;
 			bVar7 = 0;
 			if (snd == nullptr) {
@@ -184,34 +219,34 @@ void JAIBasic::checkNextFrameSe()
 				unk0->mSeTrack[i][j].mSound = nullptr;
 				bVar7                       = 1;
 			} else {
-				for (k = 0; k < maxPlaying; ++k) {
+				for (k = 0; k < num; ++k) {
 					if (unk0->mSeTrack[i][j].mSound == candidates[k].sound) {
 						candidates[k].sound = nullptr;
-						k                   = maxPlaying;
+						k                   = num;
 					}
 				}
 			}
 
 			if (bVar7 == 1) {
-				for (k = 0; k < maxPlaying; ++k) {
+				for (k = 0; k < num; ++k) {
 					snd = candidates[k].sound;
 					if (snd != nullptr && snd->mState != SOUNDSTATE_Started) {
-						for (l = 0; l < maxPlaying; ++l) {
+						for (l = 0; l < num; ++l) {
 							if (unk0->mSeTrack[i][l].mSound
 							    && snd == unk0->mSeTrack[i][l].mSound) {
 								bVar7 = 0;
-								l     = maxPlaying;
+								l     = num;
 							}
 						}
 
 						if (bVar7 == 1) {
 							unk0->mSeTrack[i][j].mSound = snd;
 							candidates[k].sound         = nullptr;
-							k                           = maxPlaying + 1;
+							k                           = num + 1;
 						}
 					}
 				}
-				if (k == maxPlaying) {
+				if (k == num) {
 					unk0->mSeTrack[i][j].mSound = nullptr;
 				}
 			}
@@ -219,6 +254,28 @@ void JAIBasic::checkNextFrameSe()
 	}
 }
 
+// TODO: every instruction matches and the frame is 0xa8 exact, but four stack
+// slots sit elsewhere. The locals area is 0xc..0x30 (the f32-to-int conversion
+// slot at 0x30 and the register saves from 0x3c match), and inside it retail
+// has its temp pool end at 0x24 (the `get_ufloat_1` bit-cast at 0x1c, the
+// `std::sqrtf` round trip at 0x20) with `readStatus1`/`readStatus0` at
+// 0x26/0x28, where we have 8 bytes more temp pool (bit-cast 0x24, round trip
+// 0x28) and the pair at 0x2c/0x2e. So two opposite corrections are needed: one
+// inline expansion too many below the temps, and 6 bytes of named locals
+// declared *before* `readStatus0` that we are missing (0x2a..0x30 is empty in
+// retail, which is three more u16s or equivalent).
+// TODO: 100.0% by instruction, frame 0xa8 exact; the eight remaining operands
+// are all stack displacements. Retail puts the two `readPortApp` u16s at
+// 0x26/0x28 and the two 4-byte float temps at 0x1c/0x20; ours are at 0x2c/0x2e
+// and 0x24/0x28. Relative order and adjacency are right, so the low pool below
+// the float temps is 8 bytes larger in ours (0xc..0x24 against 0xc..0x1c) and
+// the named block starts 6 bytes higher, which is the -8 pool / +6 named split
+// recorded in frame-gaps.md. Closure round 2026-09-18: writing the sqrt loop
+// as `infos[k].unk18 = std::sqrtf(infos[k].unk18);` is byte-identical,
+// dropping `infos` costs an instruction, and dropping the `portMask` binding
+// takes the frame to 0xa0 (142 operands) -- so the pool is reachable from the
+// `portMask` binding's end, but nothing found yet removes 8 bytes from it
+// without moving code.
 void JAIBasic::sendPlayingSeCommand()
 {
 	u16 readStatus0;
@@ -228,8 +285,9 @@ void JAIBasic::sendPlayingSeCommand()
 	u8 trackId = 0;
 
 	for (u8 cat = 0; cat < JAIGlobalParameter::getParamSeCategoryMax(); ++cat) {
-		for (j = 0;
-		     j < unk0->mCategoryInfoTable[mSoundScene][(u8)cat].mMaxPlaying;
+		for (j = 0; j < unk0
+		                    ->mCategoryInfoTable[mSoundScene][(u8)cat]
+		                    .mMaxPlaying;
 		     ++trackId, ++j) {
 			sound = unk0->mSeTrack[cat][j].mSound;
 			if (sound == nullptr)
@@ -252,7 +310,7 @@ void JAIBasic::sendPlayingSeCommand()
 				*dPtr     = std::sqrtf(*dPtr);
 			}
 
-			u8 state = sound->mState;
+			u8 state = sound->getStatus();
 			if (state == SOUNDSTATE_Prepared) {
 				u32 swBit     = sound->getSwBit();
 				sound->mTrack = trackId;

@@ -75,7 +75,7 @@ static void ClampStick(s8* px, s8* py, s8 max, s8 xy, s8 min)
 	*py = signY * y;
 }
 
-inline static void ClampTrigger(unsigned char* trigger)
+static void ClampTrigger(unsigned char* trigger)
 {
 	if (*trigger <= ClampRegion.minTrigger) {
 		*trigger = 0;

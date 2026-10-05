@@ -28,9 +28,23 @@ extern const unsigned char __upper_map[];
 #define __control      (__motion_char | __control_char)
 #define __zero_fill(c) ((int)(unsigned char)(c))
 
+int isalnum(int c);
+int isalpha(int c);
+int iscntrl(int c);
+int isdigit(int c);
+int isgraph(int c);
+int islower(int c);
+int isprint(int c);
+int ispunct(int c);
+int isspace(int c);
+int isupper(int c);
+int isxdigit(int c);
 int tolower(int c);
 int toupper(int c);
 
+// ctype.c defines the classifiers out of line (all UNUSED in the map); every
+// other unit expands these copies.
+#ifndef _MSL_CTYPE_C
 inline int isalpha(int c)
 {
 	return (int)(__ctype_map[(unsigned char)c] & __letter);
@@ -51,6 +65,7 @@ inline int isxdigit(int c)
 {
 	return (int)(__ctype_map[(unsigned char)c] & __hex_digit);
 }
+#endif
 
 inline int _tolower(int c)
 {

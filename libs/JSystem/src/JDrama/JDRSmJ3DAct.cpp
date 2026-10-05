@@ -34,31 +34,34 @@ void TSmJ3DAct::load(JSUMemoryInputStream& stream)
 	initModDat();
 }
 
+// Z, Y, X Euler chain applied to the actor's translation, the JDRCamera
+// shape: one rotation matrix (never in memory, 0x170) reset per axis with its
+// translation zeroed, and the two result matrices at 0x140/0x110 ping-ponging
+// through `concat(a, b)`. The two `TVec3` zero translations are code-free
+// +0x18 carriers that make up retail's low region; a third one overshoots by
+// 0x18, so the last is the float form. Declaration order rotation, translation,
+// result puts the three at 0x170/0x140/0x110.
+
 void TSmJ3DAct::perform(u32 cue, TGraphics* graphics)
 {
 	if (cue & CUE_CALC_ANIM) {
-		TPosition3f local_148;
-		local_148.identity();
-		local_148.setTrans(mPosition);
-
-		(void)&local_148;
-
 		TPosition3f tmp;
-		tmp.identity();
-		tmp.setEularX(DEG_TO_RAD(mRotation.x));
-
-		TMtx34f local_110;
+		TPosition3f local_148;
+		TPosition3f local_110;
+		local_148.identity();
+		local_148.setTrans(getPosition());
+		tmp.setEularZ(DEG_TO_RAD(getRotation().z));
+		tmp.setTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		local_110.concat(local_148, tmp);
+		tmp.setEularY(DEG_TO_RAD(getRotation().y));
+		tmp.setTrans(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		local_148.concat(local_110, tmp);
+		tmp.setEularX(DEG_TO_RAD(getRotation().x));
+		tmp.setTrans(0.0f, 0.0f, 0.0f);
 		local_110.concat(local_148, tmp);
 
-		tmp.setEularY(DEG_TO_RAD(mRotation.y));
-		TMtx34f local_140;
-		local_140.concat(local_110, tmp);
-
-		tmp.setEularZ(DEG_TO_RAD(mRotation.z));
-		local_110.concat(local_140, tmp);
-
 		unk48->setBaseTRMtx(local_110);
-		unk48->setBaseScale(mScaling);
+		unk48->setBaseScale(getScaling());
 
 		if (unk4C == nullptr) {
 			unk48->calc();

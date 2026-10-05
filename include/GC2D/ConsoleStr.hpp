@@ -8,6 +8,7 @@ class J2DSetScreen;
 class TExPane;
 class J2DTextBox;
 class TBoundPane;
+class JPABaseEmitter;
 
 class TConsoleStr : public JDrama::TViewObj {
 public:
@@ -38,29 +39,29 @@ public:
 	static JUTPoint cShineGetLeft3;
 
 public:
-	/* 0x10 */ s32 mGoPaneCount;
-	/* 0x14 */ s32 mShinePaneCount;
-	/* 0x18 */ s32 mMissPaneCount;
-	/* 0x1C */ s32 mMissBaseRotation[12];
-	/* 0x4C */ J2DSetScreen* unk4C;
-	/* 0x50 */ J2DSetScreen* unk50;
-	/* 0x54 */ f32 unk18;
-	/* 0x58 */ int unk1C;
-	/* 0x5C */ u32 unk20;
-	/* 0x60 */ u32 unk24;
-	/* 0x64 */ TBoundPane* unk28[11];
-	/* 0x90 */ JUTPoint unk34[0xF2];
-	/* 0x820 */ TBoundPane* unk244[11];
-	/* 0x84C */ TBoundPane* unk268[12];
-	/* 0x87C */ TExPane* unk27C[5];
-	/* 0x890 */ TExPane* unk290[2];
-	/* 0x898 */ TExPane* unk298[2];
-	/* 0x8A0 */ J2DTextBox* unk2A0[2];
-	/* 0x8A8 */ u8 unk2A8;
-	/* 0x8A9 */ u8 unk2A9;
-	/* 0x8AC */ void* unk2AC[11];
-	/* 0x8D8 */ int unk2B8;
-	/* 0x8DC */ int unk2BC;
+	/* 0x10 */ J2DSetScreen* unk10;
+	/* 0x14 */ J2DSetScreen* unk14;
+	/* 0x18 */ f32 unk18;
+	/* 0x1C */ int unk1C;
+	/* 0x20 */ int unk20;
+	/* 0x24 */ u32 unk24;
+	// Layout read off load()/the constructor: the 'sg00' loop runs six times
+	// and the 'ms00' loop seven, __construct_array builds 66 JUTPoints at
+	// 0x34 (three rows of 22, the row stride in processGo is 0xb0), and the
+	// three JPABaseEmitter pointers loadAfter() clears sit at 0x2a8.
+	/* 0x28 */ TBoundPane* unk28[3];
+	/* 0x34 */ JUTPoint unk34[3][22];
+	/* 0x244 */ TBoundPane* unk244[6];
+	/* 0x25C */ TBoundPane* unk25C[7];
+	/* 0x278 */ TExPane* unk278[5];
+	/* 0x28C */ TExPane* unk28C[2];
+	/* 0x294 */ TExPane* mWipePanes[2];
+	/* 0x29C */ J2DTextBox* unk29C[2];
+	/* 0x2A4 */ u8 unk2A4;
+	/* 0x2A5 */ u8 unk2A5;
+	/* 0x2A8 */ JPABaseEmitter* unk2A8[3];
+	/* 0x2B4 */ int unk2B4;
+	/* 0x2B8 */ int unk2B8;
 };
 
 #endif

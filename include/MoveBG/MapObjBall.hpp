@@ -8,7 +8,6 @@ class TWaterEmitInfo;
 class TMapObjBall : public TMapObjGeneral {
 public:
 	TMapObjBall(const char* name = "ボール");
-	virtual ~TMapObjBall() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	virtual void control();
@@ -17,7 +16,7 @@ public:
 	virtual void touchActor(THitActor*);
 	virtual u32 touchWater(THitActor*);
 	virtual void makeObjDefault();
-	virtual f32 getDepthAtFloating();
+	virtual f32 getDepthAtFloating() { return mDepthAtFloating; }
 	virtual void hold(TTakeActor*);
 	virtual void put();
 	virtual void touchGround(JGeometry::TVec3<f32>*);
@@ -32,6 +31,11 @@ public:
 
 	void boundByActor(THitActor*);
 
+	// fabricated name: the per-kind drag the water current is scaled by.
+	f32 getUnk17C() const { return unk17C; }
+
+	// Per-ball-kind physics tunables, all written by initMapObj from a
+	// switch on mActorType. Names follow usage where it is unambiguous.
 	/* 0x148 */ f32 unk148;
 	/* 0x14C */ f32 unk14C;
 	/* 0x150 */ f32 unk150;
@@ -49,7 +53,8 @@ public:
 	/* 0x180 */ f32 unk180;
 	/* 0x184 */ f32 unk184;
 	/* 0x188 */ f32 unk188;
-	/* 0x18C */ f32 unk18C;
+	/// How deep the ball sits when floating on water.
+	/* 0x18C */ f32 mDepthAtFloating;
 	/* 0x190 */ f32 unk190;
 	/* 0x194 */ int unk194;
 };
@@ -57,7 +62,6 @@ public:
 class TResetFruit : public TMapObjBall {
 public:
 	TResetFruit(const char* name = "無限フルーツ");
-	virtual ~TResetFruit() { }
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
@@ -86,22 +90,27 @@ public:
 	void makeObjLiving();
 	void makeObjWaitingToAppear();
 
+	// The map records all six of these as globals, not members.
 	static u32 mFruitLivingTime;
 	static f32 mScaleUpSpeed;
-	f32 mRottingScaleSpeed;
+	static f32 mRottingScaleSpeed;
 	static f32 mBreakingScaleSpeed;
 	static u32 mFruitWaitTimeToAppear;
-	GXColorS10 mRottenColor;
-	u8 unk1A4;
+	static GXColorS10 mRottenColor;
+
+	/* 0x198 */ f32 unk198;
+	/* 0x19C */ GXColorS10 unk19C;
+	/* 0x1A4 */ u8 unk1A4;
 };
 
 class TRandomFruit : public TResetFruit {
 public:
 	TRandomFruit(const char* name = "ランダムフルーツ");
-	virtual ~TRandomFruit() { }
 	virtual void initMapObj();
 
-	/* 0x1A8 */ u8 unk1A8[0x20];
+	// initMapObj picks one of four fruit model names into here and points
+	// unkF4 at it.
+	/* 0x1A8 */ char mModelName[0x20];
 };
 
 class TCoverFruit : public TMapObjBase {
@@ -135,8 +144,8 @@ public:
 
 	void startEvent();
 
-	/* 0x198 */ TWaterEmitInfo* mWaterEmitInfo;
-	/* 0x19C */ u32 unk19C;
+	/* 0x198 */ TWaterEmitInfo* unk198;
+	/* 0x19C */ int unk19C;
 	/* 0x1A0 */ f32 unk1A0;
 };
 

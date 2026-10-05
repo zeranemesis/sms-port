@@ -7,6 +7,8 @@
 class JSUFileInputStream : public JSURandomInputStream {
 public:
 	JSUFileInputStream(JKRFile* file);
+	bool open(const char* name);
+	bool close();
 	virtual int readData(void* buf, s32 count);
 	virtual int seekPos(s32 offset, JSUStreamSeekFrom from);
 	virtual ~JSUFileInputStream() { }

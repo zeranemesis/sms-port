@@ -1,22 +1,9 @@
 #include "dolphin/os/OSRtc.h"
-#include <dolphin/os.h>
 #include <System/RenderModeObj.hpp>
 #include <dolphin/vi.h>
 #include <dolphin/os.h>
 #include <JSystem/JDrama/JDRRenderMode.hpp>
 #include <System/Resolution.hpp>
-
-static u32 SMSGetVideoFormat()
-{
-	u32 fmt = VIGetTvFormat();
-	if (!(OSGetConsoleType() & OS_CONSOLE_DEVELOPMENT)) {
-		fmt = VI_PAL;
-	}
-	if (OSGetEuRgb60Mode() == 1) {
-		fmt = VI_EURGB60;
-	}
-	return fmt;
-}
 
 u8 SMSAASamplePattern_non[12][2] = {
 	{ 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 }, { 6, 6 },
@@ -29,6 +16,21 @@ u8 SMSAASamplePattern_aa[12][2] = {
 };
 u8 SMSVFilter_non[7]     = { 0x0, 0x0, 0x15, 0x16, 0x15, 0x0, 0x0 };
 u8 SMSVFilter_flicker[7] = { 0x8, 0x8, 0xA, 0xC, 0xA, 0x8, 0x8 };
+
+// All four SMSSetup*RenderingInfo functions are exact. Their frames were 8/8/8
+// /16 bytes of dead low region short (GCLogo 0x18 vs 0x20, Movie 0x20 vs 0x28,
+// Title 0x28 vs 0x30, Game 0x28 vs 0x38) with no instruction difference at all;
+// header round 26 closed them by giving JDrama::TDisplay::getRenderMode() a
+// named pointer to bind (see the note at its declaration). Probes: one 4-byte
+// non-trivial local placed in getRenderMode() lands all four frames exactly,
+// the same local placed in on/offFlag lands only Movie and Title, and
+// SMSSetupTitleRenderMode -- the only one of the bodies with an out-of-line
+// copy -- is byte-exact at 0x20, so the bytes were provably caller-side and
+// getRenderMode() was the unique carrier.
+//
+// Measured as +0 here (do not retry): a named GXRenderModeObj* or
+// GXRenderModeObj& local at the call sites themselves, and a TU-local
+// SMSGetRenderMode(TDisplay*) forwarder.
 
 JDrama::TRect SMSGetRederRect_Game()
 {
@@ -66,14 +68,10 @@ void SMSSetupGCLogoRenderMode(GXRenderModeObj* rmo)
 
 void SMSSetupGCLogoRenderingInfo(JDrama::TDisplay* param_1)
 {
-
-	
-	
 	SMSSetupGCLogoRenderMode(&param_1->getRenderMode());
 	param_1->offFlag(0x8);
 }
 
-#pragma dont_inline on
 void SMSSetupTitleRenderMode(GXRenderModeObj* rmo)
 {
 #ifdef VERSION_GMSP01
@@ -110,7 +108,6 @@ void SMSSetupTitleRenderMode(GXRenderModeObj* rmo)
 	JDrama::CopyRenderModeVFilter(rmo, noFilter ? SMSVFilter_non
 	                                            : SMSVFilter_flicker);
 }
-#pragma dont_inline off
 
 void SMSSetupTitleRenderingInfo(JDrama::TDisplay* param_1)
 {
@@ -206,11 +203,4 @@ void SMSSetupMovieRenderingInfo(JDrama::TDisplay* param_1)
 	JDrama::CopyRenderModeSamplePattern(&rmo, SMSAASamplePattern_non);
 	JDrama::CopyRenderModeVFilter(&rmo, SMSVFilter_non);
 	param_1->offFlag(0x8);
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x28 against 0x20). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }

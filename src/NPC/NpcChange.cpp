@@ -65,9 +65,6 @@ bool TBaseNPC::isNerveMaybeDontCalcAnim1() const
 	return result;
 }
 
-// The ROM keeps this out of line: changeNerveProc_ emits a single `bl`
-// (marioEU.MAP 8020B138). We inline it, costing changeNerveProc_ 15 points.
-#pragma dont_inline on
 bool TBaseNPC::isNerveCanGoToTalk() const
 {
 	bool result                         = false;
@@ -80,15 +77,15 @@ bool TBaseNPC::isNerveCanGoToTalk() const
 	    || nerve == &TNerveNPCRecoverAfter::theNerve()
 	    || nerve == &TNerveNPCMad::theNerve()
 	    || nerve == &TNerveNPCMareStand::theNerve()) {
-		if (mSpine->getCurrentNerve() != nullptr
-		    || (mSpine->getTop() != &TNerveNPCWet::theNerve()
-		        && mSpine->getTop() != &TNerveNPCTalk::theNerve())) {
+		const TNerveBase<TLiveActor>* current = mSpine->getCurrentNerve();
+		if (current != nullptr
+		    || (getSpine()->getTop() != &TNerveNPCWet::theNerve()
+		        && getSpine()->getTop() != &TNerveNPCTalk::theNerve())) {
 			result = true;
 		}
 	}
 	return result;
 }
-#pragma dont_inline off
 
 bool TBaseNPC::isNerveCanGoToWet() const
 {
@@ -146,6 +143,8 @@ bool TBaseNPC::isNerveCanGoToTaken() const
 	return result;
 }
 
+bool TBaseNPC::isNerveCanGoToThrow() const { }
+
 bool TBaseNPC::isNerveCanGoToMad() const
 {
 	bool result                         = false;
@@ -180,8 +179,9 @@ bool TBaseNPC::isNerveCanGoToBlown() const
 
 void TBaseNPC::changeNerveFromTalk_()
 {
-	const TNerveBase<TLiveActor>* current = mSpine->getCurrentNerve();
-	const TNerveBase<TLiveActor>* top     = mSpine->getTop();
+	TSpineBase<TLiveActor>* spine         = getSpine();
+	const TNerveBase<TLiveActor>* current = spine->getCurrentNerve();
+	const TNerveBase<TLiveActor>* top     = spine->getTop();
 
 	if (current == &TNerveNPCWet::theNerve()) {
 		mSpine->skip();
@@ -204,6 +204,11 @@ void TBaseNPC::changeNerveFromTalk_()
 	offLiveFlag(LIVE_FLAG_UNK2000000);
 }
 
+void TBaseNPC::changeNerveToWet_()
+{
+	mSpine->pushNerve(&TNerveNPCWet::theNerve());
+}
+
 void TBaseNPC::changeNerveToMad_()
 {
 	if (mSpine->getCurrentNerve() == &TNerveNPCWet::theNerve()) {
@@ -213,17 +218,21 @@ void TBaseNPC::changeNerveToMad_()
 	}
 }
 
+// Direct-return fork over the carrier's yaw: the pool rung that, with the
+// raw XZ speed read, lands releaseTaken_'s 0x50 frame (the velocity set()
+// alone, which fixes the load order, is 8 bytes over).
+static inline f32 NpcTakerRotY(const TTakeActor* taker)
+{
+	return taker->getRotation().y;
+}
+
 void TBaseNPC::releaseTaken_()
 {
-	f32 fVar1 = mPtrSaveNormal->mThrowSpeedXZ.get();
-	s16 uVar4 = CLBDegToShortAngle(unk158->mRotation.y);
-	f32 fVar2 = mPtrSaveNormal->mThrowSpeedY.get();
-	f32 s     = JMASSin(uVar4);
-	f32 c     = JMASCos(uVar4);
+	f32 fVar1 = mPtrSaveNormal->mThrowSpeedXZ.value;
+	s16 uVar4 = CLBDegToShortAngle(NpcTakerRotY(unk158));
 
-	mVelocity.x = fVar1 * s;
-	mVelocity.y = fVar2;
-	mVelocity.z = fVar1 * c;
+	mVelocity.set(fVar1 * JMASSin(uVar4), mPtrSaveNormal->mThrowSpeedY.get(),
+	              fVar1 * JMASCos(uVar4));
 
 	onLiveFlag(LIVE_FLAG_UNK10000000);
 
@@ -322,22 +331,51 @@ void TBaseNPC::behaveToBeTrampled_()
 	switch (unkD0->getCurrentAnmKind()) {
 	case NPC_ANM_KIND_UNK1B:
 	case NPC_ANM_KIND_UNK7: {
-		const TNerveBase<TLiveActor>* current = mSpine->getCurrentNerve();
-		const TNerveBase<TLiveActor>* latest  = mSpine->getLatestNerve();
-		if (latest == &TNerveNPCWet::theNerve()) {
+		const TNerveBase<TLiveActor>* current
+		    = getSpine()->getCurrentNerve();
+		const TNerveBase<TLiveActor>* latest = getSpine()->getLatestNerve();
+		if (current == &TNerveNPCWet::theNerve()) {
 			mSpine->pushNerve(&TNerveNPCWet::theNerve());
-			mSpine->setNext(nullptr);
+			getSpine()->setNext(nullptr);
 		} else if (current == nullptr && latest == &TNerveNPCWet::theNerve())
-			mSpine->setNext(&TNerveNPCWet::theNerve());
+			getSpine()->setNext(&TNerveNPCWet::theNerve());
 	} break;
 
 	default:
 		if (isNerveCanGoToWet())
-			mSpine->pushNerve(&TNerveNPCWet::theNerve());
+			getSpine()->pushNerve(&TNerveNPCWet::theNerve());
 		break;
 	}
 }
 
+// The wet reaction proper, one inline level below the nerve gate: at that
+// level isSunflowerReviving's result reuses the nerve web's register (r28),
+// as in retail; spelled in the caller it takes the gate result's r29.
+static inline void NpcGetWetByObject(TBaseNPC* self, EnumHitNpcObjectKind kind)
+{
+	if (!self->isSunflowerReviving()
+	    && (self->isClean() || kind != HIT_NPC_OBJECT_KIND_UNK1)
+	    && (self->mActorType != 0x4000006
+	        || self->unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4
+	        || self->unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK6)
+	    && (self->mSpine->getCurrentNerve() != &TNerveNPCTalk::theNerve()
+	        || self->mSpine->getTime() >= 4)) {
+		if (kind == 1)
+			self->onLiveFlag(LIVE_FLAG_UNK4000000);
+		self->mSpine->pushNerve(&TNerveNPCWet::theNerve());
+	}
+}
+
+// TODO: 99.9%, every instruction and register exact. The burning-branch
+// spray particle is emitted at the hitting object's position (retail's
+// r4 + 0x10). Remaining: the frame is 0x30 short, all dead low region (no
+// stack slot used, so hsearch dbg maps nothing). Inert: getSpine(),
+// getActorType() and SMSGetMarDirector() at each single site, the map-size
+// changeNerveToWet_ at the final push; getSpine() in isNerveCanGoToWet is +8
+// here but costs behaveToBeTrampled_ the same 8. getSpine()/getLodAnm() in
+// the wet helper are +8 each (frame-only, not taken). Moving the nerve gate
+// or the checkActionFlag return into the helper stops isNerveCanGoToWet
+// expanding (79%); a bool predicate for the condition is worse (85.6/98.4).
 void TBaseNPC::behaveToHitObject_(THitActor* param_1,
                                   EnumHitNpcObjectKind param_2)
 {
@@ -348,8 +386,8 @@ void TBaseNPC::behaveToHitObject_(THitActor* param_1,
 		if (gpMarDirector->isTalkOrDemoModeNow())
 			return;
 
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &mPosition, 0,
-		                             nullptr);
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
+		                             &param_1->mPosition, 0, nullptr);
 		SMSGetMSound()->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0,
 		                              0.0f, 0, 0, 4);
 		if (SMSGetMSound()->gateCheck(MSD_SE_NPC_FIRE_FIGHTING))
@@ -385,19 +423,16 @@ void TBaseNPC::behaveToHitObject_(THitActor* param_1,
 
 	if (isNerveCanGoToWet() && !checkActionFlag(NPC_ACTION_UNK800)) {
 		if (!isPeachTired()) {
-			if (!isSunflowerReviving()
-			    && (isClean() || param_2 != HIT_NPC_OBJECT_KIND_UNK1)
-			    && (mActorType != 0x4000006
-			        || unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4
-			        || unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK6)
-			    && (mSpine->getCurrentNerve() != &TNerveNPCTalk::theNerve()
-			        || mSpine->getTime() >= 4)) {
-				if (param_2 == 1)
-					onLiveFlag(LIVE_FLAG_UNK4000000);
-				mSpine->pushNerve(&TNerveNPCWet::theNerve());
-			}
+			NpcGetWetByObject(this, param_2);
 		}
 	}
+}
+
+// Direct-return fork over the blown-velocity parameter: its pool rung puts
+// the velocity temporary at retail's 0x34 once the push arm reads mSpine raw.
+static inline f32 NpcBlownVelocity()
+{
+	return TBaseNPC::mPtrSaveNormal->mSLBlownVelocity.get();
 }
 
 void TBaseNPC::behaveToSandBomb_(const TLiveActor* param_1)
@@ -406,12 +441,12 @@ void TBaseNPC::behaveToSandBomb_(const TLiveActor* param_1)
 	unk1C8    = SMS_GetSandRiseUpRatio(param_1);
 	if (unk1C8 > fVar1 && unk1C8 > 0.05f && fVar1 > 0.001f
 	    && isNerveCanGoToBlown()) {
-		f32 fVar1 = mPtrSaveNormal->mSLBlownVelocity.get();
+		f32 fVar1 = NpcBlownVelocity();
 		mPosition.y += fVar1;
 		onLiveFlag(LIVE_FLAG_AIRBORNE);
 		mVelocity = JGeometry::TVec3<f32>(0.0f, fVar1, 0.0f);
-		if (mSpine->getCurrentNerve() == &TNerveNPCWet::theNerve()) {
-			mSpine->setNext(&TNerveNPCBlown::theNerve());
+		if (getSpine()->getCurrentNerve() == &TNerveNPCWet::theNerve()) {
+			getSpine()->setNext(&TNerveNPCBlown::theNerve());
 		} else {
 			mSpine->pushNerve(&TNerveNPCBlown::theNerve());
 		}
@@ -432,11 +467,8 @@ bool TBaseNPC::isStateGoToMad_() const
 
 bool TBaseNPC::isNowCanTaken() const
 {
-
-	
-	
 	bool result = false;
-	if (checkLiveFlag(LIVE_FLAG_UNK100000) && mActorType != 0x400001C
+	if (checkLiveFlag(LIVE_FLAG_UNK100000) && getActorType() != 0x400001C
 	    && mHolder == nullptr && mHeldObject == nullptr
 	    && !checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN
 	                      | LIVE_FLAG_CLIPPED_OUT | LIVE_FLAG_UNK40000
@@ -447,6 +479,84 @@ bool TBaseNPC::isNowCanTaken() const
 	return result;
 }
 
+static inline bool isInSameCameraCubeAtHead(const JGeometry::TVec3<f32>& pos)
+{
+	JGeometry::TVec3<f32> head = pos;
+	head.y += 75.0f;
+	return SMS_IsInSameCameraCube(head);
+}
+
+static inline bool NpcIsTalkAccepted(TBaseNPC* self)
+{
+	bool result = false;
+	if (self->checkLiveFlag(LIVE_FLAG_UNK40000)) {
+		result = true;
+	} else if (self->mTalkForbidCount == 0 && !self->isJellyFishMare()
+	           && !gpCamera->isTalkCameraInbetween() && self->mHolder == nullptr
+	           && !self->checkLiveFlag(
+	               LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT
+	               | LIVE_FLAG_UNK200 | TBaseNPC::LIVE_FLAG_DONT_TALK
+	               | TBaseNPC::LIVE_FLAG_SINK_BOTTOM | LIVE_FLAG_UNK400000)
+	           && !self->checkActionFlag(TBaseNPC::NPC_ACTION_BURNING)
+	           && self->isClean()) {
+
+		if (!self->isSunflowerReviving() && self->isNerveCanGoToTalk()
+		    && (self->mActorType != 0x4000006
+		        || self->unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4)
+		    && !SMS_IsMarioOpeningDoor()) {
+			if (gpMarDirector->mMap != 7
+			    || isInSameCameraCubeAtHead(self->mPosition)) {
+				f32 fVar2;
+				f32 fVar1;
+				if (self->mThrowCtrl != nullptr) {
+					fVar2 = TBaseNPC::mPtrSaveNormal->mSLThrowTalkAcceptDist
+					            .get();
+					fVar1 = TBaseNPC::mPtrSaveNormal->mSLThrowTalkAcceptHeight
+					            .get();
+				} else {
+					if (self->mActorType == 0x400001A) {
+						fVar2 = TBaseNPC::mPtrSaveNormal->mSLSunflowerLTalkDist
+						            .get();
+					} else {
+						fVar2 = TBaseNPC::mPtrSaveNormal->mTalkAcceptDist.get();
+					}
+					fVar1 = TBaseNPC::mPtrSaveNormal->mTalkAcceptHeight.get();
+				}
+
+				f32 fVar3;
+				if ((self->checkActionFlag(TBaseNPC::NPC_ACTION_UNK400
+				                           | TBaseNPC::NPC_ACTION_UNK1))
+				    || self->isSunflower() || self->mActorType == 0x400001D) {
+					fVar3 = TBaseNPC::mPtrSaveNormal->mSLSitTalkAcceptDegree
+					            .get();
+				} else {
+					fVar3 = TBaseNPC::mPtrSaveNormal->mTalkAcceptDegree.get();
+				}
+
+				if (abs(SMS_GetMarioPos().y - self->mPosition.y) < fVar1
+				    && self->isInSight(SMS_GetMarioPos(), fVar2, fVar3, -1.0f)
+				    && MsIsInSight(SMS_GetMarioPos(),
+				                   SHORTANGLE2DEG(*gpMarioAngleY),
+				                   self->mPosition, fVar2,
+				                   TBaseNPC::mPtrSaveNormal
+				                       ->mSLMarioTalkAcceptDegree.get(),
+				                   0.0f))
+					result = true;
+			}
+		}
+	}
+
+	return result;
+}
+
+// TODO: 99.8%, every instruction exact. The talk-acceptance test is a bool
+// predicate level (retail's sunflower result starts as `mr r27, r30`, a copy
+// of this level's `result` zero, the c-k9 shared-zero tell), with its two
+// distances declared height-last so fVar2 takes f31. Remaining: the frame is
+// 0x48 short (hsearch dbg: one word between the int-to-float temporary and
+// the head copy, 17 below the head copy), and the inlined isNerveCanGoToSink's
+// nerve takes r27 where retail has r30. getSpine()/getPosition() at every
+// site reach 0x110 but rerank 23 registers.
 void TBaseNPC::changeNerveProc_()
 {
 	bool bVar4                                = false;
@@ -456,64 +566,7 @@ void TBaseNPC::changeNerveProc_()
 		onLiveFlag(LIVE_FLAG_UNK20000);
 		offLiveFlag(LIVE_FLAG_UNK40000);
 	} else {
-		bool bVar5 = false;
-		if (checkLiveFlag(LIVE_FLAG_UNK40000)) {
-			bVar5 = true;
-		} else if (mTalkForbidCount == 0 && !isJellyFishMare()
-		           && !gpCamera->isTalkCameraInbetween() && mHolder == nullptr
-		           && !checkLiveFlag(
-		               LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT
-		               | LIVE_FLAG_UNK200 | LIVE_FLAG_DONT_TALK
-		               | LIVE_FLAG_SINK_BOTTOM | LIVE_FLAG_UNK400000)
-		           && !checkActionFlag(NPC_ACTION_BURNING) && isClean()) {
-
-			if (!isSunflowerReviving() && isNerveCanGoToTalk()
-			    && (mActorType != 0x4000006
-			        || unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK4)
-			    && !SMS_IsMarioOpeningDoor()) {
-				bool inCameraCube = true;
-				if (gpMarDirector->mMap == 7) {
-					JGeometry::TVec3<f32> local_58 = mPosition;
-					local_58.y += 75.0f;
-					inCameraCube = SMS_IsInSameCameraCube(local_58);
-				}
-
-				if (inCameraCube) {
-					f32 fVar1;
-					f32 fVar2;
-					if (mThrowCtrl != nullptr) {
-						fVar1 = mPtrSaveNormal->mSLThrowTalkAcceptHeight.get();
-						fVar2 = mPtrSaveNormal->mSLThrowTalkAcceptDist.get();
-					} else {
-						if (mActorType == 0x400001A) {
-							fVar2 = mPtrSaveNormal->mSLSunflowerLTalkDist.get();
-						} else {
-							fVar2 = mPtrSaveNormal->mTalkAcceptDist.get();
-						}
-						fVar1 = mPtrSaveNormal->mTalkAcceptHeight.get();
-					}
-
-					f32 fVar3;
-					if ((checkActionFlag(NPC_ACTION_UNK400 | NPC_ACTION_UNK1))
-					    || isSunflower() || mActorType == 0x400001D) {
-						fVar3 = mPtrSaveNormal->mSLSitTalkAcceptDegree.get();
-					} else {
-						fVar3 = mPtrSaveNormal->mTalkAcceptDegree.get();
-					}
-
-					if (abs(SMS_GetMarioPos().y - mPosition.y) < fVar1
-					    && isInSight(SMS_GetMarioPos(), fVar2, fVar3, -1.0f)
-					    && MsIsInSight(
-					        SMS_GetMarioPos(), SHORTANGLE2DEG(*gpMarioAngleY),
-					        mPosition, fVar2,
-					        mPtrSaveNormal->mSLMarioTalkAcceptDegree.get(),
-					        0.0f))
-						bVar5 = true;
-				}
-			}
-		}
-
-		if (bVar5) {
+		if (NpcIsTalkAccepted(this)) {
 			onLiveFlag(LIVE_FLAG_UNK20000);
 			if (checkLiveFlag(LIVE_FLAG_UNK40000)) {
 				bVar4 = true;
@@ -589,11 +642,31 @@ void TBaseNPC::changeNerveProc_()
 	}
 }
 
+static inline TPollutionManager* NpcChangePollution()
+{
+	TPollutionManager* r = gpPollution;
+	return r;
+}
+
+static inline f32 NpcChangeHeadHeight(TBaseNPC* self)
+{
+	f32 r = self->getHeadHeight();
+	return r;
+}
+
+// TODO: frame 0x20 short (retail 0xa8): retail's pos copy sits at 0x80 with
+// a 4-byte hole above it, ours at 0x64. Every instruction matches.
+// getSpine() at any one or two sites is +8 and saturates; raw mSinkHeight is
+// -8. setNext(getDefault()) gives the spine/nerve registers; y is loaded
+// before z but z still ranks f31.
 void TBaseNPC::setPosAndInitAfterSinkBottom()
 {
 	JGeometry::TVec3<f32> pos = unk194;
 
-	bool cVar8 = gpPollution->isPolluted(pos.x, pos.y, pos.z);
+	f32 z;
+	f32 y = pos.y;
+	z      = pos.z;
+	bool cVar8 = NpcChangePollution()->isPolluted(pos.x, y, z);
 	offLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT
 	            | LIVE_FLAG_UNK8 | LIVE_FLAG_UNK10 | LIVE_FLAG_UNK20000
 	            | LIVE_FLAG_UNK40000 | LIVE_FLAG_UNK400000
@@ -614,18 +687,18 @@ void TBaseNPC::setPosAndInitAfterSinkBottom()
 	unk1D0 = 0.0f;
 	if (cVar8 && isPollutionNpc() && !checkActionFlag(NPC_ACTION_UNK400)) {
 		onHitFlag(HIT_FLAG_NO_COLLISION);
-		mSpine->setDefaultNext();
+		mSpine->setNext(mSpine->getDefault());
 		mSpine->pushNerve(&TNerveNPCSink::theNerve());
 		mSpine->pushNerve(&TNerveNPCSink::theNerve());
 		onLiveFlag(LIVE_FLAG_UNK10 | LIVE_FLAG_UNK400000
 		           | LIVE_FLAG_SINK_BOTTOM);
 		unk1C4 = mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
-		    pos.x, pos.y + getHeadHeight(), pos.z, &mGroundPlane);
+		    pos.x, y + NpcChangeHeadHeight(this), z, &mGroundPlane);
 		pos.y = unk1C4 - mIndividualParams->mSinkHeight.get();
 		mVelocity.set(0.0f, 0.0f, 0.0f);
 	} else {
 		offHitFlag(HIT_FLAG_NO_COLLISION);
-		mSpine->setDefaultNext();
+		mSpine->setNext(mSpine->getDefault());
 		mSpine->pushNerve(mSpine->getDefault());
 		pos.y += 2.0f;
 		mVelocity.set(0.0f, 5.0f, 0.0f);
@@ -636,8 +709,8 @@ void TBaseNPC::setPosAndInitAfterSinkBottom()
 	mPosition.set(pos);
 	mRotation.set(unk1A0);
 	mLinearVelocity.set(0.0f, 0.0f, 0.0f);
-	unk124->reset();
-	unk124->reset2();
+	getTracer()->reset();
+	getTracer()->reset2();
 	goToShortestNextGraphNode();
 	npcWaitIn();
 	randomizeBckAndBtpFrame_();

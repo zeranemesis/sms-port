@@ -24,17 +24,31 @@ void TMario::playerRefrection(int param_1)
 	}
 }
 
+// A zero distance resets dx too: retail loads 1.0f into dx's register and
+// copies it to dist, and matan later reads that dx.
+// thresh initialised at its declaration gives retail's entry registers.
+// TODO: instruction-exact; only slots differ (named block exact with ground
+// declared before floorY). hsearch dbg: retail stacks the `diff * step`
+// operand copy (0x5c) over the two sqrt volatiles (0x58/0x54), then the
+// `newPos - mPosition` copy (0x44) and the product (0x34); ours keeps the
+// three TVec3 temporaries together above the volatiles. The by-value
+// operator-/operator* header class (frame-gaps.md c-r20/c-r21).
+// c-r39: under by-value `TVec3 r(fst); r op= snd; return r;` operators for
+// -, + and * (uncast operator=) this function is byte-exact with the clamp
+// written `f32 max = 50.0f; if (max < step) step = max;` (the named limit is
+// retail's one word under `diff`); under today's header that is 24 -> 55
+// markers, so it waits for the header migration.
 void TMario::keepDistance(const JGeometry::TVec3<f32>& target, f32 param_2,
                           f32 param_3)
 {
-	f32 dz = mPosition.z - target.z;
-	f32 dx = mPosition.x - target.x;
-
 	f32 thresh = param_3 + (param_2 + unk15C);
-	f32 dist   = MsSqrtf(dx * dx + dz * dz);
+	f32 dx;
+	f32 dz   = mPosition.z - target.z;
+	dx       = mPosition.x - target.x;
+	f32 dist = MsSqrtf(dx * dx + dz * dz);
 
 	if (dist == 0.0f)
-		dist = 1.0f;
+		dist = dx = 1.0f;
 
 	if (!(dist < thresh))
 		return;
@@ -69,8 +83,8 @@ void TMario::keepDistance(const JGeometry::TVec3<f32>& target, f32 param_2,
 	newPos.z = target.z + thresh * JMASCos(angle);
 
 	checkWallPlane(&newPos, 60.0f, unk15C);
-	f32 floorY;
 	const TBGCheckData* ground;
+	f32 floorY;
 	checkGroundPlane(newPos.x, newPos.y, newPos.z, &floorY, &ground);
 	if (!ground->isLegal())
 		return;
@@ -78,12 +92,14 @@ void TMario::keepDistance(const JGeometry::TVec3<f32>& target, f32 param_2,
 	JGeometry::TVec3<f32> diff = newPos - mPosition;
 
 	f32 step = diff.length();
-	if (50.0f < step)
-		step = 50.0f;
+	if (step > 0.0f) {
+		if (50.0f < step)
+			step = 50.0f;
 
-	diff.normalize();
+		diff.normalize();
 
-	mPosition += diff * step;
+		mPosition += diff * step;
+	}
 }
 
 void TMario::keepDistance(const THitActor& actor, f32 param_2)
@@ -93,28 +109,31 @@ void TMario::keepDistance(const THitActor& actor, f32 param_2)
 
 void TMario::checkDescent()
 {
+	// TODO: instruction-exact (`(int)active != 1` gives retail's signed
+	// cmpwi); the frame is 8 short with floorY/ground swapped (retail floorY
+	// 0x28, ground 0x2c). getPosition() in the record ctor is +8; in the
+	// 160.0f test it lands the frame but adds a spilled temp; SMSGetMap(),
+	// swapping the floorY/ground declarations are inert.
 	bool active   = false;
 	f32 descentSp = mHangingParams.mDescentSp.get();
-	if (mHeldObject == nullptr && !onYoshi())
+	if (getHeldObject() == nullptr && !onYoshi())
 		active = true;
 
-	// The target tests the flag with `clrlwi. r0, r29, 24 / cmpwi r0, 1`: a
-	// SIGNED compare against 1. `active != true` gives `cmplwi`.
-	if ((s32)active != 1)
+	if ((int)active != 1)
 		return;
 
 	if (!(mForwardVel < descentSp))
 		return;
 
-	TBGWallCheckRecord rec(mPosition.x, mPosition.y - 10.0f, mPosition.z,
-	                       descentSp, 1, 0);
+	TBGWallCheckRecord rec(getPosition().x, getPosition().y - 10.0f,
+	                       getPosition().z, descentSp, 1, 0);
 	if (!gpMap->isTouchedWallsAndMoveXZ(&rec))
 		return;
 
-const TBGCheckData* ground;
-  f32 floorY;
-  checkGroundPlane(rec.mCenter.x, mPosition.y + 30.0f, rec.mCenter.z, &floorY,
-                   &ground);
+	const TBGCheckData* ground;
+	f32 floorY;
+	checkGroundPlane(rec.mCenter.x, mPosition.y + 30.0f, rec.mCenter.z, &floorY,
+	                 &ground);
 
 	if (ground->checkFlag(BG_CHECK_FLAG_ILLEGAL))
 		return;
@@ -134,13 +153,6 @@ const TBGCheckData* ground;
 		changePlayerStatus(MARIO_STATUS_DESCEND, 0, false);
 		setAnimation(ANIM_HGDWN, 1.0f);
 	}
-
-	// Every remaining diff marker is a frame offset sitting exactly 0x10 above
-	// ours (frame 0x78 against 0x68). Declared LAST on purpose: mwcc hands out
-	// the low addresses to the last-declared local, so the pad has to come
-	// after TBGWallCheckRecord rec to push rec and its float spills up.
-	
-	
 }
 
 int TMario::checkGroundAtWalking(Vec* v)
@@ -148,15 +160,15 @@ int TMario::checkGroundAtWalking(Vec* v)
 	checkWallPlane(v, 30.0f, 0.5f * unk15C);
 	TBGCheckData* wall = checkWallPlane(v, 60.0f, unk15C);
 
-	f32 floorY;
+	const TBGCheckData* roof;
 	const TBGCheckData* ground;
+	f32 floorY;
 	if (checkStatusType(0x10000)) {
 		floorY = gpMap->checkGround(v->x, v->y + 30.0f, v->z, &ground);
 	} else {
 		checkGroundPlane(v->x, v->y + 30.0f, v->z, &floorY, &ground);
 	}
 
-	const TBGCheckData* roof;
 	f32 roofY  = gpMap->checkRoof(v->x, mPosition.y + 80.0f, v->z, &roof);
 	mWallPlane = wall;
 
@@ -250,7 +262,7 @@ int TMario::barProcess()
 
 	JGeometry::TVec3<f32> pos;
 	pos.x = mHolder->mPosition.x;
-	pos.y = mPosition.y;
+	pos.y = getPosition().y;
 	pos.z = mHolder->mPosition.z;
 
 	TBGCheckData* wall1 = checkWallPlane(&pos, 60.0f, 43.0f);
@@ -301,17 +313,17 @@ int TMario::barProcess()
 BOOL TMario::hangonCheck(const TBGCheckData* wall, const Vec& prev,
                          const Vec& curr)
 {
+	const TBGCheckData* ground;
 	if (mVel.y > 0.0f)
 		return false;
 
-	if ((curr.x - prev.x) * mVel.x + (curr.z - prev.z) * mVel.z > 0.0f)
+	if ((curr.x - prev.x) * getVel().x + (curr.z - prev.z) * getVel().z > 0.0f)
 		return false;
 
 	JGeometry::TVec3<f32> newPos;
 	newPos.x = curr.x - 60.0f * wall->getNormal().x;
 	newPos.z = curr.z - 60.0f * wall->getNormal().z;
 
-	const TBGCheckData* ground;
 	checkGroundPlane(newPos.x, curr.y + 160.0f, newPos.z, &newPos.y, &ground);
 
 	if (newPos.y - curr.y <= 100.0f)
@@ -335,6 +347,20 @@ BOOL TMario::hangonCheck(const TBGCheckData* wall, const Vec& prev,
 	return true;
 }
 
+static inline BOOL MarioCanHang(TMario* mario)
+{
+	bool ok = false;
+	if (mario->mHeldObject == nullptr && !mario->onYoshi())
+		ok = true;
+	return ok;
+}
+
+// Retail tests "can hang" inside the wall `if` condition (`== 1`, a signed
+// compare, so the helper returns BOOL from its bool flag) and folds the roof
+// check into one `if`, both through the same no-held-object/no-Yoshi test
+// other TMario code spells out (changeWireHanging, wireWaitToHang, hangPole).
+// The hip-drop test reads the status through getStatus(): its forced-load
+// word is the one dead word below `pos` (frame 0x88 -> 0x90).
 int TMario::checkGroundAtJumping(const Vec& target, int param_2)
 {
 	Vec pos             = target;
@@ -365,7 +391,7 @@ int TMario::checkGroundAtJumping(const Vec& target, int param_2)
 		if (mGroundPlane->isMarioThrough())
 			passable = true;
 
-		if (mStatus == MARIO_STATUS_HIP_DROP
+		if (getStatus() == MARIO_STATUS_HIP_DROP
 		    && mGroundPlane->isGroundPoundToPassThrough())
 			passable = true;
 
@@ -396,13 +422,10 @@ int TMario::checkGroundAtJumping(const Vec& target, int param_2)
 				if (checkFlag(MARIO_FLAG_VISIBLE))
 					onFlag(MARIO_FLAG_UNK200);
 
-				if (param_2 & 0x2) {
-					BOOL canHang = (mHeldObject == nullptr && !onYoshi());
-					if (canHang && mRoofPlane->isFence())
-						roofCode = 4;
-					else
-						roofCode = 0;
-				}
+				if ((param_2 & 0x2) && MarioCanHang(this) && mRoofPlane->isFence())
+					roofCode = 4;
+				else
+					roofCode = 0;
 			}
 		}
 	}
@@ -424,15 +447,13 @@ int TMario::checkGroundAtJumping(const Vec& target, int param_2)
 		wall2Passable = true;
 	}
 
-	if ((param_2 & 0x1) && wall1Passable == 1 && wall2Passable == 0) {
-		BOOL canHang = (mHeldObject == nullptr && !onYoshi());
-		if (canHang == 1) {
-			mWallPlane = wall2;
-			if (hangonCheck(wall2, target, pos))
-				wallCode = 3;
-			else
-				wallCode = 0;
-		}
+	if ((param_2 & 0x1) && wall1Passable == 1 && wall2Passable == 0
+	    && MarioCanHang(this) == 1) {
+		mWallPlane = wall2;
+		if (hangonCheck(wall2, target, pos))
+			wallCode = 3;
+		else
+			wallCode = 0;
 	} else if (wall1Passable == 0 || wall2Passable == 0) {
 		mWallPlane = wall1 != nullptr ? wall1 : wall2;
 		s16 diff   = matan(mWallPlane->getNormal().z, mWallPlane->getNormal().x)
@@ -470,18 +491,15 @@ BOOL TMario::isFallCancel()
 
 void TMario::fallProcess()
 {
-
-	
-	
-	if (mStatus == MARIO_STATUS_DIVE) {
+	if (getStatus() == MARIO_STATUS_DIVE) {
 		mVel.y -= mDivingParams.mGravity.get();
 		if (mVel.y < -75.0f)
 			mVel.y = -75.0f;
 	} else {
 		if (isFallCancel()) {
 			mVel.y *= 0.75f;
-		} else if ((mStatus == MARIO_STATUS_LEFT_ROTATE_JUMP
-		            || mStatus == MARIO_STATUS_RIGHT_ROTATE_JUMP)
+		} else if ((getStatus() == MARIO_STATUS_LEFT_ROTATE_JUMP
+		            || getStatus() == MARIO_STATUS_RIGHT_ROTATE_JUMP)
 		           && mVel.y < 0.0f) {
 			mVel.y -= mJumpParams.mSpinJumpGravity.get();
 		} else {
@@ -497,6 +515,7 @@ void TMario::fallProcess()
 
 int TMario::jumpProcess(int param_1)
 {
+	Vec next;
 	int result = 0;
 	f32 speed  = std::sqrtf(mVel.x * mVel.x + mVel.z * mVel.z);
 
@@ -505,10 +524,9 @@ int TMario::jumpProcess(int param_1)
 		mVel.z = mVel.z * (mJumpParams.mJumpingMax.get() / speed);
 	}
 
-	Vec next;
 	next.x  = mPosition.x + 0.25f * mVel.x;
-	next.y  = mPosition.y + 0.25f * mVel.y;
-	next.z  = mPosition.z + 0.25f * mVel.z;
+	next.y  = getPosition().y + 0.25f * mVel.y;
+	next.z  = getPosition().z + 0.25f * mVel.z;
 	int ret = checkGroundAtJumping(next, param_1);
 	if (ret != 0)
 		result = ret;
@@ -518,7 +536,7 @@ int TMario::jumpProcess(int param_1)
 
 	fallProcess();
 
-	if (mStatus != MARIO_STATUS_JUMP_CATCH)
+	if (getStatus() != MARIO_STATUS_JUMP_CATCH)
 		mFaceAngle.x = 0;
 
 	mModelFaceAngle = mFaceAngle.y;

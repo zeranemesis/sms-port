@@ -11,9 +11,10 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 
 // rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionManager.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
 static const char* DebuTelesa_bastable[] = {
 	"/scene/DebuTelesa/bas/debuTelesa_wait.bas",
@@ -56,11 +57,24 @@ void TDebuTelesa::calcRootMatrix()
 
 void TDebuTelesa::kill() { TSmallEnemy::kill(); }
 
+// TODO: 99.8%, frame 0x28 vs retail's 0x30. All 44 instructions are exact and
+// every r1 displacement in retail is 8 higher, the LR slot included, so the
+// residue is one small object at the bottom of the local area.
+// Batch 74 located it: it belongs to MSound::startSoundActor, whose retail body
+// bound the callee's JAISound* return to a named local
+// (`JAISound* sound = nullptr; if (gateCheck(id)) sound = MSoundSE::...;
+// return sound;`). That is worth +8 here and closes 38 callers of the wrapper
+// project-wide, but ten other callers want the raw spelled-out gate check
+// instead and have to be converted first, so the header edit is not in the tree
+// yet. The probe table, the closed list and the ten conversions are in
+// docs/catalog/frame-gaps.md, "Closure batch 74".
+// Measured and rejected here: gpMSound-> instead of SMSGetMSound()-> (+0), the
+// spelled-out gateCheck + MSoundSE::startSoundActor pair (+0), a named nullptr
+// handle (+0), a TU-local static inline wrapper around the call (+0, inline
+// levels are saturated), &getPosition() (frame becomes 0x30 but costs three
+// instructions and a fourth callee-saved register).
 BOOL TDebuTelesa::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	switch (message) {
 	case HIT_MESSAGE_TRAMPLE:
 	case HIT_MESSAGE_HIP_DROP:
@@ -68,8 +82,7 @@ BOOL TDebuTelesa::receiveMessage(THitActor* sender, u32 message)
 		return false;
 
 	case HIT_MESSAGE_UNKB:
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_DB_TELSA_EATEN, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_DB_TELSA_EATEN, &mPosition);
 		break;
 	}
 

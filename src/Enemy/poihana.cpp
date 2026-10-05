@@ -48,8 +48,8 @@ TPoihanaSaveLoadParams::TPoihanaSaveLoadParams(const char* path)
     , PARAM_INIT(mSLBackThrowVal, 0.5f)
     , PARAM_INIT(mSLSleepFrame, 1000)
     , PARAM_INIT(mSLWakeFrame, 2000)
-    , PARAM_INIT(mSLTrapJumpMinSpY, 10.0f)
     , PARAM_INIT(mSLTrapJumpMaxSpY, 10.0f)
+    , PARAM_INIT(mSLTrapJumpMinSpY, 10.0f)
     , PARAM_INIT(mSLTrapJumpMaxSpXZ, 8.0f)
     , PARAM_INIT(mSLTrapJumpMinSpXZ, 8.0f)
     , PARAM_INIT(mSLTrapJumpGravity, 1.0f)
@@ -80,17 +80,18 @@ void TPoiHanaManager::perform(u32 cue, JDrama::TGraphics* graphics)
 	TEnemyManager::perform(cue, graphics);
 }
 
+// TODO: retail's frame is 0xe0 against our 0x40 with identical instructions
+// (hauntLeg and tamaNoko share the 0xe0 frame); the carrier is unknown.
+// TODO: instruction-exact; frame 0x50 vs retail 0xe0 (getObjNum() and
+// getObj(i) in the loop, as TTamaNokoManager reads them, +0x10, c-hs6).
 void TPoiHanaManager::initSetEnemies()
 {
-
-	
-	
 	int bodyIdx
 	    = getObj(0)->getModel()->getModelData()->getMaterialName()->getIndex(
 	        "_body");
 
-	for (int i = 0; i < mObjNum; ++i) {
-		TPoiHana* poiHana = (TPoiHana*)unk18[i];
+	for (int i = 0; i < getObjNum(); ++i) {
+		TPoiHana* poiHana = (TPoiHana*)getObj(i);
 		SMS_InitPacket_OneTevColor(poiHana->getMActor()->getModel(), bodyIdx,
 		                           GX_TEVREG0, &poiHana->unk1C0);
 	}
@@ -153,15 +154,21 @@ void TPoiHana::init(TLiveManager* param_1)
 	unk19C = (TPoihanaSaveLoadParams*)getSaveParam();
 	unk1BC = new TPoiHanaCollision;
 
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	// TODO: the push_back depth-2 pair sits 4 high: retail creates the
+	// search's TNameRefGen binder before the insert temps (as the two-line
+	// `TIdxGroupObj* group = search<>(); group->getChildren()...` form
+	// does), but that form, a direct getRootNameRef()->search() and a named
+	// list reference each lose one optimizer temp at the frame bottom.
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(unk1BC);
 
-	unk1BC->initHitActor(0, 2, 0x80000000,
-	                     unk19C->mSLAttackRadius.get() * mBodyScale,
-	                     unk19C->mSLAttackHeight.get() * mBodyScale,
-	                     unk19C->mSLDamageRadius.get() * mBodyScale,
-	                     unk19C->mSLDamageHeight.get() * mBodyScale);
+	f32 attackRadius = unk19C->mSLAttackRadius.get();
+	f32 attackHeight = unk19C->mSLAttackHeight.get();
+	f32 damageRadius = unk19C->mSLDamageRadius.get();
+	f32 damageHeight = unk19C->mSLDamageHeight.get();
+	unk1BC->initHitActor(0, 2, 0x80000000, attackRadius * mBodyScale, attackHeight * mBodyScale,
+	                     damageRadius * mBodyScale, damageHeight * mBodyScale);
 
 	unk1BC->unk68 = this;
 
@@ -187,13 +194,18 @@ void TPoiHana::reset()
 	mIsTrapped      = false;
 }
 
+// Binding level over the address of a struct member, worth +16 of low region
+// in TPoiHana::moveObject (batch 130).
+static inline const JGeometry::TVec3<f32>* PoihanaPosition(const TPoiHana* p)
+{
+	const JGeometry::TVec3<f32>* position = &p->mPosition;
+	return position;
+}
+
 void TPoiHana::moveObject()
 {
-
-	
-	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-		unk1BC->mPosition = mPosition;
+		unk1BC->mPosition = *PoihanaPosition(this);
 	} else {
 		MtxPtr mtx = getModel()->getAnmMtx(mBodyJntIndex);
 
@@ -361,12 +373,12 @@ bool TPoiHana::isCollidMove(THitActor* param_1)
 		    || param_1->getActorType() == 0x400000D0)
 			return false;
 
-		if (mSpine->getCurrentNerve() == &TNerveWalkerAttack::theNerve()) {
+		if (getSpine()->getCurrentNerve() == &TNerveWalkerAttack::theNerve()) {
 			mSpine->pushNerve(&TNervePoihanaFreeze::theNerve());
-			JGeometry::TVec3<f32> vel = mLinearVelocity;
-			mLinearVelocity.x *= -2.0f;
-			mLinearVelocity.y *= 5.0f;
-			mLinearVelocity.z *= -2.0f;
+			JGeometry::TVec3<f32> vel = getLinearVelocity();
+			vel.x *= -2.0f;
+			vel.y *= 5.0f;
+			vel.z *= -2.0f;
 			mVelocity = vel;
 
 			mPosition.y += 10.0f;
@@ -388,21 +400,16 @@ void TPoiHana::walkBehavior(int param_1, float param_2)
 	if (mSleepVersion && param_1 == 0) {
 		mGoToSleepTimer += 1;
 		if (checkCurAnmEnd(0)) {
-			if (mGoToSleepTimer
-			    > unk19C->mSLWakeFrame.get() + mInstanceIndex * 100) {
+			// One web for the wake frame and the sum (`add r4, r4, r3`).
+			int wakeFrame = unk19C->mSLWakeFrame.get();
+			wakeFrame += getInstanceIndex() * 100;
+			if (mGoToSleepTimer > wakeFrame) {
 				mGoToSleepTimer = 0;
 
 				mGoToSleepTimer = TMsRange<s32>(-500, 500).rand();
 
 				mSpine->setNext(&TNervePoihanaSleep::theNerve());
 				unk195 = true;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 			}
 		}
 	}
@@ -518,7 +525,10 @@ void TPoiHana::genEventCoin()
 
 	coin->mPosition = mPosition;
 
-	JGeometry::TVec3<f32> vec = mPosition - SMS_GetMarioPos();
+	// TODO: the frame is exact reading gpMarioPos raw (SMS_GetMarioPos()
+	// returns a reference and reserves 8 bytes here), but `vec` sits at
+	// 0x28 against retail's 0x14, so retail's slot pool below it is larger.
+	JGeometry::TVec3<f32> vec = mPosition - *gpMarioPos;
 	MsVECNormalize(&vec, &vec);
 	coin->mVelocity.set(vec.x * 10.0f, 18.0f, vec.z * 10.0f);
 
@@ -566,11 +576,16 @@ void TSleepPoiHana::load(JSUMemoryInputStream& stream)
 	TPoiHana::load(stream);
 }
 
+// Binding level worth +8 of low region, landing
+// TNervePoihanaSleep::execute's frame at 0x40 (batch 121).
+static inline MActor* PoihanaGetMActor(const TPoiHana* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
 DEFINE_NERVE(TNervePoihanaSleep, TLiveActor)
 {
-
-	
-	
 	TPoiHana* self = (TPoiHana*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -594,7 +609,7 @@ DEFINE_NERVE(TNervePoihanaSleep, TLiveActor)
 		                                &self->mPosition, 0, nullptr, 0, 4);
 
 		self->setBckAnm(10);
-		self->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setFrame(148.0f);
+		PoihanaGetMActor(self)->getFrameCtrl(ANM_TYPE_BCK)->setFrame(148.0f);
 	}
 
 	if (self->checkCurAnmEnd(0)) {
@@ -626,15 +641,20 @@ DEFINE_NERVE(TNervePoihanaSleep, TLiveActor)
 	return 0;
 }
 
+// Binding level worth +16 of low region, landing
+// TNervePoihanaFreeze::execute's frame at 0x48 (batch 121).
+static inline const TBGCheckData* PoihanaGetGroundPlane(const TPoiHana* p)
+{
+	const TBGCheckData* groundPlane = p->getGroundPlane();
+	return groundPlane;
+}
+
 DEFINE_NERVE(TNervePoihanaFreeze, TLiveActor)
 {
-
-	
-	
 	TPoiHana* self = (TPoiHana*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		if (self->getGroundPlane()->isSand()) {
+		if (PoihanaGetGroundPlane(self)->isSand()) {
 			self->setBckAnm(12);
 		} else {
 			self->setBckAnm(13);
@@ -682,8 +702,8 @@ DEFINE_NERVE(TNervePoihanaThrow, TLiveActor)
 			SMS_SendMessageToMario(self, HIT_MESSAGE_THROWN);
 			f32 backThrowVal = self->unk19C->mSLBackThrowVal.get();
 			Mtx afStack_4c;
-			MsMtxSetRotRPH(afStack_4c, self->mPosition.x, self->mPosition.y,
-			               self->mPosition.z);
+			MsMtxSetRotRPH(afStack_4c, self->mRotation.x, self->mRotation.y,
+			               self->mRotation.z);
 			JGeometry::TVec3<f32> local_58(0.0f, 1.0f, -backThrowVal);
 			MTXMultVec(afStack_4c, &local_58, &local_58);
 			SMS_ThrowMario(local_58, self->unk19C->mSLThrowSpeed.get());
@@ -697,9 +717,9 @@ DEFINE_NERVE(TNervePoihanaThrow, TLiveActor)
 		SMSRumbleMgr->start(0x15, 0xf, (float*)nullptr);
 		MtxPtr mtx
 		    = self->mMActor->getModel()->getAnmMtx(TPoiHana::mMouthJntIndex);
-		gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_DMG_B, mtx, 0,
+		SMSGetParticleManagerBound()->emitAndBindToMtxPtr(PARTICLE_MS_DMG_B, mtx, 0,
 		                                            nullptr);
-		gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_M_AMIATTACK,
+		SMSGetParticleManagerBound()->emitAndBindToMtxPtr(PARTICLE_MS_M_AMIATTACK,
 		                                            mtx, 0, nullptr);
 	}
 
@@ -719,32 +739,40 @@ DEFINE_NERVE(TNervePoihanaTrapped, TLiveActor)
 			self->mPosition.y += 150.0f;
 			self->onLiveFlag(LIVE_FLAG_AIRBORNE);
 			if (self->unk1A8) {
-				// TODO: rand interval class
-				volatile f32 trapJumpMaxSpY
-				    = self->unk19C->mSLTrapJumpMaxSpY.get();
-				volatile f32 trapJumpMaxSpXZ
-				    = self->unk19C->mSLTrapJumpMaxSpXZ.get();
-				volatile f32 trapJumpMinSpY
-				    = self->unk19C->mSLTrapJumpMinSpY.get();
-				volatile f32 trapJumpMinSpXZ
-				    = self->unk19C->mSLTrapJumpMinSpXZ.get();
+				// Naming the three rand() results lands retail's frame and every
+				// named slot (99.7 -> 99.9); maxXZ first gives retail's load order.
+				// TODO: the two operator- temporaries sit 0x24 high (0xf4/0xe8
+				// against 0xd0/0xc4). Inert: every order of the four floats with
+				// maxXZ first, naming only one rand().
+				f32 maxXZ = self->unk19C->mSLTrapJumpMaxSpXZ.get();
+				f32 maxY = self->unk19C->mSLTrapJumpMaxSpY.get();
+				f32 minY = self->unk19C->mSLTrapJumpMinSpY.get();
+				f32 minXZ = self->unk19C->mSLTrapJumpMinSpXZ.get();
+				TMsRange<f32> trapJumpSpXZ(minXZ, maxXZ);
+				TMsRange<f32> trapJumpSpY(minY, maxY);
 
 				JGeometry::TVec3<f32> local_48;
 				const TLiveActor* groundActor
 				    = self->getGroundPlane()->getActor();
 				if (groundActor)
-					local_48 = self->mPosition - groundActor->mPosition;
+					local_48 = self->getPosition() - groundActor->getPosition();
 				else
-					local_48 = self->mPosition - SMS_GetMarioPos();
-				if (local_48.x == 0.0f && local_48.y == 0.0f
-				    && local_48.z == 0.0f)
+					local_48 = self->getPosition() - SMS_GetMarioPos();
+				// As in the ROM: the parse is
+				// `(local_48.x == local_48.y) == local_48.z`,
+				// so the bool is converted to a float before the
+				// second comparison. Presumably a zero-vector guard
+				// that never fires for (0,0,0).
+				if (local_48.x == local_48.y == local_48.z)
 					local_48.x = 1.0f;
 
 				VECNormalize(&local_48, &local_48);
-				// TODO: rand interval class
-				local_48.x *= MsRandF(trapJumpMinSpXZ, trapJumpMaxSpXZ);
-				local_48.y = MsRandF(trapJumpMinSpY, trapJumpMaxSpY);
-				local_48.z *= MsRandF(trapJumpMinSpXZ, trapJumpMaxSpXZ);
+				f32 x = trapJumpSpXZ.rand();
+				local_48.x *= x;
+				f32 y = trapJumpSpY.rand();
+				local_48.y = y;
+				f32 z = trapJumpSpXZ.rand();
+				local_48.z *= z;
 
 				self->mVelocity             = local_48;
 				self->mCurrentFlungVelocity = local_48;

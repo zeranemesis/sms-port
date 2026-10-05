@@ -4,6 +4,7 @@
 #include <Map/MapWire.hpp>
 #include <Map/MapWireManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
+#include <MoveBG/MapObjItem2.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <Strategic/HitActor.hpp>
 #include <System/EmitterViewObj.hpp>
@@ -35,30 +36,27 @@ bool TMario::getNozzle(THitActor* sender, TWaterGun::TNozzleType type)
 
 void TMario::getGesso(THitActor* param_1)
 {
-
-	
-	
-	if (mStatus != 0x10000) {
-		mFaceAngle.y    = DEG2SHORTANGLE(param_1->mRotation.y);
+	if (getStatus() != 0x10000) {
+		mFaceAngle.y    = DEG2SHORTANGLE(param_1->getRotation().y);
 		mModelFaceAngle = mFaceAngle.y;
 		changePlayerStatus(MARIO_STATUS_SURF, 0, false);
 		mStatusTimer = mDeParams.mSurfStartFreezeTime.get();
 		emitGetEffect();
 		switch (param_1->getActorType()) {
 		case 0x400000C5:
-			mSurfGesso     = gpMapObjManager->mRedGesso;
+			mSurfGesso     = SMSGetMapObjManager()->mRedGesso;
 			mSurfGessoType = SURF_GESSO_TYPE_RED;
 			break;
 
 		case 0x400000C6:
-			mSurfGesso     = gpMapObjManager->mYellowGesso;
+			mSurfGesso     = SMSGetMapObjManager()->mYellowGesso;
 			mSurfGessoType = SURF_GESSO_TYPE_YELLOW;
 			break;
 
 		default:
 		case 0x400000C7:
 			mSurfGessoType = SURF_GESSO_TYPE_GREEN;
-			mSurfGesso     = gpMapObjManager->mGreenGesso;
+			mSurfGesso     = SMSGetMapObjManager()->mGreenGesso;
 			break;
 		}
 		mSurfGesso->setBck("surfgeso_run1");
@@ -91,6 +89,30 @@ void TMario::getCoinBlue()
 	emitGetCoinEffect(&mPosition);
 }
 
+// TODO: frame 0x1a8 vs 0x220. Every instruction matches (100%, 2225 insns,
+// only `~` stack operands). The `TVec3::sub` return temp stays at 0x150 on
+// both sides, so accessor/binder levers that grow the low region from 0xc
+// push a matching slot and must not be retried.
+//
+// Named-block holes, ours ascending vs retail:
+//   tmp pair     0x164/0x170 vs 0x194/0x1a0
+//   68-byte hole     (none) vs 0x1ac..0x1ef
+//   `diff`           0x17c vs 0x1f0
+//   fcvt pair    0x188/0x190 vs 0x200/0x208
+// The 4-byte gap under retail's `diff` (0x1fc..0x1ff) appears for free once
+// the 68-byte hole is filled (alignment); it is not a separate local.
+//
+// Measured (reverted; unused locals are padding): `Mtx` then `TVec3` then
+// `TVec2` declared after `diff` fills the 68-byte hole; a second `Mtx`
+// declared last in the `mHolder == nullptr` arm, just before
+// `changePlayerStatus(WIRE_WAIT)`, fills the 48 below the tmp pair. Together
+// they land frame 0x220 with zero mismatches. `getOnWirePosAngle` uses three
+// Mtxs plus TVec3s but is a `bl` from this TU and cannot be the source: it
+// would replace the matched `sub`+`matan` sequence. No map-UNUSED helper in
+// this TU is left to host those objects. Parked for a named use, not a
+// second padding pass. Rechecked 2026-09-22: wireMove, changeWireHanging,
+// getTipPoints and getPosInWire are all out-of-line in the map (bl), so none
+// of the wire-arm callees can host the missing Mtx/TVec3/TVec2 objects.
 BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 {
 	if (checkFlag(MARIO_FLAG_GAME_OVER))
@@ -98,25 +120,24 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 
 	// Generic "Mario hit by enemy" thump sound.
 	if (sender->checkActorType(0x20000000)) {
-		const u32 senderType = sender->mActorType;
 		bool playThump = true;
-		if (senderType - 0x20000000 == 0x0E)
+		if (sender->mActorType == 0x2000000E)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x0F)
+		if (sender->mActorType == 0x2000000F)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x10)
+		if (sender->mActorType == 0x20000010)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x11)
+		if (sender->mActorType == 0x20000011)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x13)
+		if (sender->mActorType == 0x20000013)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x1F)
+		if (sender->mActorType == 0x2000001F)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x26)
+		if (sender->mActorType == 0x20000026)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x22)
+		if (sender->mActorType == 0x20000022)
 			playThump = false;
-		if (senderType - 0x20000000 == 0x2A)
+		if (sender->mActorType == 0x2000002A)
 			playThump = false;
 
 		if (playThump == true)
@@ -194,17 +215,16 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 			break;
 		case 0x20000005:
 		case 0x20000006:
-		case 0x20000007: // collectible fruit
+		case 0x20000007: // 1-up mushrooms
 			if (message == HIT_MESSAGE_ATTACK) {
-				bool invalid;
-				if (*(s8*)((u8*)sender + 0x13A) == 0
-				    && *(s32*)((u8*)sender + 0x13C) < 120) {
-					invalid = true;
-				} else {
-					invalid = false;
-				}
-				if (invalid == false) {
-					mHealth = mDeParams.mHpMax.get();
+				TMushroom1up* mushroom = static_cast<TMushroom1up*>(sender);
+				bool cannotTake;
+				if (mushroom->unk13A == 0 && mushroom->unk13C < 120)
+					cannotTake = true;
+				else
+					cannotTake = false;
+				if (!cannotTake) {
+					mHealth = mDeParams.mHPMax.get();
 					if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
 						mWaterGun->addWater(mWaterGun->getMaxWater());
 					}
@@ -231,7 +251,7 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 
 		case 0x2000003C: // shirt/cap pickup
 			mCap->setModelActive(TMarioCap::E_CAP_MODEL_HAT);
-			mHealth = mDeParams.mHpMax.get();
+			mHealth = mDeParams.mHPMax.get();
 			emitGetEffect();
 			return TRUE;
 		case 0x2000000E: // yellow coin
@@ -243,16 +263,17 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 		case 0x20000010: // blue coin
 			getCoinBlue();
 			return TRUE;
-		case 0x20000013: // 1-up shroom / pickup-action
+		case 0x20000013: // shine
 			if (message == HIT_MESSAGE_ATTACK
-			    && mStatus != MARIO_STATUS_WIN_DEMO) {
+			    && getStatus() != MARIO_STATUS_WIN_DEMO) {
 				unk384          = sender;
 				mPosition.x     = sender->mPosition.x;
 				mPosition.z     = sender->mPosition.z;
-				mFaceAngle.y    = DEG2SHORTANGLE(*(f32*)((u8*)sender + 0x11C));
+				mFaceAngle.y    = DEG2SHORTANGLE(
+				    static_cast<TMapObjBase*>(sender)->mInitialRotation.y);
 				mModelFaceAngle = mFaceAngle.y;
 				setPlayerVelocity(0.0f);
-				mHealth = mDeParams.mHpMax.get();
+				mHealth = mDeParams.mHPMax.get();
 				mAir    = mMaxAir;
 				changePlayerStatus(MARIO_STATUS_WIN_DEMO, 0, true);
 				return TRUE;
@@ -325,11 +346,11 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 			break;
 		case 0x40000098: { // wire/zipline
 			if (mHolder == nullptr) {
-				if (mStatus == MARIO_STATUS_WIRE_JUMP && mVel.y > 0.0f)
+				if (getStatus() == MARIO_STATUS_WIRE_JUMP && mVel.y > 0.0f)
 					return FALSE;
-				if (mStatus == MARIO_STATUS_WIRE_ROLL_JUMP && mVel.y > 0.0f)
+				if (getStatus() == MARIO_STATUS_WIRE_ROLL_JUMP && mVel.y > 0.0f)
 					return FALSE;
-				if (mStatus == MARIO_STATUS_WIRE_HANG_LAND_SAFE_DOWN)
+				if (getStatus() == MARIO_STATUS_WIRE_HANG_LAND_SAFE_DOWN)
 					return FALSE;
 				if (onYoshi())
 					return FALSE;
@@ -346,8 +367,8 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 				mWireSag       = 0.0f;
 
 				bool flipDir;
-				if (mStatus == MARIO_STATUS_WIRE_ROLL_JUMP
-				    || mStatus == MARIO_STATUS_JUMP_CATCH) {
+				if (getStatus() == MARIO_STATUS_WIRE_ROLL_JUMP
+				    || getStatus() == MARIO_STATUS_JUMP_CATCH) {
 					flipDir = true;
 				} else if (mVel.y < 0.0f) {
 					flipDir = false;
@@ -527,7 +548,6 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 				return TRUE;
 			}
 			break;
-
 		case 0x1000002B:
 		case 0x1000000D: // glistening enemy
 			if (message == HIT_MESSAGE_UNK5) {
@@ -645,7 +665,7 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 	case 0x08000013: // BG tentacle
 		switch (message) {
 		case HIT_MESSAGE_TAKE:
-			if (mHeldObject == nullptr && mHolder == nullptr) {
+			if (getHeldObject() == nullptr && mHolder == nullptr) {
 				mHolder = (TTakeActor*)sender;
 				changePlayerStatus(MARIO_STATUS_WAIT, 0, false);
 				return TRUE;
@@ -708,7 +728,7 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 	case 0x10000035:
 		switch (message) {
 		case HIT_MESSAGE_TAKE:
-			if (!isInvincible() && mHeldObject == nullptr
+			if (!isInvincible() && getHeldObject() == nullptr
 			    && mHolder == nullptr) {
 				mHolder = (TTakeActor*)sender;
 				changePlayerStatus(MARIO_STATUS_TAKEN, 0, false);
@@ -740,7 +760,7 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 
 	case 0x08000024: // boss-eel-class
 		if (!isInvincible() && message == HIT_MESSAGE_ATTACK
-		    && (((mStatus - 0x800000) != 0x8A9) || mStatusState != 3)) {
+		    && (((getStatus() - 0x800000) != 0x8A9) || mStatusState != 3)) {
 			damageExec(sender, mDmgParamsBGTentacle.mDamage.get(),
 			           mDmgParamsBGTentacle.mDownType.get(),
 			           mDmgParamsBGTentacle.mWaterEmit.get(),
@@ -816,13 +836,12 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 		break;
 	}
 
-
-	case 0x80000001:
 	case 0x08000002:
+	case 0x80000001:
 		if (!isInvincible()) {
 			switch (message) {
 			case HIT_MESSAGE_TAKE:
-				if (mHeldObject == nullptr && mHolder == nullptr) {
+				if (getHeldObject() == nullptr && mHolder == nullptr) {
 					mHolder = (TTakeActor*)sender;
 					changePlayerStatus(MARIO_STATUS_TAKEN, 0, false);
 					return TRUE;
@@ -866,7 +885,7 @@ BOOL TMario::receiveMessage(THitActor* sender, u32 message)
 		break;
 
 	case 0x080000C0:
-		if (mStatus != MARIO_STATUS_WARP_IN && message == HIT_MESSAGE_TAKE) {
+		if (getStatus() != MARIO_STATUS_WARP_IN && message == HIT_MESSAGE_TAKE) {
 			mHolder = (TTakeActor*)sender;
 			if (!checkStatusType(MARIO_STATUS_FLAG_JUMPING)) {
 				setAnimation(ANIM_JUMP, 1.0f);

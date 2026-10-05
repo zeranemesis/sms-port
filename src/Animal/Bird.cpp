@@ -1,12 +1,17 @@
-#include <Animal/Bird.hpp>
+#include <Animal/BirdNerve.hpp>
 #include <Animal/AnimalBase.hpp>
 #include <Enemy/Graph.hpp>
 #include <Enemy/WireBinder.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoaderFlags.hpp>
+#include <JSystem/JGeometry/JGQuat4.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <M3DUtil/MActor.hpp>
-#include <Map/Map.hpp>
+#include <M3DUtil/MActorAnm.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
+#include <Map/Map.hpp>
 #include <MoveBG/Item.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/MapObjBase.hpp>
@@ -15,20 +20,23 @@
 #include <MSound/MSoundSE.hpp>
 #include <MSound/SoundEffects.hpp>
 #include <Player/MarioAccess.hpp>
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/ObjManager.hpp>
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
+#include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
 #include <System/Particles.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/JUtility/JUTNameTab.hpp>
-#include <dolphin/mtx.h>
+#include <math.h>
 
 // rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
+// The .bas table: only fly/open/start/stop are named, the rest of the model's
+// .bck slots have no ambient sound.
 static const char* bird_bastable[] = {
 	nullptr,
 	"/scene/bird/bas/bird_fly.bas",
@@ -43,8 +51,14 @@ static const char* bird_bastable[] = {
 
 namespace {
 
+// The animations the ActionOnGround nerve picks between; index 8 (walk) is
+// special-cased into the WalkOnGround nerve instead of being played here.
 const int cRandomAnims[] = { 7, 4, 0, 2, 8 };
+
 const char* const cMatName = "_mat_body1";
+
+// Body tint per mColorIndex: blue coin, yellow coin (the default), shine and
+// red coin.
 const GXColorS10 cColorTable[] = {
 	{ 0, 100, 255, 0 },
 	{ 0, 200, 0, 0 },
@@ -54,29 +68,35 @@ const GXColorS10 cColorTable[] = {
 
 } // namespace
 
+
 TAnimalBird::TAnimalBird(const char* name)
     : TSpineEnemy(name)
-    , mItem(nullptr)
-    , mWireBinder(nullptr)
 {
+	mItem       = nullptr;
+	mWireBinder = nullptr;
 }
 
-void TAnimalBird::init(TLiveManager* manager)
+void TAnimalBird::init(TLiveManager* live_manager)
 {
-	mManager = manager;
+	mManager = live_manager;
 	mManager->manageActor(this);
+
 	mMActorKeeper = new TMActorKeeper(mManager, 1);
 	mMActor       = mMActorKeeper->createMActor("bird_man.bmd", 0);
+
 	mSpine->initWith(&TNerveAnimalBirdWaitOnGround::theNerve());
+
 	initParams();
 	initCollision();
 	initAnmSound();
 }
 
+// The named model data is one dead word below load()'s eventID.
 void TAnimalBird::initTevColor(const GXColorS10* color)
 {
-	int idx = getModel()->getModelData()->getMaterialName()->getIndex(cMatName);
-	SMS_InitPacket_OneTevColor(getModel(), idx, GX_TEVREG1, color);
+	J3DModelData* modelData = getModel()->getModelData();
+	s32 index = modelData->getMaterialName()->getIndex(cMatName);
+	SMS_InitPacket_OneTevColor(getModel(), index, GX_TEVREG1, color);
 }
 
 void TAnimalBird::initCollision()
@@ -87,88 +107,86 @@ void TAnimalBird::initCollision()
 	mScaledBodyRadius = 35.0f;
 }
 
-// The target calls initParams() out of line from init(); without this pragma it
-// gets inlined and init()'s frame grows by 0x10.
-#pragma dont_inline on
 void TAnimalBird::initParams()
 {
-	mHomePosition.set(mPosition);
+	mHomePosition.x = mPosition.x;
+	mHomePosition.y = mPosition.y;
+	mHomePosition.z = mPosition.z;
 	mHomePosition.y += 90.0f;
-	mHomeRotation.set(mRotation);
-	mHitPoints    = getMaxHitPoints();
-	unk178        = 0;
-	unk17C        = 0;
-	unk170        = 1.0f;
+
+	mHomeRotation.x = mRotation.x;
+	mHomeRotation.y = mRotation.y;
+	mHomeRotation.z = mRotation.z;
+
+	mHitPoints      = getMaxHitPoints();
+	mWaterHitTimer  = 0;
+	mFloatingTimer  = 0;
+	mTurnDir        = 1.0f;
 	offLiveFlag(LIVE_FLAG_AIRBORNE);
-	mRandomScale = 1.0f - 0.1f * (MsRandF() - 0.5f);
+	mPowerRate = 1.0f - 0.1f * (MsRandF() - 0.5f);
 
 	if (TWireBinder::isOnWire(mPosition)) {
 		mWireBinder = new TWireBinder;
 		mWireBinder->init(mPosition);
 	}
 }
-#pragma dont_inline off
 
 void TAnimalBird::load(JSUMemoryInputStream& stream)
 {
 	TSpineEnemy::load(stream);
 
-	s32 eventId;
-	stream >> eventId;
-	if (eventId >= 0)
-		mItem = TMapObjBaseManager::newAndRegisterObjByEventID(eventId,
-		                                                       "鳥用");
+	s32 eventID;
+	stream.read(&eventID, 4);
+
+	if (eventID >= 0)
+		mItem = TMapObjBaseManager::newAndRegisterObjByEventID(eventID, "鳥用");
 	else
 		mItem = TMapObjBaseManager::newAndRegisterObjByEventID(100, "");
 
 	switch (mItem->getActorType()) {
 	default:
-		mColorType = 1;
+		mColorIndex = 1;
 		break;
 	case 0x20000013:
-		mColorType = 2;
+		mColorIndex = 2;
 		break;
 	case 0x2000000F:
-		mColorType = 3;
+		mColorIndex = 3;
 		break;
 	case 0x20000010:
-		mColorType = 0;
-		if (TFlagManager::smInstance->getBlueCoinFlag(
-		        SMSGetMarDirector()->getCurrentMap(), eventId))
-			onLiveFlag(LIVE_FLAG_DEAD);
+		mColorIndex = 0;
+		checkNotAppear(eventID);
 		break;
 	}
 
-	initTevColor(&cColorTable[mColorType]);
+	initTevColor(&cColorTable[mColorIndex]);
 }
 
+// Exact since header round 18: two expansions of MSRegisterRandPlayTrans,
+// whose dead 12-byte local is the whole +0x18. See its TODO in
+// MSound/MSoundSE.hpp.
 void TAnimalBird::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	MSoundSESystem::MSRandPlay::registerTrans(MSD_SE_OBJ_BIRD_DOL_FLYING1, &mPosition);
-	MSoundSESystem::MSRandPlay::registerTrans(MSD_SE_OBJ_BIRD_DOL_CHUN, &mPosition);
+	MSRegisterRandPlayTrans(MSD_SE_OBJ_BIRD_DOL_FLYING1, &mPosition);
+	MSRegisterRandPlayTrans(MSD_SE_OBJ_BIRD_DOL_CHUN, &mPosition);
 }
 
+// TODO: instruction-exact; both TVec3(1,1,1) temporaries sit 4 high (retail
+// 0x58/0x4c). `checkLiveFlag(...) != 0` is +8; raw mLiveFlag, getPosition()
+// at either emit or the sound call, a cast nullptr, a named gpMSound are inert.
 BOOL TAnimalBird::receiveMessage(THitActor* sender, u32 message)
 {
-	if (mLiveFlag & LIVE_FLAG_DEAD)
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
 		return FALSE;
 
-	// Written as an if/else chain rather than a switch: the target compares
-	// each message individually instead of building a jump table.
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		SMS_EasyEmitParticle(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
 		                     nullptr,
 		                     JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
-		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK,
-		                        (const Vec*)&sender->mPosition, 0, 0.0f, 0,
-		                        0, 4);
-		if (unk178 <= 0)
-			unk178 = getBirdParams()->mWaterproofTimerMax.get();
-
-		if (isAirborne() && mHitPoints)
-			--mHitPoints;
-
+		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &sender->mPosition,
+		                        0, 0.0f, 0, 0, 4);
+		behaveHitWater();
 		return TRUE;
 	}
 
@@ -182,31 +200,35 @@ BOOL TAnimalBird::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if ((message == HIT_MESSAGE_PUT || message == HIT_MESSAGE_THROWN)
-	    && mHolder == sender) {
+	    && mHolder == (TTakeActor*)sender) {
 		mHolder = nullptr;
 		offHitFlag(HIT_FLAG_NO_COLLISION);
 		return TRUE;
 	}
 
+	// Two more equality tests rather than a switch: the ROM compares 0xB and
+	// then 0 with plain cmplwi and no pivot tree.
 	if (message == HIT_MESSAGE_UNKB) {
 		mHolder = nullptr;
-		if (mSpine->getLatestNerve()
-		    != &TNerveAnimalBirdChangeToCoin::theNerve()) {
+		if (isChanged() == false) {
 			mSpine->reset();
 			mSpine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
-		} else
+		} else {
 			kill();
+		}
 		return TRUE;
 	}
 
-	if (message == HIT_MESSAGE_TRAMPLE && sender->isActorType(0x1000000D)) {
-		if (mSpine->getLatestNerve()
-		    != &TNerveAnimalBirdChangeToCoin::theNerve()) {
-			mSpine->reset();
-			mSpine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
-		} else
-			receiveMessage(this, HIT_MESSAGE_SPRAYED_BY_WATER);
-		return TRUE;
+	if (message == HIT_MESSAGE_TRAMPLE) {
+		if (sender->isActorType(0x1000000D)) {
+			if (isChanged() == false) {
+				mSpine->reset();
+				mSpine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
+			} else {
+				receiveMessage(this, HIT_MESSAGE_SPRAYED_BY_WATER);
+			}
+			return TRUE;
+		}
 	}
 
 	return TSpineEnemy::receiveMessage(sender, message);
@@ -214,263 +236,415 @@ BOOL TAnimalBird::receiveMessage(THitActor* sender, u32 message)
 
 void TAnimalBird::calcRootMatrix()
 {
-	if (mHolder) {
-		MtxPtr takingMtx = mHolder->getTakingMtx();
-		getModel()->setBaseTRMtx(takingMtx);
-	} else
+	if (mHolder != nullptr) {
+		MtxPtr mtx = mHolder->getTakingMtx();
+		getModel()->setBaseTRMtx(mtx);
+	} else {
 		TSpineEnemy::calcRootMatrix();
+	}
 
 	getModel()->getBaseTRMtx()[1][3] += 35.0f;
 }
 
+// TODO: retail reloads mWaterHitTimer after the > 0 test, branches straight
+// out of the inlined isChangeToItem() (we materialise its bool), and has a
+// frame 0x18 larger.  Spelling the condition in checkChangeToItem gives that
+// function its 0x110 map size but inlines getLatestNerve() here; the if/return
+// and ==false spellings of isChangeToItem are inert or worse.
 void TAnimalBird::moveObject()
 {
-	if (unk178 > 0)
-		unk178--;
+	if (mWaterHitTimer > 0)
+		mWaterHitTimer = mWaterHitTimer - 1;
 
-	TSpineBase<TLiveActor>* spine = mSpine;
-
-	// Written as a single `||` chain over fresh getLatestNerve()/theNerve()
-	// calls: the target materialises its own intermediate bools for such a
-	// chain (flag registers merged with `li 1` / `addi` / `clrlwi.`) and only
-	// expands the first operand's calls inline, calling the rest out of line.
-	bool onGroundNerve
-	    = (spine->getLatestNerve() == &TNerveAnimalBirdWaitOnGround::theNerve()
-	        || spine->getLatestNerve()
-	               == &TNerveAnimalBirdActionOnGround::theNerve())
-	      || spine->getLatestNerve()
-	             == &TNerveAnimalBirdWalkOnGround::theNerve();
-
-	if (onGroundNerve) {
-		// checkLiveFlag() rather than isAirborne(): the latter's `? 1 : 0`
-		// body makes MWCC materialise a bool, the target just masks the bit.
-		if (checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
-			// The increment lives in the condition: the target evaluates the
-			// getBirdParams() call first and only then bumps unk17C.
-			if (getBirdParams()->mFloatingTimerMax.get() < ++unk17C) {
-				spine->reset();
-				spine->setNext(&TNerveAnimalBirdTakeoff::theNerve());
-			}
-		} else
-			unk17C = 0;
-	}
-
-	// The comparison result is kept in a named bool: the target materialises it
-	// with subf/cntlzw/extrwi. instead of fusing it into the branch, and calls
-	// theNerve()/getLatestNerve() out of line here.
-	bool isCoinNerve = spine->isNerve(&TNerveAnimalBirdChangeToCoin::theNerve());
-	if (isCoinNerve && mHitPoints == 0) {
-		spine->reset();
-		spine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
-	}
-
-	bool flying = spine->getLatestNerve()
-	                  == &TNerveAnimalBirdGraphWander::theNerve()
-	              || spine->getLatestNerve()
-	                     == &TNerveAnimalBirdComeback::theNerve();
-	if (!flying) {
-		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_FLYING1,
-		                          mInstanceIndex);
-	}
-
-	onGroundNerve
-	    = (spine->getLatestNerve() == &TNerveAnimalBirdWaitOnGround::theNerve()
-	        || spine->getLatestNerve()
-	               == &TNerveAnimalBirdActionOnGround::theNerve())
-	      || spine->getLatestNerve()
-	             == &TNerveAnimalBirdWalkOnGround::theNerve();
-	if (!onGroundNerve) {
-		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_CHUN, mInstanceIndex);
-	}
+	checkFalling();
+	checkChangeToItem();
+	updateSound();
 
 	TLiveActor::moveObject();
 }
 
-// TODO: 56 %, and the only thing wrong is the first operand of the || chain
-// that isOnGroundNerve() (inlined twice) contributes. The target calls
-// theNerve()/getLatestNerve() out of line there, so it must reach that inline
-// at one level deeper than we do. See the note on isOnGroundNerve().
+// Binding level over a raw member read, worth +8 of low region in
+// TAnimalBird::bind (batch 127).
+static inline TWireBinder* BirdWireBinder(const TAnimalBird* p)
+{
+	TWireBinder* wireBinder = p->mWireBinder;
+	return wireBinder;
+}
+
 void TAnimalBird::bind()
 {
-	if (!isCheckWithWireBinder())
+	if (isCheckWithWireBinder() == false)
 		TLiveActor::bind();
 	else
-		mWireBinder->bind(this);
+		BirdWireBinder(this)->bind(this);
 }
 
 const char** TAnimalBird::getBasNameTable() const { return bird_bastable; }
 
-// TODO: the target calls theNerve() and getLatestNerve() out of line for all
-// four checks when this gets inlined into bind(), we still inline the first.
-bool TAnimalBird::isOnGroundNerve() const
+void TAnimalBird::behaveHitWater()
 {
-	TSpineBase<TLiveActor>* spine = mSpine;
-	bool result = spine->getLatestNerve()
-	                  == &TNerveAnimalBirdWaitOnGround::theNerve()
-	              || spine->getLatestNerve()
-	                     == &TNerveAnimalBirdActionOnGround::theNerve()
-	              || spine->getLatestNerve()
-	                     == &TNerveAnimalBirdWalkOnGround::theNerve()
-	              || spine->getLatestNerve()
-	                     == &TNerveAnimalBirdPreLanding::theNerve();
-	return result;
+	if (mWaterHitTimer <= 0) {
+		mWaterHitTimer = getSaveParams()->mWaterproofTimerMax.get();
+		if (checkLiveFlag(LIVE_FLAG_AIRBORNE))
+			decHitPoints();
+	}
 }
 
-// TODO: frame is 8 bytes too big, everything else matches
-// The original build inlines this into the three flight nerves (Comeback,
-// PreLanding, Landing) but leaves it out of line for the three ground nerves
-// (WaitOnGround, ActionOnGround, WalkOnGround). MWCC inlines it everywhere, so
-// BIRD_SEARCH_MARIO below mirrors the inlined form used by the flight nerves.
-#pragma dont_inline on
+bool TAnimalBird::isOnGroundNerve() const
+{
+	// The spine goes into a local: the ROM keeps it in one register across
+	// the three theNerve() calls instead of re-reading the member.
+	TSpineBase<TLiveActor>* spine = mSpine;
+	return spine->getLatestNerve()
+	        == &TNerveAnimalBirdWaitOnGround::theNerve()
+	    || spine->getLatestNerve()
+	        == &TNerveAnimalBirdActionOnGround::theNerve()
+	    || spine->getLatestNerve()
+	        == &TNerveAnimalBirdWalkOnGround::theNerve();
+}
+
+void TAnimalBird::checkFalling()
+{
+	if (isOnGroundNerve()) {
+		if (checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
+			if (getSaveParams()->mFloatingTimerMax.get()
+			    < ++mFloatingTimer) {
+				mSpine->reset();
+				mSpine->setNext(&TNerveAnimalBirdTakeoff::theNerve());
+			}
+		} else {
+			mFloatingTimer = 0;
+		}
+	}
+}
+
+void TAnimalBird::checkChangeToItem()
+{
+	if (isChangeToItem()) {
+		mSpine->reset();
+		mSpine->setNext(&TNerveAnimalBirdChangeToCoin::theNerve());
+	}
+}
+
+void TAnimalBird::checkNotAppear(s32 event_id)
+{
+	if (TFlagManager::getInstance()->getBlueCoinFlag(
+	        SMSGetMarDirector()->getCurrentMap(), event_id))
+		onLiveFlag(LIVE_FLAG_DEAD);
+}
+
+void TAnimalBird::updateSound()
+{
+	if (isFlying())
+		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_FLYING1,
+		                          mInstanceIndex);
+
+	if (isOnGroundNerve())
+		gpMSound->startSeRandPlay(MSD_SE_OBJ_BIRD_DOL_CHUN, mInstanceIndex);
+}
+
+bool TAnimalBird::isWantToFly() const
+{
+	return (mWaterHitTimer > 0 || isFindMario()) && MsRandF() < 0.5f;
+}
+
+bool TAnimalBird::isWantToAction() const
+{
+	s32 over = mSpine->getTime() - getSaveParams()->mActionTimer.get();
+	if (over < 0)
+		return false;
+
+	f32 chance = (f32)over / (f32)getSaveParams()->mActionTimerAdd.get();
+	return MsRandF() < chance;
+}
+
+bool TAnimalBird::isWantToRest() const
+{
+	return getSaveParams()->mWalkTimer.get() < mSpine->getTime();
+}
+
 bool TAnimalBird::isFindMario() const
 {
-	if (getBirdParams()->mSearchHeight.get()
-	    < fabs(SMS_GetMarioPos().y - mPosition.y))
+	if (getSaveParams()->mSearchHeight.get()
+	    < fabsf(SMS_GetMarioPos().y - mPosition.y))
 		return false;
 
 	return isInSight(SMS_GetMarioPos(),
-	                 mRandomScale * getBirdParams()->mSearchLength.get(),
-	                 mRandomScale * getBirdParams()->mSearchAngle.get(),
-	                 mRandomScale * getBirdParams()->mSearchAware.get());
+	                 mPowerRate * getSaveParams()->mSearchLength.get(),
+	                 mPowerRate * getSaveParams()->mSearchAngle.get(),
+	                 mPowerRate * getSaveParams()->mSearchAware.get());
 }
-#pragma dont_inline off
 
-namespace {
+// TODO: incorrect size. Map records 152 bytes; the early-return spelling is
+// 24 bytes bigger still and costs moveObject two points.
+bool TAnimalBird::isChangeToItem() const
+{
+	return !isChanged() && getHitPoints() == 0;
+}
 
-// Mirrors the inlined form of TAnimalBird::isFindMario() that the original
-// build emits into the flight nerves. See the note on isFindMario() above.
-#define BIRD_SEARCH_MARIO(b)                                                  \
-	((b)->getBirdParams()->mSearchHeight.get()                                \
-	     < fabs(SMS_GetMarioPos().y - (b)->mPosition.y)                      \
-	     ? false                                                              \
-	     : (b)->isInSight(SMS_GetMarioPos(),                                 \
-	                        (b)->mRandomScale                                \
-	                            * (b)->getBirdParams()->mSearchLength.get(),  \
-	                        (b)->mRandomScale                                \
-	                            * (b)->getBirdParams()->mSearchAngle.get(),   \
-	                        (b)->mRandomScale                                \
-	                            * (b)->getBirdParams()->mSearchAware.get()))
-
-} // namespace
+bool TAnimalBird::isGroundShaken() const { return false; }
 
 bool TAnimalBird::isCheckWithWireBinder() const
 {
-	bool result = false;
-	if (mWireBinder && isOnGroundNerve())
-		result = true;
-	return result;
+	return mWireBinder != nullptr
+	    && (isOnGroundNerve()
+	        || mSpine->getLatestNerve()
+	            == &TNerveAnimalBirdPreLanding::theNerve());
 }
 
+// TU-local, name unknown: one inline level between isChanged() and theNerve()
+// is what makes retail emit `li r3, instance$; bl TNerveBase<TLiveActor>()`
+// inside both of receiveMessage's inlined isChanged() guards while the two
+// `setNext(&theNerve())` arguments two statements later still expand the base
+// constructor (codegen-tells.md, "Research batch 251": the guard expands at
+// theNerve level 1 and calls the base ctor at level 2, and an argument is
+// evaluated at the caller's level). receiveMessage 96.9 -> 100.0 and
+// isChanged's own out-of-line body stays at the map's 0x90, which pins the
+// level to the inside of isChanged rather than the call site.
+// TODO: the level overshoots the two UNUSED sizes that measured it --
+// checkChangeToItem is now 0xec against the map's 0x110 (theNerve itself goes
+// out of line at level 3 there) and isChangeToItem 0xa8 against 0x98 -- so the
+// real spelling is probably a named TAnimalBird predicate, not a free helper.
+// It also reshuffles the weak DEFINE_NERVE bodies (validate-symbol-order's
+// compiler-controlled warning).
+static inline const TNerveBase<TLiveActor>* BirdChangeToCoinNerve()
+{
+	return &TNerveAnimalBirdChangeToCoin::theNerve();
+}
+
+// Binding level over mItem: +8 of low region per expansion, the same
+// pointer-member form that closed TAnimalBird::bind.
+static inline TMapObjBase* BirdItem(const TAnimalBird* p)
+{
+	TMapObjBase* item = p->mItem;
+	return item;
+}
+
+bool TAnimalBird::isChanged() const
+{
+	return mSpine->getLatestNerve() == BirdChangeToCoinNerve();
+}
+
+bool TAnimalBird::isFlying() const
+{
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	return nerve == &TNerveAnimalBirdGraphWander::theNerve()
+	    || nerve == &TNerveAnimalBirdComeback::theNerve();
+}
+
+void TAnimalBird::doDropCoin()
+{
+	TMapObjBase* item = BirdItem(this);
+	u32 type          = item->getActorType();
+	if (type == 0x20000013 ? true : false) {
+		item->JSGSetTranslation(mPosition);
+		((TShine*)mItem)->appearWithDemo("鳥シャインカメラ");
+	} else {
+		TMapObjBase* obj;
+		if (type == 0x2000000E ? true : false)
+			obj = gpItemManager->makeObjAppear(0x2000000E);
+		else
+			obj = item;
+
+		if (obj != nullptr) {
+			obj->appear();
+			obj->JSGSetTranslation(mPosition);
+			obj->mVelocity.set(0.0f, -10.0f, 0.0f);
+			obj->offLiveFlag(LIVE_FLAG_UNK10);
+			obj->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		}
+	}
+}
+
+// TODO(JGQuat4.hpp): parked header need. Retail's two-argument
+// TQuat4::rotate is a two-level body: the inner level declares the TQuat4
+// temporary (the `bl TVec4<f>::TVec4()`), reads the quaternion's members
+// directly after that call, has no `* 0` terms, and ends in the
+// TVec3<f>::set<f> that goes out of line one level deeper (WalkOnGround's
+// weak set<f>). This is now exactly JGQuat4.hpp's rotateInPlace/rotateQ,
+// but calling that instead (header round 2026-09-23) moves doLanding
+// 93.40 -> 92.38 (take-off quaternion registers, doLanding itself unchanged),
+// so the fork stays until that is understood.
+static inline void BirdRotateQ(const JGeometry::TQuat4<f32>& r,
+                               const JGeometry::TVec3<f32>& v,
+                               JGeometry::TVec3<f32>& rDest)
+{
+	// clang-format off
+	JGeometry::TQuat4<f32> q;
+	q.x =  r.y * v.z - r.z * v.y + r.w * v.x;
+	q.y = -r.x * v.z + r.z * v.x + r.w * v.y;
+	q.z =  r.x * v.y - r.y * v.x + r.w * v.z;
+	q.w = -r.x * v.x - r.y * v.y - r.z * v.z;
+
+	rDest.set( q.x *  r.w + q.y * -r.z - q.z * -r.y + q.w * -r.x,
+	          -q.x * -r.z + q.y *  r.w + q.z * -r.x + q.w * -r.y,
+	           q.x * -r.y - q.y * -r.x + q.z *  r.w + q.w * -r.z);
+	// clang-format on
+}
+
+static inline void BirdRotate(const JGeometry::TQuat4<f32>& r,
+                              const JGeometry::TVec3<f32>& v,
+                              JGeometry::TVec3<f32>& rDest)
+{
+	BirdRotateQ(r, v, rDest);
+}
+
+
+// TODO: 95.4%. Instruction-identical except the quaternion temporary's
+// register numbering inside the inlined rotate and toGoal 4 bytes low.
 void TAnimalBird::doFlyToCurPathNode()
 {
-	// quat/v are declared up here and filled in further down: locals run from
-	// the top of the frame in declaration order and the target has the quat at
-	// the highest address even though it is computed last.
-	JGeometry::TQuat4<f32> quat;
-	JGeometry::TVec3<f32> v;
-	JGeometry::TVec3<f32> diff = unkF4.getPoint();
-	diff -= mPosition;
+	JGeometry::TVec3<f32> toGoal = getUnkF4().getPoint();
+	toGoal.sub(mPosition);
 
-	f32 dist = diff.length();
-
-	if (dist < 100.0f)
+	f32 distance = toGoal.length();
+	if (distance < 100.0f)
 		return;
 
-	f32 marchSpeed = mRandomScale * getBirdParams()->mMarchSpeed.get();
-	marchSpeed     = marchSpeed * SMSGetAnmFrameRate();
-	f32 turnSpeed  = getBirdParams()->mTurnSpeed.get() * SMSGetAnmFrameRate();
+	f32 marchSpeed = getMyMarchSpeed() * SMSGetAnmFrameRate();
+	f32 turnRate  = getSaveParams()->mTurnSpeed.get();
+	f32 turnSpeed = turnRate * SMSGetAnmFrameRate();
 
-	if (dist <= 2.0f * calcMinimumTurnRadius(marchSpeed, turnSpeed))
-		turnSpeed = calcTurnSpeedToReach(marchSpeed, 0.5f * dist);
+	if (distance <= 2.0f * calcMinimumTurnRadius(marchSpeed, turnSpeed))
+		turnSpeed = calcTurnSpeedToReach(marchSpeed, 0.5f * distance);
 
-	TAnimalBase::getRotationFlyToDir(&mRotation, diff, marchSpeed, turnSpeed);
+	TAnimalBase::getRotationFlyToDir(&mRotation, toGoal, marchSpeed,
+	                                 turnSpeed);
 
-	quat = SMS_Eular2Quat(mRotation);
-	v.set(0.0f, 0.0f, marchSpeed);
-	// The rotation itself is TQuat4::rotate() -- same `w * 0` residue as the
-	// other three rotate() sites in this file.
-	quat.rotate(v, v);
-
-	f32 rate  = unk178 / (f32)getBirdParams()->mWaterproofTimerMax.get();
-	f32 scale = 1.0f - rate;
-	v.x *= scale;
-	v.y *= scale;
-	v.z *= scale;
-
-	// The target recomputes the ratio here rather than reusing `rate`.
-	v.y -= getBirdParams()->mWaterPowerY.get()
-	       * (unk178 / (f32)getBirdParams()->mWaterproofTimerMax.get());
-
-	mLinearVelocity = v;
+	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
+	JGeometry::TVec3<f32> velocity(0.0f, 0.0f, marchSpeed);
+	BirdRotate(quat, velocity, velocity);
+	velocity.scale(1.0f - getWaterDamageRate());
+	velocity.y -= getWaterPowerY();
+	mLinearVelocity = velocity;
 }
 
-bool TAnimalBird::doLanding(bool param_1)
+void TAnimalBird::doWalk()
 {
-	if (param_1) {
-		f32 speed = mRandomScale * getBirdParams()->mMarchSpeed.get();
-		speed     = speed * SMSGetAnmFrameRate();
+	mGravity = 0.15f;
 
+	f32 torque  = getSaveParams()->mWalkingTorqueY.get();
+	mRotation.y = MsWrap(mTurnDir * (torque * SMSGetAnmFrameRate())
+	                         + mRotation.y,
+	                     0.0f, 360.0f);
+
+	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
+	JGeometry::TVec3<f32> velocity(0.0f, 0.0f,
+	                               getSaveParams()->mWalkingSpeed.get());
+	BirdRotate(quat, velocity, velocity);
+	mLinearVelocity = velocity;
+}
+
+// TODO: 93.4%, frame 0x160 against 0x158. The take-off velocity is rotated in
+// place and rebuilt flat, which lets MWCC drop the rotated y as retail does.
+// The speed is the length of an explicit copy of mVelocity: retail copies it
+// to the stack and calls TUtil<f32>::sqrt, which the named-local spelling
+// expands. Left: MsAngleDiff loads mRotation.y before mHomeRotation.y
+// (retail the other way round; a named home local is inert) and the
+// take-off quaternion's register numbering.
+bool TAnimalBird::doLanding(bool takeoff)
+{
+	if (takeoff) {
+		f32 marchSpeed = getMyMarchSpeed() * SMSGetAnmFrameRate();
 		JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
-		JGeometry::TVec3<f32> velocity;
-		// The residual `w * 0` multiplies are the signature of this inline
-		// (MWCC folds explicit *0 but not one that came out of a function).
-		quat.rotate(JGeometry::TVec3<f32>(0.0f, 0.0f, speed), velocity);
+		JGeometry::TVec3<f32> dir(0.0f, 0.0f, marchSpeed);
+		quat.rotate(dir, dir);
+		JGeometry::TVec3<f32> velocity(dir.x, 0.0f, dir.z);
 		mVelocity = velocity;
 	}
 
-	JGeometry::TVec3<f32> fall(0.0f, 0.0f, 0.0f);
-	bool grounded = false;
+	bool landed = false;
 
-	JGeometry::TVec3<f32> point;
+	JGeometry::TVec3<f32> acceleration;
+	acceleration.zero();
 
-	if (mWireBinder)
-		mWireBinder->getPoint(&point, mHomePosition);
-	else
-		gpMap->checkGround(mPosition, &mGroundPlane);
+	getFootGroundHeight();
 
-	// checkLiveFlag() rather than isAirborne(): the latter's `? 1 : 0` body
-	// makes MWCC materialise a bool where the target just masks the bit.
 	if (checkLiveFlag(LIVE_FLAG_AIRBORNE))
-		fall.y = -getBirdParams()->mLandingGravityY.get();
+		acceleration.y = -getSaveParams()->mLandingGravityY.get();
 	else
-		grounded = true;
+		landed = true;
 
 	mRotation.x = mHomeRotation.x;
 	mRotation.z = mHomeRotation.z;
 
-	f32 torque = getBirdParams()->mLandingTorqueY.get();
-	torque      = torque * SMSGetAnmFrameRate();
-	f32 diff    = MsAngleDiff(mHomeRotation.y, mRotation.y);
-	// MsClamp() as it is written in MathUtil.hpp tests the upper bound first;
-	// the target tests the lower bound first (and drops the redundant
-	// `step = -torque` store because the value is already in the register).
-	f32 step;
-	if (diff < -torque)
-		step = -torque;
-	else if (diff > torque)
-		step = torque;
-	else
-		step = diff;
-	mRotation.y = MsWrap<f32>(mRotation.y + step, 0.0f, 360.0f);
+	f32 torqueRate = getSaveParams()->mLandingTorqueY.get();
+	f32 torque     = torqueRate * SMSGetAnmFrameRate();
+	f32 turn       = JGeometry::TUtil<f32>::clamp(
+	    MsAngleDiff(mHomeRotation.y, mRotation.y), -torque, torque);
+	mRotation.y = MsWrap(mRotation.y + turn, 0.0f, 360.0f);
 
-	mLinearVelocity = fall;
+	mLinearVelocity = acceleration;
 
-	// friction is built first and only then scaled by mLandingFric -- the
-	// target does not fold the two multiplications together.
-	JGeometry::TVec3<f32> friction;
-	JGeometry::TVec3<f32> vel = mVelocity;
-	friction.set(0.0f, 0.0f, JGeometry::TUtil<f32>::sqrt(vel.squared()));
-	friction *= getBirdParams()->mLandingFric.get();
+	JGeometry::TVec3<f32> forward(0.0f, 0.0f,
+	                              JGeometry::TVec3<f32>(mVelocity).length());
+	forward.scale(getSaveParams()->mLandingFric.get());
+	BirdRotate(SMS_Eular2Quat(mRotation), forward, forward);
+	mVelocity = forward;
 
-	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
-	quat.rotate(friction, friction);
-	mVelocity = friction;
-
-	return grounded && fabs(step) < 0.01f;
+	return landed && fabsf(turn) < 0.01f;
 }
 
-TAnimalBirdParams::TAnimalBirdParams(const char* path)
-    : TSpineEnemyParams(path)
+// TODO: incorrect size. Map records 388 bytes.
+void TAnimalBird::doGotoRandomNextGraphNode()
+{
+	goToRandomNextGraphNode();
+
+	JGeometry::TVec3<f32> goal = getUnk104().getPoint();
+	goal.x += 200.0f * (MsRandF() - 0.5f);
+	goal.y += 200.0f * (MsRandF() - 0.5f);
+	goal.z += 200.0f * (MsRandF() - 0.5f);
+
+	setGoalPath(TPathNode(goal));
+}
+
+void TAnimalBird::setGoalToComeback() { setGoalPath(TPathNode(mHomePosition)); }
+
+void TAnimalBird::setParamsOnFloating()
+{
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	mGravity       = 0.0f;
+	mFloatingTimer = 0;
+}
+
+void TAnimalBird::setParamsOnLanding() { }
+
+void TAnimalBird::setBckAnm(int index)
+{
+	getMActor()->setBckFromIndex(index);
+	setCurAnmSound();
+}
+
+f32 TAnimalBird::getMyMarchSpeed() const
+{
+	return mPowerRate * getSaveParams()->mMarchSpeed.get();
+}
+
+f32 TAnimalBird::getWaterDamageRate() const
+{
+	return (f32)mWaterHitTimer
+	    / (f32)getSaveParams()->mWaterproofTimerMax.get();
+}
+
+f32 TAnimalBird::getWaterPowerY() const
+{
+	return getSaveParams()->mWaterPowerY.get() * getWaterDamageRate();
+}
+
+f32 TAnimalBird::getFootGroundHeight()
+{
+	JGeometry::TVec3<f32> point;
+
+	if (mWireBinder != nullptr) {
+		mWireBinder->getPoint(&point, mHomePosition);
+		return point.y;
+	}
+
+	return gpMap->checkGround(mPosition, &mGroundPlane);
+}
+
+TAnimalBirdParams::TAnimalBirdParams(const char* prm)
+    : TSpineEnemyParams(prm)
     , PARAM_INIT(mMarchSpeed, 5.0f)
     , PARAM_INIT(mTurnSpeed, 0.1f)
     , PARAM_INIT(mReturnTimer, 1800)
@@ -504,17 +678,23 @@ void TAnimalBirdManager::load(JSUMemoryInputStream& stream)
 	TEnemyManager::load(stream);
 }
 
+// Exact since header round 18: two expansions of MSCreateRandPlayVec give
+// 0x30 and getObjNum() over the raw mObjNum the last 8 (lever pair, the same
+// shape TAnimalBase::loadAfter needs). See MSound/MSoundSE.hpp.
 void TAnimalBirdManager::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	MSoundSESystem::MSRandPlay::createRandPlayVec(MSD_SE_OBJ_BIRD_DOL_FLYING1, mObjNum);
-	MSoundSESystem::MSRandPlay::createRandPlayVec(MSD_SE_OBJ_BIRD_DOL_CHUN, mObjNum);
+	MSCreateRandPlayVec(MSD_SE_OBJ_BIRD_DOL_FLYING1, getObjNum());
+	MSCreateRandPlayVec(MSD_SE_OBJ_BIRD_DOL_CHUN, getObjNum());
 }
 
 void TAnimalBirdManager::createModelData()
 {
 	static const TModelDataLoadEntry entry[] = {
-		{ "bird_man.bmd", 0x10210000, 0 },
+		{ "bird_man.bmd",
+		  J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+		      | (1 << J3DMLF_TevStageNumShift),
+		  0 },
 		{ nullptr, 0, 0 },
 	};
 
@@ -525,37 +705,18 @@ DEFINE_NERVE(TNerveAnimalBirdWaitOnGround, TLiveActor)
 {
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
-	if (spine->getTime() == 0) {
-		bird->mMActor->setBckFromIndex(7);
-		bird->setCurAnmSound();
-	}
+	if (spine->getTime() == 0)
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_WAIT);
 
-	bool canFly = bird->unk178 > 0 || bird->isFindMario();
-	bool wantToFly = false;
-
-	if (canFly && MsRandF() < 0.5f)
-		wantToFly = true;
-
-	if (wantToFly) {
+	if (bird->isWantToFly()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdTakeoff::theNerve());
 		return TRUE;
 	}
 
 	if (bird->checkCurAnmEnd(0)) {
-		// The target counts *up* to mActionTimer (mActionTimer - getTime())
-		// and halves MsRandF() instead of doubling the ratio; no `params`
-		// local either, so getBirdParams() is called twice.
-		int time = bird->getBirdParams()->mActionTimer.get() - spine->getTime();
-		bool wantAction = false;
-
-		if (time >= 0)
-			wantAction = MsRandF() * 0.5f
-			             < (f32)time
-			                   / (f32)bird->getBirdParams()
-			                          ->mActionTimerAdd.get();
-
-		if (wantAction) {
-			spine->pushAfterCurrent(&TNerveAnimalBirdActionOnGround::theNerve());
+		if (bird->isWantToAction()) {
+			spine->pushAfterCurrent(
+			    &TNerveAnimalBirdActionOnGround::theNerve());
 			return TRUE;
 		}
 	}
@@ -568,24 +729,19 @@ DEFINE_NERVE(TNerveAnimalBirdActionOnGround, TLiveActor)
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		int anm = cRandomAnims[(int)(MsRandF() * 5.0f)];
-
-		if (anm == 8) {
-			spine->pushAfterCurrent(&TNerveAnimalBirdWalkOnGround::theNerve());
+		int anm = cRandomAnims[(int)(5.0f * MsRandF())];
+		if (anm == TAnimalBird::BIRD_ANM_WALK) {
+			spine->pushAfterCurrent(
+			    &TNerveAnimalBirdWalkOnGround::theNerve());
 			return TRUE;
 		}
 
-		if (!bird->mMActor->checkCurBckFromIndex(anm))
-			bird->mMActor->setBckFromIndex(anm);
+		MActor* actor = bird->getMActor();
+		if (!actor->checkCurBckFromIndex(anm))
+			actor->setBckFromIndex(anm);
 	}
 
-	bool canFly = bird->unk178 > 0 || bird->isFindMario();
-	bool wantToFly = false;
-
-	if (canFly && MsRandF() < 0.5f)
-		wantToFly = true;
-
-	if (wantToFly) {
+	if (bird->isWantToFly()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdTakeoff::theNerve());
 		return TRUE;
 	}
@@ -598,48 +754,33 @@ DEFINE_NERVE(TNerveAnimalBirdActionOnGround, TLiveActor)
 	return FALSE;
 }
 
+// TODO: 93.1%, frame 0xb0 against 0xb8. With doWalk's rotate going through
+// the two-level BirdRotate the TVec4() and TVec3::set<f> calls and the
+// weak set<f> are retail's; left is 0xc of low region below the quaternion
+// temporary and the -z/-x negation schedule inside BirdRotateQ.
 DEFINE_NERVE(TNerveAnimalBirdWalkOnGround, TLiveActor)
 {
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		bird->unk170 = -1.0f * bird->unk170;
-		bird->mMActor->setBckFromIndex(8);
-		bird->setCurAnmSound();
+		bird->mTurnDir *= -1.0f;
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_WALK);
 	}
 
-	bool canFly = bird->unk178 > 0 || bird->isFindMario();
-	bool wantToFly = false;
-
-	if (canFly && MsRandF() < 0.5f)
-		wantToFly = true;
-
-	if (wantToFly) {
+	if (bird->isWantToFly()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdTakeoff::theNerve());
 		return TRUE;
 	}
 
-	bird->mGravity = 0.15f;
+	// Retail calls doWalk() rather than spelling its body out here: at depth 2
+	// MsWrap<f32> refuses to inline, which is exactly the `bl MsWrap<float>`
+	// the ROM has (a pasted body puts it at depth 1, where it expands into two
+	// wrap loops). TQuat4::rotate still goes out of line for us where retail
+	// expands it -- that is JGQuat4.hpp's known-open "inlined direction" local
+	// set, not this call site.
+	bird->doWalk();
 
-	f32 torque = bird->getBirdParams()->mWalkingTorqueY.get();
-	torque      = torque * SMSGetAnmFrameRate();
-	bird->mRotation.y = MsWrap<f32>(bird->mRotation.y
-	                                    + bird->unk170 * torque,
-	                                0.0f, 360.0f);
-
-	// TQuat4::rotate() ends in TVec3<f32>::set<f32>(x, y, z), which is the
-	// out-of-line `set<f>` call the target emits right after this nerve
-	// (it is the very next symbol in the map's .text layout). `v` is
-	// declared before `quat` (locals run from the top of the frame down in
-	// declaration order) but filled in after, which is the order the target
-	// stores them in.
-	JGeometry::TVec3<f32> v;
-	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(bird->mRotation);
-	v.set(0.0f, 0.0f, bird->getBirdParams()->mWalkingSpeed.get());
-	quat.rotate(v, v);
-	bird->mLinearVelocity = v;
-
-	if (spine->getTime() > bird->getBirdParams()->mWalkTimer.get()) {
+	if (bird->getSaveParams()->mWalkTimer.get() < spine->getTime()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdWaitOnGround::theNerve());
 		return TRUE;
 	}
@@ -652,66 +793,49 @@ DEFINE_NERVE(TNerveAnimalBirdTakeoff, TLiveActor)
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		bird->mMActor->setBckFromIndex(5);
-		bird->setCurAnmSound();
-		bird->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		bird->mGravity = 0.0f;
-		bird->unk17C   = 0;
-
-		J3DFrameCtrl* ctrl = bird->mMActor->getFrameCtrl(ANM_TYPE_BCK);
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_START);
+		bird->setParamsOnFloating();
+		J3DFrameCtrl* ctrl = bird->getMActor()->getFrameCtrl(0);
 		ctrl->setRate(3.0f * ctrl->getRate());
-
-		if (gpMSound->gateCheck(MSD_SE_OBJ_BIRD_DOL_TO_FLY1))
-			MSoundSESystem::MSoundSE::startSoundActor(
-			    MSD_SE_OBJ_BIRD_DOL_TO_FLY1, (const Vec*)&bird->mPosition, 0,
-			    nullptr, 0, 4);
+		gpMSound->startSoundActor(MSD_SE_OBJ_BIRD_DOL_TO_FLY1, &bird->mPosition);
 	}
 
 	if (bird->checkCurAnmEnd(0)) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdGraphWander::theNerve());
-		bird->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		bird->mGravity = 0.0f;
-		bird->unk17C   = 0;
+		bird->setParamsOnFloating();
 		return TRUE;
 	}
 
 	return FALSE;
 }
 
+// TODO: 99.8%. Instruction-identical except the frame is 0x18 too large
+// (0xb8 vs 0xa0). bird->mSpine (not the spine parameter) is the return-timer
+// compare; getSpine() adds another +8. The extra 0x10 was already there from
+// the inlined doGotoRandomNextGraphNode TPathNode temps.
 DEFINE_NERVE(TNerveAnimalBirdGraphWander, TLiveActor)
 {
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		JGeometry::TVec3<f32> vel(0.0f, 0.0f, 0.0f);
-		bird->mVelocity = vel;
-		bird->getTracer()->mPrevIdx = -1;
+		bird->setVelocity(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		bird->getTracer()->reset();
 		bird->goToShortestNextGraphNode();
 	}
 
 	if (spine->getTime() == 0 || bird->isReachedToGoal()) {
-		bird->goToRandomNextGraphNode();
+		bird->doGotoRandomNextGraphNode();
 
-		JGeometry::TVec3<f32> point = bird->unk104.getPoint();
-		point.x = point.x + 200.0f * (MsRandF() - 0.5f);
-		point.y = point.y + 200.0f * (MsRandF() - 0.5f);
-		point.z = point.z + 200.0f * (MsRandF() - 0.5f);
-
-		TPathNode goal(point);
-		bird->setGoalPath(goal);
-
-		if (bird->mPosition.y <= bird->unkF4.getPoint().y) {
-			bird->mMActor->setBckFromIndex(1);
-			bird->setCurAnmSound();
-		} else {
-			bird->mMActor->setBckFromIndex(3);
-			bird->setCurAnmSound();
-		}
+		if (bird->mPosition.y <= bird->getUnkF4().getPoint().y)
+			bird->setBckAnm(TAnimalBird::BIRD_ANM_STOP);
+		else
+			bird->setBckAnm(TAnimalBird::BIRD_ANM_FLY);
 	}
 
 	bird->checkCurAnmEnd(0);
 
-	if (spine->getTime() > bird->getBirdParams()->mReturnTimer.get()) {
+	if (bird->getSaveParams()->mReturnTimer.get()
+	    < bird->mSpine->getTime()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdComeback::theNerve());
 		return TRUE;
 	}
@@ -722,28 +846,28 @@ DEFINE_NERVE(TNerveAnimalBirdGraphWander, TLiveActor)
 
 DEFINE_NERVE(TNerveAnimalBirdChangeToCoin, TLiveActor)
 {
+	TMapObjBase* obj;
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
 		bird->onLiveFlag(LIVE_FLAG_DEAD);
 
-		if (bird->mItem->isActorType(0x20000013)) {
-			bird->mItem->JSGSetTranslation(bird->mPosition);
-			((TShine*)bird->mItem)
-			    ->appearWithDemo("鳥用メッセージ");
+		TMapObjBase* item = BirdItem(bird);
+		u32 type          = item->getActorType();
+		if (type == 0x20000013 ? true : false) {
+			item->JSGSetTranslation(bird->mPosition);
+			((TShine*)bird->mItem)->appearWithDemo("鳥シャインカメラ");
 		} else {
-			TMapObjBase* obj;
-
-			if (bird->mItem->isActorType(0x2000000E))
+			if (type == 0x2000000E ? true : false)
 				obj = gpItemManager->makeObjAppear(0x2000000E);
 			else
-				obj = bird->mItem;
+				obj = item;
 
 			if (obj != nullptr) {
 				obj->appear();
 				obj->JSGSetTranslation(bird->mPosition);
 				obj->mVelocity.set(0.0f, -10.0f, 0.0f);
-				obj->offLiveFlag(0x3FFFFFF);
+				obj->offLiveFlag(LIVE_FLAG_UNK10);
 				obj->onLiveFlag(LIVE_FLAG_AIRBORNE);
 			}
 		}
@@ -757,15 +881,13 @@ DEFINE_NERVE(TNerveAnimalBirdComeback, TLiveActor)
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		TPathNode goal(bird->mHomePosition);
-		bird->setGoalPath(goal);
-		bird->mMActor->setBckFromIndex(3);
-		bird->setCurAnmSound();
+		bird->setGoalToComeback();
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_FLY);
 	}
 
 	bird->doFlyToCurPathNode();
 
-	if (BIRD_SEARCH_MARIO(bird)) {
+	if (bird->isFindMario()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdGraphWander::theNerve());
 		return TRUE;
 	}
@@ -783,16 +905,13 @@ DEFINE_NERVE(TNerveAnimalBirdPreLanding, TLiveActor)
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		bird->mMActor->setBckFromIndex(1);
-		bird->setCurAnmSound();
-
-		J3DFrameCtrl* ctrl = bird->mMActor->getFrameCtrl(ANM_TYPE_BCK);
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_STOP);
+		J3DFrameCtrl* ctrl = bird->getMActor()->getFrameCtrl(0);
 		ctrl->setRate(1.5f * ctrl->getRate());
-
 		bird->doLanding(true);
 	}
 
-	if (BIRD_SEARCH_MARIO(bird)) {
+	if (bird->isFindMario()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdGraphWander::theNerve());
 		return TRUE;
 	}
@@ -808,19 +927,18 @@ DEFINE_NERVE(TNerveAnimalBirdPreLanding, TLiveActor)
 DEFINE_NERVE(TNerveAnimalBirdLanding, TLiveActor)
 {
 	TAnimalBird* bird = (TAnimalBird*)spine->getBody();
-	J3DFrameCtrl* ctrl = bird->mMActor->getFrameCtrl(ANM_TYPE_BCK);
+
+	J3DFrameCtrl* ctrl = bird->getMActor()->getFrameCtrl(0);
 
 	if (spine->getTime() == 0) {
-		JGeometry::TVec3<f32> vel(0.0f, 0.0f, 0.0f);
-		bird->mVelocity = vel;
-		bird->mMActor->setBckFromIndex(5);
-		bird->setCurAnmSound();
+		bird->setVelocity(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		bird->setBckAnm(TAnimalBird::BIRD_ANM_START);
 		ctrl->setAttribute(J3DFrameCtrl::ATTR_ONCE_AND_RESET);
 		ctrl->setFrame(ctrl->getEnd());
 		ctrl->setRate(-1.0f * ctrl->getRate());
 	}
 
-	if (BIRD_SEARCH_MARIO(bird)) {
+	if (bird->isFindMario()) {
 		spine->pushAfterCurrent(&TNerveAnimalBirdGraphWander::theNerve());
 		return TRUE;
 	}

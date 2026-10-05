@@ -1,11 +1,16 @@
-#include <Enemy/killer.hpp>
+#include <Enemy/Killer.hpp>
+#include <Enemy/KillerNerve.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/EffectObj.hpp>
+#include <Enemy/Enemy.hpp>
+#include <Enemy/SmallEnemy.hpp>
+#include <Enemy/WalkerEnemy.hpp>
 #include <Camera/CameraShake.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Strategic/ObjModel.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapCollisionData.hpp>
 #include <Map/MapData.hpp>
-#include <M3DUtil/MActor.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
@@ -16,36 +21,95 @@
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <Player/MarioAccess.hpp>
-#include <Strategic/ObjModel.hpp>
 #include <Strategic/Spine.hpp>
-#include <System/EmitterViewObj.hpp>
 #include <System/MarDirector.hpp>
 #include <System/Particles.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/JMath.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DCluster.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DVertex.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
-#include <dolphin/mtx.h>
+#include <math.h>
+#include <macros.h>
 
 // rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
+
+static int KillerBodyCallback(J3DNode*, int);
+
+// fabricated: the ROM calls MsSin, MsCos *and* TVec3::set<f32> out of line
+// from the chase nerve's forward step. MsSin/MsCos only stop expanding at
+// inline depth 5 and set<f32> at depth 4, so the direction vector is built
+// four expansions below the nerve body. TFlyEnemy::flyMove is UNUSED (0x2bc)
+// and its body is spelled out in the nerve, so at least one of those four
+// levels is flyMove itself; the other three have no symbol anywhere in the
+// map, which is why they are TU-local.
+//
+// Measured ladder on TNerveFlyEnemyChaseFly::execute (levels -> score / the
+// deepest callee that still expands): 1 -> 95.00 / JMASSin(short) inlined,
+// 2 -> 96.44 / bl JMASin(float), 3 -> 98.16 / bl set<f32>,
+// 4 -> 98.94 / bl MsSin, bl MsCos, bl set<f32> -- retail's exact call set.
+// TODO: replace the three thin wrappers with the real enclosing functions
+// once they are identified; the remaining residue is 48 bytes of frame and
+// one `fmr` in the turn clamp.
+static inline void MsGetVecFromRotY(JGeometry::TVec3<f32>& dst, f32 rot_y,
+                                    f32 length)
+{
+	dst.set(length * MsSin(rot_y), 0.0f, length * MsCos(rot_y));
+}
+
+static inline void MsGetVecFromRotY_L3(JGeometry::TVec3<f32>& dst, f32 rot_y,
+                                       f32 length)
+{
+	MsGetVecFromRotY(dst, rot_y, length);
+}
+
+static inline void MsGetVecFromRotY_L2(JGeometry::TVec3<f32>& dst, f32 rot_y,
+                                       f32 length)
+{
+	MsGetVecFromRotY_L3(dst, rot_y, length);
+}
+
+static inline void MsGetVecFromRotY_L1(JGeometry::TVec3<f32>& dst, f32 rot_y,
+                                       f32 length)
+{
+	MsGetVecFromRotY_L2(dst, rot_y, length);
+}
+
+// fabricated: consume getPosition() inside a by-value fork so the reference
+// address does not escape into a callee-saved GPR. Used on X because retail
+// already loads that component first.
+static inline f32 KillerPosX(const TKiller* k) { return k->getPosition().x; }
+
+static inline f32 FlyPosX(const TFlyEnemy* e) { return e->getPosition().x; }
+static inline f32 FlyMarioX() { return SMS_GetMarioPos().x; }
 
 static const char* killer_bastable[] = {
 	"/scene/killer/bas/downkiller_down1.bas", nullptr, nullptr,
 	"/scene/killer/bas/killer_search1.bas",   nullptr,
 };
 
-bool TKiller::mSerialBomb        = true;
-bool TKiller::mTrampleDie        = true;
-f32 TFlyEnemy::mTestSp           = 2.5f;
-int TFlyEnemy::mInvalidTime      = 200;
-f32 TFlyEnemy::mTestMarioSpMax   = 12.0f;
+// The joint callback and TKiller::reset/calcRootMatrix hand the currently
+// drawn killer to the callback, which has no other way of reaching it.
 static TKiller* gpCurKiller;
+
+bool TKiller::mSerialBomb = true;
+// TODO: dead-stripped; .sdata placement only tells us the initialiser is
+// non-zero. Joint 1 is the one init() attaches KillerBodyCallback to.
+u8 TKiller::mSmokeJntNo = 1;
+bool TKiller::mTrampleDie = true;
 bool TKiller::mRollSw;
 
-TFlyEnemyParams::TFlyEnemyParams(const char* path)
-    : TWalkerEnemyParams(path)
+f32 TFlyEnemy::mTestSp          = 2.5f;
+int TFlyEnemy::mInvalidTime     = 200;
+f32 TFlyEnemy::mTestMarioSpMax  = 12.0f;
+
+TFlyEnemyParams::TFlyEnemyParams(const char* prm)
+    : TWalkerEnemyParams(prm)
     , PARAM_INIT(mSLNormalFlyGravityY, 0.2f)
     , PARAM_INIT(mSLNormalFlySpeed, 10.0f)
     , PARAM_INIT(mSLChaseFlyGravityY, 0.1f)
@@ -58,365 +122,321 @@ TFlyEnemyParams::TFlyEnemyParams(const char* path)
 void TFlyEnemy::init(TLiveManager* manager)
 {
 	TWalkerEnemy::init(manager);
-	unk19C = (TFlyEnemyParams*)getSaveParam();
+	mFlyParams = (TFlyEnemyParams*)getSaveParam();
 }
 
 f32 TFlyEnemy::getGravityY() const
 {
 	if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve())
-		return unk194;
-	return unk19C->mSLNormalFlyGravityY.get();
+		return mGravityY;
+	f32 gravity = mFlyParams->getSLNormalFlyGravityY();
+	return gravity;
 }
 
 void TFlyEnemy::reset()
 {
 	TWalkerEnemy::reset();
-	unk1A0 = 0;
-	unk198 = 1;
-	unk1A4 = 0;
-	unk194 = unk19C->mSLNormalFlyGravityY.get();
-	unk1A5 = 0;
+	mFlyTime   = 0;
+	mFlyState  = FLY_STATE_UNK1;
+	unk1A4     = false;
+	mGravityY  = mFlyParams->mSLNormalFlyGravityY.get();
+	unk1A5     = false;
 }
 
+// TODO: 90.2%. Instruction-identical apart from the final
+// JGeometry::TVec3<f32>::sub, which the ROM calls out of line and our build
+// expands -- the per-call-site TVec3 inlining divergence recorded in
+// docs/catalog/codegen-tells.md. The 40-byte frame gap follows from it.
 void TFlyEnemy::fly()
 {
-	JGeometry::TVec3<f32> pos = mPosition;
-	pos.add(mLinearVelocity);
+	JGeometry::TVec3<f32> nextPos = getPosition();
+	nextPos.add(mLinearVelocity);
 
-	JGeometry::TVec3<f32> vel = mVelocity;
-	vel.x += *gpMarioSpeedX / mTestMarioSpMax;
-	vel.z += *gpMarioSpeedZ / mTestMarioSpMax;
+	JGeometry::TVec3<f32> drift = mVelocity;
+	drift.x += SMS_GetMarioSpeedX() / TFlyEnemy::mTestMarioSpMax;
+	drift.z += SMS_GetMarioSpeedZ() / TFlyEnemy::mTestMarioSpMax;
+	nextPos.add(drift);
+	nextPos.y += mGravityY;
 
-	pos.add(vel);
-	pos.y += unk194;
-
-	mGroundHeight = gpMap->checkGround(pos.x, pos.y + mHeadHeight, pos.z,
-	                                   &mGroundPlane);
+	f32 nextY     = nextPos.y;
+	mGroundHeight = gpMap->checkGround(nextPos.x, nextY + mHeadHeight,
+	                                   nextPos.z, &mGroundPlane);
 	mGroundHeight += 1.0f;
-
-	if (pos.y <= mGroundHeight) {
-		if (unk1A0 > mInvalidTime) {
+	if (nextY <= mGroundHeight) {
+		if (mFlyTime > TFlyEnemy::mInvalidTime) {
 			offLiveFlag(LIVE_FLAG_AIRBORNE);
 			mVelocity.set(0.0f, 0.0f, 0.0f);
-			pos.y = mGroundHeight;
+			nextPos.y = mGroundHeight;
 		}
 
-		// TODO: the 0x4000..0x400A actor types are unidentified
-		if (mGroundPlane->mActor != nullptr
-		    && ((u32)(mGroundPlane->mActor->getActorType() - 0x4000) <= 10
-		        ? true
-		        : false))
-			const_cast<TLiveActor*>(mGroundPlane->mActor)->kill();
+		const TLiveActor* rider = getGroundPlane()->getActor();
+		if (rider) {
+			if (rider->isActorType(0x4000000A))
+				((TLiveActor*)rider)->kill();
+		}
 
-		if (mGroundPlane->isIllegalData())
+		if (getGroundPlane()->isIllegalData())
 			kill();
 	} else {
 		onLiveFlag(LIVE_FLAG_AIRBORNE);
 	}
 
-	mLinearVelocity = pos - mPosition;
+	// `a = b - c` reaches the map's out-of-line TVec3::sub: operator= is one
+	// inline level and the difference nested in its argument two more.
+	mLinearVelocity = nextPos - mPosition;
 }
 
+// TODO: 99.9%. FlyMarioX + FlyPosX (by-value getPosition forks) land the
+// 0x90 frame and every stack slot (99.5 -> 99.9). Residue is the params
+// pointer after MsVECNormalize in r3 against retail's r4.
+// Tried: params named or not, getSLNormalFlySpeed()/.get()/.value (and the
+// same for the force gravity), speed-first products, velocity.set(), and
+// every MsVECNormalize argument spelling: none moves the register.
+// mwcc-stack (c-k10): `params` is a named web whose only neighbours are r0, r1
+// and `this`, so it takes the lowest free volatile, r3; retail's r4 means r3
+// is held by a neighbour over the two param loads (a value live across them,
+// such as a call result or a second copy of the pointer), not an order issue.
 void TFlyEnemy::calcChaseParam()
 {
-	JGeometry::TVec3<f32> dir;
-	dir.sub(*gpMarioPos, mPosition);
-	dir.x *= 1.1f;
-	dir.z *= 1.1f;
+	JGeometry::TVec3<f32> toMario(FlyMarioX() - FlyPosX(this),
+	                              SMS_GetMarioPos().y - mPosition.y,
+	                              SMS_GetMarioPos().z - mPosition.z);
+	toMario.x *= 1.1f;
+	toMario.z *= 1.1f;
 
-	JGeometry::TVec3<f32> tgt;
-	tgt.add(mPosition, dir);
+	JGeometry::TVec3<f32> goal;
+	goal.x = mPosition.x + toMario.x;
+	goal.y = mPosition.y + toMario.y;
+	goal.z = mPosition.z + toMario.z;
 
-	if (unk1A5) {
-		TPathNode node(tgt);
-		unkF4      = node;
-		unk104     = node;
-		unk114.clear();
-	}
+	if (unk1A5)
+		setGoalPath(TPathNode(goal));
 
-	if (dir.y > 100.0f || fabsf(dir.y) >= 100.0f) {
+	if (toMario.y > 100.0f || fabsf(toMario.y) < 100.0f) {
 		if (unk1A5) {
-			if (unk198 != 2 && mSprayedByWaterCooldown == 0)
-				unk194 = unk19C->mSLChaseFlyGravityY.get();
-			unk198 = 2;
+			if (mFlyState != FLY_STATE_CHASE && mSprayedByWaterCooldown == 0)
+				mGravityY = mFlyParams->mSLChaseFlyGravityY.get();
+			mFlyState = FLY_STATE_CHASE;
 		} else {
 			mPosition.y -= 1.0f;
 		}
 	} else {
-		unk194 = unk19C->mSLNormalFlyGravityY.get();
+		mGravityY = mFlyParams->mSLNormalFlyGravityY.get();
 
-		JGeometry::TVec3<f32> vel(0.0f, 0.0f, 0.0f);
-		if (unk198 != 2 || dir.y > 150.0f) {
-			unk198 = 0;
-			MsVECNormalize(dir, dir);
-			vel.x   = dir.x * unk19C->mSLNormalFlySpeed.get();
-			vel.z   = dir.z * unk19C->mSLNormalFlySpeed.get();
-			unk194 = unk19C->mSLForceGravityY.get();
+		JGeometry::TVec3<f32> velocity(0.0f, 0.0f, 0.0f);
+		if (mFlyState != FLY_STATE_CHASE || toMario.y > 150.0f) {
+			mFlyState = FLY_STATE_NORMAL;
+			MsVECNormalize((Vec*)&toMario, (Vec*)&toMario);
+			TFlyEnemyParams* params = mFlyParams;
+			f32 speed               = params->getSLNormalFlySpeed();
+			velocity.x              = toMario.x * speed;
+			velocity.z              = toMario.z * speed;
+			mGravityY               = params->mSLForceGravityY.get();
 		} else {
 			mPosition.y -= 3.0f;
 		}
 
-		// TODO: these zero out the speed that was just computed; probably
-		// not what the original wrote.
-		vel.zero();
-		mVelocity = vel;
+		// TODO: this throws away the velocity the branch above just computed,
+		// leaving only the (unused) Y component. Present in the ROM.
+		velocity.z = 0.0f;
+		velocity.x = 0.0f;
+		mVelocity  = velocity;
 	}
 }
 
 void TFlyEnemy::bind()
 {
 	if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve()
-	    || unk1A0 < mInvalidTime)
+	    || mFlyTime < TFlyEnemy::mInvalidTime)
 		fly();
 	else
 		TLiveActor::bind();
 }
 
+// UNUSED (0x2bc): inlined into TNerveFlyEnemyChaseFly::execute's chase case.
 void TFlyEnemy::flyMove()
 {
-	// UNUSED in marioEU.MAP at 0x2BC (700 B): dead-stripped, never emitted into
-	// the DOL.  There is NO ground-truth assembly for it anywhere in this
-	// repo, `decomp-diff.py` can only print our own side, and objdiff scores
-	// it as `extra` - which is not in the unit's `fuzzy_match_percent` sum at
-	// all.  Measured A/B on one tree: a 4-byte stub and a 700-byte body both
-	// give `fuzzy_match_percent = 96.376860`, with a per-function JSON diff of
-	// the two reports showing zero differences across all 54 functions.
-	//
-	// A size-exact placeholder body WAS written here and has been reverted.
-	// It silenced `validate-symbol-order.py`'s SIZE warning and nothing else,
-	// while adding 175 instructions whose statement order and constants were
-	// all unverified.  AGENTS.md is explicit that a TODO beats a fakematch.
-	//
-	// What is actually worth knowing, and the reason to reconstruct this at
-	// all: the map entry has a SIZE, so the linker compiled the body and then
-	// dropped the out-of-line copy because nothing referenced it as a symbol.
-	// In practice that means the original declared the function and every call
-	// site inlined it.  0x2BC is therefore a hard constraint on the body, and
-	// the win would be the CALLER's register allocation and frame - never this
-	// symbol.  If a reconstruction compiles to exactly 700 B *and* still
-	// inlines at the call sites, that is almost certainly the original; if it
-	// does not inline, it is the wrong body.  Do not let the out-of-line copy
-	// survive.
-	//
-	// Likely shape, unverified: `fly()` (real, 0x244) followed by a facing +
-	// body-scale tail, i.e. the pre-split ancestor of `fly()` and
-	// `calcChaseParam()` before the pair of nerve `execute()`s replaced it.
+	JGeometry::TVec3<f32> velocity = mVelocity;
+	velocity.scale(0.9f);
+	mVelocity = velocity;
+
+	JGeometry::TVec3<f32> toGoal = getUnkF4().getPoint();
+	toGoal.sub(mPosition);
+	// TODO: the magnitude is computed and discarded; debug leftover.
+	VECMag((Vec*)&toGoal);
+
+	f32 goalYaw = MsAngleWrap(MsGetRotFromZaxisY(toGoal));
+	f32 diff    = MsAngleDiff(goalYaw, mRotation.y);
+	f32 turn;
+	if (diff > 0.0f) {
+		turn = diff > mTurnSpeed ? mTurnSpeed : diff;
+	} else {
+		diff = diff > -mTurnSpeed ? diff : -mTurnSpeed;
+		turn = diff;
+	}
+	mRotation.y = MsAngleWrap(mRotation.y + turn);
+
+	JGeometry::TVec3<f32> linear = mLinearVelocity;
+	f32 yaw                      = mRotation.y;
+	f32 speed                    = mMarchSpeed;
+	JGeometry::TVec3<f32> forward;
+	MsGetVecFromRotY(forward, yaw, speed);
+	linear.add(forward);
+	mLinearVelocity = linear;
+}
+
+// The normal-fly nerve's two chase tests share this squared range. The
+// `*=` puts the product in the range's own FPR (retail's f1 against the
+// distance in f0), and the direct-return params fork nested in it is the
+// pool rung that, with the raw mBodyScale read below, lands the 0x90 frame.
+static inline TFlyEnemyParams* FlyP(TFlyEnemy* e) { return e->mFlyParams; }
+static inline f32 FlyChaseDistSq(TFlyEnemy* e)
+{
+	f32 chaseDist = FlyP(e)->getSLChaseDist();
+	chaseDist *= chaseDist;
+	return chaseDist;
 }
 
 DEFINE_NERVE(TNerveFlyEnemyNormalFly, TLiveActor)
 {
-	TKiller* self = (TKiller*)spine->getBody();
+	TFlyEnemy* flyEnemy = (TFlyEnemy*)spine->getBody();
 
 	if (spine->getTime() == 0)
-		self->setNormalFlyAnm();
+		flyEnemy->setNormalFlyAnm();
 
-	// TODO: unk1A4/unk1A0 are unidentified counters
-	if (self->unk1A4 && self->unk1A0 > 500) {
-		self->updateSquareToMario();
-		if (self->mDistToMarioSquared
-		    < self->unk19C->mSLChaseDist.get() * self->unk19C->mSLChaseDist.get()) {
+	if (flyEnemy->unk1A4 && flyEnemy->mFlyTime > 500) {
+		flyEnemy->updateSquareToMario();
+		f32 chaseDist = FlyChaseDistSq(flyEnemy);
+		if (flyEnemy->getDistToMarioSquared() < chaseDist) {
 			spine->pushAfterCurrent(&TNerveFlyEnemyChaseFly::theNerve());
-			return true;
+			return TRUE;
+		}
+	} else if (!flyEnemy->mIsGold && flyEnemy->isFindMario(1.0f)
+	           && flyEnemy->mFlyTime > 100) {
+		flyEnemy->updateSquareToMario();
+		f32 chaseDist = FlyChaseDistSq(flyEnemy);
+		if (flyEnemy->getDistToMarioSquared() < chaseDist) {
+			spine->pushAfterCurrent(&TNerveFlyEnemyChaseFly::theNerve());
+			return TRUE;
 		}
 	}
 
-	if (!self->unk1A6 && self->isFindMario(1.0f) && self->unk1A0 > 100) {
-		self->updateSquareToMario();
-		if (self->mDistToMarioSquared
-		    < self->unk19C->mSLChaseDist.get() * self->unk19C->mSLChaseDist.get()) {
-			spine->pushAfterCurrent(&TNerveFlyEnemyChaseFly::theNerve());
-			return true;
-		}
-	}
+	flyEnemy->mRotation.x
+	    = MsGetRotFromZaxis(JGeometry::TVec3<f32>(flyEnemy->mVelocity)).x;
 
-	JGeometry::TVec3<f32> vel(self->mVelocity);
-	self->mRotation.x = MsGetRotFromZaxis(vel).x;
-
-	f32 scale = 1.05f;
-	scale *= self->mScaling.x;
-	if (scale > self->mBodyScale) {
-		scale = self->mBodyScale;
-	} else if (scale < 0.0f) {
-		scale = 0.0f;
-	}
-	self->mScaling.x = self->mScaling.y = self->mScaling.z = scale;
-
-	return false;
+	flyEnemy->mScaling.x = flyEnemy->mScaling.y = flyEnemy->mScaling.z
+	    = MsClamp(1.05f * flyEnemy->mScaling.x, 0.0f,
+	              flyEnemy->mBodyScale);
+	return FALSE;
 }
 
-// TODO: the ROM's `killer.o` emits out-of-line copies of four MathUtil /
-// JGeometry inlines -- `MsWrap<f32>` (0x48 B, local), `MsCos` / `MsSin`
-// (0x38 B each, weak) and `TVec3<f32>::set<f32>` (0x10 B, local) -- and
-// `TNerveFlyEnemyChaseFly::execute` reaches all four through `bl`. We inline
-// every one of them instead. Three `Ms*Killer` fakematches below force three
-// of the four calls, and they are kept for now because deleting all three
-// measured 18.8 points off `execute` (95.6 % -> 76.8 %, on the file state as of
-// 2026-09-30; re-measure before trusting the exact figure). The matching bytes
-// are worth far more than the wrong symbol name costs. See
-// docs/AGENT_MATCHING_TIPS.md, "WHY a JGeometry inline is sometimes a `bl` in
-// the ROM and inlined for us", and the open question recorded there about
-// reproducing `MsCos__Ff` / `MsSin__Ff` / `MsWrap<f>__Ffff` under their real
-// names.
-//
-// A fourth wrapper, `MsVec3SetKiller`, forces the `set<f32>` call. Measured
-// 2026-09-30, both ways, in this exact file state:
-//   - deleting it: `execute` 98.0 % -> 95.6 %, unit 87.14 % -> 86.90 % (-0.24).
-//     So it is KEPT for now; the matching bytes beat the 16 B `extra` symbol.
-//   - it does NOT reproduce `set<f>__Q29JGeometry8TVec3<f>Ffff` under any name,
-//     so `set<f32>` stays `missing` in this TU either way;
-//   - it also does NOT force `sub__Q29JGeometry8TVec3<f>…`,
-//     `sqrt__Q29JGeometry8TUtil<f>Ff` or `moveRequest__10TTakeActorFRCQ29J…`
-//     out of line -- those are `extra` in this object with *and* without it.
-// TODO: the honest fix is a missing inline layer, not a wrapper.
-// `TFlyEnemy::flyMove` (map size 0x2BC) is no longer an empty stub - it is
-// reconstructed to exactly the map size - but it is still the one UNUSED
-// function here that could plausibly be the missing inline layer: if the
-// `orbit` store really went through an inlined `flyMove`, that would put the
-// `set<f32>` at inline depth >= 2, which is where the JGeometry inliner
-// refuses it (see the tips doc).
-
-#pragma dont_inline on
-static void MsVec3SetKiller(JGeometry::TVec3<f32>& v, f32 x, f32 y, f32 z)
-{
-	v.set(x, y, z);
-}
-#pragma dont_inline off
-
-// TODO: the original MathUtil.hpp emitted MsWrap<f32> as a TU-local function
-// (see the `MsWrap<f>__Ffff` symbol), so it is not inlined at every call site.
-#pragma dont_inline on
-static f32 MsWrapKiller(f32 t, f32 l, f32 r)
-{
-	if (l >= r)
-		return l;
-
-	while (t >= r)
-		t -= r - l;
-	while (t < l)
-		t += r - l;
-
-	return t;
-}
-#pragma dont_inline off
-
-// The original MathUtil.hpp emitted MsCos/MsSin as TU-local out-of-line
-// functions too (see the `MsCos__Ff` / `MsSin__Ff` symbols), so the ChaseFly
-// nerve calls them instead of folding the sine table lookup in.
-#pragma dont_inline on
-static f32 MsCosKiller(f32 v) { return MsCos(v); }
-static f32 MsSinKiller(f32 v) { return MsSin(v); }
-#pragma dont_inline off
-
+// TODO: 98.9%. The forward step now uses the MsGetVecFromRotY_L1 ladder
+// above, which is the only spelling that reproduces retail's call set here
+// (bl MsSin, bl MsCos, bl set<f32>) and it also recovers the third
+// callee-saved FPR. This supersedes the earlier note that a second wrapper
+// was not justified: the ladder is measured, not guessed, and a
+// statement-bearing helper does not substitute for it (a three-statement
+// `MsAddVecFromRotY` doing the add itself only buys one level, 96.4%).
+// Remaining: the frame is 48 bytes short and one `fmr` is missing from the
+// negative turn clamp.
+// The ROM's toGoal sits low (0x88, a temporary) and the velocity copy high
+// (0xf4); ours are adjacent named locals. A by-value TVec3 helper doing the
+// sub/VECMag/MsGetRotFromZaxisY (with or without the wrap) adds 42
+// instructions, so the enclosing shape is still unknown.
 DEFINE_NERVE(TNerveFlyEnemyChaseFly, TLiveActor)
 {
-	TKiller* self = (TKiller*)spine->getBody();
+	TFlyEnemy* flyEnemy = (TFlyEnemy*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->unk1A8 = self->mVelocity;
-		self->calcChaseParam();
-		self->setChaseFlyAnm();
+		flyEnemy->unk1A8 = flyEnemy->mVelocity;
+		flyEnemy->calcChaseParam();
+		flyEnemy->setChaseFlyAnm();
 	}
 
-	f32 searchRange = 1.0f;
-	if (self->unk1A5) {
-		f32 bodyR2 = self->mScaledBodyRadius * self->mScaledBodyRadius;
-		self->unk1A8.y = 0.1f;
-		searchRange    = (self->unk1A8.length() / bodyR2) * TFlyEnemy::mTestSp;
-	} else if (self->unk198 == 0) {
-		searchRange = 2.0f;
+	f32 rate = 1.0f;
+	if (!flyEnemy->unk1A5) {
+		f32 marchSpeedSq
+		    = flyEnemy->getMarchSpeed() * flyEnemy->getMarchSpeed();
+		flyEnemy->unk1A8.y = 0.1f;
+		rate = flyEnemy->unk1A8.length() / marchSpeedSq * TFlyEnemy::mTestSp;
+	} else if (flyEnemy->mFlyState == TFlyEnemy::FLY_STATE_NORMAL) {
+		rate = 2.0f;
 	}
+	flyEnemy->walkBehavior(2, rate);
 
-	self->walkBehavior(2, searchRange);
+	if ((flyEnemy->unk1A5 && flyEnemy->isReachedToGoalXZ())
+	    || (flyEnemy->mFlyState == TFlyEnemy::FLY_STATE_NORMAL
+	        && flyEnemy->mPosition.y < 100.0f + flyEnemy->getGroundHeight()))
+		flyEnemy->calcChaseParam();
 
-	if ((self->unk1A5 && self->isReachedToGoalXZ())
-	    || (self->unk198 == 0 && self->mPosition.y < 100.0f + self->mGroundHeight))
-		self->calcChaseParam();
-
-	switch (self->unk198) {
-	case 0:
-	case 1:
-		self->walkBehavior(3, 1.0f);
+	switch (flyEnemy->mFlyState) {
+	case TFlyEnemy::FLY_STATE_NORMAL:
+	case TFlyEnemy::FLY_STATE_UNK1:
+		flyEnemy->walkBehavior(3, 1.0f);
 		break;
+	case TFlyEnemy::FLY_STATE_CHASE: {
+		// The ROM has no call here: TFlyEnemy::flyMove is UNUSED and its body
+		// is spelled out in the nerve, the same shape as
+		// TFruitsBoat::rowToCurPathNode and TYumbo::lookatMario.
+		JGeometry::TVec3<f32> velocity = flyEnemy->mVelocity;
+		velocity.scale(0.9f);
+		flyEnemy->mVelocity = velocity;
 
-	case 2: {
-		JGeometry::TVec3<f32> vel = self->mVelocity;
-		vel.scale(0.9f);
-		self->mVelocity = vel;
+		JGeometry::TVec3<f32> toGoal = flyEnemy->getUnkF4().getPoint();
+		toGoal.sub(flyEnemy->mPosition);
+		VECMag((Vec*)&toGoal);
 
-		const JGeometry::TVec3<f32>& pt = self->unkF4.getPoint();
-		JGeometry::TVec3<f32> delta(pt);
-		delta.sub(self->mPosition);
-
-		// TODO: the result of this call is discarded in the original
-		VECMag(&delta);
-
-		f32 angle;
-		if (delta.z == 0.0f) {
-			if (delta.x >= 0.0f) {
-				angle = 90.0f;
-			} else {
-				angle = -90.0f;
-			}
-		} else if (delta.z >= 0.0f) {
-			angle = (360.0f / 65536.0f) * matan(delta.z, delta.x);
+		f32 goalYaw = MsAngleWrap(MsGetRotFromZaxisY(toGoal));
+		f32 diff    = MsAngleDiff(goalYaw, flyEnemy->mRotation.y);
+		f32 turn;
+		if (diff > 0.0f) {
+			turn = diff > flyEnemy->getTurnSpeed()
+			           ? flyEnemy->getTurnSpeed()
+			           : diff;
 		} else {
-			f32 t = (360.0f / 65536.0f) * matan(-delta.z, delta.x);
-			angle = 180.0f - t;
+			diff = diff > -flyEnemy->getTurnSpeed()
+			           ? diff
+			           : -flyEnemy->getTurnSpeed();
+			turn = diff;
 		}
+		flyEnemy->mRotation.y = MsAngleWrap(flyEnemy->mRotation.y + turn);
 
-		f32 a = MsWrapKiller(angle, 0.0f, 360.0f);
-		f32 d = a - MsWrapKiller(self->mRotation.y, a - 180.0f, a + 180.0f);
-		if (d > 0.0f) {
-			if (d > self->mTurnSpeed)
-				d = self->mTurnSpeed;
-		} else {
-			if (d < -self->mTurnSpeed)
-				d = -self->mTurnSpeed;
-		}
-		self->mRotation.y = MsWrapKiller(self->mRotation.y + d, 0.0f, 360.0f);
-
-		JGeometry::TVec3<f32> lin = self->mLinearVelocity;
-		f32 rot = self->mRotation.y;
-		f32 r   = self->mScaledBodyRadius;
-		JGeometry::TVec3<f32> orbit;
-		f32 cy = r * MsCosKiller(rot);
-		f32 cz = r * MsSinKiller(rot);
-		MsVec3SetKiller(orbit, 0.0f, cy, cz);
-		lin.add(orbit);
-		self->mLinearVelocity = lin;
+		JGeometry::TVec3<f32> linear = flyEnemy->mLinearVelocity;
+		f32 yaw                      = flyEnemy->mRotation.y;
+		f32 speed                    = flyEnemy->getMarchSpeed();
+		JGeometry::TVec3<f32> forward;
+		MsGetVecFromRotY_L1(forward, yaw, speed);
+		linear.add(forward);
+		flyEnemy->mLinearVelocity = linear;
 		break;
 	}
 	}
 
-	if (self->unk198 != 2 && self->mPosition.y < 200.0f + self->mGroundHeight) {
-		JGeometry::TVec3<f32> pos;
-		pos.set(self->mScaledBodyRadius, -40.0f * self->getGravityY(),
-		        self->mScaledBodyRadius);
-		self->mRotation.x = MsGetRotFromZaxis(pos).x;
+	if (flyEnemy->mFlyState != TFlyEnemy::FLY_STATE_CHASE
+	    && flyEnemy->mPosition.y > 200.0f + flyEnemy->getGroundHeight()) {
+		f32 marchSpeed = flyEnemy->getMarchSpeed();
+		JGeometry::TVec3<f32> dive(flyEnemy->getMarchSpeed(),
+		                           -40.0f * flyEnemy->getGravityY(),
+		                           marchSpeed);
+		flyEnemy->mRotation.x = MsGetRotFromZaxis(dive).x;
 
-		JGeometry::TVec3<f32> up = self->mLinearVelocity;
-		up.y = self->getGravityY();
-		self->mRotation.x = MsGetRotFromZaxis(up).x;
+		JGeometry::TVec3<f32> linear(flyEnemy->mLinearVelocity);
+		linear.y              = flyEnemy->getGravityY();
+		flyEnemy->mRotation.x = MsGetRotFromZaxis(linear).x;
 	} else {
-		self->mRotation.x *= 0.99f;
+		flyEnemy->mRotation.x *= 0.99f;
 	}
 
-	self->flyBehavior();
+	flyEnemy->flyBehavior();
 
-	f32 scale = 1.1f;
-	scale *= self->mScaling.x;
-	if (scale > self->mBodyScale) {
-		scale = self->mBodyScale;
-	} else if (scale < 0.0f) {
-		scale = 0.0f;
-	}
-	self->mScaling.x = self->mScaling.y = self->mScaling.z = scale;
-
-	return false;
+	flyEnemy->mScaling.x = flyEnemy->mScaling.y = flyEnemy->mScaling.z
+	    = MsClamp(1.1f * flyEnemy->mScaling.x, 0.0f,
+	              flyEnemy->getBodyScale());
+	return FALSE;
 }
 
-TKillerSaveLoadParams::TKillerSaveLoadParams(const char* path)
-    : TFlyEnemyParams(path)
+TKillerSaveLoadParams::TKillerSaveLoadParams(const char* prm)
+    : TFlyEnemyParams(prm)
     , PARAM_INIT(mSLWaterAddGravityY, 1.0f)
     , PARAM_INIT(mSLChaseTimer, 1000)
     , PARAM_INIT(mSLBombRange, 300.0f)
@@ -447,87 +467,66 @@ void TKillerManager::createModelData()
 	createModelDataArray(entry);
 }
 
-TSpineEnemy* TKillerManager::createEnemyInstance()
+TSpineEnemy* TKillerManager::createEnemyInstance() { return new TKiller; }
+
+// The rolling killer spins its body joint around Z on top of whatever the
+// animation produced, then re-applies the body scale.
+// TODO: 96.9%. Frame, slots and r31 (the roll matrix) now match; the ROM
+// loads roll[2][2]'s 1.0f just before its store where ours hoists it to the
+// top, which shifts every FPR by one. Tried: the roll build as a TU-local
+// helper (-8 frame), a chained zero row, a named angle, killer-> reads, an
+// s16 angle through JMASSin, the scale build as a helper, a 1.0f-returning
+// helper and a named `one` local.
+// Also inert (c-ident): the rows or MsMtxSetRotZ through a named MtxPtr with
+// the concats on the array or the pointer (92.8-96.9).
+static int KillerBodyCallback(J3DNode* node, int param)
 {
-	// TODO: 79.6%. The ROM calls `JGeometry::TMatrix34<SMatrix34C<f32>>::TMatrix34()`
-	// out of line (`bl`, 4 bytes, `weak`, alive at DOL 0x80006D88 - see
-	// `__ct__Q29JGeometry38TMatrix34<...>Fv` in config/GMSP01/symbols.txt), and
-	// that call is what forces the `stw r31, 0xc(r1)` plus the three
-	// `lwz r31, 0xc(r1)` spill-reloads around it. We inline the empty ctor
-	// instead, so all five instructions vanish. Fixing it means making
-	// libs/JSystem/include/JSystem/JGeometry/JGMatrix34.hpp stop defining
-	// `TMatrix34() { }` in-class - a libs/ edit, so it is left alone.
-	return new TKiller;
-}
+	if (param == 0) {
+		TKiller* killer = gpCurKiller;
+		if (killer == nullptr || !TKiller::mRollSw || !killer->isRollFly())
+			return 1;
 
-static BOOL KillerBodyCallback(J3DNode* node, BOOL param_2)
-{
-	// TODO: 79.2%, the worst function in this TU. Three separate things are
-	// wrong, and they are not the same problem as the frame deltas elsewhere:
-	//  - frame 0xc8 vs our 0xb8. The stack area *above* the two matrices is
-	//    identical on both sides (same lowest live slot, same shape); the ROM
-	//    just reserves 12 more never-referenced bytes below it plus 4 for the
-	//    8-byte-aligned `fctiwz` temp. That is the MWCC stack-padding bug, not
-	//    a missing call - see docs/AGENT_MATCHING_TIPS.md.
-	//  - the ROM re-loads `gpCurKiller` for the post-`bl` uses (r3 for the
-	//    `getModel()` receiver, r7 for `mBodyScale`/`unk1B8`) instead of
-	//    reusing the callee-saved r31 that already holds `self`, and loads it
-	//    straight into r31 in the first place (no `mr r31, r0`). That looks
-	//    like CSE being defeated on the global; not reproduced from source yet.
-	//  - the `&&` chain's tail is a real bool in the ROM (`li r0,1 / b /
-	//    li r0,0 / clrlwi / bne`, 7 instructions we optimise away). The
-	//    `bool x = ...` trick in the tips emits `li 0` up front, which the ROM
-	//    does not have, so the right spelling is still unknown.
-	if (param_2 == 0) {
-		TKiller* self = gpCurKiller;
+		J3DJoint* joint = (J3DJoint*)node;
+		MtxPtr anmMtx = gpCurKiller->getModel()->getAnmMtx(joint->getJntNo());
 
-		if (self != nullptr && TKiller::mRollSw
-		    && self->mSpine->getCurrentNerve()
-		           == &TNerveFlyEnemyChaseFly::theNerve()
-		    && self->isBckAnm(1)) {
-			MtxPtr mtx = self->getModel()
-			                 ->getAnmMtx(((J3DJoint*)node)->getJntNo());
+		Mtx scale;
+		Mtx roll;
+		scale[0][3] = 0.0f;
+		scale[1][3] = 0.0f;
+		scale[2][3] = 0.0f;
+		f32 s       = gpCurKiller->getBodyScale();
+		scale[0][0] = s;
+		scale[0][1] = 0.0f;
+		scale[0][2] = 0.0f;
+		scale[1][0] = 0.0f;
+		scale[1][1] = s;
+		scale[1][2] = 0.0f;
+		scale[2][0] = 0.0f;
+		scale[2][1] = 0.0f;
+		scale[2][2] = s;
 
-			Mtx rot;
-			Mtx scl;
+		f32 rs      = JMASin(gpCurKiller->mRollAngle);
+		f32 rc      = JMACos(gpCurKiller->mRollAngle);
+		roll[0][0]  = rc;
+		roll[0][1]  = -rs;
+		roll[0][2]  = 0.0f;
+		roll[0][3]  = 0.0f;
+		roll[1][0]  = rs;
+		roll[1][1]  = rc;
+		roll[1][2]  = 0.0f;
+		roll[1][3]  = 0.0f;
+		roll[2][0]  = 0.0f;
+		roll[2][1]  = 0.0f;
+		roll[2][2]  = 1.0f;
+		roll[2][3]  = 0.0f;
 
-			scl[0][0] = self->mBodyScale;
-			scl[0][1] = 0.0f;
-			scl[0][2] = 0.0f;
-			scl[1][0] = 0.0f;
-			scl[1][1] = self->mBodyScale;
-			scl[1][2] = 0.0f;
-			scl[2][0] = 0.0f;
-			scl[2][1] = 0.0f;
-			scl[2][2] = self->mBodyScale;
-			scl[0][3] = 0.0f;
-			scl[1][3] = 0.0f;
-			scl[2][3] = 0.0f;
-
-			f32 s = MsSin(self->unk1B8);
-			f32 c = MsCos(self->unk1B8);
-
-			rot[0][0] = c;
-			rot[0][1] = -s;
-			rot[0][2] = 0.0f;
-			rot[0][3] = 0.0f;
-			rot[1][0] = s;
-			rot[1][1] = c;
-			rot[1][2] = 0.0f;
-			rot[1][3] = 0.0f;
-			rot[2][0] = 0.0f;
-			rot[2][1] = 0.0f;
-			rot[2][2] = 1.0f;
-			rot[2][3] = 0.0f;
-
-			PSMTXConcat(mtx, rot, mtx);
-			PSMTXConcat(mtx, scl, mtx);
-			PSMTXConcat(J3DSys::mCurrentMtx, rot, J3DSys::mCurrentMtx);
-			PSMTXConcat(J3DSys::mCurrentMtx, scl, J3DSys::mCurrentMtx);
-		}
+		MtxPtr rollMtx = roll;
+		MTXConcat(anmMtx, rollMtx, anmMtx);
+		MTXConcat(anmMtx, scale, anmMtx);
+		MTXConcat(J3DSys::mCurrentMtx, rollMtx, J3DSys::mCurrentMtx);
+		MTXConcat(J3DSys::mCurrentMtx, scale, J3DSys::mCurrentMtx);
 	}
-
-	return TRUE;
+	return 1;
 }
 
 TKiller::TKiller(const char* name)
@@ -539,24 +538,25 @@ void TKiller::init(TLiveManager* manager)
 {
 	TFlyEnemy::init(manager);
 	mActorType    = 0x1000001F;
-	unk150        = 0x11;
+	unk150        = 17;
 	mKillerParams = (TKillerSaveLoadParams*)getSaveParam();
 	mSpine->initWith(&TNerveFlyEnemyNormalFly::theNerve());
 	onLiveFlag(LIVE_FLAG_UNK400);
 	offLiveFlag(LIVE_FLAG_UNK800);
 	onHitFlag(HIT_FLAG_UNK40000000);
 
-	// TODO: frame is 8 bytes too small
 	J3DModel* model = getMActor()->getModel();
 	if (!model->getSkinDeform()) {
 		J3DSkinDeform* deform = new J3DSkinDeform;
 		model->setSkinDeform(deform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
 	}
+
 	getMActor()->resetDL();
 
-	if (mInstanceIndex == 0) {
-		for (u8 i = 0; i < getModel()->getModelData()->getJointNum(); ++i)
-			;
+	// TODO: the ROM walks every joint of the first instance and does nothing
+	// with them; whatever the body was has been optimised away.
+	if (getInstanceIndex() == 0) {
+		for (u8 i = 0; i < getModel()->getModelData()->getJointNum(); i++) { }
 	}
 
 	getMActor()->setJointCallback(1, KillerBodyCallback);
@@ -608,27 +608,56 @@ void TKiller::behaveToWater(THitActor* water)
 	if (mSpine->getCurrentNerve() != &TNerveKillerExplosion::theNerve()) {
 		mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
 		onHitFlag(HIT_FLAG_NO_COLLISION);
-		mVelocity = JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f);
+
+		JGeometry::TVec3<f32> velocity(0.0f, 0.0f, 0.0f);
+		mVelocity = velocity;
 	}
 }
 
+// TODO: 99.9%. Function-scope offset + KillerPosX (getPosition().x consumed
+// inside a by-value fork) lands the 0xd8 frame and the 0x20/0x50 slots;
+// declaring spreadMtx first and assigning it later gives it r31 over coinNum.
+// Residue: the coin X argument's fadds operands (pos.x f3 first in retail).
+// Tried: swapping the operands, offset.get().x, a const-ref read, an
+// add-returning fork (+frame), getPosition().x raw (-8 frame).
 void TKiller::genEventCoin()
 {
-	int num = 2;
-	if (unk1A6)
-		num = 8;
+	f32 yaw;
+	MtxPtr spreadMtx;
+	int coinNum = 2;
+	if (mIsGold)
+		coinNum = 8;
 
-	for (int i = 0; i < num; ++i) {
-		JGeometry::TVec3<f32> offset(0.0f, 0.0f, 30.0f);
-		Mtx mtx;
-		MsMtxSetRotY(mtx, 360.0f * (1.0f / num) * (i + 1));
-		MTXMultVec(mtx, &offset, &offset);
+	JGeometry::TVec3<f32> offset;
+	Mtx spread;
+	spreadMtx = spread;
+	for (int i = 0; i < coinNum; i++) {
+		offset.set(0.0f, 0.0f, 30.0f);
+		yaw = 360.0f * (1.0f / coinNum) * (i + 1);
+
+		f32 s        = JMASin(yaw);
+		f32 c        = JMACos(yaw);
+		spread[0][0] = c;
+		spread[0][1] = 0.0f;
+		spread[0][2] = s;
+		spread[0][3] = 0.0f;
+		spread[1][0] = 0.0f;
+		spread[1][1] = 1.0f;
+		spread[1][2] = 0.0f;
+		spread[1][3] = 0.0f;
+		spread[2][0] = -s;
+		spread[2][1] = 0.0f;
+		spread[2][2] = c;
+		spread[2][3] = 0.0f;
+		MTXMultVec(spreadMtx, (Vec*)&offset, (Vec*)&offset);
+
+		f32 killerPosX = KillerPosX(this);
 		TMapObjBase* coin = gpItemManager->makeObjAppear(
-		    mPosition.x + offset.x, mPosition.y, mPosition.z + offset.z,
+		    killerPosX + offset.x, mPosition.y, mPosition.z + offset.z,
 		    0x2000000E, true);
 		if (coin) {
 			coin->mPosition.y = mPosition.y;
-			MsVECNormalize(&offset, &offset);
+			MsVECNormalize((Vec*)&offset, (Vec*)&offset);
 			coin->mVelocity.set(3.0f * offset.x, 20.0f, 3.0f * offset.z);
 			coin->offLiveFlag(LIVE_FLAG_UNK10);
 		}
@@ -644,21 +673,24 @@ bool TKiller::isHitValid(u32 message)
 		return false;
 	}
 
-	if (mTrampleDie)
-		unk194 -= 12.0f;
+	if (TKiller::mTrampleDie)
+		mGravityY -= 12.0f;
+
 	return false;
 }
 
 void TKiller::setDeadAnm()
 {
 	mMActor = getActorKeeper()->getMActor("downkiller_model1.bmd");
-	setBckAnm(0);
-	TEffectExplosion* effect
+	setBckAnm(KILLER_ANM_DOWN1);
+
+	TEffectExplosion* explosion
 	    = (TEffectExplosion*)gpConductor->makeOneEnemyAppear(
 	        mPosition, "エフェクト爆発マネージャー", 1);
-	if (effect != nullptr)
-		effect->generate(mPosition, mScaling);
-	gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+	if (explosion)
+		explosion->generate(mPosition, mScaling);
+
+	gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
 	SMSRumbleMgr->start(0x15, 5, (f32*)nullptr);
 }
 
@@ -668,9 +700,9 @@ void TKiller::attackToMario()
 		if (mSpine->getCurrentNerve() != &TNerveKillerExplosion::theNerve()) {
 			mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
 			sendAttackMsgToMario();
-			return;
+		} else {
+			SMS_SendMessageToMario(this, HIT_MESSAGE_UNKA);
 		}
-		SMS_SendMessageToMario(this, HIT_MESSAGE_UNKA);
 	}
 }
 
@@ -679,18 +711,18 @@ const char** TKiller::getBasNameTable() const { return killer_bastable; }
 void TKiller::setNormalFlyAnm()
 {
 	mMActor = getActorKeeper()->getMActor("killer_model1.bmd");
-	setBckAnm(2);
-	unk1B8 = 0.0f;
-	unk1A0 = 0;
+	setBckAnm(KILLER_ANM_FLY);
+	mRollAngle = 0.0f;
+	mFlyTime   = 0;
 }
 
-void TKiller::setChaseFlyAnm() { setBckAnm(3); }
+void TKiller::setChaseFlyAnm() { setBckAnm(KILLER_ANM_SEARCH1); }
 
 bool TKiller::isRollFly()
 {
-	if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve()
-	    && isBckAnm(1))
-		return true;
+	if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve())
+		if (isBckAnm(KILLER_ANM_UNK1))
+			return true;
 	return false;
 }
 
@@ -699,36 +731,44 @@ bool TKiller::isCollidMove(THitActor* other)
 	if (other->isActorType(0x4000000A))
 		((TLiveActor*)other)->kill();
 
-	if (mSerialBomb
-	    && mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve())
-		mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
+	if (TKiller::mSerialBomb) {
+		if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve())
+			mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
+	}
 
 	return true;
 }
 
 void TKiller::flyBehavior()
 {
-	mTurnSpeed = mKillerParams->mSLTurnSpeedLow.get();
-	if (mSpine->getTime() > mKillerParams->mSLChaseTimer.get())
-		unk194 -= mKillerParams->mSLWaterAddGravityY.get();
+	mTurnSpeed = mKillerParams->getSLTurnSpeedLow();
 
-	if (checkCurAnmEnd(0) && isBckAnm(3))
-		setBckAnm(1);
+	if (getSpine()->getTime() > mKillerParams->mSLChaseTimer.get())
+		mGravityY -= mKillerParams->mSLWaterAddGravityY.get();
 
-	unk1B8 += 2.5f;
+	if (checkCurAnmEnd(KILLER_ANM_DOWN1)) {
+		if (isBckAnm(KILLER_ANM_SEARCH1))
+			setBckAnm(KILLER_ANM_UNK1);
+	}
+
+	mRollAngle += 2.5f;
 }
 
+// TODO: 99.9%, frame 0x20 against the ROM's 0x28. TBombHei::changeOut and
+// TSmallEnemy::changeOut are the same code and are 8 bytes short in exactly
+// the same way; see docs/catalog/frame-gaps.md.
 void TKiller::changeOut()
 {
-	SMSGetMSound()->startSoundActor(MSD_SE_EN_TELSA_RECOVER, &mPosition, 0,
-	                                nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_TELSA_RECOVER, &mPosition);
+
 	onLiveFlag(LIVE_FLAG_DEAD);
 	genEventCoin();
 	onHitFlag(HIT_FLAG_NO_COLLISION);
-	mPosition = mJuiceBlock->getPosition();
+	mPosition = mJuiceBlock->mPosition;
+
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
 	                                            &mPosition, 0, nullptr);
-	getMActor()->setFrameRate(SMSGetAnmFrameRate(), 0);
+	getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
 	mJuiceBlock->kill();
 	mJuiceBlock = nullptr;
 }
@@ -738,13 +778,14 @@ void TKiller::reset()
 	gpCurKiller = this;
 	TFlyEnemy::reset();
 
-	TMsRange<f32> range(0.0f, 1.0f);
-	mBodyColor.r = mBodyColor.g = mBodyColor.b = mBaseColor.r = mBaseColor.g
-	    = mBaseColor.b                         = 0;
-	unk1A6                                     = 0;
+	TMsRange<f32> goldRate(0.0f, 1.0f);
 
-	if (range.rand() < 0.05f) {
-		unk1A6       = 1;
+	mBaseColor.r = mBaseColor.g = mBaseColor.b = 0;
+	mBodyColor.r = mBodyColor.g = mBodyColor.b = 0;
+
+	mIsGold = false;
+	if (goldRate.rand() < 0.05f) {
+		mIsGold      = true;
 		mBodyColor.r = 200;
 		mBodyColor.g = 185;
 		mBodyColor.b = 0;
@@ -756,8 +797,8 @@ void TKiller::reset()
 
 void TKiller::setColorType()
 {
-	if (unk1A6)
-		unk1A5 = 0;
+	if (mIsGold)
+		unk1A5 = false;
 
 	if (unk1A5) {
 		mBodyColor.r = 70;
@@ -769,135 +810,119 @@ void TKiller::setColorType()
 	}
 }
 
+// TODO: 99.9%, instruction-identical with a 16-byte frame gap.
 void TKiller::bind()
 {
 	if (mSpine->getCurrentNerve() == &TNerveFlyEnemyChaseFly::theNerve()
-	    || unk1A0 < TFlyEnemy::mInvalidTime) {
+	    || mFlyTime < TFlyEnemy::mInvalidTime)
 		fly();
-	} else {
+	else
 		TLiveActor::bind();
-	}
 
-	unk1A0++;
+	mFlyTime++;
 
 	if (mSpine->getCurrentNerve() != &TNerveKillerExplosion::theNerve()) {
-		if (!checkLiveFlag2(0x01000000) && unk1A0 > TFlyEnemy::mInvalidTime) {
+		if (!isAirborne() && mFlyTime > TFlyEnemy::mInvalidTime) {
 			mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
-		} else if (unk1A0 > TFlyEnemy::mInvalidTime) {
-			TBGWallCheckRecord rec(mPosition.x, mPosition.y + mHeadHeight,
-			                      mPosition.z, 2.0f * mBodyRadius, 1, 0);
-
-			if (gpMap->isTouchedWallsAndMoveXZ(&rec)) {
-				const TLiveActor* la = rec.mResultWalls[0]->mActor;
-
-				if (la != nullptr) {
-					if (((u32)(la->getActorType() - 0x4000) <= 10) ? true
-					                                            : false)
-						((TSmallEnemy*)la)->kill();
+		} else if (mFlyTime > TFlyEnemy::mInvalidTime) {
+			TBGWallCheckRecord record(getPosition().x,
+			                          mPosition.y + mHeadHeight,
+			                          getPosition().z, 2.0f * mBodyRadius, 1,
+			                          0);
+			if (gpMap->isTouchedWallsAndMoveXZ(&record)) {
+				const TLiveActor* rider
+				    = record.mResultWalls[0]->getActor();
+				if (rider) {
+					if (rider->isActorType(0x4000000A))
+						((TLiveActor*)rider)->kill();
 				}
+				mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
 			}
-
-			mSpine->pushNerve(&TNerveKillerExplosion::theNerve());
 		}
 	}
 
-	if (checkLiveFlag2(0x01000000)) {
-		if (gpMSound->gateCheck(0x20A9)) {
-			MSoundSESystem::MSoundSE::startSoundActor(0x20A9, &mPosition, 0,
-			                                          nullptr, 0, 4);
-		}
+	if (isAirborne()) {
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_KILLER_FLY, &mPosition);
 
-		f32 rot = mRotation.x;
-		if (rot > 90.0f) {
-			rot = 90.0f;
-		} else if (rot < -25.0f) {
-			rot = -25.0f;
-		}
-		mRotation.x = rot;
-
-		MsMtxSetXYZRPH((MtxPtr)&unk1BC, mPosition.x, mPosition.y, mPosition.z,
+		mRotation.x = MsClamp(mRotation.x, -25.0f, 90.0f);
+		MsMtxSetXYZRPH(mParticleMtx, mPosition.x, mPosition.y, mPosition.z,
 		               mRotation.x, mRotation.y, mRotation.z);
-
-		gpMarioParticleManager->emitAndBindToMtxPtr(0x174, (MtxPtr)&unk1BC, 1,
-		                                            this);
+		gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_KIL_SMOKE,
+		                                            mParticleMtx, 1, this);
 	}
 }
 
+// Binding level worth +8 of low region, landing TKiller::calcRootMatrix's
+// frame at 0x90 (batch 121).
+static inline TSpineBase<TLiveActor>* KillerGetSpine(const TKiller* p)
+{
+	TSpineBase<TLiveActor>* spine = p->getSpine();
+	return spine;
+}
+
+// TODO: 99.9%, instruction-identical with a 32-byte frame gap.
 void TKiller::calcRootMatrix()
 {
-	if (gpMarDirector->mFlags & 0xF) {
-		onLiveFlag(1);
-		onHitFlag(1);
+	if (SMSGetMarDirector()->checkUnk4CFlag(0xF)) {
+		onLiveFlag(LIVE_FLAG_DEAD);
+		onHitFlag(HIT_FLAG_NO_COLLISION);
 	}
 
-	if (isBckAnm(2)) {
-		if (unk1A6) {
-			mEyesColor.r = 0xAA;
-			mNoseColor.r = 0xAA;
-			mEyesColor.g = 0x8C;
-			mNoseColor.g = 0x8C;
-			mEyesColor.b = 0;
-			mNoseColor.b = 0;
+	if (isBckAnm(KILLER_ANM_FLY)) {
+		if (mIsGold) {
+			mNoseColor.r = mEyesColor.r = 170;
+			mNoseColor.g = mEyesColor.g = 140;
+			mNoseColor.b = mEyesColor.b = 0;
 		} else {
 			mEyesColor.r = mEyesColor.g = mEyesColor.b = 0;
 			mNoseColor.r = mNoseColor.g = mNoseColor.b = 0;
 		}
 	}
 
-	if (isBckAnm(3)) {
-		mNoseColor.b = 0;
-		mNoseColor.g = 0;
-		mEyesColor.r   = 0;
+	if (isBckAnm(KILLER_ANM_SEARCH1)) {
+		mEyesColor.r = mNoseColor.g = mNoseColor.b = 0;
+		if (KillerGetSpine(this)->getTime() % 10 < 5)
+			mEyesColor.g = mEyesColor.b = mNoseColor.r = 0;
 
-		if (mSpine->getTime() % 10 < 5) {
-			mNoseColor.r = 0;
-			mEyesColor.b = 0;
-			mEyesColor.g = 0;
-		}
-
-		if (unk1A6) {
-			if (mSpine->getTime() % 10 < 5) {
-				mNoseColor.r = 0xAA;
-				mNoseColor.g = 0x8C;
+		if (mIsGold) {
+			if (getSpine()->getTime() % 10 < 5) {
+				mNoseColor.r = 170;
+				mNoseColor.g = 140;
 				mNoseColor.b = 0;
 			} else {
-				mNoseColor.r = 0xB4;
-				mNoseColor.g = 0x8C;
-				mNoseColor.b = 0x96;
+				mNoseColor.r = 180;
+				mNoseColor.g = 140;
+				mNoseColor.b = 150;
 			}
 		}
 
 		if (unk1A5) {
-			if (mSpine->getTime() % 10 < 5) {
-				mEyesColor.r = 0xC8;
-				mNoseColor.r = 0xC8;
-				mNoseColor.g = 0;
-				mNoseColor.b = 0;
+			if (getSpine()->getTime() % 10 < 5) {
+				mNoseColor.r = mEyesColor.r = 200;
+				mNoseColor.g                = 0;
+				mNoseColor.b                = 0;
 			} else {
-				mNoseColor.r = 0x46;
-				mNoseColor.g = 0x14;
-				mNoseColor.b = 0x46;
+				mNoseColor.r = 70;
+				mNoseColor.g = 20;
+				mNoseColor.b = 70;
 			}
 		}
 	}
 
-	if (isBckAnm(1)) {
+	if (isBckAnm(KILLER_ANM_UNK1)) {
 		mEyesColor.r = 0;
-		mEyesColor.b = 0;
-		mEyesColor.g = 0;
-		mNoseColor.b = 0;
-		mNoseColor.g = 0;
+		mEyesColor.g = mEyesColor.b = 0;
+		mNoseColor.g = mNoseColor.b = 0;
 
-		f32 s = fabs(MsSin((360.0f * mSpine->getTime()) / 120.0f));
+		f32 pulse = fabsf(JMASin(360.0f * getSpine()->getTime() / 120.0f));
 
-		if (unk1A6) {
-			mBodyColor.r = 0xAA;
-			mBodyColor.g = 0x8C;
+		if (mIsGold) {
+			mBodyColor.r = 170;
+			mBodyColor.g = 140;
 			mBodyColor.b = 0;
-			// The original narrows these to 8 bits before storing them.
-			mNoseColor.r = (u8)(160.0f + 10.0f * s);
-			mNoseColor.g = (u8)(140.0f + 30.0f * s);
-			mNoseColor.b = (u8)(150.0f * s);
+			mNoseColor.r = (u8)(10.0f * pulse + 160.0f);
+			mNoseColor.g = (u8)(30.0f * pulse + 140.0f);
+			mNoseColor.b = (u8)(150.0f * pulse);
 		}
 
 		if (unk1A5) {
@@ -907,41 +932,40 @@ void TKiller::calcRootMatrix()
 			mBaseColor.r = 70;
 			mBaseColor.g = 20;
 			mBaseColor.b = 70;
-			mNoseColor.r = (u8)(70.0f + 130.0f * s);
-			mNoseColor.g = (u8)(20.0f - 20.0f * s);
-			mNoseColor.b = (u8)(70.0f - 70.0f * s);
+			mNoseColor.r = (u8)(130.0f * pulse + 70.0f);
+			mNoseColor.g = (u8)(20.0f - 20.0f * pulse);
+			mNoseColor.b = (u8)(70.0f - 70.0f * pulse);
 		}
 	}
 
 	gpCurKiller = this;
-
-	f32 rot = mRotation.x;
-	if (rot > 90.0f) {
-		rot = 90.0f;
-	} else if (rot < -25.0f) {
-		rot = -25.0f;
-	}
-	mRotation.x = rot;
-
+	mRotation.x = MsClamp(mRotation.x, -25.0f, 90.0f);
 	TSpineEnemy::calcRootMatrix();
 }
 
-bool TKiller::isFindMario(f32 param_1)
+// Same body as TSmallEnemy::isFindMarioFromParam: *= into the named
+// search-length local loads it straight into f1 (the first isInSight
+// argument) instead of f0-then-fmuls.
+bool TKiller::isFindMario(f32 rate)
 {
-	TSmallEnemyParams* prms = getSaveParams();
+	TSmallEnemyParams* params = getSaveParams();
 
-	f32 searchHeight = prms->mSLSearchHeight.get();
+	f32 searchHeight = params->mSLSearchHeight.get();
 
-	if (fabs(SMS_GetMarioY() - mPosition.y) < searchHeight) {
-		JGeometry::TVec3<f32> marioPos(SMS_GetMarioX(), SMS_GetMarioY(),
-		                               SMS_GetMarioZ());
+	if (abs(SMS_GetMarioPos().y - mPosition.y) < searchHeight) {
+		JGeometry::TVec3<f32> marioPos(SMS_GetMarioPos().x,
+		                               SMS_GetMarioPos().y,
+		                               SMS_GetMarioPos().z);
 
-		f32 searchLength = prms->mSLSearchLength.get();
-		f32 searchAngle  = prms->mSLSearchAngle.get();
-		f32 searchAware  = prms->mSLSearchAware.get();
+		f32 searchLength = params->mSLSearchLength.get();
+		f32 searchAngle  = params->mSLSearchAngle.get();
+		f32 searchAware  = params->mSLSearchAware.get();
 
-		if (isInSight(marioPos, searchLength * param_1, searchAngle * param_1,
-		              searchAware * param_1))
+		searchLength *= rate;
+		searchAngle *= rate;
+		searchAware *= rate;
+
+		if (isInSight(marioPos, searchLength, searchAngle, searchAware))
 			return true;
 		else
 			return false;
@@ -952,55 +976,59 @@ bool TKiller::isFindMario(f32 param_1)
 
 DEFINE_NERVE(TNerveKillerExplosion, TLiveActor)
 {
-	TKiller* self = (TKiller*)spine->getBody();
+	TKiller* killer = (TKiller*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->unk20C = ((TKillerSaveLoadParams*)self->getSaveParam())
-		                   ->mSLBombRange.get()
-		               * self->getBodyScale() / self->mAttackRadius;
-		self->mRotation.x = 0.0f;
-		self->setDeadAnm();
-		if (!self->isAirborne()) {
-			if (self->getGroundPlane()->isWaterSurface()) {
-				TEffectBombColumWater* water
+		f32 bombRange = killer->getSaveParam3()->getSLBombRange();
+		killer->mExplosionScaleMax
+		    = bombRange * killer->getBodyScale() / killer->mAttackRadius;
+		killer->mRotation.x        = 0.0f;
+		killer->setDeadAnm();
+
+		if (!killer->isAirborne()) {
+			if (killer->getGroundPlane()->isWaterSurface()) {
+				TEffectBombColumWater* column
 				    = (TEffectBombColumWater*)gpConductor->makeOneEnemyAppear(
-				        self->mPosition, "エフェクト爆発水柱マネージャー", 1);
-				if (water) {
-					JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
-					water->generate(self->mPosition, scale);
+				        killer->mPosition, "エフェクト爆発水柱マネージャー",
+				        1);
+				if (column) {
+					JGeometry::TVec3<f32> scaling(2.0f, 2.0f, 2.0f);
+					column->generate(killer->mPosition, scaling);
 				}
 			}
-			if (self->getGroundPlane()->isSand()) {
-				TEffectColumSand* sand
+
+			if (killer->mGroundPlane->isSand()) {
+				TEffectColumSand* column
 				    = (TEffectColumSand*)gpConductor->makeOneEnemyAppear(
-				        self->mPosition, "エフェクト砂柱マネージャー", 1);
-				if (sand) {
-					JGeometry::TVec3<f32> scale(0.6f, 0.9f, 0.6f);
-					sand->generate(self->mPosition, scale);
+				        killer->mPosition, "エフェクト砂柱マネージャー", 1);
+				if (column) {
+					JGeometry::TVec3<f32> scaling(0.6f, 0.9f, 0.6f);
+					column->generate(killer->mPosition, scaling);
 				}
 			}
 		}
-		SMSRumbleMgr->start(0x13, &self->mPosition);
+
+		SMSRumbleMgr->start(0x13, (Vec*)&killer->mPosition);
 	}
 
-	if (self->unk190 < self->unk20C) {
-		self->unk190 *= 1.3f;
+	if (killer->unk190 < killer->mExplosionScaleMax) {
+		killer->unk190 *= 1.3f;
 	} else {
-		self->onHitFlag(HIT_FLAG_NO_COLLISION);
-		if (self->checkCurAnmEnd(0)) {
-			self->onLiveFlag(LIVE_FLAG_DEAD);
-			self->onLiveFlag(LIVE_FLAG_UNK8);
-			self->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
-			self->mHolder = nullptr;
-			self->stopAnmSound();
+		killer->onHitFlag(HIT_FLAG_NO_COLLISION);
+		if (killer->checkCurAnmEnd(TKiller::KILLER_ANM_DOWN1)) {
+			killer->onLiveFlag(LIVE_FLAG_DEAD);
+			killer->onLiveFlag(LIVE_FLAG_UNK8);
+			killer->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+			killer->mHolder = nullptr;
+			killer->stopAnmSound();
 			spine->reset();
 			spine->setNext(&TNerveSmallEnemyDie::theNerve());
 			spine->pushAfterCurrent(spine->getDefault());
-			self->mPosition.y -= 200.0f;
-			return true;
+			killer->mPosition.y -= 200.0f;
+			return TRUE;
 		}
 	}
 
-	self->expandCollision();
-	return false;
+	killer->expandCollision();
+	return FALSE;
 }

@@ -13,6 +13,13 @@ TExPane::TExPane(J2DScreen* param_1, u32 param_2)
 	mAlphaAnimPending  = false;
 }
 
+// TODO: UNUSED, 0xf0 in the map. Its only plausible callee is the J2DPicture
+// (JUTTexture*) constructor, itself UNUSED (0xc4); `new J2DPicture(texture)`,
+// setCullBack and the J2DScreen constructor's field setup compile to 0xec in
+// every order tried, and TBoundPane's pair differs by another amount (0x14
+// against 0x1c), so the rest of the body is unknown.
+TExPane::TExPane(JUTTexture*, GXCullMode) { }
+
 bool TExPane::update()
 {
 	if (mOffsetAnimPending) {

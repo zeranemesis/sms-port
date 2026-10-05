@@ -162,7 +162,7 @@ public:
 	void setTo(int node_idx);
 	int moveTo(int node_idx);
 	f32 calcSplineSpeed(float);
-	bool traceSpline(float);
+	BOOL traceSpline(float);
 	int getCurGraphIndex() const { return mCurrIdx; }
 	const TGraphWeb* getGraph() const { return unk0; }
 
@@ -174,6 +174,7 @@ public:
 		return getGraph()->getGraphNode(mCurrIdx);
 	}
 	int getPrevIndex() const { return mPrevIdx; }
+	int& getPrevIndexRef() { return mPrevIdx; }
 	void init(TGraphWeb* web) { unk0 = web; }
 	void reset() { mPrevIdx = -1; }
 	void reset2() { mCurrIdx = -1; }
@@ -192,13 +193,19 @@ public:
 	}
 	TGraphWeb* getGraph() { return unk0; }
 	void setGraph(TGraphWeb* web) { unk0 = web; }
-	u32 popCurr() // very wrong
+	// TODO: the reference accessor is what puts the tracer in r3 and
+	// &mPrevIdx in r4 as retail does (a raw `int& prev = mPrevIdx;`, a
+	// pointer, a setter level and a by-value read all rank them the other
+	// way round); it is the one inline level here, so the caller
+	// (TFireWanwan::initTurnNextGraphNode) still owes 8 bytes of frame.
+	u32 popCurr()
 	{
 		int result = mPrevIdx;
+		int& prev  = getPrevIndexRef();
 		int curr   = mCurrIdx;
-		if (mPrevIdx == -1)
+		if (result == -1)
 			result = curr;
-		mPrevIdx = curr;
+		prev = curr;
 		return result;
 	}
 	bool currPitchIsZero() const

@@ -21,19 +21,27 @@ static void dummy(Vec* v)
 	*v = (Vec) { 1.0f, 1.0f, 1.0f };
 }
 
+// Exact. Three inline levels pay for the frame: the named
+// `TFlagManager* flagManager` before `setBool`, and the two that
+// `SMSGetPollutionLayer` adds over `getLayer(i)` (see PollutionManager.hpp --
+// this site and TAirportEventSink::watch are the only two that read the layer
+// through `SMSGetPollution()->getLayers()[i]`). Worth zero here: own-class
+// accessors for unk64/unk68, an extra level inside TPollutionLayer::startDecay
+// or TPollutionManager::getLayer, and a named layer local. Worse: `&getUnk68()`
+// (97.8%) and accessors on the warp arguments (97.0%).
 bool TMapEventSirenaSink::watch()
 {
-	JDrama::TFlagT<u16> demoCameraFlag(0);
 	if (unk64) {
-		gpPollution->getLayer(0)->startDecay();
+		SMSGetPollutionLayer(0)->startDecay();
 		mRaisingBuildingIdx = 0;
 		SMSGetMarDirector()->fireStartDemoCamera(
 		    "ホテル上げカメラ", &unk68, -1, 0.0f, true, nullptr, 0, nullptr,
-		    demoCameraFlag);
+		    JDrama::TFlagT<u16>(0));
 		gpItemManager->makeShineAppearWithDemo("シャイン（ホテル上げ用）",
 		                                       "ホテル上げシャインカメラ",
 		                                       unk68.x, unk68.y, unk68.z);
-		TFlagManager::getInstance()->setBool(true, 0x50008);
+		TFlagManager* flagManager = TFlagManager::getInstance();
+		flagManager->setBool(true, 0x50008);
 		SMS_MarioWarpRequest(unk74, unk80);
 		gpMarioParticleManager->emit(MAP_MAP_MS_OBJUP_HOTEL_A,
 		                             &gpMapObjManager->getUnk44(), 0, nullptr);
@@ -49,8 +57,7 @@ bool TMapEventSirenaSink::watch()
 void TMapEventSirenaSink::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	unk40 = static_cast<TCameraMapTool*>(
-	            JDrama::TNameRefGen::search("ホテル上げカメラ"))
+	unk40 = JDrama::TNameRefGen::search<TCameraMapTool>("ホテル上げカメラ")
 	            ->getDemoLengthFrames();
 	unk44   = 240;
 	unk48   = 240;

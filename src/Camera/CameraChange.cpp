@@ -9,13 +9,14 @@
 #include <Camera/CameraMapTool.hpp>
 #include <Camera/camerasave.hpp>
 #include <Camera/CameraKindParam.hpp>
-#include <System/StageUtil.hpp>
 #include <System/MarDirector.hpp>
 #include <Camera/CameraMarioData.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+
+#include <System/StageUtil.hpp>
 
 void CPolarSubCamera::getLButtonCameraModeByNozzle_() { }
 
@@ -24,235 +25,239 @@ s16 CPolarSubCamera::getCameraInbetweenFrame_(int param_1)
 	if (param_1 == -1)
 		param_1 = unk60->getThing();
 
-	s16 iVar3 = 1;
+	s16 frames = 1;
 	if (mMode < CAMERA_MODE_REPRODUCE_DEMO
 	    && param_1 < CAMERA_MODE_REPRODUCE_DEMO) {
 		TCamSaveKindParam* pTVar4 = mSaveKindParam[mMode];
 		switch (param_1) {
 		case CAMERA_MODE_FOLLOW:
-			iVar3 = pTVar4->mSLInbetFollow.get();
+			frames = pTVar4->mSLInbetFollow.get();
 			break;
 		case CAMERA_MODE_PARALLEL:
-			iVar3 = pTVar4->mSLInbetParallel.get();
+			frames = pTVar4->mSLInbetParallel.get();
 			break;
 		case CAMERA_MODE_MULTI_PLAYER:
-			iVar3 = pTVar4->mSLInbetMultiPlayer.get();
+			frames = pTVar4->mSLInbetMultiPlayer.get();
 			break;
 		case CAMERA_MODE_WALL_JUMP:
-			iVar3 = pTVar4->mSLInbetWallJump.get();
+			frames = pTVar4->mSLInbetWallJump.get();
 			break;
 		case CAMERA_MODE_HIP_ATTACK:
-			iVar3 = pTVar4->mSLInbetHipAttack.get();
+			frames = pTVar4->mSLInbetHipAttack.get();
 			break;
 		case CAMERA_MODE_ROCKET_JUMP:
-			iVar3 = pTVar4->mSLInbetRocketJump.get();
+			frames = pTVar4->mSLInbetRocketJump.get();
 			break;
 		case CAMERA_MODE_WIRE:
-			iVar3 = pTVar4->mSLInbetWire.get();
+			frames = pTVar4->mSLInbetWire.get();
 			break;
 		case CAMERA_MODE_L_NORMAL:
-			iVar3 = pTVar4->mSLInbetLNormal.get();
+			frames = pTVar4->mSLInbetLNormal.get();
 			break;
 		case CAMERA_MODE_MARE_UNDER_GROUND:
-			iVar3 = pTVar4->mSLInbetMareUnderGround.get();
+			frames = pTVar4->mSLInbetMareUnderGround.get();
 			break;
 		case CAMERA_MODE_DEFINITE_D2:
-			iVar3 = pTVar4->mSLInbetDefiniteD2.get();
+			frames = pTVar4->mSLInbetDefiniteD2.get();
 			break;
 		case CAMERA_MODE_TALK_E:
-			iVar3 = pTVar4->mSLInbetTalkE.get();
+			frames = pTVar4->mSLInbetTalkE.get();
 			break;
 		case CAMERA_MODE_LEAN_MIRROR:
-			iVar3 = pTVar4->mSLInbetLeanMirror.get();
+			frames = pTVar4->mSLInbetLeanMirror.get();
 			break;
 		case CAMERA_MODE_TALK_A:
-			iVar3 = pTVar4->mSLInbetTalkA.get();
+			frames = pTVar4->mSLInbetTalkA.get();
 			break;
 		case CAMERA_MODE_UNDER_GROUND:
-			iVar3 = pTVar4->mSLInbetUnderGround.get();
+			frames = pTVar4->mSLInbetUnderGround.get();
 			break;
 		case CAMERA_MODE_INDOOR:
-			iVar3 = pTVar4->mSLInbetIndoor.get();
+			frames = pTVar4->mSLInbetIndoor.get();
 			break;
 		case CAMERA_MODE_HANG:
-			iVar3 = pTVar4->mSLInbetHang.get();
+			frames = pTVar4->mSLInbetHang.get();
 			break;
 		case CAMERA_MODE_WIRE_HANG:
-			iVar3 = pTVar4->mSLInbetWireHang.get();
+			frames = pTVar4->mSLInbetWireHang.get();
 			break;
 		case CAMERA_MODE_SAND_BIRD:
-			iVar3 = pTVar4->mSLInbetSandBird.get();
+			frames = pTVar4->mSLInbetSandBird.get();
 			break;
 		case CAMERA_MODE_HOVERING:
-			iVar3 = pTVar4->mSLInbetHovering.get();
+			frames = pTVar4->mSLInbetHovering.get();
 			break;
 		case CAMERA_MODE_JUMP_CODE:
-			iVar3 = pTVar4->mSLInbetJumpCode.get();
+			frames = pTVar4->mSLInbetJumpCode.get();
 			break;
 		case CAMERA_MODE_DELFINO:
-			iVar3 = pTVar4->mSLInbetDelfino.get();
+			frames = pTVar4->mSLInbetDelfino.get();
 			break;
 		case CAMERA_MODE_CLIMB:
-			iVar3 = pTVar4->mSLInbetClimb.get();
+			frames = pTVar4->mSLInbetClimb.get();
 			break;
 		case CAMERA_MODE_FIX_A:
-			iVar3 = pTVar4->mSLInbetFixA.get();
+			frames = pTVar4->mSLInbetFixA.get();
 			break;
 		case CAMERA_MODE_FIX_B:
-			iVar3 = pTVar4->mSLInbetFixB.get();
+			frames = pTVar4->mSLInbetFixB.get();
 			break;
 		case CAMERA_MODE_FIX_C:
-			iVar3 = pTVar4->mSLInbetFixC.get();
+			frames = pTVar4->mSLInbetFixC.get();
 			break;
 		case CAMERA_MODE_FIX_D:
-			iVar3 = pTVar4->mSLInbetFixD.get();
+			frames = pTVar4->mSLInbetFixD.get();
 			break;
 		case CAMERA_MODE_FIX_E:
-			iVar3 = pTVar4->mSLInbetFixE.get();
+			frames = pTVar4->mSLInbetFixE.get();
 			break;
 		case CAMERA_MODE_FIX_F:
-			iVar3 = pTVar4->mSLInbetFixF.get();
+			frames = pTVar4->mSLInbetFixF.get();
 			break;
 		case CAMERA_MODE_FIX_G:
-			iVar3 = pTVar4->mSLInbetFixG.get();
+			frames = pTVar4->mSLInbetFixG.get();
 			break;
 		case CAMERA_MODE_FIX_H:
-			iVar3 = pTVar4->mSLInbetFixH.get();
+			frames = pTVar4->mSLInbetFixH.get();
 			break;
 		case CAMERA_MODE_DEFINITE_A:
-			iVar3 = pTVar4->mSLInbetDefiniteA.get();
+			frames = pTVar4->mSLInbetDefiniteA.get();
 			break;
 		case CAMERA_MODE_DEFINITE_B:
-			iVar3 = pTVar4->mSLInbetDefiniteB.get();
+			frames = pTVar4->mSLInbetDefiniteB.get();
 			break;
 		case CAMERA_MODE_DEFINITE_C:
-			iVar3 = pTVar4->mSLInbetDefiniteC.get();
+			frames = pTVar4->mSLInbetDefiniteC.get();
 			break;
 		case CAMERA_MODE_DEFINITE_D:
-			iVar3 = pTVar4->mSLInbetDefiniteD.get();
+			frames = pTVar4->mSLInbetDefiniteD.get();
 			break;
 		case CAMERA_MODE_DEFINITE_E:
-			iVar3 = pTVar4->mSLInbetDefiniteE.get();
+			frames = pTVar4->mSLInbetDefiniteE.get();
 			break;
 		case CAMERA_MODE_DEFINITE_F:
-			iVar3 = pTVar4->mSLInbetDefiniteF.get();
+			frames = pTVar4->mSLInbetDefiniteF.get();
 			break;
 		case CAMERA_MODE_DEFINITE_G:
-			iVar3 = pTVar4->mSLInbetDefiniteG.get();
+			frames = pTVar4->mSLInbetDefiniteG.get();
 			break;
 		case CAMERA_MODE_DEFINITE_H:
-			iVar3 = pTVar4->mSLInbetDefiniteH.get();
+			frames = pTVar4->mSLInbetDefiniteH.get();
 			break;
 		case CAMERA_MODE_EX_MAP_0:
-			iVar3 = pTVar4->mSLInbetExMap0.get();
+			frames = pTVar4->mSLInbetExMap0.get();
 			break;
 		case CAMERA_MODE_TOWER_A:
-			iVar3 = pTVar4->mSLInbetTowerA.get();
+			frames = pTVar4->mSLInbetTowerA.get();
 			break;
 		case CAMERA_MODE_TOWER_B:
-			iVar3 = pTVar4->mSLInbetTowerB.get();
+			frames = pTVar4->mSLInbetTowerB.get();
 			break;
 		case CAMERA_MODE_TOWER_C:
-			iVar3 = pTVar4->mSLInbetTowerC.get();
+			frames = pTVar4->mSLInbetTowerC.get();
 			break;
 		case CAMERA_MODE_SLIDER:
-			iVar3 = pTVar4->mSLInbetSlider.get();
+			frames = pTVar4->mSLInbetSlider.get();
 			break;
 		case CAMERA_MODE_DIVING:
-			iVar3 = pTVar4->mSLInbetDiving.get();
+			frames = pTVar4->mSLInbetDiving.get();
 			break;
 		case CAMERA_MODE_TURBO:
-			iVar3 = pTVar4->mSLInbetTurbo.get();
+			frames = pTVar4->mSLInbetTurbo.get();
 			break;
 		case CAMERA_MODE_TALK_B:
-			iVar3 = pTVar4->mSLInbetTalkB.get();
+			frames = pTVar4->mSLInbetTalkB.get();
 			break;
 		case CAMERA_MODE_JET_COASTER:
-			iVar3 = pTVar4->mSLInbetJetCoaster.get();
+			frames = pTVar4->mSLInbetJetCoaster.get();
 			break;
 		case CAMERA_MODE_PARALLEL_B:
-			iVar3 = pTVar4->mSLInbetParallelB.get();
+			frames = pTVar4->mSLInbetParallelB.get();
 			break;
 		case CAMERA_MODE_SURFING:
-			iVar3 = pTVar4->mSLInbetSurfing.get();
+			frames = pTVar4->mSLInbetSurfing.get();
 			break;
 		case CAMERA_MODE_SWIMMING:
-			iVar3 = pTVar4->mSLInbetSwimming.get();
+			frames = pTVar4->mSLInbetSwimming.get();
 			break;
 		case CAMERA_MODE_CLIMB_JUMP:
-			iVar3 = pTVar4->mSLInbetClimbJump.get();
+			frames = pTVar4->mSLInbetClimbJump.get();
 			break;
 		case CAMERA_MODE_LOOK_DOWN:
-			iVar3 = pTVar4->mSLInbetLookDown.get();
+			frames = pTVar4->mSLInbetLookDown.get();
 			break;
 		case CAMERA_MODE_RAIL_FENCE:
-			iVar3 = pTVar4->mSLInbetRailFence.get();
+			frames = pTVar4->mSLInbetRailFence.get();
 			break;
 		case CAMERA_MODE_FOLLOW_B:
-			iVar3 = pTVar4->mSLInbetFollowB.get();
+			frames = pTVar4->mSLInbetFollowB.get();
 			break;
 		case CAMERA_MODE_FOLLOW_C:
-			iVar3 = pTVar4->mSLInbetFollowC.get();
+			frames = pTVar4->mSLInbetFollowC.get();
 			break;
 		case CAMERA_MODE_TOWER_D:
-			iVar3 = pTVar4->mSLInbetTowerD.get();
+			frames = pTVar4->mSLInbetTowerD.get();
 			break;
 		case CAMERA_MODE_DELFINO_ATTIC:
-			iVar3 = pTVar4->mSLInbetDelfinoAttic.get();
+			frames = pTVar4->mSLInbetDelfinoAttic.get();
 			break;
 		case CAMERA_MODE_BOSS_GESO:
-			iVar3 = pTVar4->mSLInbetBossGeso.get();
+			frames = pTVar4->mSLInbetBossGeso.get();
 			break;
 		case CAMERA_MODE_FIX_I:
-			iVar3 = pTVar4->mSLInbetFixI.get();
+			frames = pTVar4->mSLInbetFixI.get();
 			break;
 		case CAMERA_MODE_DEFINITE_I:
-			iVar3 = pTVar4->mSLInbetDefiniteI.get();
+			frames = pTVar4->mSLInbetDefiniteI.get();
 			break;
 		case CAMERA_MODE_FENCE:
-			iVar3 = pTVar4->mSLInbetFence.get();
+			frames = pTVar4->mSLInbetFence.get();
 			break;
 		case CAMERA_MODE_MONTE_FENCE:
-			iVar3 = pTVar4->mSLInbetMonteFence.get();
+			frames = pTVar4->mSLInbetMonteFence.get();
 			break;
 		case CAMERA_MODE_MONTE_HANG:
-			iVar3 = pTVar4->mSLInbetMonteHang.get();
+			frames = pTVar4->mSLInbetMonteHang.get();
 			break;
 		case CAMERA_MODE_TALK_C:
-			iVar3 = pTVar4->mSLInbetTalkC.get();
+			frames = pTVar4->mSLInbetTalkC.get();
 			break;
 		case CAMERA_MODE_TALK_D:
-			iVar3 = pTVar4->mSLInbetTalkD.get();
+			frames = pTVar4->mSLInbetTalkD.get();
 			break;
 		case CAMERA_MODE_TOWER_E:
-			iVar3 = pTVar4->mSLInbetTowerE.get();
+			frames = pTVar4->mSLInbetTowerE.get();
 			break;
 		case CAMERA_MODE_DELFINO_B:
-			iVar3 = pTVar4->mSLInbetDelfinoB.get();
+			frames = pTVar4->mSLInbetDelfinoB.get();
 			break;
 		case CAMERA_MODE_CANCAN:
-			iVar3 = pTVar4->mSLInbetCancan.get();
+			frames = pTVar4->mSLInbetCancan.get();
 			break;
 		case CAMERA_MODE_AQUATIC_TURBO:
-			iVar3 = pTVar4->mSLInbetAquaticTurbo.get();
+			frames = pTVar4->mSLInbetAquaticTurbo.get();
 			break;
 		case CAMERA_MODE_FOLLOW_D:
-			iVar3 = pTVar4->mSLInbetFollowD.get();
+			frames = pTVar4->mSLInbetFollowD.get();
 			break;
 		case CAMERA_MODE_FOLLOW_E:
-			iVar3 = pTVar4->mSLInbetFollowE.get();
+			frames = pTVar4->mSLInbetFollowE.get();
 			break;
 		case CAMERA_MODE_PARALLEL_C:
-			iVar3 = pTVar4->mSLInbetParallelC.get();
+			frames = pTVar4->mSLInbetParallelC.get();
 			break;
 		case CAMERA_MODE_PARALLEL_D:
-			iVar3 = pTVar4->mSLInbetParallelD.get();
+			frames = pTVar4->mSLInbetParallelD.get();
 			break;
 		}
 	}
-	return iVar3;
+	return frames;
 }
 
+// Retail's standalone copy of this function expands MsClamp<f> while its
+// expansion inside changeCamModeSub_ reaches the map's local 0x20
+// `bl MsClamp<float>`: the setUpLButtonCameraChange_ level between them
+// supplies the extra depth.
 void CPolarSubCamera::setUpToLButtonCamera_(int param_1)
 {
 	mCurrentTarget.unk30 = mCurrentTarget.unk28;
@@ -269,20 +274,32 @@ void CPolarSubCamera::setUpFromLButtonCamera_()
 	mPreviousTarget.unk28 = mCurrentTarget.unk28 = mCurrentTarget.unk30;
 }
 
+inline void CPolarSubCamera::setUpLButtonCameraChange_(int mode)
+{
+	if (!isLButtonCameraSpecifyMode(mMode)) {
+		if (isLButtonCameraSpecifyMode(mode)) {
+			setUpToLButtonCamera_(mode);
+			unk120->onNeutralMarioKey();
+		}
+	} else {
+		if (!isLButtonCameraSpecifyMode(mode)) {
+			setUpFromLButtonCamera_();
+			unk120->onNeutralMarioKey();
+		}
+	}
+}
+
 void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 {
-	int frameProbe;
-	(void)frameProbe;
 	bool bVar11 = false;
 	if (mode == -1) {
 		mode   = unk60->getThing();
 		bVar11 = true;
 	}
 
-	if (!force && mMode == mode)
-		return;
-
-	if (tween_frames < 0)
+	// One `if` with `||`: retail shares a single return block and leaves the
+	// unfoldable `bge next; b epilogue` pair for the second term.
+	if ((!force && mMode == mode) || tween_frames < 0)
 		return;
 
 	if (tween_frames == 0)
@@ -290,6 +307,18 @@ void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 
 	mPrevMode = mMode;
 
+	// TODO: retail emits the unfoldable `bgt next; b join` pair for
+	// popThing()'s `unk4 > 0` guard where we emit the folded `ble join`, so
+	// changeCamModeSub_ is one further instruction short. Tried and inert:
+	// five popThing bodies (early return, two returns, empty then/else arm,
+	// a named count, `unk4 = unk4 - 1`) and five call-site spellings (two
+	// separate ifs, `== true`, inverted arms, `else if (!bVar11)`, no
+	// braces). c-k5, also inert: a TU-local pop with `?:`, `-= 1`, a named
+	// count, `if (!(n > 0)) return;`, then-return + return, `else return;`;
+	// a `?:` or inverted if/else at the call site is worse (90.6/96.2).
+	// This is the unit's whole data gap: @3715 is a 51-entry jump
+	// table whose grouping already matches and whose addends sit 4 bytes
+	// low, gated on this function's size.
 	if (bVar11) {
 		unk60->popThing();
 	} else {
@@ -305,17 +334,7 @@ void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 			mCurrentTarget.unk28  = 1.0f;
 			mPreviousTarget.unk28 = 1.0f;
 		} else {
-			if (!isLButtonCameraSpecifyMode(mMode)) {
-				if (isLButtonCameraSpecifyMode(mode)) {
-					setUpToLButtonCamera_(mode);
-					unk120->onNeutralMarioKey();
-				}
-			} else {
-				if (!isLButtonCameraSpecifyMode(mode)) {
-					setUpFromLButtonCamera_();
-					unk120->onNeutralMarioKey();
-				}
-			}
+			setUpLButtonCameraChange_(mode);
 		}
 		mInbetween->startCameraInbetween(tween_frames);
 	}
@@ -334,7 +353,7 @@ void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 
 		if (wasFixedMode) {
 			if (unk11C & 1) {
-				mPreviousTarget = mCurrentTarget = mTargetBeforeFixedMode;
+				restoreTargetBeforeFixedMode_();
 				killHeightPan_();
 			} else {
 				calcNowTargetFromPosAndAt_(mPosition, mTarget);
@@ -367,23 +386,23 @@ void CPolarSubCamera::changeCamModeSub_(int mode, int tween_frames, bool force)
 			case CAMERA_MODE_FIX_A:
 			case CAMERA_MODE_FIX_B:
 			case CAMERA_MODE_DEFINITE_A:
-			case CAMERA_MODE_DEFINITE_B:
+			case CAMERA_MODE_DEFINITE_B: {
 				if (bVar11)
 					save = mCurrentTarget.mPosition;
 				tool->calcPosAndAt(&mCurrentTarget.mPosition,
 				                   &mCurrentTarget.mTarget);
 				if (bVar11)
 					mCurrentTarget.mPosition.set(save);
-				break;
+			} break;
 
-			default:
+			default: {
 				if (bVar11)
 					save = mPosition;
 				tool->calcPosAndAt(&mPosition, &mTarget);
 				if (bVar11)
 					mPosition.set(save);
 				warpPosAndAt(mPosition, mTarget);
-				break;
+			} break;
 			}
 		}
 
@@ -426,13 +445,14 @@ void CPolarSubCamera::changeCamModeSpecifyFrame_(int mode, int tween_frames)
 void CPolarSubCamera::changeCamModeSpecifyCamMapTool_(
     const TCameraMapTool* tool)
 {
-
-	
-	
 	int newMode = tool->getCameraMode();
 	if (mMode != newMode || unk70 != tool) {
-		unk74 = unk70;
-		unk70 = tool;
+		// Naming the outgoing tool is what carries the last 8 bytes of this
+		// frame; the sibling changeCamModeSpecifyCamMapToolAndFrame_, which
+		// has no getCameraInbetweenFrame_ call, matches without it.
+		const TCameraMapTool* prev = unk70;
+		unk74                      = prev;
+		unk70                      = tool;
 		changeCamModeSub_(newMode, getCameraInbetweenFrame_(newMode), true);
 	}
 }
@@ -450,8 +470,6 @@ void CPolarSubCamera::changeCamModeSpecifyCamMapToolAndFrame_(
 
 void CPolarSubCamera::execFrontRotate_()
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	(void)0;
 	(void)0;
 	(void)0;
@@ -460,16 +478,39 @@ void CPolarSubCamera::execFrontRotate_()
 	    && SMS_GetMarioStatus() != MARIO_STATUS_HIP_DROP) {
 		unk64 &= ~CAMERA_FLAG_UNK10;
 		unk64 |= CAMERA_FLAG_UNK4;
-		unk274 = *gpMarioAngleY - 0x8000;
-		if (unk120->checkFrameMeaning(TMarioGamePad::MEANING_Y)) {
+		unk274 = SMS_GetMarioAngleY() - 0x8000;
+		if (unk120->checkFrameMeaning(0x4000)) {
 			unk276 = mSaveEx->mYButtonRotateChase.get();
 			unk64 |= CAMERA_FLAG_UNK8;
-		} else if (unk120->checkFrameMeaning(TMarioGamePad::MEANING_CAM_L)) {
+		} else if (unk120->checkFrameMeaning(0x8000)) {
 			unk276 = mSaveEx->mLButtonRotateChase.get();
 			unk64 &= ~CAMERA_FLAG_UNK8;
 			SMSGetMSound()->startSoundSystemSE(0x4826, 0, nullptr, 0);
 		}
 	}
+}
+
+inline void CPolarSubCamera::execLButtonCameraOnProc_()
+{
+	if (unk64 & CAMERA_FLAG_UNK10) {
+		unk64 &= ~CAMERA_FLAG_UNK10;
+		doLButtonCameraOn_();
+		return;
+	}
+
+	if (!unk120->checkFrameMeaning(0xC000))
+		return;
+
+	if (unk120->checkFrameMeaning(0x4000)) {
+		if (unk282 != 0)
+			return;
+		execNoticeOnOffProc_(NOTICE_MODE_UNK2);
+	}
+
+	if (unk64 & CAMERA_FLAG_NOTICE_ACTIVE)
+		doLButtonCameraOn_();
+	else if (!isLButtonCameraInbetween())
+		execFrontRotate_();
 }
 
 void CPolarSubCamera::doLButtonCameraOn_()
@@ -481,6 +522,16 @@ void CPolarSubCamera::doLButtonCameraOn_()
 	}
 }
 
+// Pragma residue (sweep 360): protects the only caller,
+// CPolarSubCamera::execCameraModeChangeProc_ (99.99 -> 82.5 without it).
+// TODO: the body costs 9 statements and needs 15 (measured with fillers).
+// Byte-free spellings found for 3 (cc38): `if (!isThing2()) return;` as an
+// early-return guard, a named `bool active = isThing2();`, and a named
+// `MSound* sound = SMSGetMSound();`. Three more are missing; the call site
+// that tests only isLButtonCameraSpecifyMode sits at depth 1, so a missing
+// execLButtonCameraOffProc_-style level above the other two sites alone
+// cannot explain it. Writing isThing2() out in place (as a guard or a named
+// bool, with the named sound) is +0 and still inlines.
 #pragma dont_inline on
 void CPolarSubCamera::doLButtonCameraOff_(bool param_1)
 {
@@ -498,6 +549,8 @@ void CPolarSubCamera::doLButtonCameraOff_(bool param_1)
 	}
 }
 
+#pragma dont_inline off
+
 bool CPolarSubCamera::isChangeToBossGesoCamera_() const
 {
 	bool result     = false;
@@ -511,7 +564,6 @@ bool CPolarSubCamera::isChangeToBossGesoCamera_() const
 	}
 	return result;
 }
-#pragma dont_inline off
 
 bool CPolarSubCamera::isChangeToCancanCamera_() const
 {
@@ -569,92 +621,35 @@ bool CPolarSubCamera::isChangeToParallelCameraCByMoveBG_() const
 	return result;
 }
 
-// TODO: inlining is NOT working out in a bunch of places in this function,
-// hence the hacks above...
-void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
+// Fabricated name; the level is measured. Its three expansions in
+// execCameraModeChangeProc_ put the flag in the same register as the mode
+// being chosen, which only a returned bool gives.
+inline bool CPolarSubCamera::isExMapCamera_() const
 {
-
-	// on both sides - every byte of the local region is dead on both sides, so
-	// the pad only recreates the unreferenced space MWCC allocated in the ROM.
-	
-	
-
-	if (SMS_isMultiPlayerMap()) {
-		changeCamMode_(CAMERA_MODE_MULTI_PLAYER);
-		return;
-	}
-
-	if (SMS_GetMarioStatus() == MARIO_STATUS_TOROCCO) {
-		changeCamMode_(CAMERA_MODE_JET_COASTER);
-		return;
-	}
-
-	if (isFixOrDefiniteCameraSpecifyMode(param_1)) {
-		if (unk120->mEnabledFrameMeaning & TMarioGamePad::MEANING_Y)
-			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
-			                                  nullptr, 0);
-		return;
-	}
-
-	if (unk64 & CAMERA_FLAG_NOTICE_ACTIVE)
-		execNoticeOnOffProc_(NOTICE_MODE_UNK1);
-
-	int prevMode = mMode;
-
-	if (gpMarioOriginal->isSleeping() || SMS_CheckMarioFlag(2)
-	    || (SMS_GetMarioStatus() & MARIO_STATUS_FLAG_UNK10000)
-	    || gpCameraMario->isMarioRocketing()
-	    || gpMarioOriginal->checkFlag(MARIO_FLAG_FLUDD_EMITTING)
-	    || gpCameraMario->isMarioClimb(SMS_GetMarioStatus())) {
-		if (isLButtonCameraSpecifyMode(mMode))
-			doLButtonCameraOff_(true);
-		if (unk120->checkFrameMeaning(TMarioGamePad::MEANING_CAM_L))
-			execFrontRotate_();
-		if (unk120->mEnabledFrameMeaning & TMarioGamePad::MEANING_Y)
-			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
-			                                  nullptr, 0);
-	} else {
-		if (isLButtonCameraSpecifyMode(mMode)) {
-			if (SMS_GetMarioStatus() & MARIO_STATUS_FLAG_UNK20000) {
-				doLButtonCameraOff_(true);
-			} else if (!isLButtonCameraInbetween()
-			           && unk120->checkFrameMeaning(
-			               TMarioGamePad::MEANING_Y
-			               | TMarioGamePad::MEANING_CAM_AB)
-			           && unk282 == 0) {
-				doLButtonCameraOff_(false);
-			}
-		} else if (isNormalCameraSpecifyMode(mMode)
-		           || isTowerCameraSpecifyMode(mMode)) {
-			if (unk64 & CAMERA_FLAG_UNK10) {
-				unk64 &= ~CAMERA_FLAG_UNK10;
-				doLButtonCameraOn_();
-			} else if (unk120->checkFrameMeaning(
-			               TMarioGamePad::MEANING_Y
-			               | TMarioGamePad::MEANING_CAM_L)) {
-				bool doCheck = true;
-				if (unk120->checkFrameMeaning(TMarioGamePad::MEANING_Y)) {
-					if (unk282 != 0)
-						doCheck = false;
-					else
-						execNoticeOnOffProc_((EnumNoticeOnOffMode)2);
-				}
-				if (doCheck) {
-					if (unk64 & CAMERA_FLAG_NOTICE_ACTIVE) {
-						doLButtonCameraOn_();
-					} else if (!isLButtonCameraInbetween()) {
-						execFrontRotate_();
-					}
-				}
-			}
+	bool exMap = false;
+	if (SMS_isExMap()) {
+		switch (gpMarDirector->getCurrentMap()) {
+		case 0x1D:
+		case 0x1E:
+			break;
+		default:
+			exMap = true;
+			break;
 		}
 	}
+	return exMap;
+}
 
-	if (prevMode != mMode)
-		return;
-	if (isLButtonCameraSpecifyMode(mMode))
-		return;
-
+// Fabricated name; the level is measured. The ROM keeps the chosen mode in
+// its own register (`mr r26, r27` at each `newMode = param_1`) rather than
+// coalescing it with the parameter, and puts isChangeToCancanCamera_ and
+// isChangeToParallelCameraCByMoveBG_ one level deeper than
+// execCameraModeChangeProc_'s own body, where they expand while
+// isChangeToBossGesoCamera_ stays a call. The changeCamMode_ belongs inside:
+// returning the mode instead is refused as a call argument and costs a final
+// `mr` as a named local.
+inline void CPolarSubCamera::calcNewCameraMode_(int param_1)
+{
 	u32 status     = SMS_GetMarioStatus();
 	u32 prevStatus = gpMarioOriginal->getPreviousStatus();
 	int currentMap = gpMarDirector->getCurrentMap();
@@ -737,12 +732,7 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 			} else if (isChangeToBossGesoCamera_()) {
 				newMode = CAMERA_MODE_BOSS_GESO;
 			} else {
-				bool isCancan = false;
-				if (gpMarioOriginal->getHeldObject() != nullptr
-				    && gpMarioOriginal->getHeldObject()->getActorType()
-				           == 0x10000028)
-					isCancan = true;
-				if (isCancan) {
+				if (isChangeToCancanCamera_()) {
 					newMode = CAMERA_MODE_CANCAN;
 				} else {
 					bool onPlatform_2C9 = false;
@@ -756,28 +746,13 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 					} else if (isChangeToParallelCameraByMoveBG_()) {
 						newMode = CAMERA_MODE_PARALLEL;
 					} else {
-						bool onPlatform_12F = false;
-						if (SMS_GetGroundActor(SMS_GetMarioGrPlane(),
-						                       0x4000012F))
-							onPlatform_12F = true;
-						if (onPlatform_12F) {
+						if (isChangeToParallelCameraCByMoveBG_()) {
 							newMode = CAMERA_MODE_PARALLEL_C;
 						} else if (status == MARIO_STATUS_HIP_DROP) {
 							if (isOverHipAttackSpecifyMode(param_1)) {
 								newMode = param_1;
 							} else {
-								bool exMap = false;
-								if (SMS_isExMap()) {
-									switch (gpMarDirector->getCurrentMap()) {
-									case 0x1D:
-									case 0x1E:
-										break;
-									default:
-										exMap = true;
-										break;
-									}
-								}
-								if (exMap)
+								if (isExMapCamera_())
 									newMode = CAMERA_MODE_EX_MAP_0;
 								else
 									newMode = CAMERA_MODE_HIP_ATTACK;
@@ -797,19 +772,7 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 								        || mPrevMode == CAMERA_MODE_CLIMB)) {
 									newMode = CAMERA_MODE_CLIMB_JUMP;
 								} else {
-									bool exMap = false;
-									if (SMS_isExMap()) {
-										switch (
-										    gpMarDirector->getCurrentMap()) {
-										case 0x1D:
-										case 0x1E:
-											break;
-										default:
-											exMap = true;
-											break;
-										}
-									}
-									if (exMap)
+									if (isExMapCamera_())
 										newMode = CAMERA_MODE_EX_MAP_0;
 									else
 										newMode = CAMERA_MODE_WALL_JUMP;
@@ -817,18 +780,7 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 								break;
 
 							default:
-								bool exMap = false;
-								if (SMS_isExMap()) {
-									switch (gpMarDirector->getCurrentMap()) {
-									case 0x1D:
-									case 0x1E:
-										break;
-									default:
-										exMap = true;
-										break;
-									}
-								}
-								if (exMap)
+								if (isExMapCamera_())
 									newMode = CAMERA_MODE_EX_MAP_0;
 								else if (isFollowCameraSpecifyMode(param_1))
 									newMode = param_1;
@@ -844,4 +796,64 @@ void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 	}
 
 	changeCamMode_(newMode);
+}
+
+// TODO: 0x50 of frame short (0xb0 against retail's 0x100); every instruction
+// but the frame setup and teardown matches.
+void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
+{
+	if (SMS_isMultiPlayerMap()) {
+		changeCamMode_(CAMERA_MODE_MULTI_PLAYER);
+		return;
+	}
+
+	if (SMS_GetMarioStatus() == MARIO_STATUS_TOROCCO) {
+		changeCamMode_(CAMERA_MODE_JET_COASTER);
+		return;
+	}
+
+	if (isFixOrDefiniteCameraSpecifyMode(param_1)) {
+		if (unk120->checkFrameMeaning(0x4000))
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
+			                                   nullptr, 0);
+		return;
+	}
+
+	if (unk64 & CAMERA_FLAG_NOTICE_ACTIVE)
+		execNoticeOnOffProc_(NOTICE_MODE_UNK1);
+
+	int prevMode = mMode;
+
+	if (gpMarioOriginal->isSleeping() || SMS_CheckMarioFlag(2)
+	    || (SMS_GetMarioStatus() & MARIO_STATUS_FLAG_UNK10000)
+	    || gpCameraMario->isMarioRocketing()
+	    || gpMarioOriginal->checkFlag(MARIO_FLAG_FLUDD_EMITTING)
+	    || gpCameraMario->isMarioClimb(SMS_GetMarioStatus())) {
+		if (isLButtonCameraSpecifyMode(mMode))
+			doLButtonCameraOff_(true);
+		if (unk120->checkFrameMeaning(0x8000))
+			execFrontRotate_();
+		if (unk120->checkFrameMeaning(0x4000))
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT, 0,
+			                                   nullptr, 0);
+	} else {
+		if (isLButtonCameraSpecifyMode(mMode)) {
+			if (SMS_GetMarioStatus() & MARIO_STATUS_FLAG_UNK20000) {
+				doLButtonCameraOff_(true);
+			} else if (!isLButtonCameraInbetween()
+			           && unk120->checkFrameMeaning(0x14000) && unk282 == 0) {
+				doLButtonCameraOff_(false);
+			}
+		} else if (isNormalCameraSpecifyMode(mMode)
+		           || isTowerCameraSpecifyMode(mMode)) {
+			execLButtonCameraOnProc_();
+		}
+	}
+
+	if (prevMode != mMode)
+		return;
+	if (isLButtonCameraSpecifyMode(mMode))
+		return;
+
+	calcNewCameraMode_(param_1);
 }

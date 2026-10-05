@@ -1,7 +1,3 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Enemy/BossEel.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Camera/Camera.hpp>
@@ -18,7 +14,6 @@
 #include <MarioUtil/LightUtil.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <MoveBG/Item.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <M3DUtil/MActor.hpp>
@@ -43,8 +38,15 @@
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionEntry.hpp>
+
+// The map names no enumerator for the top hit-flag bit; parked TU-locally per
+// the shared-header rule until a header batch adds the canonical name.
+enum { BOSSEEL_HIT_FLAG_UNK80000000 = 0x80000000 };
 
 f32 TBossEel::mOpenRollSpeed    = 0.3f;
 bool TBossEel::mUseObjCollision = true;
@@ -84,6 +86,11 @@ static const char* bossEelTears_bastable[]
 
 static f32 testHeight;
 
+static inline TBEelTearsSaveLoadParams* BEelTearsParams(TBEelTears* tears)
+{
+	return tears->mTearsParams;
+}
+
 TBEelTearsDrop::TBEelTearsDrop(TBEelTears* owner, int jointIndex,
                                SDLModelData* modelData, const char* name)
     : THitActor(name)
@@ -93,17 +100,21 @@ TBEelTearsDrop::TBEelTearsDrop(TBEelTears* owner, int jointIndex,
 	mSharedParts
 	    = new TSharedParts(mOwner, jointIndex, modelData, 0, "<TSharedParts>");
 	initHitActor(0x2000002C, 3, ACTOR_TYPE_PLAYER,
-	             mOwner->mTearsParams->mSLTearsDropAttackRadius.get(),
-	             mOwner->mTearsParams->mSLTearsDropAttackHeight.get(),
-	             mOwner->mTearsParams->mSLTearsDropDamageRadius.get(),
-	             mOwner->mTearsParams->mSLTearsDropDamageHeight.get());
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	             BEelTearsParams(mOwner)->mSLTearsDropAttackRadius.get(),
+	             BEelTearsParams(mOwner)->mSLTearsDropAttackHeight.get(),
+	             BEelTearsParams(mOwner)->mSLTearsDropDamageRadius.get(),
+	             BEelTearsParams(mOwner)->mSLTearsDropDamageHeight.get());
+	// TODO: the push_back depth-2 pair sits 4 high: retail's search
+	// TNameRefGen binder precedes the insert temps. A named list reference
+	// fixes that pair but drops the depth-1 pair 4; the named-group form
+	// loses a bottom optimizer temp.
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 	mActive = false;
 
-	TScreenTexture* screenTexture = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+	TScreenTexture* screenTexture
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
 	const ResTIMG* textureInfo = screenTexture->getTexture()->getTexInfo();
 	new J3DSkinDeform;
 	MActor* actor = mSharedParts->getMActor();
@@ -111,9 +122,6 @@ TBEelTearsDrop::TBEelTearsDrop(TBEelTears* owner, int jointIndex,
 	                     *textureInfo);
 	actor->setBckFromIndex(0);
 	actor->setLightType(LIGHT_TYPE_INDIRECT);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -121,24 +129,54 @@ void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
 	THitActor::perform(cue, graphics);
 	if (cue & CUE_MOVE) {
 		mPosition.y += mRiseSpeed;
-		if (mPosition.y > gpMarioPos->y + 2000.0f)
+		if (getPosition().y > gpMarioPos->y + 2000.0f)
 			mActive = false;
 	}
 	if (cue & CUE_CALC_ANIM) {
 		Mtx transform;
 		// TODO: inline?
 		MtxPtr ptr = transform;
-		MsMtxSetXYZRPH(ptr, mPosition.x, mPosition.y, mPosition.z, mRotation.x,
-		               mRotation.y, mRotation.z);
+		MsMtxSetXYZRPH(ptr, getPosition().x, getPosition().y, getPosition().z,
+		               mRotation.x, mRotation.y, mRotation.z);
 		mSharedParts->getMActor()->getModel()->setBaseTRMtx(ptr);
 		f32 scale = mOwner->mTearsParams->mSLTearsDropScaleLow.get();
 		mScaling.set(scale, scale, scale);
 		mSharedParts->getMActor()->getModel()->setBaseScale(mScaling);
 	}
 	mSharedParts->getMActor()->perform(cue, graphics);
-	// TODO: the original had extra unused locals here.
-	
-	
+}
+
+static inline TBEelTears* BEelTearsDropOwner(const TBEelTearsDrop* drop)
+{
+	return drop->mOwner;
+}
+
+static inline TBEelTearsSaveLoadParams*
+BEelTearsDropParams(const TBEelTearsDrop* drop)
+{
+	TBEelTearsSaveLoadParams* params = BEelTearsDropOwner(drop)->mTearsParams;
+	return params;
+}
+
+static inline const TMsRange<f32>&
+BEelTearsDropScaleRange(const TBEelTearsDrop* drop)
+{
+	return BEelTearsDropParams(drop)->mTearsDropScaleRange;
+}
+
+void TBEelTearsDrop::generate(JGeometry::TVec3<f32>& position)
+{
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+	mActive = true;
+	TMsRange<f32> riseRange(4.0f, 6.0f);
+	mRiseSpeed = riseRange.rand();
+	mPosition  = position;
+
+	TMsRange<f32> unused(1.0f, 1.5f);
+	rand();
+
+	f32 scale = BEelTearsDropScaleRange(this).rand();
+	mScaling.set(scale, scale, scale);
 }
 
 TBEelTearsSaveLoadParams::TBEelTearsSaveLoadParams(const char* path)
@@ -222,10 +260,11 @@ void TBEelTearsManager::createEnemies(int count)
 {
 	TEnemyManager::createEnemies(count);
 
+	SDLModelData* modelData;
 	void* resource = JKRGetResource("/scene/bossEelTears/tears_drop.bmd");
-	SDLModelData* modelData
+	modelData
 	    = new SDLModelData(J3DModelLoaderDataBase::load(resource, 0x11240000));
-	TBEelTears* owner = static_cast<TBEelTears*>(getObj(0));
+	TBEelTears* owner = static_cast<TBEelTears*>(TLiveManager::getObj(0));
 	for (int i = 0; i < 30; ++i)
 		mTearsDrops[i] = new TBEelTearsDrop(owner, 0, modelData, "涙粒");
 }
@@ -247,25 +286,11 @@ void TBEelTearsManager::splitTears(JGeometry::TVec3<f32>& position)
 		dropPosition.z += positionRange.rand();
 
 		--tearsLeft;
-		TBEelTearsDrop* drop = *dropPtr;
-		drop->offHitFlag(HIT_FLAG_NO_COLLISION);
-		drop->mActive = true;
-		TMsRange<f32> riseRange(4.0f, 6.0f);
-		drop->mRiseSpeed = riseRange.rand();
-		drop->mPosition  = dropPosition;
-
-		TMsRange<f32> unused(1.0f, 1.5f);
-		unused.rand();
-
-		f32 scale = drop->mOwner->mTearsParams->mTearsDropScaleRange.rand();
-		drop->mScaling.set(scale, scale, scale);
+		(*dropPtr)->generate(dropPosition);
 
 		if (tearsLeft < 0)
 			break;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 TBEelTears::TBEelTears(const char* name)
@@ -278,28 +303,35 @@ TBEelTears::TBEelTears(const char* name)
 {
 }
 
+static inline TMActorKeeper* BEelTearsKeeper(const TBEelTears* tears)
+{
+	TMActorKeeper* r = tears->mMActorKeeper;
+	return r;
+}
+
 void TBEelTears::init(TLiveManager* manager)
 {
 	TSpineEnemy::init(manager);
 	mActorType = 0x08000003;
-	onHitFlag(HIT_FLAG_UNK8000000);
+	onHitFlag(BOSSEEL_HIT_FLAG_UNK80000000);
 	setMActorAndKeeper();
 	mTearsParams = static_cast<TBEelTearsSaveLoadParams*>(getSaveParam());
 	mSpine->initWith(&TNerveBEelTearsGenerate::theNerve());
 
-	TScreenTexture* screenTexture = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+	TScreenTexture* screenTexture
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
 	const ResTIMG& screenTexInfo = *screenTexture->getTexture()->getTexInfo();
 
 	J3DSkinDeform* deform = new J3DSkinDeform;
-	MActor* tearsActor    = mMActorKeeper->getMActor("tears.bmd");
+	MActor* tearsActor    = BEelTearsKeeper(this)->getMActor("tears.bmd");
 	tearsActor->getModel()->setSkinDeform(deform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
 	tearsActor->resetDL();
 	SMS_ChangeTextureAll(tearsActor->getModel()->getModelData(), "M_dummy",
 	                     screenTexInfo);
 	tearsActor->setLightType(LIGHT_TYPE_INDIRECT);
 
-	MActor* waterHitActor = mMActorKeeper->getMActor("tears_waterhit.bmd");
+	MActor* waterHitActor
+	    = BEelTearsKeeper(this)->getMActor("tears_waterhit.bmd");
 	SMS_ChangeTextureAll(waterHitActor->getModel()->getModelData(), "M_dummy",
 	                     screenTexInfo);
 	waterHitActor->setLightType(LIGHT_TYPE_INDIRECT);
@@ -308,16 +340,13 @@ void TBEelTears::init(TLiveManager* manager)
 	mBodyScale = mTearsParams->mBodyScaleRange.rand();
 
 	TIdxGroupObj* enemyGroup
-	    = static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"));
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
 	mRecoverCollision = new TBossEelTearsRecoverCollision(
 	    mMActor->getModel()->getAnmMtx(0), "回復コリジョン");
 	mRecoverCollision->initCollision();
 
 	enemyGroup->getChildren().push_back(mRecoverCollision);
 	mRecoverCollision->onHitFlag(HIT_FLAG_NO_COLLISION);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 void TBEelTears::setMActorAndKeeper()
@@ -329,8 +358,7 @@ void TBEelTears::setMActorAndKeeper()
 
 void TBEelTears::moveObject()
 {
-	TBEelTearsSaveLoadParams* params = mTearsParams;
-	f32 liveHeight                   = params->mSLTearsLiveHeight.get();
+	f32 liveHeight = mTearsParams->mSLTearsLiveHeight.get();
 	mVelocity.x *= 0.9f;
 	mVelocity.z *= 0.9f;
 	mPosition.x += mVelocity.x;
@@ -344,10 +372,10 @@ void TBEelTears::moveObject()
 	}
 
 	f32 scale        = mScaling.x;
-	s32 attackRadius = params->mSLTearsAttackRadius.get();
-	s32 attackHeight = params->mSLTearsAttackHeight.get();
-	s32 damageRadius = params->mSLTearsDamageRadius.get();
-	s32 damageHeight = params->mSLTearsDamageHeight.get();
+	f32 attackRadius = mTearsParams->mSLTearsAttackRadius.get();
+	f32 attackHeight = mTearsParams->mSLTearsAttackHeight.get();
+	f32 damageRadius = mTearsParams->mSLTearsDamageRadius.get();
+	f32 damageHeight = mTearsParams->mSLTearsDamageHeight.get();
 	setHitParams(attackRadius * scale, attackHeight * scale,
 	             damageRadius * scale, damageHeight * scale);
 
@@ -374,9 +402,15 @@ void TBEelTears::moveObject()
 	}
 
 	TLiveActor::moveObject();
-	// TODO: the original had extra unused locals here.
-	
-	
+}
+
+// Moves v a fraction `rate` of the way towards target. Retail loads the rate
+// before the translation stores and multiplies it on the left, which only this
+// inlined shape (the rate a parameter, the step a named local) reproduces.
+static inline void BEelApproach(f32& v, f32 target, f32 rate)
+{
+	f32 d = target - v;
+	v += rate * d;
 }
 
 void TBEelTears::calcRootMatrix()
@@ -388,12 +422,8 @@ void TBEelTears::calcRootMatrix()
 
 		if (mSpine->getCurrentNerve() == &TNerveBEelTearsGenerate::theNerve()) {
 			TPosition3f transform(mPosition.x, mPosition.y, mPosition.z);
-			transform.ref(0, 3)
-			    = transform.at(0, 3)
-			      + (mSpawnMtx[0][3] - transform.at(0, 3)) * 0.1f;
-			transform.ref(2, 3)
-			    = transform.at(2, 3)
-			      + (mSpawnMtx[2][3] - transform.at(2, 3)) * 0.1f;
+			BEelApproach(transform.ref(0, 3), mSpawnMtx[0][3], 0.1f);
+			BEelApproach(transform.ref(2, 3), mSpawnMtx[2][3], 0.1f);
 
 			mScaling.setAll(mTearsParams->mSLBodyScaleLow.get());
 			mMActor->getModel()->setBaseScale(mScaling);
@@ -414,7 +444,7 @@ void TBEelTears::perform(u32 cue, JDrama::TGraphics* graphics)
 		moveObject();
 
 	if (cue & CUE_CALC_ANIM) {
-		Mtx effectMtx;
+		Mtx44 effectMtx;
 		SMS_GetLightPerspectiveForEffectMtx(effectMtx);
 		mMActor->getModel()
 		    ->getModelData()
@@ -440,25 +470,18 @@ void TBEelTears::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_ENTRY)
 		mMActor->entry();
 	THitActor::perform(cue, graphics);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 BOOL TBEelTears::receiveMessage(THitActor*, u32 message)
 {
-
-	
-	
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		mStateTimer = 60;
-		if (mSpine->getCurrentNerve() == &TNerveBEelTearsMoveUp::theNerve()
-		    || mSpine->getCurrentNerve() == &TNerveOilBallStay::theNerve())
+		if (getSpine()->getCurrentNerve() == &TNerveBEelTearsMoveUp::theNerve()
+		    || getSpine()->getCurrentNerve() == &TNerveOilBallStay::theNerve())
 			mSpine->pushNerve(&TNerveBEelTearsWaterHit::theNerve());
 
 		if (mSpine->getCurrentNerve() == &TNerveBEelTearsWaterHit::theNerve()) {
-			MActor* actor = mMActor;
-			actor->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
+			getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
 		}
 		return true;
 	}
@@ -498,6 +521,14 @@ void TBEelTears::setBubble()
 	mRecoverCollision->mColliding = true;
 }
 
+void TBEelTears::setRecoverTears()
+{
+	mRecoverCollision->mColliding = false;
+	mRecoverCollision->offHitFlag(HIT_FLAG_NO_COLLISION);
+	mRecoverCollision->mRecovering = true;
+	mRecoverCollision->mPosition   = mPosition;
+}
+
 void TBEelTears::deadEffect()
 {
 	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
@@ -521,22 +552,6 @@ const char** TBEelTears::getBasNameTable() const
 	return bossEelTears_bastable;
 }
 
-// UNUSED: inlined in original
-void TBEelTears::setRecoverTears()
-{
-}
-
-// UNUSED: inlined in original
-BOOL TBossEel::isEyeBlurOn()
-{
-	return false;
-}
-
-// UNUSED: inlined in original
-void TBEelTearsDrop::generate(JGeometry::TVec3<f32>&)
-{
-}
-
 DEFINE_NERVE(TNerveBEelTearsGenerate, TLiveActor)
 {
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
@@ -552,23 +567,49 @@ DEFINE_NERVE(TNerveBEelTearsGenerate, TLiveActor)
 	return false;
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TNerveBEelTearsMoveUp::execute (batch 127).
+static inline TMActorKeeper* BosseelMActorKeeper(const TBEelTears* p)
+{
+	TMActorKeeper* mActorKeeper = p->mMActorKeeper;
+	return mActorKeeper;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TNerveBEelTearsMoveUp::execute (batch 127).
+static inline TBEelTearsSaveLoadParams* BosseelTearsParams(const TBEelTears* p)
+{
+	TBEelTearsSaveLoadParams* tearsParams = p->mTearsParams;
+	return tearsParams;
+}
+
 DEFINE_NERVE(TNerveBEelTearsMoveUp, TLiveActor)
 {
-
-	
-	
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
 	if (spine->getTime() == 0) {
-		tears->mMActor = tears->mMActorKeeper->getMActor("tears.bmd");
+		tears->mMActor = BosseelMActorKeeper(tears)->getMActor("tears.bmd");
 		tears->mMActor->setBckFromIndex(1);
 	}
-	tears->mPosition.y += tears->mTearsParams->mSLTearsUpSpeed.get();
+	tears->mPosition.y += BosseelTearsParams(tears)->mSLTearsUpSpeed.get();
 	return false;
+}
+
+static inline f32 BEelTearsHitAnmFrameRate(TBEelTears* tears)
+{
+	TBEelTearsSaveLoadParams* params = tears->mTearsParams;
+	f32 rate                         = params->mSLHitAnmFrameRate.get();
+	return rate;
+}
+
+static inline TBEelTears* BEelTearsWaterHitBody(TSpineBase<TLiveActor>* spine)
+{
+	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
+	return tears;
 }
 
 DEFINE_NERVE(TNerveBEelTearsWaterHit, TLiveActor)
 {
-	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
+	TBEelTears* tears = BEelTearsWaterHitBody(spine);
 	if (spine->getTime() == 0) {
 		SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_TEAR_TREMBLE,
 		                                &tears->mPosition, 0, nullptr, 0, 4);
@@ -577,7 +618,7 @@ DEFINE_NERVE(TNerveBEelTearsWaterHit, TLiveActor)
 	}
 
 	--tears->mStateTimer;
-	f32 frameRate = tears->mTearsParams->mSLHitAnmFrameRate.get();
+	f32 frameRate = BEelTearsHitAnmFrameRate(tears);
 	if (tears->mStateTimer < 0) {
 		MActor* actor = tears->mMActor;
 		actor->setFrameRate(-frameRate * SMSGetAnmFrameRate(), ANM_TYPE_BCK);
@@ -596,9 +637,6 @@ DEFINE_NERVE(TNerveBEelTearsWaterHit, TLiveActor)
 
 	if (tears->mHighPoly)
 		tears->mPosition.y += tears->mTearsParams->mSLTearsDamageUpSpeed.get();
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -607,9 +645,10 @@ DEFINE_NERVE(TNerveBEelTearsMarioRecover, TLiveActor)
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
 	if (!tears->mRecoverCollision->mRecovering) {
 		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
-		    BOSSEELTEARS_MS_MEO_TEAR_AWAGET, gpMarioPos, 0, nullptr);
+		    BOSSEELTEARS_MS_MEO_TEAR_AWAGET, &SMS_GetMarioPos(), 0,
+		    nullptr);
 		if (emitter)
-			emitter->setGlobalScale(tears->mScaling);
+			emitter->setGlobalScale(tears->getScaling());
 		tears->kill();
 		return true;
 	}
@@ -617,7 +656,7 @@ DEFINE_NERVE(TNerveBEelTearsMarioRecover, TLiveActor)
 	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
 	    BOSSEELTEARS_MS_MEO_TEAR_AWA, &tears->mPosition, 1, tears);
 	if (emitter)
-		emitter->setGlobalScale(tears->mScaling);
+		emitter->setGlobalScale(tears->getScaling());
 
 	if (spine->getTime() > 1000) {
 		tears->kill();
@@ -627,10 +666,15 @@ DEFINE_NERVE(TNerveBEelTearsMarioRecover, TLiveActor)
 		tears->mPosition.y += tears->mTearsParams->mSLTearsUpSpeed.get();
 		tears->mRecoverCollision->mPosition.y = tears->mPosition.y;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TNerveBEelTearsSplit::execute (batch 127).
+static inline MActor* BosseelMActor(const TBEelTears* p)
+{
+	MActor* mActor = p->mMActor;
+	return mActor;
 }
 
 DEFINE_NERVE(TNerveBEelTearsSplit, TLiveActor)
@@ -640,8 +684,8 @@ DEFINE_NERVE(TNerveBEelTearsSplit, TLiveActor)
 		SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_TEAR_TREMBLE,
 		                                &tears->mPosition, 0, nullptr, 0, 4);
 		tears->mMActor = tears->mMActorKeeper->getMActor("tears_waterhit.bmd");
-		tears->mMActor->setBckFromIndex(3);
-		MActor* actor = tears->mMActor;
+		BosseelMActor(tears)->setBckFromIndex(3);
+		MActor* actor = BosseelMActor(tears);
 		f32 frameRate = tears->mTearsParams->mSLHitAnmFrameRate.get();
 		actor->setFrameRate(frameRate * SMSGetAnmFrameRate(), ANM_TYPE_BCK);
 	}
@@ -651,9 +695,6 @@ DEFINE_NERVE(TNerveBEelTearsSplit, TLiveActor)
 		spine->pushAfterCurrent(&TNerveBEelTearsMarioRecover::theNerve());
 		return true;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -677,17 +718,16 @@ void TOilBall::reset()
 
 void TOilBall::moveObject()
 {
-	TBEelTearsSaveLoadParams* params = mTearsParams;
-	f32 scale                        = mScaling.x;
-	s32 attackRadius                 = params->mSLTearsAttackRadius.get();
-	s32 attackHeight                 = params->mSLTearsAttackHeight.get();
-	s32 damageRadius                 = params->mSLTearsDamageRadius.get();
-	s32 damageHeight                 = params->mSLTearsDamageHeight.get();
+	f32 scale        = mScaling.x;
+	f32 attackRadius = mTearsParams->mSLTearsAttackRadius.get();
+	f32 attackHeight = mTearsParams->mSLTearsAttackHeight.get();
+	f32 damageRadius = mTearsParams->mSLTearsDamageRadius.get();
+	f32 damageHeight = mTearsParams->mSLTearsDamageHeight.get();
 	setHitParams(attackRadius * scale, attackHeight * scale,
 	             damageRadius * scale, damageHeight * scale);
 
-	for (int i = 0; i < getColNum(); ++i) {
-		THitActor* actor = getCollision(i);
+	for (int i = 0; i < mColCount; ++i) {
+		THitActor* actor = mCollisions[i];
 		if (actor->isActorType(0x80000001)) {
 			if (mSpine->getCurrentNerve() == &TNerveBEelTearsMoveUp::theNerve()
 			    || mSpine->getCurrentNerve()
@@ -697,8 +737,9 @@ void TOilBall::moveObject()
 			}
 		} else {
 			JGeometry::TVec3<f32> velocity(0.0f, 0.0f, 0.0f);
-			JGeometry::TVec3<f32> push;
-			push.sub(mPosition, actor->mPosition);
+			JGeometry::TVec3<f32> push(mPosition.x - actor->mPosition.x,
+			                           mPosition.y - actor->mPosition.y,
+			                           mPosition.z - actor->mPosition.z);
 			if (push.x == 0.0f && push.y == 0.0f && push.z == 0.0f)
 				push.x += 1.0f;
 			MsVECNormalize(&push, &push);
@@ -806,15 +847,13 @@ TBossEelTooth::TBossEelTooth(u8 toothType, TBossEel* owner,
     , mOwner(owner)
     , mHitPoints(0)
     , mToothType(toothType)
-    , mTrembleRotation(0.0f, 0.0f, 0.0f)
+    , unk78(0.0f, 0.0f, 0.0f)
     , mDamageCooldown(0)
     , mCanShedTears(true)
 {
-	s32 jointIndex = mOwner->getMActor()
-	                     ->getModel()
-	                     ->getModelData()
-	                     ->getJointName()
-	                     ->getIndex(jointName);
+	JUTNameTab* nameTab
+	    = mOwner->getMActor()->getModel()->getModelData()->getJointName();
+	s32 jointIndex = nameTab->getIndex(jointName);
 	mSharedParts
 	    = new TSharedParts(mOwner, jointIndex, modelData, 0, "<TSharedParts>");
 	MActor* actor = mSharedParts->getMActor();
@@ -829,23 +868,22 @@ TBossEelTooth::TBossEelTooth(u8 toothType, TBossEel* owner,
 		                                  &mColor);
 
 	mColor.a   = 0xFF;
-	mHitPoints = mOwner->getBossEelParams().mSLToothMaxHitPoint.get();
+	mHitPoints = mOwner->mSaveParams->mSLToothMaxHitPoint.value;
 	initHitActor(0x08000022, 5, 0x81000000,
-	             mOwner->getBossEelParams().mSLToothAttackRadius.get(),
-	             mOwner->getBossEelParams().mSLToothAttackHeight.get(),
-	             mOwner->getBossEelParams().mSLToothDamageRadius.get(),
-	             mOwner->getBossEelParams().mSLToothDamageHeight.get());
+	             mOwner->mSaveParams->mSLToothAttackRadius.get(),
+	             mOwner->mSaveParams->mSLToothAttackHeight.get(),
+	             mOwner->mSaveParams->mSLToothDamageRadius.get(),
+	             mOwner->mSaveParams->mSLToothDamageHeight.get());
 
-	static_cast<TIdxGroupObj*>(
-	    JDrama::TNameRefGen::search("オブジェクトグループ"))
+	// TODO: frame size is exact but the push_back iterator temporaries sit 4
+	// bytes below retail's, so something above them is 4 bytes wider here.
+	JDrama::TNameRefGen::search<TIdxGroupObj>("オブジェクトグループ")
 	    ->getChildren()
 	    .push_back(this);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
 void TBossEelTooth::changeToothAlpha(u8 alpha) { mColor.a = alpha; }
-
-void TBossEelTooth::updateTremble() { }
 
 BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 {
@@ -867,19 +905,20 @@ BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 
 			if (mHitPoints == 1) {
 				mColor.a = 0;
-				MTXCopy(mSharedParts->getConnectedMtx(), mDetachedMtx);
+				MtxPtr detached = mDetachedMtx;
+				MTXCopy(mSharedParts->getConnectedMtx(), detached);
 				if (mToothType == 1) {
 					SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_TEATH_COMEOFF,
 					                                &mPosition, 0, nullptr, 0,
 					                                4);
 					if (mCanShedTears)
 						SMSGetMSound()->startSoundActor(
-						    MSD_SE_BS_UNG_VOICE_M_CRY, &mOwner->mPosition, 0,
-						    nullptr, 0, 4);
+						    MSD_SE_BS_UNG_VOICE_M_CRY, &mOwner->getPosition(),
+						    0, nullptr, 0, 4);
 					else
 						SMSGetMSound()->startSoundActor(
-						    MSD_SE_BS_UNG_VOICE_W_CRY, &mOwner->mPosition, 0,
-						    nullptr, 0, 4);
+						    MSD_SE_BS_UNG_VOICE_W_CRY, &mOwner->getPosition(),
+						    0, nullptr, 0, 4);
 					mOwner->mToothBroken = true;
 
 					JPABaseEmitter* emitter = gpMarioParticleManager->emit(
@@ -903,11 +942,10 @@ BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 		}
 		result = true;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return result;
 }
+
+void TBossEelTooth::updateTremble() { }
 
 void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 {
@@ -916,19 +954,19 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_MOVE) {
 		TBossEelSaveParams* params = mOwner->mSaveParams;
-		f32 scale                  = mOwner->mScaling.x;
 		f32 attackRadius           = params->mSLToothAttackRadius.get();
 		f32 attackHeight           = params->mSLToothAttackHeight.get();
 		f32 damageHeight           = params->mSLToothDamageHeight.get();
 		f32 damageRadius           = params->mSLToothDamageRadius.get();
-		attackRadius *= scale;
-		attackHeight *= scale;
-		damageRadius *= scale;
-		damageHeight *= scale;
-		setHitParams(attackRadius, attackHeight, damageRadius, damageHeight);
+		// TODO: retail keeps all four products live before the stores (AR
+		// product in f3, DR param in f5) and params in r5; ours reuses f1/f3/r4.
+		// Same residue as TBossEelVortex::perform; frame 8 short (low region).
+		f32 scale                  = mOwner->getScaling().x;
+		setHitParams(attackRadius * scale, attackHeight * scale,
+		             damageRadius * scale, damageHeight * scale);
 
 		for (s32 i = 0; i < mColCount; ++i) {
-			THitActor* collision = mCollisions[i];
+			THitActor* collision = getCollision(i);
 			if (mOwner->isValidToothDamage()
 			    && collision->isActorType(0x80000001) && mHitPoints > 1) {
 				SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
@@ -948,8 +986,7 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 					if (mSharedParts->getMActor()->checkCurBckFromIndex(22)) {
 						mSharedParts->getMActor()->setBckFromIndex(20);
 						JGeometry::TVec3<f32> tearsPosition(
-						    mDetachedMtx[0][3],
-						    mTrembleRotation.y + mDetachedMtx[1][3],
+						    mDetachedMtx[0][3], unk78.y + mDetachedMtx[1][3],
 						    mDetachedMtx[2][3]);
 						mOwner->generateBubble(tearsPosition);
 						mSharedParts->getMActor()->setFrameRate(
@@ -963,10 +1000,10 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 
 				f32 speed = mOwner->getBossEelParams().mSLToothUpSpeed.get();
 				if (mToothType == 1) {
-					mTrembleRotation.y += speed;
-					if (mTrembleRotation.y > mOwner->getBossEelParams()
-					                             .mSLToothLiveHeight.get()
-					    || mPosition.y > gpMarioPos->y + 2000.0f) {
+					unk78.y += speed;
+					if (unk78.y > mOwner->getBossEelParams()
+					                  .mSLToothLiveHeight.get()
+					    || getPosition().y > gpMarioPos->y + 2000.0f) {
 						mHitPoints = 0;
 						onHitFlag(HIT_FLAG_NO_COLLISION);
 					}
@@ -987,7 +1024,7 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 			    = gpMarioParticleManager->emitAndBindToPosPtr(
 			        BOSSEEL_JPA_MS_MEO_TOOTH_ALWAYS, &mPosition, 1, this);
 			if (emitter)
-				emitter->setGlobalScale(mOwner->mScaling);
+				emitter->setGlobalScale(mOwner->getScaling());
 		}
 		if (mSharedParts->getMActor()->checkCurBckFromIndex(22)
 		    && mSharedParts->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getRate()
@@ -996,21 +1033,21 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 			    = gpMarioParticleManager->emitAndBindToPosPtr(
 			        BOSSEEL_JPA_MS_MEO_TOOTH_WASH, &mPosition, 1, this);
 			if (emitter)
-				emitter->setGlobalScale(mOwner->mScaling);
+				emitter->setGlobalScale(mOwner->getScaling());
 		}
 		if ((mToothType == 0 || mToothType == 2) && mHitPoints == 1) {
 			JPABaseEmitter* emitter
 			    = gpMarioParticleManager->emitAndBindToPosPtr(
 			        BOSSEEL_JPA_MS_MEO_TOOTH_KIRA, &mPosition, 1, this);
 			if (emitter)
-				emitter->setGlobalScale(mOwner->mScaling);
+				emitter->setGlobalScale(mOwner->getScaling());
 		}
 
-		TPosition3f transform(0, 0, mTrembleRotation.x);
+		TPosition3f transform(0, 0, unk78.x);
 		MTXConcat(toothMtx, transform, toothMtx);
-		MsMtxSetRotRPH(transform, mTrembleRotation.z, mTrembleRotation.z, 0.0f);
+		MsMtxSetRotRPH(transform, unk78.z, unk78.z, 0.0f);
 		MTXConcat(toothMtx, transform, toothMtx);
-		toothMtx[1][3] += mTrembleRotation.y;
+		toothMtx[1][3] += unk78.y;
 		mPosition.x = toothMtx[0][3];
 		mPosition.y = toothMtx[1][3];
 		mPosition.z = toothMtx[2][3];
@@ -1019,9 +1056,6 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	THitActor::perform(cue, graphics);
 	mSharedParts->getMActor()->perform(cue, graphics);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 TBossEelVortex::TBossEelVortex(TBossEel* owner, const char* name)
@@ -1034,12 +1068,15 @@ TBossEelVortex::TBossEelVortex(TBossEel* owner, const char* name)
 	             mOwner->getBossEelParams().mSLVortexAttackHeight.get(),
 	             mOwner->getBossEelParams().mSLVortexDamageRadius.get(),
 	             mOwner->getBossEelParams().mSLVortexDamageHeight.get());
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+// TODO: every instruction matches; the frame is 0x140 against retail 0x1b0.
+// c-hs7: getMActor() at every owner-actor read took it from 0x108; a lone
+// named isActorType() bool in the collision loop is +8 more.
 void TBossEelVortex::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (mInactive)
@@ -1049,22 +1086,23 @@ void TBossEelVortex::perform(u32 cue, JDrama::TGraphics* graphics)
 		{
 			TBossEel* owner            = mOwner;
 			TBossEelSaveParams* params = owner->mSaveParams;
-			f32 scale                  = owner->mScaling.x;
 			f32 attackRadius           = params->mSLVortexAttackRadius.get();
 			f32 attackHeight           = params->mSLVortexAttackHeight.get();
 			f32 damageHeight           = params->mSLVortexDamageHeight.get();
 			f32 damageRadius           = params->mSLVortexDamageRadius.get();
-			mAttackRadius              = attackRadius * scale;
-			mAttackHeight              = attackHeight * scale;
-			mDamageRadius              = damageRadius * scale;
-			mDamageHeight              = damageHeight * scale;
+			// TODO: retail keeps all four products live before the stores
+			// (AR product f3, DR param f5); scale named last fixed f4. The
+			// frame is 0xa8 short with every instruction right: a dead low
+			// region with no carrier found.
+			f32 scale                  = owner->mScaling.x;
+			setHitParams(attackRadius * scale, attackHeight * scale,
+			             damageRadius * scale, damageHeight * scale);
 		}
-		calcEntryRadius();
 
 		++mTimer;
 		if (mTimer > 30) {
-			if (mOwner->mMActor->checkCurBckFromIndex(14)
-			    || mOwner->mMActor->checkCurBckFromIndex(17)) {
+			if (mOwner->getMActor()->checkCurBckFromIndex(14)
+			    || mOwner->getMActor()->checkCurBckFromIndex(17)) {
 				for (s32 i = 0; i < mColCount; ++i) {
 					if (!mCollisions[i]->isActorType(0x80000001))
 						continue;
@@ -1085,7 +1123,7 @@ void TBossEelVortex::perform(u32 cue, JDrama::TGraphics* graphics)
 
 					power *= wave;
 					SMSRumbleMgr->start(8, &mPosition);
-					if (mOwner->mMActor->checkCurBckFromIndex(17))
+					if (mOwner->getMActor()->checkCurBckFromIndex(17))
 						power *= 0.5f;
 					marioTarget.scale(power);
 					marioTarget.add(*gpMarioPos);
@@ -1098,18 +1136,15 @@ void TBossEelVortex::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & CUE_CALC_ANIM) {
-		mPosition.x = mOwner->mMActor->getModel()->getAnmMtx(
+		mPosition.x = mOwner->getMActor()->getModel()->getAnmMtx(
 		    mOwner->mMapCollisionJointIndices[2])[0][3];
-		mPosition.y = mOwner->mMActor->getModel()->getAnmMtx(
+		mPosition.y = mOwner->getMActor()->getModel()->getAnmMtx(
 		                  mOwner->mMapCollisionJointIndices[2])[1][3]
 		              + 1000.0f;
-		mPosition.z = mOwner->mMActor->getModel()->getAnmMtx(
+		mPosition.z = mOwner->getMActor()->getModel()->getAnmMtx(
 		    mOwner->mMapCollisionJointIndices[2])[2][3];
 	}
 	THitActor::perform(cue, graphics);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 void TBossEelVortex::reset()
@@ -1117,6 +1152,22 @@ void TBossEelVortex::reset()
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	onHitFlag(ACTOR_TYPE_PLAYER);
 	mTimer = 0;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TBossEelEye::TBossEelEye (batch 127).
+static inline SDLModel* BosseelBlendModel(const TBossEelEye* p)
+{
+	SDLModel* blendModel = p->mBlendModel;
+	return blendModel;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TBossEelEye::TBossEelEye (batch 127).
+static inline f32 BosseelBlendRatio(const TBossEelEye* p)
+{
+	f32 blendRatio = p->mBlendRatio;
+	return blendRatio;
 }
 
 TBossEelEye::TBossEelEye(const TLiveActor* owner, int jointIndex,
@@ -1130,17 +1181,27 @@ TBossEelEye::TBossEelEye(const TLiveActor* owner, int jointIndex,
     , mBlurTimer(0)
     , mBlurDuration(50)
 {
-	volatile u8 stackPad[16];
-	(void)stackPad;
 	mBlendModel = new SDLModel(modelData, modelFlags, 1);
-	mBlendModel->getModelData()->getMaterialName()->getIndex("_mat7");
+	BosseelBlendModel(this)->getModelData()->getMaterialName()->getIndex("_mat7");
 	getMActor()->initNormalMotionBlend();
 	mPreviousBckIndex = getMActor()->getCurAnmIdx(ANM_TYPE_BCK);
 	mAnimationMode    = 0;
 	mBlendRatio       = 1.0f;
 	getMActor()->setBckOldMotionBlendAnmPtr(getMActor()->getBckAnm());
 	getMActor()->setBckFromIndex(0);
-	getMActor()->setMotionBlendRatioForBck(mBlendRatio);
+	getMActor()->setMotionBlendRatioForBck(BosseelBlendRatio(this));
+}
+
+// Retail's eyeMtx sits at the very top of the local region, which is why the
+// `const TBossEel* owner = getOwner();` local had to go: its cast takes a slot
+// above the matrix. The 0x28 below it is accessor pool, paid by the MActor
+// binder at three of nine sites.
+// TODO: 100.0%, every instruction present and the frame exact at 0xb8;
+// `eyeMtx` still sits 4 bytes low (0x64 against retail's 0x68).
+static inline MActor* BosseelEyeMActor(TBossEelEye* p)
+{
+	MActor* actor = p->getMActor();
+	return actor;
 }
 
 void TBossEelEye::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -1159,17 +1220,21 @@ void TBossEelEye::perform(u32 cue, JDrama::TGraphics* graphics)
 
 		Mtx eyeMtx;
 		MTXCopy(getConnectedMtx(), eyeMtx);
-		getMActor()->getModel()->setBaseTRMtx(eyeMtx);
-		if (mCopyConnectedMtx == 0)
-			MTXCopy(eyeMtx, mBlendMtx);
+		MtxPtr mtx = eyeMtx;
+		BosseelEyeMActor(this)->getModel()->setBaseTRMtx(mtx);
+		if (mCopyConnectedMtx == 0) {
+			MtxPtr blendMtx = mBlendMtx;
+			MTXCopy(mtx, blendMtx);
+		}
 
 		mBlendRatio = MsClamp(mBlendRatio - 0.01f, 0.0f, 1.0f);
-		getMActor()->setMotionBlendRatioForBck(mBlendRatio);
+		BosseelEyeMActor(this)->setMotionBlendRatioForBck(mBlendRatio);
 		if (mAnimationMode == 1
 		    && getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 			++mAnimationLoopCount;
 			if (mAnimationLoopCount > 3) {
-				mPreviousBckIndex = getMActor()->getCurAnmIdx(ANM_TYPE_BCK);
+				MActor* actor = getMActor();
+				mPreviousBckIndex = actor->getCurAnmIdx(ANM_TYPE_BCK);
 				mAnimationMode    = 0;
 				mBlendRatio       = 1.0f;
 				getMActor()->setBckOldMotionBlendAnmPtr(
@@ -1190,11 +1255,8 @@ void TBossEelEye::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 		}
 	}
-	getMActor()->perform(cue, graphics);
+	BosseelEyeMActor(this)->perform(cue, graphics);
 	mCopyConnectedMtx = -1;
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 void TBossEelEye::setBckAnm(int index)
@@ -1221,45 +1283,66 @@ TBossEelHeartCoin::TBossEelHeartCoin(const TLiveActor* owner, int jointIndex,
 	}
 }
 
+// Binding level over a raw member read: a register lever in
+// TBossEelHeartCoin::perform at an unchanged frame (batch 127).
+static inline bool BosseelActive(const TBossEelHeartCoin* p)
+{
+	bool active = p->mActive;
+	return active;
+}
+
 void TBossEelHeartCoin::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (!mActive)
+	if (!BosseelActive(this))
 		return;
 
 	u32 calcAnim = cue & CUE_CALC_ANIM;
 	if (calcAnim) {
-		MtxPtr jointMtx = mOwner->mMActor->getModel()->getAnmMtx(
-		    mOwner->mMActor->getModel()
-		        ->getModelData()
-		        ->getJointName()
-		        ->getIndex("ha7"));
-		if (mOwner->mMActor->checkCurBckFromIndex(3)
-		    && mOwner->mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+		s32 jointIndex = mOwner->getMActor()->getModel()
+		                     ->getModelData()
+		                     ->getJointName()
+		                     ->getIndex("ha7");
+		MtxPtr jointMtx
+		    = mOwner->getMActor()->getModel()->getAnmMtx(jointIndex);
+		if (mOwner->getMActor()->checkCurBckFromIndex(3)
+		    && mOwner->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
 		           < 700.0f) {
 			mPosition.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
 		}
 		mPosition.y = jointMtx[1][3];
-		// Dead store in the original: the coins are then parked way below the
-		// stage so they are never visible.
-		mPosition.y = -23300.0f;
 
 		TPosition3f heartMtx(mPosition.x, mPosition.y, mPosition.z);
 		getMActor()->getModel()->setBaseTRMtx(heartMtx);
-		// TODO: the original had an extra unused local here.
-		
-		
 	}
 	getMActor()->perform(cue, graphics);
 
 	if (calcAnim) {
 		for (s32 i = 0; i < 20; ++i) {
 			MtxPtr coinMtx = getMActor()->getModel()->getAnmMtx(i + 2);
-			mCoins[i]->mPosition.set(coinMtx[0][3], -23300.0f,
+			mCoins[i]->mPosition.set(coinMtx[0][3], coinMtx[1][3],
 			                         coinMtx[2][3]);
 		}
 	}
 }
 
+// TODO: retail calls this instead of expanding it into TNerveBossEelDie, and
+// the honest lever for that is the statement budget, not a pragma. Measured in
+// a scratch TU with the game flags: a plain callee reached at depth 1 inlines up
+// to a cost of 14 and is called at 15, where every statement costs 1, an `else`
+// costs 1, a `for`/`while` costs 1 for itself plus its init and increment
+// expressions plus one extra for being a loop, and statements a callee gains by
+// expanding its own inlines cost nothing. This body costs 10 (two stores, the
+// `for` at 4, four loop statements), so it still expands; the original therefore
+// spelled about five more statements here that leave no trace in the 0xcc bytes.
+// Named locals for `mCoins[i]` and the `getMActor()->getModel()->getAnmMtx(0)`
+// chain would buy three of the five, but nothing in the asm chooses them, so the
+// pragma stays until better evidence turns up. Sweep 360 priced the five:
+// both `set(a, b, c)` calls are confirmed retail (hoisted loads, and the
+// `stfsu` heading the coin stores means the receiver was bound), so expanding
+// them into component stores is +4 but breaks the bytes here; retail also
+// binds `&mCoins[i]` into a register and reloads through it three times rather
+// than naming the TCoin*. Expanding both sets plus a named coin does reach 15
+// statements (the callers stay exact) but the body falls to 65.1 at 0xc4.
 #pragma dont_inline on
 void TBossEelHeartCoin::generate(JGeometry::TVec3<f32>& position)
 {
@@ -1322,14 +1405,25 @@ TBossEelCollision::TBossEelCollision(MtxPtr collisionMtx, const char* name)
 {
 }
 
+static inline s32 BossEelColCount(const THitActor* collider)
+{
+	s32 count = collider->mColCount;
+	return count;
+}
+
+static inline bool BossEelHitMario(const THitActor* collider, s32 i)
+{
+	THitActor* actor = collider->mCollisions[i];
+	bool isMario     = actor->isActorType(0x80000001);
+	return isMario;
+}
+
 void TBossEelCollision::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	volatile u8 stackPad[24];
-	(void)stackPad;
 	if (cue & CUE_MOVE) {
 		calcEntryRadius();
-		for (s32 i = 0; i < mColCount; ++i) {
-			if (mCollisions[i]->isActorType(0x80000001))
+		for (s32 i = 0; i < BossEelColCount(this); ++i) {
+			if (BossEelHitMario(this, i))
 				behaveToMario();
 		}
 	}
@@ -1347,17 +1441,21 @@ void TBossEelCollision::initCollision()
 	             mBaseAttackHeight, mBaseDamageRadius, mBaseDamageHeight);
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TBossEelCollision::behaveToMario (batch 127).
+static inline TBossEel* BosseelOwner(const TBossEelCollision* p)
+{
+	TBossEel* owner = p->mOwner;
+	return owner;
+}
+
 void TBossEelCollision::behaveToMario()
 {
 	JGeometry::TVec3<f32> marioTarget(0.0f, TBossEel::mForcePow, 0.0f);
 	marioTarget += SMS_GetMarioPos();
 	SMS_MarioMoveRequest(marioTarget);
 
-	// TODO: the original had an extra unused 4-byte local here.
-	
-	
-
-	if (mOwner && mOwner->canEatMario())
+	if (BosseelOwner(this) && mOwner->canEatMario())
 		mOwner->forceEat();
 }
 
@@ -1385,39 +1483,44 @@ void TBossEelAwaCollision::behaveToMario()
 	JGeometry::TVec3<f32> marioTarget(0.0f, 10.0f, 0.0f);
 	marioTarget.y  = 15.0f;
 	*gpMarioSpeedY = 0.0f;
-	marioTarget.add(*gpMarioPos);
+	marioTarget.add(SMS_GetMarioPos());
 	SMS_MarioMoveRequest(marioTarget);
-	// TODO: the original had an extra unused 4-byte local here.
-	
-	
+}
+
+static inline s32 BossEelAwaColCount(const THitActor* collider)
+{
+	s32 count = collider->mColCount;
+	return count;
+}
+
+static inline bool BossEelAwaHitMario(const THitActor* collider, s32 i)
+{
+	THitActor* actor = collider->mCollisions[i];
+	return actor->isActorType(0x80000001);
 }
 
 void TBossEelAwaCollision::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_MOVE) {
 		calcEntryRadius();
-		if (gpMarioPos->y < mPosition.y + 500.0f)
+		// The first test reads through getPosition() and the second raw: the
+		// accessor's reference temporary is two words of retail's 0x50 frame.
+		if (SMS_GetMarioPos().y < getPosition().y + 500.0f)
 			offHitFlag(HIT_FLAG_NO_COLLISION);
-		if (gpMarioPos->y > mPosition.y + mAttackHeight)
+		if (SMS_GetMarioPos().y > mPosition.y + mAttackHeight)
 			onHitFlag(HIT_FLAG_NO_COLLISION);
 
-		for (s32 i = 0; i < mColCount; ++i) {
-			if (mCollisions[i]->isActorType(0x80000001))
+		for (s32 i = 0; i < BossEelAwaColCount(this); ++i) {
+			if (BossEelAwaHitMario(this, i))
 				behaveToMario();
 		}
 	}
 	if (cue & CUE_CALC_ANIM) {
 		mPosition.x = mCollisionMtx[0][3];
 		mPosition.y = mCollisionMtx[1][3] + 11000.0f;
-		// Dead store in the original; the AWA collision box is always parked
-		// at a fixed low Y so it can never touch Mario.
-		mPosition.y = -24300.0f;
 		mPosition.z = mCollisionMtx[2][3];
 	}
 	THitActor::perform(cue, graphics);
-	// TODO: the original had extra unused locals here.
-	
-	
 }
 
 void TBossEelBarrierCollision::initCollision()
@@ -1432,11 +1535,8 @@ void TBossEelBarrierCollision::initCollision()
 void TBossEelBarrierCollision::behaveToMario()
 {
 	JGeometry::TVec3<f32> marioTarget(0.0f, TBossEel::mForcePow, 0.0f);
-	marioTarget.add(*gpMarioPos);
+	marioTarget.add(SMS_GetMarioPos());
 	SMS_MarioMoveRequest(marioTarget);
-	// TODO: the original had an extra unused 4-byte local here.
-	
-	
 }
 
 void TBossEelTearsRecoverCollision::initCollision()
@@ -1456,21 +1556,39 @@ void TBossEelTearsRecoverCollision::behaveToMario()
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+static inline s32 BossEelTearsColCount(const THitActor* collider)
+{
+	s32 count = collider->mColCount;
+	return count;
+}
+
+static inline bool BossEelTearsHitMario(const THitActor* collider, s32 i)
+{
+	THitActor* actor = collider->mCollisions[i];
+	bool isMario     = actor->isActorType(0x80000001);
+	return isMario;
+}
+
 void TBossEelTearsRecoverCollision::perform(u32 cue,
                                             JDrama::TGraphics* graphics)
 {
-	volatile u8 stackPad[24];
-	(void)stackPad;
 	if (cue & CUE_MOVE) {
 		calcEntryRadius();
-		for (s32 i = 0; i < mColCount; ++i) {
-			if (mCollisions[i]->isActorType(0x80000001))
+		for (s32 i = 0; i < BossEelTearsColCount(this); ++i) {
+			if (BossEelTearsHitMario(this, i))
 				behaveToMario();
 		}
 	}
 	THitActor::perform(cue, graphics);
 }
 
+// The heart coin takes its model data straight from the `new` expression:
+// naming it (at any scope) costs retail's missing pointer copy.
+// TODO: instruction-exact with skin/eye register differences; the raw
+// mJointNum in the joint loop gives retail's 0x310 frame (getJointNum() is
+// 8 long, as in SMS_MakeJointsToArc). mMActor->getModel() for the skin-deform model cut
+// markers 90->75. Tried without effect: unnamed/split-declared deform,
+// hoisted skin deform.
 void TBossEel::init(TLiveManager* manager)
 {
 	mManager = manager;
@@ -1483,7 +1601,7 @@ void TBossEel::init(TLiveManager* manager)
 	onLiveFlag(LIVE_FLAG_UNK8 | LIVE_FLAG_UNK10);
 	mGroundHeight = gpMap->checkGround(
 	    mPosition.x, mPosition.y + getHeadHeight(), mPosition.z, &mGroundPlane);
-	mMActor->initNormalMotionBlend();
+	getMActor()->initNormalMotionBlend();
 	mSpine->initWith(&TNerveBossEelWaitAppear::theNerve());
 
 	initHitActor(0x08000003, 1, ACTOR_TYPE_PLAYER,
@@ -1493,9 +1611,11 @@ void TBossEel::init(TLiveManager* manager)
 	             mSaveParams->mSLBodyDamageHeight.get());
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	J3DModel* model = mMActor->getModel();
-	if (!model->getSkinDeform())
-		model->setSkinDeform(new J3DSkinDeform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
-	mMActor->resetDL();
+	if (!model->getSkinDeform()) {
+		J3DSkinDeform* deform = new J3DSkinDeform;
+		model->setSkinDeform(deform, J3D_DEFORM_ATTACH_FLAG_UNK_1);
+	}
+	getMActor()->resetDL();
 
 	mHeadCollision = new THitActor("めおとウナギの頭部");
 	mHeadCollision->initHitActor(0x08000003, 2, ACTOR_TYPE_PLAYER,
@@ -1504,34 +1624,36 @@ void TBossEel::init(TLiveManager* manager)
 	                             mSaveParams->mSLHeadDamageRadius.get(),
 	                             mSaveParams->mSLHeadDamageHeight.get());
 	TIdxGroupObj* enemyGroup
-	    = static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"));
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
 	enemyGroup->getChildren().push_back(mHeadCollision);
 	mHeadCollision->offHitFlag(HIT_FLAG_NO_COLLISION);
 
 	mBodyCollision = new TBossEelBodyCollision(
-	    mMActor->getModel()->getBaseTRMtx(), "体コリジョン");
+	    getMActor()->getModel()->getBaseTRMtx(), "体コリジョン");
 	mBodyCollision->initCollision();
 	mBodyCollision->mOwner = this;
 	enemyGroup->getChildren().push_back(mBodyCollision);
 	mBodyCollision->offHitFlag(HIT_FLAG_NO_COLLISION);
 
 	mBarrierCollision = new TBossEelBarrierCollision(
-	    mMActor->getModel()->getAnmMtx(7), "障害コリジョン");
+	    getMActor()->getModel()->getAnmMtx(7), "障害コリジョン");
 	mBarrierCollision->initCollision();
 	enemyGroup->getChildren().push_back(mBarrierCollision);
 	mBarrierCollision->offHitFlag(HIT_FLAG_NO_COLLISION);
 
-	JUTNameTab* jntNames = mMActor->getModel()->getModelData()->getJointName();
+	JUTNameTab* jntNames
+	    = getMActor()->getModel()->getModelData()->getJointName();
 
+	void* resource;
 	{
 		static const char* sEyePartsJointTable[]
 		    = { "eye1", "eye2", "eye3", "eye4" };
 
-		void* eyeResource = JKRGetResource("/scene/bosseel/eye.bmd");
+		resource = JKRGetResource("/scene/bosseel/eye.bmd");
 		SDLModelData* eyeModelData
 		    = new SDLModelData(J3DModelLoaderDataBase::load(
-		        eyeResource, J3DMLF_MaterialPEFull | J3DMLF_MaterialTexGenFull
-		                         | (2 << J3DMLF_TevStageNumShift)));
+		        resource, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+		                      | (4 << J3DMLF_TevStageNumShift)));
 		for (s32 i = 0; i < 4; ++i) {
 			s32 jointIndex = jntNames->getIndex(sEyePartsJointTable[i]);
 			mEyes[i]       = new TBossEelEye(this, jointIndex, eyeModelData, 3,
@@ -1548,18 +1670,15 @@ void TBossEel::init(TLiveManager* manager)
 	{
 		SDLModelData* toothModelData[3];
 
-		void* resource1   = JKRGetResource("/scene/bosseel/tooth.bmd");
+		resource = JKRGetResource("/scene/bosseel/tooth.bmd");
 		toothModelData[0] = new SDLModelData(J3DModelLoaderDataBase::load(
-		    resource1,
-		    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
-		void* resource2   = JKRGetResource("/scene/bosseel/bad_tooth.bmd");
+		    resource, J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
+		resource = JKRGetResource("/scene/bosseel/bad_tooth.bmd");
 		toothModelData[1] = new SDLModelData(J3DModelLoaderDataBase::load(
-		    resource2,
-		    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
-		void* resource3   = JKRGetResource("/scene/bosseel/gold_tooth.bmd");
+		    resource, J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
+		resource = JKRGetResource("/scene/bosseel/gold_tooth.bmd");
 		toothModelData[2] = new SDLModelData(J3DModelLoaderDataBase::load(
-		    resource3,
-		    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
+		    resource, J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift)));
 
 		static const char* sToothPartsJointTable[]
 		    = { "ha1", "ha2", "ha3", "ha4", "ha5", "ha6", "ha7", "ha8" };
@@ -1579,14 +1698,13 @@ void TBossEel::init(TLiveManager* manager)
 	}
 
 	{
-		void* heartResource
-		    = JKRGetResource("/scene/bosseel/meoto_heartcoin.bmd");
-		SDLModelData* heartModelData
-		    = new SDLModelData(J3DModelLoaderDataBase::load(
-		        heartResource, J3DMLF_MaterialPEFull | J3DMLF_MaterialTexGenFull
-		                           | (2 << J3DMLF_TevStageNumShift)));
-		mHeartCoin = new TBossEelHeartCoin(this, 0, heartModelData, 3,
-		                                   "めおとウナギハートコイン");
+		resource = JKRGetResource("/scene/bosseel/meoto_heartcoin.bmd");
+		mHeartCoin = new TBossEelHeartCoin(
+		    this, 0,
+		    new SDLModelData(J3DModelLoaderDataBase::load(
+		        resource, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+		                      | (4 << J3DMLF_TevStageNumShift))),
+		    3, "めおとウナギハートコイン");
 	}
 
 	{
@@ -1606,7 +1724,7 @@ void TBossEel::init(TLiveManager* manager)
 	}
 
 	mAwaCollision = new TBossEelAwaCollision(
-	    mMActor->getModel()->getAnmMtx(mMapCollisionJointIndices[2]),
+	    getMActor()->getModel()->getAnmMtx(mMapCollisionJointIndices[2]),
 	    "泡コリジョン");
 	mAwaCollision->initCollision();
 	enemyGroup->getChildren().push_back(mAwaCollision);
@@ -1620,42 +1738,63 @@ void TBossEel::init(TLiveManager* manager)
 	mouthCube->unk24.set(7000.0f, 10000.0f, 7000.0f);
 
 	if (mInstanceIndex == 0) {
-		for (u8 i = 0; i < getModel()->getModelData()->getJointNum(); ++i)
+		for (u8 i = 0; i < getModel()->getModelData()->mJointNum; ++i)
 			; // assert?
 	}
 
 	initAnmSound();
-	mMActor->getModel()->calc();
-	// TODO: the original had extra unused locals here.
-	
-	
+	getMActor()->getModel()->calc();
 }
 
 MtxPtr TBossEel::getTakingMtx() { return mMActor->getModel()->getAnmMtx(7); }
 
+// The mouth-cube lookup sits two inline levels below
+// calcAndSetCollisionCubeBite_, which puts JGadget::TVector<void*>::begin()
+// deep enough in TBossEel::perform's expansion that the ROM `bl`s it, as in
+// MSStageCubeFade::calcParamRatioInCube.
+static inline TCubeGeneralInfo* getMouthCube(const TBossEel* p, s32 id)
+{
+	TCubeManagerBase* mgr = p->mMouthCubeManager;
+	return mgr->getCube(id);
+}
+
 void TBossEel::calcAndSetCollisionCubeBite_()
 {
-	TCubeGeneralInfo* mouthCube
-	    = *mMouthCubeManager->unk14->getChildren().begin();
+	// Element [1], not [0]: retail's expansion of this body inside
+	// TBossEel::perform reads `lwz r3,4(r3)` off the begin() result, while the
+	// eel's other two mouth-cube sites read +0. The manager is built with two
+	// cubes.
+	TCubeGeneralInfo* mouthCube = getMouthCube(this, 1);
 	mouthCube->unk18.set(mRotation);
 	mouthCube->unkC.set(mPosition.x, mPosition.y + 1900.0f, mPosition.z);
-	mouthCube->unk24.set(1100.0f, 1000.0f, 1100.0f);
+	mouthCube->unk24.x = 1100.0f;
+	mouthCube->unk24.y = 1000.0f;
+	mouthCube->unk24.z = 1100.0f;
 	mouthCube->unkC.set(mPosition.x, mPosition.y + 9600.0f * mScaling.y,
 	                    mPosition.z);
 	mouthCube->unk24.set(7000.0f * mScaling.x, 10000.0f * mScaling.y,
 	                     7000.0f * mScaling.z);
 }
 
+static inline TBossEelEye* BosseelEye(const TBossEel* p, s32 i)
+{
+	TBossEelEye* eye = p->mEyes[i];
+	return eye;
+}
+
+static inline TBossEelEye* BosseelPairedEye(const TBossEel* p, s32 i)
+{
+	TBossEelEye* eye = BosseelEye(p, i)->mPairedEye;
+	return eye;
+}
+
 void TBossEel::updateTearsCnt()
 {
-
-	
-	
 	static const s32 eyeTable[] = { 0, 2, 1, 3 };
 
 	++mTearCycleTimer;
 	s32 interval = mSaveParams->mSLGenTearsTime.get();
-	f32 height   = fabsf(mPosition.y - gpMarioPos->y);
+	f32 height   = fabsf(getPosition().y - SMS_GetMarioPos().y);
 	if (height > 30000.0f)
 		interval *= 4;
 	else if (height > 15000.0f)
@@ -1665,16 +1804,16 @@ void TBossEel::updateTearsCnt()
 
 	if (mTearCycleTimer == interval - 100) {
 		s32 eyeIndex = eyeTable[mTearEyeIndex];
-		mEyes[eyeIndex]->setBckAnm(1);
-		mEyes[eyeIndex]->mPairedEye->setBckAnm(1);
+		BosseelEye(this, eyeIndex)->setBckAnm(1);
+		BosseelPairedEye(this, eyeIndex)->setBckAnm(1);
 	}
 
 	if (mTearCycleTimer > interval) {
 		mTearCycleTimer = 0;
 		s32 eyeIndex    = eyeTable[mTearEyeIndex];
-		MtxPtr spawnMtx = mEyes[eyeIndex]->getConnectedMtx();
-		mEyes[eyeIndex]->setBckAnm(1);
-		mEyes[eyeIndex]->mAnimationLoopCount = 0;
+		MtxPtr spawnMtx = BosseelEye(this, eyeIndex)->getConnectedMtx();
+		BosseelEye(this, eyeIndex)->setBckAnm(1);
+		BosseelEye(this, eyeIndex)->mAnimationLoopCount = 0;
 		shedTears(spawnMtx);
 		mTearEyeIndex += 1;
 		if (mTearEyeIndex >= 4)
@@ -1704,6 +1843,8 @@ bool TBossEel::canEatMario()
 	return false;
 }
 
+BOOL TBossEel::isEyeBlurOn() { }
+
 void TBossEel::shedTears(MtxPtr spawnMtx)
 {
 	JGeometry::TVec3<f32> position(spawnMtx[0][3], spawnMtx[1][3],
@@ -1730,16 +1871,45 @@ void TBossEel::shedTears(MtxPtr spawnMtx)
 	tears->mVelocity = direction;
 }
 
-#pragma dont_inline on
+// TODO: retail calls this from TNerveBossEelSleepOnBottom::execute and
+// TBossEelTooth::receiveMessage instead of expanding it, so the body must cost
+// 15 statements under the measured depth-1 budget (see the note on
+// TBossEelHeartCoin::generate). This spelling costs 13: one store, the outer
+// if/else at 6, and the four trailing statements. Writing the index selection as
+// two if/else pairs reaches 15 and makes both callers match with no pragma, but
+// it replaces retail's "default then override" codegen (`li r3,0` hoisted above
+// the toggle test, then a conditional `li r3,1`) and drops this function to
+// 91.3%, so the pragma is the smaller lie until the real two statements turn up.
+// Also short by 0x30 of frame (0x28 vs 0x58) with every instruction matching; an
+// unreferenced `Mtx` local does not grow it here, so the missing locals belong to
+// an inline expansion, most likely TBossEelEye::setBckAnm's accessor chain.
+static inline bool BosseelTearEyeToggle(const TBossEel* p)
+{
+	bool toggle = p->mTearEyeToggle;
+	return toggle;
+}
+
+static inline TBossEelEye* BosseelShedEye(const TBossEel* p, s32 i)
+{
+	TBossEelEye* eye = BosseelEye(p, i);
+	return eye;
+}
+
+// Retail calls this from TBossEelTooth::receiveMessage, TNerveBossEelDie and
+// TNerveBossEelSleepOnBottom instead of expanding it, so the body has to cost
+// 15 statements under the measured depth-1 budget of 14. The two that reach the
+// floor are both byte-free: naming the toggle out of its own store, and naming
+// the shed eye out of the getConnectedMtx() chain. Both the body and all three
+// callers stay exact, so the `dont_inline` pragma that used to stand here is
+// gone (pragma sweep 360's open lead, closed).
 void TBossEel::forceShedTears(bool rearEyes)
 {
-	volatile u8 stackPad[48];
-	(void)stackPad;
-	mTearEyeToggle = !mTearEyeToggle;
+	bool toggle    = !mTearEyeToggle;
+	mTearEyeToggle = toggle;
 	s32 eyeIndex;
 	if (!rearEyes) {
 		eyeIndex = 0;
-		if (mTearEyeToggle)
+		if (BosseelTearEyeToggle(this))
 			eyeIndex = 1;
 	} else {
 		eyeIndex = 2;
@@ -1747,12 +1917,12 @@ void TBossEel::forceShedTears(bool rearEyes)
 			eyeIndex = 3;
 	}
 
-	MtxPtr spawnMtx = mEyes[eyeIndex]->getConnectedMtx();
-	mEyes[eyeIndex]->setBckAnm(1);
-	mEyes[eyeIndex]->mAnimationLoopCount = 0;
+	TBossEelEye* shedEye = BosseelShedEye(this, eyeIndex);
+	MtxPtr spawnMtx      = shedEye->getConnectedMtx();
+	BosseelEye(this, eyeIndex)->setBckAnm(1);
+	BosseelEye(this, eyeIndex)->mAnimationLoopCount = 0;
 	shedTears(spawnMtx);
 }
-#pragma dont_inline off
 
 void TBossEel::generateVortex()
 {
@@ -1776,16 +1946,23 @@ void TBossEel::invalidateAllCollision()
 	mAwaCollision->offHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+// TODO: frame 0x20 short (0x100 vs 0x120; every slot shifts uniformly, so a
+// missing low-region inline level), and retail keeps distance.y/.z live in
+// f3/f4 from length() into dot() where ours reloads them. Inert: axis.dot,
+// distance -= center, penetration after the dot.
 void TBossEel::collideToMario()
 {
 	JGeometry::TVec3<f32> marioTarget = *gpMarioPos;
-	JGeometry::TVec3<f32> correction(0.0f, 0.0f, 0.0f);
+	JGeometry::TVec3<f32> correction;
+	correction.zero();
 
 	for (s32 i = 0; i < 2; ++i) {
 		MtxPtr collisionMtx
 		    = mMActor->getModel()->getAnmMtx(mMapCollisionJointIndices[i]);
-		JGeometry::TVec3<f32> center(collisionMtx[0][3], collisionMtx[1][3],
-		                             collisionMtx[2][3]);
+		JGeometry::TVec3<f32> center;
+		center.x = collisionMtx[0][3];
+		center.y = collisionMtx[1][3];
+		center.z = collisionMtx[2][3];
 		JGeometry::TVec3<f32> axis;
 		axis.x = collisionMtx[0][1];
 		axis.y = collisionMtx[1][1];
@@ -1817,9 +1994,6 @@ void TBossEel::collideToMario()
 		}
 		correction.add(push);
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 
 	marioTarget.add(correction);
 	SMS_MarioMoveRequest(marioTarget);
@@ -1846,6 +2020,20 @@ void TBossEel::perform(u32 cue, JDrama::TGraphics* graphics)
 		    = mAppearOffset
 		      + (mInitialPosition.y + mSaveParams->mSLInitTransYOffset.get());
 
+		// TODO: three things are known about this block and only one is
+		// applied. (1) Retail writes unk24.set(1100.0f, 1000.0f, 1100.0f)
+		// before the unkC set below, dead code overwritten by the scaled set
+		// (@6011/@6012 in the target's .sdata2); adding it matches those three
+		// stores but costs more than it gains, because (2) retail addresses
+		// mouthCube from one fixed base with 0xc/0x10/0x14 and 0x24/0x28/0x2c
+		// displacements while we bump the base with `stfsu f1, 0x24(r3)` and
+		// materialise a second base for the unkC group, and (3) retail `bl`s
+		// JGadget::TVector<void*>::begin() and dereferences its result at +4,
+		// where our chain (getChildren() -> TVector_pointer<T>::begin() ->
+		// TVector<void*>::begin(), depth 3) expands it and reads +0. Fix (2)
+		// and (3) before re-adding (1).  The later calcAndSetCollisionCubeBite_
+		// site now gets its `bl` from the getMouthCube -> getCube levels; the
+		// mouth cube there still lands in r6 where retail keeps r3.
 		TCubeGeneralInfo* mouthCube
 		    = *mMouthCubeManager->unk14->getChildren().begin();
 		mouthCube->unkC.set(mPosition.x, mPosition.y + 9600.0f * mScaling.y,
@@ -1860,7 +2048,7 @@ void TBossEel::perform(u32 cue, JDrama::TGraphics* graphics)
 
 		TPosition3f collisionMtx;
 		collisionMtx.set(
-		    mMActor->getModel()->getAnmMtx(mMapCollisionJointIndices[0]));
+		    mMActor->getModel()->getAnmMtx(mMapCollisionJointIndices[2]));
 		mMapCollisions[2]->moveMtx(collisionMtx);
 
 		if (mUseMapCollision) {
@@ -1878,28 +2066,33 @@ void TBossEel::perform(u32 cue, JDrama::TGraphics* graphics)
 		else
 			mBodyCollision->onHitFlag(HIT_FLAG_NO_COLLISION);
 
-		mHeadCollision->mPosition = mPosition;
+		mHeadCollision->mPosition = getPosition();
 		f32 bodyToHeadDistance    = mSaveParams->mSLBodyToHeadDistance.get();
 		bodyToHeadDistance *= mScaling.y;
 		mHeadCollision->mPosition.y += bodyToHeadDistance;
 
+		// TODO: retail schedules the head products differently (param * scale,
+		// store of the first result before the last two loads, f0-f5); the
+		// operand order and `.value` spellings leave the schedule unchanged.
 		mHeadCollision->setHitParams(
 		    mSaveParams->mSLHeadAttackRadius.get() * mScaling.x,
 		    mSaveParams->mSLHeadAttackHeight.get() * mScaling.x,
 		    mSaveParams->mSLHeadDamageRadius.get() * mScaling.x,
 		    mSaveParams->mSLHeadDamageHeight.get() * mScaling.x);
 
-		setHitParams(mSaveParams->mSLBodyAttackRadius.get() * mScaling.x,
-		             mSaveParams->mSLBodyAttackHeight.get() * mScaling.x,
-		             mSaveParams->mSLBodyDamageRadius.get() * mScaling.x,
-		             mSaveParams->mSLBodyDamageHeight.get() * mScaling.x);
+		setHitParams(mSaveParams->mSLBodyAttackRadius.get() * getScaling().x,
+		             mSaveParams->mSLBodyAttackHeight.get() * getScaling().x,
+		             mSaveParams->mSLBodyDamageRadius.get() * getScaling().x,
+		             mSaveParams->mSLBodyDamageHeight.get() * getScaling().x);
 
 		calcAndSetCollisionCubeBite_();
 
 		if (mHitPoints != 0) {
 			mForceEat = false;
 			for (s32 i = 0; i < mHeadCollision->getColNum(); ++i) {
-				if (mHeadCollision->getCollision(i)->isActorType(0x80000001))
+				// direct compare: retail has no materialised bool here
+				if (mHeadCollision->getCollision(i)->getActorType()
+				    == 0x80000001)
 					mForceEat = true;
 			}
 
@@ -2012,6 +2205,21 @@ void TBossEel::perform(u32 cue, JDrama::TGraphics* graphics)
 	mBarrierCollision->perform(cue, graphics);
 }
 
+// TODO: this body is misspelled; several nerves only match through
+// compensating binders. docs/progress/lever-search/bosseel_setbckanm_248.patch
+// (named rate/ctrl locals, `!table ? nullptr : table[i]`, five binders
+// removed) is 248 B like the map and closes OutWait and SecondSpin, but
+// FirstSpin's spinSpeed drops to 0x68 (retail 0x6c); its `ratio` local is
+// frame-only. Find the missing inline level instead (2026-09-22).
+// Sweep 2026-09-23 on the patch base (48 variants: ratio/rate/ctrl named or
+// not, three basName spellings, accel via getBossEelParams): with the five
+// binders gone, only `ratio` separates the two families -- named, WaitAppear,
+// SecondSpin, OutWait and SleepOnBottom are exact and FirstSpin is +8 (an
+// 8-byte hole between spinSpeed at 0x6c and the rand conversion); unnamed,
+// both spins are exact and the rest are 4 short per site. Inert on FirstSpin:
+// `!getTime()` (frame lands, spinSpeed 0x68), a named MsRandF result, a named
+// speed, ratio declared first or passed as the argument, getCurBckAnmPtr, and
+// `table == nullptr`. Appear, Eat, Die, MouthOpenWait stay 0x18-0x28 short.
 void TBossEel::setBckAnm(int index)
 {
 	mPreviousBckIndex = getMActor()->getCurAnmIdx(ANM_TYPE_BCK);
@@ -2044,7 +2252,7 @@ void TBossEel::deadCheck()
 	}
 }
 
-bool TBossEel::isValidToothDamage()
+BOOL TBossEel::isValidToothDamage()
 {
 	if (mSpine->getCurrentNerve() == &TNerveBossEelEat::theNerve())
 		return false;
@@ -2080,9 +2288,10 @@ static s32 hoseiDiveCameraCallback(uintptr_t actorAddress, u32 state)
 	if (state == 1) {
 		const TLiveActor* actor
 		    = reinterpret_cast<const TLiveActor*>(actorAddress);
-		JGeometry::TVec3<f32> position = actor->mPosition;
+		const JGeometry::TVec3<f32>& marioPos = *gpMarioPos;
+		JGeometry::TVec3<f32> position               = actor->mPosition;
 		position.y += 12300.0f;
-		gpCamera->warpPosAndAt(position, *gpMarioPos);
+		gpCamera->warpPosAndAt(position, marioPos);
 	}
 	return 0;
 }
@@ -2090,8 +2299,7 @@ static s32 hoseiDiveCameraCallback(uintptr_t actorAddress, u32 state)
 void TBossEel::startMoguCamera()
 {
 	if (!mMoguCameraActive) {
-		gpMarDirector->getConsole()->startAppearBalloon(
-		    VERSION_SELECT(GMSJ01(0xE0015), GMSP01(0x15)), true);
+		gpMarDirector->getConsole()->startAppearBalloon(0x15, true);
 		SMSGetMarDirector()->fireStartDemoCamera(
 		    "meoto_mogu_camera", &mPosition, -1, 0.0f, false,
 		    &hoseiDiveCameraCallback, reinterpret_cast<uintptr_t>(this),
@@ -2102,6 +2310,14 @@ void TBossEel::startMoguCamera()
 
 const char** TBossEel::getBasNameTable() const { return bosseel_bastable; }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TNerveBossEelWaitAppear::execute (batch 127).
+static inline TCubeManagerBase* BosseelMouthCubeManager(const TBossEel* p)
+{
+	TCubeManagerBase* mouthCubeManager = p->mMouthCubeManager;
+	return mouthCubeManager;
+}
+
 DEFINE_NERVE(TNerveBossEelWaitAppear, TLiveActor)
 {
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
@@ -2109,37 +2325,42 @@ DEFINE_NERVE(TNerveBossEelWaitAppear, TLiveActor)
 		eel->setBckAnm(10);
 
 	if (spine->getTime() == 2500)
-		gpMarDirector->getConsole()->startAppearBalloon(
-		    VERSION_SELECT(GMSJ01(0xE0012), GMSP01(0x12)), true);
+		SMSGetMarDirectorBound()->getConsole()->startAppearBalloon(0x12, true);
 
 	JGeometry::TVec3<f32> marioPosition = *gpMarioPos;
 	marioPosition.y += 75.0f;
-	if (eel->mMouthCubeManager->isInCube(marioPosition, (s32)0)) {
+	if (BosseelMouthCubeManager(eel)->isInCube(marioPosition, (s32)0)) {
 		spine->pushAfterCurrent(&TNerveBossEelFirstSpin::theNerve());
 		return true;
 	}
 	return false;
 }
 
+static inline MSound* BosseelBackSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 void ExecSpinNerve_Sub(TBossEel* eel)
 {
 	f32 spinSpeed = eel->mTurnSpeed;
-	CLBChaseGeneralConstantSpecifySpeed(&spinSpeed,
-	                                    eel->mSaveParams->mSLSpinMaxSpeed.get(),
-	                                    eel->mSaveParams->mSLSpinAccel.get());
+	f32 maxSpeed  = eel->getBossEelParams().mSLSpinMaxSpeed.get();
+	CLBChaseGeneralConstantSpecifySpeed(
+	    &spinSpeed, maxSpeed, eel->getBossEelParams().mSLSpinAccel.get());
 	eel->mTurnSpeed = spinSpeed;
 	gpCameraShake->keepShake(static_cast<EnumCamShakeMode>(0x18), 1.0f);
 
 	if (eel->checkLiveFlag(TBossEel::LIVE_FLAG_UNK10000)) {
 		eel->mRotation.y -= spinSpeed;
-		if (eel->mRotation.y <= 0.0f)
-			SMSGetMSound()->startSoundActorWithInfo(
+		if (eel->getRotation().y <= 0.0f)
+			BosseelBackSound()->startSoundActorWithInfo(
 			    MSD_SE_BS_UNG_ROLL, &eel->mPosition, nullptr, spinSpeed, 0, 0,
 			    nullptr, 0, 4);
 	} else {
 		eel->mRotation.y += spinSpeed;
-		if (eel->mRotation.y >= 360.0f)
-			SMSGetMSound()->startSoundActorWithInfo(
+		if (eel->getRotation().y >= 360.0f)
+			BosseelBackSound()->startSoundActorWithInfo(
 			    MSD_SE_BS_UNG_ROLL, &eel->mPosition, nullptr, spinSpeed, 0, 0,
 			    nullptr, 0, 4);
 	}
@@ -2151,7 +2372,7 @@ DEFINE_NERVE(TNerveBossEelFirstSpin, TLiveActor)
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
 	if (spine->getTime() == 0) {
 		eel->mTurnSpeed = 0.0f;
-		SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_UNG_ROLL,
+		gpMSound->startSoundActorWithInfo(MSD_SE_BS_UNG_ROLL,
 		                                        &eel->mPosition, nullptr, 2.0f,
 		                                        0, 0, nullptr, 0, 4);
 		eel->setBckAnm(10);
@@ -2167,16 +2388,13 @@ DEFINE_NERVE(TNerveBossEelFirstSpin, TLiveActor)
 		spine->pushAfterCurrent(&TNerveBossEelAppear::theNerve());
 		return true;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
 DEFINE_NERVE(TNerveBossEelSecondSpin, TLiveActor)
 {
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
-	if (spine->getTime() == 0) {
+	if (!spine->getTime()) {
 		eel->setBckAnm(10);
 		JGeometry::TVec2<s32>* spinTimer = eel->mSpinTimer;
 		spinTimer->x                     = 0;
@@ -2204,9 +2422,6 @@ DEFINE_NERVE(TNerveBossEelSecondSpin, TLiveActor)
 		spine->pushAfterCurrent(&TNerveBossEelAppear::theNerve());
 		return true;
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -2244,23 +2459,16 @@ DEFINE_NERVE(TNerveBossEelAppear, TLiveActor)
 		eel->mBarrierCollision->onHitFlag(HIT_FLAG_NO_COLLISION);
 		if (eel->mCollisionEnabled) {
 			eel->mCollisionEnabled = false;
-			gpMarDirector->getConsole()->startAppearBalloon(
-			    VERSION_SELECT(GMSJ01(0xE0013), GMSP01(0x13)), true);
+			gpMarDirector->getConsole()->startAppearBalloon(0x13, true);
 		}
 		return true;
 	}
 
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
 DEFINE_NERVE(TNerveBossEelOutWait, TLiveActor)
 {
-
-	
-	
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
 	++eel->mBattleTimer;
 	if (spine->getTime() == 0) {
@@ -2300,12 +2508,25 @@ DEFINE_NERVE(TNerveBossEelOutWait, TLiveActor)
 	return false;
 }
 
+static inline J3DFrameCtrl* BosseelBackFrameCtrl(const TBossEel* p)
+{
+	J3DFrameCtrl* ctrl = p->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
+	return ctrl;
+}
+
+static inline TBossEel* BosseelBackBody(TSpineBase<TLiveActor>* spine)
+{
+	TLiveActor* body = spine->getBody();
+	TBossEel* eel    = static_cast<TBossEel*>(body);
+	return eel;
+}
+
 static BOOL ExecBackNerve_Sub(TSpineBase<TLiveActor>* spine, f32 speed)
 {
-	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
+	TBossEel* eel = BosseelBackBody(spine);
 	if (spine->getTime() == 1) {
-		SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_DOWN, &eel->mPosition, 0,
-		                                nullptr, 0, 4);
+		BosseelBackSound()->startSoundActor(MSD_SE_BS_UNG_DOWN,
+		                                    &eel->mPosition, 0, nullptr, 0, 4);
 		if (eel->mToothBroken) {
 			eel->mToothBroken = false;
 			eel->setBckAnm(6);
@@ -2317,22 +2538,19 @@ static BOOL ExecBackNerve_Sub(TSpineBase<TLiveActor>* spine, f32 speed)
 	}
 
 	eel->mAppearOffset
-	    -= eel->mSaveParams->mSLAppearMoveDistY.get()
-	       / (eel->mMActor->getFrameCtrl(ANM_TYPE_BCK)->getEnd() * 2);
+	    -= eel->getBossEelParams().mSLAppearMoveDistY.get()
+	       / (BosseelBackFrameCtrl(eel)->getEnd() * 2);
 	if (eel->mAppearOffset < 0.0f) {
 		eel->mAppearOffset = 0.0f;
 		if (eel->checkCurAnmEnd(0)) {
 			eel->mInDemo = false;
 			spine->pushAfterCurrent(&TNerveBossEelSecondSpin::theNerve());
-			if (eel->mMActor->checkCurBckFromIndex(6))
+			if (eel->getMActor()->checkCurBckFromIndex(6))
 				spine->pushAfterCurrent(
 				    &TNerveBossEelSleepOnBottom::theNerve());
 			return true;
 		}
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -2379,16 +2597,18 @@ DEFINE_NERVE(TNerveBossEelEat, TLiveActor)
 				if (emitter)
 					emitter->setGlobalScale(eel->mScaling);
 			}
-		} else if (eel->mMActor->checkCurBckFromIndex(12)) {
-			if (SMS_SendMessageToMario(eel, 8)) {
-				eel->mHeldObject = nullptr;
-				SMS_SendMessageToMario(eel, 14);
-				gpMarDirector->fireEndDemoCamera();
-				eel->mMoguCameraActive = false;
+		} else {
+			if (eel->mMActor->checkCurBckFromIndex(12)) {
+				if (SMS_SendMessageToMario(eel, 8)) {
+					eel->mHeldObject = nullptr;
+					SMS_SendMessageToMario(eel, 14);
+					gpMarDirector->fireEndDemoCamera();
+					eel->mMoguCameraActive = false;
+				}
+				spine->reset();
+				spine->setDefaultNext();
+				spine->pushAfterCurrent(&TNerveBossEelQuickBack::theNerve());
 			}
-			spine->reset();
-			spine->setDefaultNext();
-			spine->pushAfterCurrent(&TNerveBossEelQuickBack::theNerve());
 			return true;
 		}
 	}
@@ -2405,9 +2625,6 @@ DEFINE_NERVE(TNerveBossEelEat, TLiveActor)
 			eel->startMoguCamera();
 		}
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -2417,10 +2634,9 @@ DEFINE_NERVE(TNerveBossEelDie, TLiveActor)
 	if (spine->getTime() == 0) {
 		SMSGetMSound()->startSoundActor(MSD_SE_BS_UNG_VOICE_LAST,
 		                                &eel->mPosition, 0, nullptr, 0, 4);
-		gpMarDirector->getConsole()->startAppearBalloon(
-		    VERSION_SELECT(GMSJ01(0xE0014), GMSP01(0x14)), true);
+		SMSGetMarDirector()->getConsole()->startAppearBalloon(0x14, true);
 		MSBgm::stopTrackBGMs(7, 10);
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK1E, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BEEL_DIE, 1.0f);
 		eel->setBckAnm(3);
 		eel->invalidateAllCollision();
 		eel->mHeartCoin->generate(eel->mPosition);
@@ -2433,25 +2649,27 @@ DEFINE_NERVE(TNerveBossEelDie, TLiveActor)
 		}
 	}
 
-	if (eel->mMActor->checkCurBckFromIndex(3)) {
-		if (eel->mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(650.0f))
+	if (eel->getMActor()->checkCurBckFromIndex(3)) {
+		if (eel->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(650.0f))
 			eel->mHeartCoin->getMActor()->setBckFromIndex(8);
 
 		if (eel->checkCurAnmEnd(0)) {
 			if (SMS_SendMessageToMario(eel, 8)) {
 				eel->mHeldObject = nullptr;
 				SMS_SendMessageToMario(eel, 14);
-				gpMarDirector->fireEndDemoCamera();
+				SMSGetMarDirector()->fireEndDemoCamera();
 			}
 
 			JGeometry::TVec3<f32> marioPosition = *gpMarioPos;
 			eel->generateBubble(marioPosition);
 
-			s32 jointIndex = eel->mMActor->getModel()
+			s32 jointIndex = eel->getMActor()
+			                     ->getModel()
 			                     ->getModelData()
 			                     ->getJointName()
 			                     ->getIndex("ha7");
-			MtxPtr shineMtx = eel->mMActor->getModel()->getAnmMtx(jointIndex);
+			MtxPtr shineMtx
+			    = eel->getMActor()->getModel()->getAnmMtx(jointIndex);
 			gpItemManager->makeShineAppearWithDemo(
 			    "シャイン（ボス用）", "めおとウナギシャインカメラ",
 			    shineMtx[0][3], shineMtx[1][3], shineMtx[2][3]);
@@ -2461,9 +2679,6 @@ DEFINE_NERVE(TNerveBossEelDie, TLiveActor)
 			eel->setBckAnm(4);
 		}
 	}
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
 }
 
@@ -2474,11 +2689,11 @@ DEFINE_NERVE(TNerveBossEelMouthOpenWait, TLiveActor)
 		if (eel->mToothBroken)
 			eel->mToothBroken = false;
 		eel->setBckAnm(13);
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK1B, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_BEEL_SUCK_OPEN, 1.0f);
 	} else if (eel->checkCurAnmEnd(0)) {
 		if (eel->mMActor->checkCurBckFromIndex(13)) {
 			eel->setBckAnm(14);
-			gpCameraShake->startShake(CAM_SHAKE_MODE_UNK1C, 1.0f);
+			gpCameraShake->startShake(CAM_SHAKE_MODE_BEEL_SUCK_LOOP, 1.0f);
 			eel->generateVortex();
 		} else {
 			s32 openFrames = eel->mSaveParams->mSLMouthOpenFrame.get();
@@ -2493,7 +2708,7 @@ DEFINE_NERVE(TNerveBossEelMouthOpenWait, TLiveActor)
 			if (spine->getTime() > openFrames) {
 				if (eel->mMActor->checkCurBckFromIndex(2))
 					return true;
-				gpCameraShake->startShake(CAM_SHAKE_MODE_UNK1D, 1.0f);
+				gpCameraShake->startShake(CAM_SHAKE_MODE_BEEL_SUCK_CLOSE, 1.0f);
 				eel->setBckAnm(2);
 			}
 		}
@@ -2501,17 +2716,19 @@ DEFINE_NERVE(TNerveBossEelMouthOpenWait, TLiveActor)
 
 	if (eel->mMActor->checkCurBckFromIndex(14))
 		eel->mRotation.y += TBossEel::mOpenRollSpeed;
-	// TODO: the original had extra unused locals here.
-	
-	
 	return false;
+}
+
+static inline TBossEel* BossEelSleepingBody(TSpineBase<TLiveActor>* spine)
+{
+	TLiveActor* body = spine->getBody();
+	TBossEel* eel    = static_cast<TBossEel*>(body);
+	return eel;
 }
 
 DEFINE_NERVE(TNerveBossEelSleepOnBottom, TLiveActor)
 {
-	volatile u8 stackPad[16];
-	(void)stackPad;
-	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
+	TBossEel* eel = BossEelSleepingBody(spine);
 
 	if (spine->getTime() == 0) {
 		eel->mBattleTimer = 0;

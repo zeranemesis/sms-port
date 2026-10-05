@@ -6,6 +6,7 @@
 
 class TBathtubKillerParams;
 class TBathtub;
+class TMapObjBase;
 
 class TBathtubKillerPersonality {
 public:
@@ -15,11 +16,11 @@ public:
 	void makeShine(const TBathtubKillerParams*);
 	void makeNormal(const TBathtubKillerParams*);
 
-	/* 0x00 */ f32 unk0;
-	/* 0x04 */ f32 unk4;
-	/* 0x08 */ f32 unk8;
-	/* 0x0C */ f32 unkC;
-	/* 0x10 */ s32 unk10;
+	/* 0x00 */ f32 mAccelerationQuatRate;
+	/* 0x04 */ f32 mChaseAcceleration;
+	/* 0x08 */ f32 mChaseSpeed;
+	/* 0x0C */ f32 mInitialSpeed;
+	/* 0x10 */ s32 mDeadPeriod;
 };
 
 class TBathtubKillerParams : public TSmallEnemyParams {
@@ -80,15 +81,28 @@ public:
 
 	void resetBathtubKiller();
 	void generateItemBathtubKiller();
+	void killBathtubKiller();
 	void breakBathtubKiller();
+	void explodeBathtubKiller();
+	void makeNoseColor();
 	f32 getBathtubY();
 	void makeInitialVelocity(JGeometry::TVec3<f32>);
+	void moveParabolic();
 	void moveChasing();
+	void moveStraight();
+	void makeVelocityQuat();
+	void makeAccelerationQuat();
 	void makeQuat(JGeometry::TVec3<f32>, f32, f32);
+	void makeScrewQuat(JGeometry::TVec3<f32>, f32, f32);
+	void setNormalBathtubKillerAnm();
+	void setChaseBathtubKillerAnm();
+	void setStraightBathtubKillerAnm();
 	void setDeadBathtubKillerAnm();
+	void updateTimers();
 	bool isAttackable();
 	bool isAboided();
 	bool canChase();
+	void generateExplosion();
 
 	// fabricated
 	TBathtubKillerParams* getSaveParam2() const
@@ -98,27 +112,24 @@ public:
 
 public:
 	/* 0x194 */ u8 unk194;
-	/* 0x198 */ TBathtubKillerPersonality unk198;
+	/* 0x198 */ TBathtubKillerPersonality mPersonality;
 	/* 0x1AC */ JGeometry::TQuat4<f32> mQuat;
-	/* 0x1BC */ JGeometry::TVec3<f32> unk1BC;
+	/* 0x1BC */ JGeometry::TVec3<f32> mAcceleration;
 	/* 0x1C8 */ char unk1C8[4];
 	/* 0x1CC */ TBathtub* unk1CC;
 	/* 0x1D0 */ char unk1D0[4];
 	/* 0x1D4 */ int unk1D4;
-	/* 0x1D8 */ GXColorS10 mBodyColor;
-	/* 0x1E0 */ GXColorS10 mNoseColor;
-	/* 0x1E8 */ GXColorS10 mEyesColor;
-	/* 0x1F0 */ GXColorS10 mBaseColor;
+	/* 0x1D8 */ GXColorS10 unk1D8;
+	/* 0x1E0 */ GXColorS10 unk1E0;
+	/* 0x1E8 */ GXColorS10 unk1E8;
+	/* 0x1F0 */ GXColorS10 unk1F0;
 	/* 0x1F8 */ f32 unk1F8;
 	/* 0x1FC */ f32 unk1FC;
 	/* 0x200 */ f32 unk200;
 	/* 0x204 */ f32 unk204;
-	/* 0x208 */ int unk208;
-	/* 0x20C */ int unk20C;
-	/* 0x210 */ int unk210;
-	/* 0x214 */ int unk214;
-	/* 0x218 */ int unk218;
-	/* 0x21C */ int unk21C;
+	// Countdown timers, stepped together by updateTimers.
+	/* 0x208 */ int mTimers[5];
+	/* 0x21C */ u32 unk21C;
 	/* 0x220 */ TPosition3f unk220;
 };
 
@@ -138,14 +149,15 @@ public:
 	virtual void createModelData();
 	virtual TSpineEnemy* createEnemyInstance();
 
+	void generateMushroom(JGeometry::TVec3<f32>);
 	int countActiveKillers();
 	int countActiveShineKillers();
 
 public:
-	/* 0x60 */ s8 unk60;
-	/* 0x64 */ TLiveActor* unk64;
-	/* 0x68 */ u8 unk68;
-	/* 0x69 */ s8 unk69;
+	/* 0x60 */ s8 mInitialLives;
+	/* 0x64 */ TMapObjBase* mMushroom;
+	/* 0x68 */ bool mDroppedFinalMushroom;
+	/* 0x69 */ s8 mMushroomDropCount;
 };
 
 #endif

@@ -10,6 +10,17 @@
 // rogue include
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// Binding level over a raw member read, worth +8 of low region in
+// TGraphWeb::getNeighborNodeIndexByFlag (batch 127) and
+// TGraphWeb::getRandomNextIndex (the TRailNode filter temporary sits at
+// 0x24 only with this named step; getGraphNode() on the start node
+// overshoots the frame by 8).
+static inline s16 GraphConnectionNum(const TRailNode* p)
+{
+	s16 connectionNum = p->mConnectionNum;
+	return connectionNum;
+}
+
 TGraphNode::TGraphNode()
     : unk0(nullptr)
     , unk4(0)
@@ -63,22 +74,31 @@ f32 TSplineRail::wrapT(f32 param_1)
 	return param_1;
 }
 
-// TODO: you'd think this is correct, but the size is wrong...
-f32 TSplineRail::getNthT(int n) { return unk0->mParametrization[n]; }
+// 0x24 in the map: a looped rail's parameter table carries a leading guard
+// point, so the looped index is shifted by one here (the tracers' general
+// cases rely on it; their loop-seam cases read the path's table directly).
+f32 TSplineRail::getNthT(int n)
+{
+	return unk0->getNthT(unk4 ? n + 1 : n);
+}
 
 JGeometry::TVec3<f32> TSplineRail::getPosition(f32 t)
 {
 	return unk0->getPoint(wrapT(t));
 }
 
+// TODO: frame 0xf8 vs 0xe8: retail has 4 more above the point/dir block and
+// 0xc more low region (dir declared before point is closer). Inert
+// (fo1): set() for either output, a named t + dt,
+// a named wrapT result, `dt` first; a named rot local fixes the frame at +6.
 void TSplineRail::getPosAndRot(f32 t, JGeometry::TVec3<f32>* out_pos,
                                JGeometry::TVec3<f32>* out_rot)
 {
 	t      = wrapT(t);
 	f32 dt = 0.01f;
 
-	JGeometry::TVec3<f32> point;
 	JGeometry::TVec3<f32> dir;
+	JGeometry::TVec3<f32> point;
 
 
 	for (;;) {
@@ -262,7 +282,7 @@ int TGraphWeb::getShortestNextIndex(int param_1, int param_2, u32 param_3) const
 
 int TGraphWeb::getRandomNextIndex(int param_1, int param_2, u32 param_3) const
 {
-	const TGraphNode* graphNode = &getGraphNode(param_1);
+	const TGraphNode* graphNode = &unk0[param_1];
 
 	TRailNode tmp;
 	const TRailNode* railNode;
@@ -273,7 +293,7 @@ int TGraphWeb::getRandomNextIndex(int param_1, int param_2, u32 param_3) const
 		railNode = &tmp;
 	}
 
-	s16 num = railNode->mConnectionNum;
+	s16 num = GraphConnectionNum(railNode);
 	if (num == 0)
 		return param_1;
 
@@ -305,13 +325,13 @@ int TGraphWeb::getEscapeFromMarioIndex(int param_1, int param_2,
                                        const JGeometry::TVec3<f32>& param_3,
                                        u32 param_4) const
 {
-	const TGraphNode& node = getGraphNode(param_1);
+	const TGraphNode* node = &unk0[param_1];
 	TRailNode fakeNode;
 	const TRailNode* railNode;
 	if (param_4 == -1) {
-		railNode = node.getRailNode();
+		railNode = node->getRailNode();
 	} else {
-		filterRailNode(param_4, node.getRailNode(), unk4, &fakeNode);
+		filterRailNode(param_4, node->getRailNode(), unk4, &fakeNode);
 		railNode = &fakeNode;
 	}
 
@@ -339,7 +359,7 @@ int TGraphWeb::getEscapeFromMarioIndex(int param_1, int param_2,
 			continue;
 
 		JGeometry::TVec3<f32> local_ac;
-		getGraphNode(railNode->mConnections[i]).getPoint(local_ac);
+		getGraphNode(railNode->mConnections[i]).getPoint(&local_ac);
 		local_ac -= param_3;
 		MsVECNormalize(&local_ac, &local_ac);
 
@@ -436,6 +456,9 @@ int TGraphWeb::getRandomButDirLimited(int param_1, int param_2,
 	}
 
 	JGeometry::TVec3<f32> local_cc = param_3;
+	JGeometry::TVec3<f32> local_d8;
+	JGeometry::TVec3<f32> local_e4;
+	f32 cos;
 	MsVECNormalize(&local_cc, &local_cc);
 
 	int result;
@@ -446,7 +469,6 @@ int TGraphWeb::getRandomButDirLimited(int param_1, int param_2,
 		if (param_2 == railNode->mConnections[i])
 			continue;
 
-		JGeometry::TVec3<f32> local_d8;
 		getGraphNode(railNode->mConnections[i]).getPoint(&local_d8);
 		local_d8 -= param_4;
 		MsVECNormalize(&local_d8, &local_d8);
@@ -466,7 +488,7 @@ int TGraphWeb::getRandomButDirLimited(int param_1, int param_2,
 		}
 	}
 
-	if (result > 0)
+	if (iVar13 > 0)
 		return result;
 
 	result     = -1;
@@ -475,12 +497,11 @@ int TGraphWeb::getRandomButDirLimited(int param_1, int param_2,
 		if (param_2 == railNode->mConnections[i])
 			continue;
 
-		JGeometry::TVec3<f32> local_e4;
 		unk0[railNode->mConnections[i]].getPoint(&local_e4);
 		local_e4.sub(param_4);
 		MsVECNormalize(&local_e4, &local_e4);
 
-		f32 cos = local_e4.dot(local_cc);
+		cos = local_e4.dot(local_cc);
 		if (result < 0 || cos > maxCos) {
 			maxCos = cos;
 			result = railNode->mConnections[i];
@@ -495,14 +516,14 @@ int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
                                    const JGeometry::TVec3<f32>& param_4,
                                    f32 param_5, u32 param_6) const
 {
-	const TGraphNode& graphNode = getGraphNode(param_1);
+	const TGraphNode* graphNode = &unk0[param_1];
 
 	TRailNode tmp;
 	const TRailNode* railNode;
 	if (param_6 == 0xffffffff) {
-		railNode = graphNode.getRailNode();
+		railNode = graphNode->getRailNode();
 	} else {
-		filterRailNode(param_6, graphNode.getRailNode(), unk4, &tmp);
+		filterRailNode(param_6, graphNode->getRailNode(), unk4, &tmp);
 		railNode = &tmp;
 	}
 
@@ -521,6 +542,9 @@ int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
 
 	JGeometry::TVec3<f32> local_c0 = param_3;
 	JGeometry::TVec3<f32> local_cc = SMS_GetMarioPos();
+	JGeometry::TVec3<f32> local_d8;
+	f32 cos;
+	JGeometry::TVec3<f32> local_e4;
 	MsVECNormalize(&local_c0, &local_c0);
 	local_cc -= param_4;
 	MsVECNormalize(&local_cc, &local_cc);
@@ -533,11 +557,12 @@ int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
 		if (param_2 == railNode->mConnections[i])
 			continue;
 
-		JGeometry::TVec3<f32> local_d8;
-		getGraphNode(railNode->mConnections[i]).getPoint(&local_d8);
+		const TGraphNode& node = getGraphNode(railNode->mConnections[i]);
+		node.getPoint(&local_d8);
 		local_d8 -= param_4;
 		MsVECNormalize(&local_d8, &local_d8);
 
+		f32 dirCos;
 		JGeometry::TVec3<f32> local_f4;
 		local_f4.cross(local_c0, local_d8);
 		f32 angle = abs(matan(local_c0.dot(local_d8), MsVECMag2(&local_f4))
@@ -547,10 +572,10 @@ int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
 				result    = railNode->mConnections[i];
 				unaff_f29 = local_d8.dot(local_cc);
 			} else {
-				f32 cos = local_d8.dot(local_cc);
-				if (cos < unaff_f29) {
+				dirCos = local_d8.dot(local_cc);
+				if (dirCos < unaff_f29) {
 					result    = railNode->mConnections[i];
-					unaff_f29 = cos;
+					unaff_f29 = dirCos;
 				}
 			}
 		}
@@ -564,12 +589,11 @@ int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
 		if (param_2 == railNode->mConnections[i])
 			continue;
 
-		JGeometry::TVec3<f32> local_e4;
 		unk0[railNode->mConnections[i]].getPoint(&local_e4);
 		local_e4.sub(param_4);
 		MsVECNormalize(&local_e4, &local_e4);
 
-		f32 cos = local_e4.dot(local_c0);
+		cos = local_e4.dot(local_cc);
 		if (result < 0 || cos < unaff_f29) {
 			unaff_f29 = cos;
 			result    = railNode->mConnections[i];
@@ -601,7 +625,27 @@ int TGraphWeb::findNearestNodeIndex(const JGeometry::TVec3<f32>& param_1,
 	return result;
 }
 
-int TGraphWeb::findFarthestNodeIndex(const JGeometry::TVec3<f32>&, u32) const {
+// UNUSED (0xfc): findNearestNodeIndex with the comparison reversed.
+int TGraphWeb::findFarthestNodeIndex(const JGeometry::TVec3<f32>& param_1,
+                                     u32 param_2) const
+{
+	int i;
+	int result  = -1;
+	f32 maxDist = -1.0f;
+	for (i = 0; i < unk8; ++i) {
+		if (param_2 != 0xffffffff && getGraphNode(i).checkFlag(param_2))
+			continue;
+
+		JGeometry::TVec3<f32> pos;
+		getGraphNode(i).getPoint(&pos);
+		pos -= param_1;
+		f32 dist = pos.squared();
+		if (maxDist < 0.0f || dist > maxDist) {
+			maxDist = dist;
+			result  = i;
+		}
+	}
+	return result;
 }
 
 int TGraphWeb::findNearestVisibleIndex(const JGeometry::TVec3<f32>& param_1,
@@ -641,29 +685,31 @@ void TGraphWeb::getNodeIndexInXZRange(const JGeometry::TVec3<f32>&, f32,
 {
 }
 
-#pragma dont_inline on
+// Retail calls this from initGoalIndex and from itself (MWCC would expand the
+// self-recursive call one level): the named `period` is the fifteenth
+// statement over the depth-1 budget. Measured and rejected: naming
+// railNode->mConnectionNum as the loop bound (does not tip it), naming the
+// n-th graph node a second time, or an early `continue` (both cost bytes).
 void TGraphWeb::calcGraphDirection(int n)
 {
-	volatile u8 stackPad[40];
-	(void)stackPad;
 	TGraphNode& graphNode = getGraphNode(n);
-	TRailNode* railNode   = graphNode.getRailNode();
+	TRailNode* railNode   = getGraphNode(n).getRailNode();
 	for (int i = 0; i < railNode->mConnectionNum; ++i) {
-		f32 totalPeriod = railNode->mPeriods[i] + graphNode.getUnk8();
+		f32 period      = railNode->mPeriods[i];
+		f32 totalPeriod = period + graphNode.getUnk8();
 		u32 conn        = railNode->mConnections[i];
 
 		// are we trying to find shortest paths in a graph here and failing
 		// miserably at it or what?
 		TGraphNode& otherGraphNode = getGraphNode(conn);
-		if (otherGraphNode.getUnk4() == 0
-		    || otherGraphNode.getUnk8() > totalPeriod) {
+		if (getGraphNode(conn).getUnk4() == 0
+		    || getGraphNode(conn).getUnk8() > totalPeriod) {
 			otherGraphNode.incUnk4();
 			otherGraphNode.setUnk8(totalPeriod);
 			calcGraphDirection(conn);
 		}
 	}
 }
-#pragma dont_inline off
 
 void TGraphWeb::initGoalIndex(const Vec& param_1)
 {
@@ -697,7 +743,7 @@ void TGraphWeb::isOnePath() const { }
 BOOL TGraphWeb::startIsEnd() const
 {
 	if (getFirstGraphNode().unk0->mConnectionNum > 2
-	    || (getFirstGraphNode().unk0->mConnections[0] != getNodeNum() - 1
+	    || (getFirstGraphNode().getRailNode()->mConnections[0] != getNodeNum() - 1
 	        && getFirstGraphNode().unk0->mConnections[1] != getNodeNum() - 1))
 		return false;
 
@@ -729,30 +775,46 @@ BOOL TGraphWeb::isDummy() const
 	return false;
 }
 
+// TODO: instructions match; only stack offsets differ. Retail has 4 more
+// bytes above local_48 (0x58 vs our 0x5c), 8 more between `point` and
+// point2 (0x38 vs 0x40), and an 8-byte smaller low region (thing 0x2c vs
+// 0x34). Reordering the top declarations, a hoisted `point`, a point2
+// constructor and dropping `nodes` are inert or worse.
+// c-d13: `f32 dVar18;` declared first in the inner loop plus
+// `unk0[i].getRailNode()` lands the frame and every slot, but the rail node
+// pointer is then reloaded after getPoint (one extra lwz); a named node
+// reference keeps the single load but drops one more low word.
 JGeometry::TVec3<f32>
 TGraphWeb::getNearestPosOnGraphLink(const JGeometry::TVec3<f32>& param_1) const
 {
-	bool bVar9 = true;
+	BOOL bVar9 = true;
 
-	JGeometry::TVec3<f32> local_48;
+	JGeometry::TVec3<f32> local_48(param_1);
 	f32 min;
 	for (int i = 0; i < unk8; ++i) {
-		const TGraphNode& node = getGraphNode(i);
 		JGeometry::TVec3<f32> point;
-		node.getPoint(&point);
-		const TRailNode* railNode = node.getRailNode();
-		for (int i = 0; i < railNode->mConnectionNum; ++i) {
-			int conn               = railNode->mConnections[i];
-			const TGraphNode& node = getGraphNode(conn);
+		unk0[i].getPoint(&point);
+		const TGraphNode* nodes = unk0;
+		const TRailNode* railNode = getGraphNode(i).getRailNode();
+		int connNum               = railNode->mConnectionNum;
+		for (int i = 0; i < connNum; ++i) {
+			const TRailNode* connNode
+			    = nodes[railNode->mConnections[i]].unk0;
 			JGeometry::TVec3<f32> point2;
-			node.getPoint(&point2);
+			point2.x = connNode->mPosition.x;
+			point2.y = connNode->mPosition.y;
+			point2.z = connNode->mPosition.z;
 			point2 -= point;
 
-			f32 fVar4 = MsClamp((param_1.dot(point2) - point.dot(point2))
-			                        / point2.squared(),
-			                    0.0f, 1.0f);
-			JGeometry::TVec3<f32> thing;
-			thing.scaleAdd(fVar4, point2, point);
+			f32 fVar4 = (param_1.dot(point2) - point.dot(point2));
+			fVar4 /= point2.squared();
+			if (fVar4 < 0.0f)
+				fVar4 = 0.0f;
+			else if (fVar4 > 1.0f)
+				fVar4 = 1.0f;
+			JGeometry::TVec3<f32> thing(point2);
+			thing.scale(fVar4);
+			thing.add(point);
 			thing.sub(param_1);
 			f32 dVar18 = thing.squared();
 			if (bVar9 || dVar18 < min) {
@@ -769,11 +831,12 @@ TGraphWeb::getNearestPosOnGraphLink(const JGeometry::TVec3<f32>& param_1) const
 int TGraphWeb::getNeighborNodeIndexByFlag(int param_1, int param_2,
                                           u32 param_3) const
 {
+	int index;
 	int goodConnectionNum = 0;
 	int goodConnections[8];
 
 	const TRailNode* railNode = getGraphNode(param_1).getRailNode();
-	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+	for (int i = 0; i < GraphConnectionNum(railNode); ++i) {
 		int conn = railNode->mConnections[i];
 		if (conn != param_2 && getGraphNode(conn).checkFlag(param_3)) {
 			goodConnections[goodConnectionNum] = conn;
@@ -784,7 +847,8 @@ int TGraphWeb::getNeighborNodeIndexByFlag(int param_1, int param_2,
 	if (goodConnectionNum == 0)
 		return -1;
 
-	return goodConnections[(int)(MsRandF() * goodConnectionNum)];
+	index = (int)(MsRandF() * goodConnectionNum);
+	return goodConnections[index];
 }
 
 void TGraphWeb::getDesignatedNodeIndex(u32, int, f32) const { }
@@ -817,19 +881,17 @@ TGraphGroup::~TGraphGroup() { }
 
 void TGraphGroup::initGraphGroup()
 {
+	// TODO: the zero vector sits 4 high (0x58, retail 0x54) and attachToGround's
+	// pos/checkData pair is swapped (0x4c/0x48, retail 0x44/0x50). The named
+	// `zero` equals the old pass-through binder's score; inert (c-m19): pos
+	// declared first, `zero` hoisted out of the loop, `if (< 0) {}` form.
 	for (int i = 0; i < unk4; ++i) {
 		if (unk8[i]->unk10 >= 0)
 			continue;
 
-		unk8[i]->initGoalIndex(JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f));
+		JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
+		unk8[i]->initGoalIndex(zero);
 		unk8[i]->attachToGround();
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xc0 against 0xb8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 }
 
@@ -847,6 +909,14 @@ TGraphWeb* TGraphGroup::getGraphByName(const char* name)
 
 void TGraphGroup::perform(u32 cue, JDrama::TGraphics* graphics)
 {
+	// TODO: retail's scratch registers start one higher (r5/r6/r7 for our
+	// r4/r5/r6), i.e. the `graphics` parameter stays live past the first
+	// temporary; the loop is fully elided otherwise. A named bound (-9pp), a
+	// getGraph(i) accessor (inert) and a named TGraphWeb* (worse) refuted.
+	// Also inert: unnamed callee params, a hoisted graphs array, a while loop,
+	// an outer-declared i or TGraphWeb*, pointer arithmetic; u32 i is worse.
+	// A `cue` test with an empty body in the inlined TGraphWeb::perform closes
+	// it (cue kept live), but that is forced control flow, so it is not used.
 	for (int i = 0; i < unk4; ++i)
 		unk8[i]->perform(cue, graphics);
 }
@@ -864,19 +934,17 @@ TGraphTracer::TGraphTracer()
 void TGraphTracer::setParamFromGraph()
 {
 	if (mCurrIdx >= 0) {
-		unk10 = (u16)unk0->unk0[mCurrIdx].unk0->mPitch * (1.0f / 65535.0f);
+		unk10 = getCurrent().getRailNode()->mPitch * (1.0f / 65535.0f);
 	} else {
 		unk10 = 0.0f;
 	}
 
 	if (mPrevIdx >= 0)
-		unkC = (u16)unk0->unk0[mPrevIdx].unk0->mYaw * 0.01f;
+		unkC = getPrevious().getRailNode()->mYaw * 0.01f;
 }
 
 void TGraphTracer::setTo(int node_idx)
 {
-	volatile u8 stackPad[72];
-	(void)stackPad;
 	mPrevIdx = -1;
 	mCurrIdx = node_idx;
 	setParamFromGraph();
@@ -884,8 +952,6 @@ void TGraphTracer::setTo(int node_idx)
 
 int TGraphTracer::moveTo(int node_idx)
 {
-	volatile u8 stackPad[72];
-	(void)stackPad;
 	if (node_idx < 0)
 		return node_idx;
 
@@ -903,67 +969,63 @@ f32 TGraphTracer::calcSplineSpeed(f32 param_1)
 	if (mPrevIdx < 0)
 		return 0.001f;
 
-	JGeometry::TVec3<f32> v1;
-	unk0->unk0[mCurrIdx].getPoint(&v1);
-	JGeometry::TVec3<f32> v2;
-	unk0->unk0[mPrevIdx].getPoint(&v2);
+	// TODO: retail subtracts the second point as an unnamed getPoint()
+	// temporary (p at 0x88 copied to 0x100, then `-=`), which this spelling
+	// reproduces, but it builds v1 straight from the first getPoint's `p`
+	// (0x9c -> 0x10c) where we copy through a return temporary. Retail's frame
+	// is 0x158 against our 0x100, with 0x58 bytes unused between the two
+	// point blocks, so a missing inline level holds the rest. Taking VECMag of
+	// the `getPoint() -= getPoint()` temporary is worse (-3pp). (The FPR
+	// swap closed with the map-sized getNthT; frame now 0x100.) Neither an
+	// indexToPoint() spelling (frame 0xf0/0x100), a named second point, nor
+	// `operator-` (worse) reaches retail's layout.
+	JGeometry::TVec3<f32> v1 = unk0->unk0[mCurrIdx].getPoint();
+	v1 -= unk0->unk0[mPrevIdx].getPoint();
+	f32 fVar13 = VECMag(&v1);
 
-	JGeometry::TVec3<f32> diff = v1;
-	diff -= v2;
-	f32 fVar13 = VECMag(&diff);
+	TSplineRail* rail = unk0->getSplineRail();
+	BOOL isLoop       = rail->isUnk4();
 
 	f32 fVar1;
 	f32 fVar2;
-	if (unk0->getSplineRail()->isUnk4() && mPrevIdx == unk0->unk8 - 1
-	    && mCurrIdx == 0) {
-		fVar1 = unk0->getSplineRail()->getNthT(0);
-		fVar2 = unk0->getSplineRail()->getNthT(1);
-	} else if (unk0->getSplineRail()->isUnk4() && mPrevIdx == 0
-	           && mCurrIdx == unk0->unk8 - 1) {
-		fVar1 = unk0->getSplineRail()->getNthT(mPrevIdx + 1);
-		fVar2 = unk0->getSplineRail()->getNthT(mPrevIdx);
+	if (isLoop && mPrevIdx == unk0->unk8 - 1 && mCurrIdx == 0) {
+		fVar1 = rail->unk0->getNthT(0);
+		fVar2 = rail->unk0->getNthT(1);
+	} else if (isLoop && mPrevIdx == 0 && mCurrIdx == unk0->unk8 - 1) {
+		fVar1 = rail->unk0->getNthT(unk0->unk8 + 1);
+		fVar2 = rail->unk0->getNthT(unk0->unk8);
 	} else {
-		u32 uVar10 = mPrevIdx;
-		if (unk0->getSplineRail()->isUnk4())
-			uVar10 += 1;
-		fVar1 = unk0->getSplineRail()->getNthT(uVar10);
-
-		u32 uVar7 = mCurrIdx;
-		if (unk0->getSplineRail()->isUnk4())
-			uVar7 += 1;
-		fVar2 = unk0->getSplineRail()->getNthT(uVar7);
+		fVar1 = rail->getNthT(mPrevIdx);
+		fVar2 = rail->getNthT(mCurrIdx);
 	}
 
 	return param_1 * (fVar2 - fVar1) / fVar13;
 }
 
-bool TGraphTracer::traceSpline(f32 param_1)
+BOOL TGraphTracer::traceSpline(f32 param_1)
 {
 	if (!unk0->unk14)
-		return false;
+		return FALSE;
 
 	f32 dVar8 = unk14;
 	f32 dVar9 = dVar8 + param_1;
 
 	f32 dVar10;
-	if (unk0->unk14->unk4 && mPrevIdx == unk0->unk8 - 1 && mCurrIdx == 0) {
-		dVar10 = unk0->unk14->getNthT(mPrevIdx + 1);
-	} else if (unk0->unk14->unk4 && mPrevIdx == 0
+	if (unk0->getSplineRail()->isUnk4() && mPrevIdx == unk0->unk8 - 1 && mCurrIdx == 0) {
+		dVar10 = unk0->unk14->unk0->getNthT(unk0->unk8 + 1);
+	} else if (unk0->getSplineRail()->isUnk4() && mPrevIdx == 0
 	           && mCurrIdx == unk0->unk8 - 1) {
-		dVar10 = unk0->unk14->getNthT(mPrevIdx);
+		dVar10 = unk0->unk14->unk0->getNthT(unk0->unk8);
 	} else {
-		u32 uVar7 = mCurrIdx;
-		if (unk0->unk14->unk4)
-			uVar7 += 1;
-		dVar10 = unk0->unk14->getNthT(uVar7);
+		dVar10 = unk0->getSplineRail()->getNthT(mCurrIdx);
 	}
 
-	bool result;
+	BOOL result;
 	if ((param_1 >= 0.0f && dVar8 <= dVar10 && dVar10 <= dVar9)
 	    || (param_1 < 0.0f && dVar9 <= dVar10 && dVar10 <= dVar8)) {
-		result = true;
+		result = TRUE;
 	} else {
-		result = false;
+		result = FALSE;
 	}
 
 	unk14 = unk0->unk14->wrapT(dVar9);

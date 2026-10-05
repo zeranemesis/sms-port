@@ -1,4 +1,6 @@
 #include <GC2D/Guide.hpp>
+#include <stdio.h>
+#include <string.h>
 #include <GC2D/BoundPane.hpp>
 #include <GC2D/ExPane.hpp>
 #include <GC2D/MessageUtil.hpp>
@@ -7,450 +9,467 @@
 #include <JSystem/J2D/J2DPicture.hpp>
 #include <JSystem/J2D/J2DScreen.hpp>
 #include <JSystem/J2D/J2DTextBox.hpp>
-#include <JSystem/JDrama/JDRGraphics.hpp>
-#include <JSystem/JGeometry/JGVec3.hpp>
+#include <JSystem/JKernel/JKRMemArchive.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
-#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
-#include <JSystem/JUtility/JUTResFont.hpp>
+#include <JSystem/JUtility/JUTPoint.hpp>
 #include <JSystem/JUtility/JUTTexture.hpp>
 #include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
 #include <Player/MarioAccess.hpp>
 #include <System/Application.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
 #include <System/MarioGamePad.hpp>
-#include <System/StageUtil.hpp>
-#include <stdio.h>
-#include <string.h>
+#include <GC2D/ShineTable.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <System/DummyMactorString.hpp>
 #include <System/DummyStrings.hpp>
 
+/// Frames left before the guide archive is swapped in. In .sbss, so it
+/// survives the screen being torn down and rebuilt.
 static u8 setup_wait;
-
-static u32 scNormalStageTable[] = { 0, 1, 2, 3, 4, 13, 6, 8, 9, 10 };
 
 TGuide::TGuide(const char* name)
     : JDrama::TViewObj(name)
-    , unk10(8)
-    , unkBC(nullptr)
-    , unkC0(nullptr)
+    , mState(STATE_INIT)
+    , mScreen(nullptr)
+    , mGamePad(nullptr)
     , unkC4(0)
     , unkC5(0)
-    , unk160(0xff)
-    , unk164(1)
-    , unk434(0, 0, 0, 0)
-    , unk480(-1)
-    , unk48C(0, 0, 0, 0)
+    , mMapAlpha(0xFF)
+    , mCursorBlinkUp(1)
+    , mSelectedPoint(-1)
 {
 }
 
+// The archive mount is setup(), inlined (retail loads unkD8 straight into the
+// argument's saved register).
+// TODO: frame 0x10 short (0x180 vs 0x190; getBounds() at the three rect
+// reads took it from 0x160); each of the five decoration
+// JUTTexture constructions keeps `this` in a second register (r25) in retail;
+// naming the texture or the ResTIMG was inert or worse.
 void TGuide::load(JSUMemoryInputStream& stream)
 {
 	unkC5 = 0;
 	JDrama::TNameRef::load(stream);
+	JKRMemArchive* archive = setup(gpMarDirector->unkD8);
 
-	JKRMemArchive* archive = gpMarDirector->unkD8;
-	setup(archive);
+	mScreen = new J2DSetScreen("guide_1.blo", archive);
 
-	unkBC = new J2DSetScreen("guide_1.blo", (JKRArchive*)archive);
-	((J2DTextBox*)unkBC->search('a_ic'))->setFont(gpSystemFont);
-	((J2DTextBox*)unkBC->search('a_tx'))->setFont(gpSystemFont);
-	((J2DTextBox*)unkBC->search('b_ic'))->setFont(gpSystemFont);
-	((J2DTextBox*)unkBC->search('b_tx'))->setFont(gpSystemFont);
+	((J2DTextBox*)mScreen->search('a_ic'))->setFont((JUTFont*)gpSystemFont);
+	((J2DTextBox*)mScreen->search('a_tx'))->setFont((JUTFont*)gpSystemFont);
+	((J2DTextBox*)mScreen->search('b_ic'))->setFont((JUTFont*)gpSystemFont);
+	((J2DTextBox*)mScreen->search('b_tx'))->setFont((JUTFont*)gpSystemFont);
 
-	unk124 = nullptr;
-	unk124 = (J2DTextBox*)unkBC->search('s_mn');
-	SMSMakeTextBuffer(unk124, 0x1a);
-	unk124->setFont(gpSystemFont);
+	mStageNameBox = nullptr;
+	mStageNameBox = (J2DTextBox*)mScreen->search('s_mn');
+	SMSMakeTextBuffer(mStageNameBox, 26);
+	mStageNameBox->setFont((JUTFont*)gpSystemFont);
 
 	for (int i = 0; i < 10; ++i) {
-		char buffer[256];
-		snprintf(buffer, 0xff, "/guide/timg/coin_number_%d.bti", i);
-		unkC8[i] = new JUTTexture((const ResTIMG*)JKRGetResource(buffer));
+		char path[255];
+		snprintf(path, 255, "/guide/timg/coin_number_%d.bti", i);
+		mNumberTextures[i]
+		    = new JUTTexture((const ResTIMG*)JKRGetResource(path));
 	}
 
-	unkF4 = unkBC->search('ss_i');
+	mShineIcon = mScreen->search('ss_i');
 	for (int i = 0; i < 2; ++i)
-		unkF8[i] = (J2DPicture*)unkBC->search('ss_1' + i);
+		mShineDigits[i] = (J2DPicture*)mScreen->search('ss_1' + i);
 
-	unk100 = unkBC->search('sq_i');
+	mEtcShineIcon = mScreen->search('sq_i');
 	for (int i = 0; i < 2; ++i)
-		unk104[i] = unkBC->search('sq_1' + i);
+		mEtcShineMarks[i] = mScreen->search('sq_1' + i);
 
 	for (int i = 0; i < 3; ++i)
-		unk10C[i] = (J2DPicture*)unkBC->search('sc_1' + i);
+		mCoinDigits[i] = (J2DPicture*)mScreen->search('sc_1' + i);
 
-	unk118 = unkBC->search('sc_s');
+	mCoinIcon = mScreen->search('sc_s');
+
 	for (int i = 0; i < 2; ++i)
-		unk11C[i] = (J2DPicture*)unkBC->search('sb_1' + i);
+		mBlueCoinDigits[i] = (J2DPicture*)mScreen->search('sb_1' + i);
 
-	JUTTexture* cursorTex = new JUTTexture(
+	JUTTexture* cursorTexture = new JUTTexture(
 	    (const ResTIMG*)JKRGetResource("/guide/timg/guide_cursor_2.bti"));
+
 	for (int i = 0; i < 2; ++i) {
-		unk128[i] = new TExPane(unkBC, 'cu_a' + i);
-		J2DPicture* pic = (J2DPicture*)unk128[i]->getPane();
-		pic->insert(cursorTex, pic->mTextureNum, 0.0f);
+		mCursors[i] = new TExPane(mScreen, 'cu_a' + i);
+		J2DPicture* pic = (J2DPicture*)mCursors[i]->getPane();
+		pic->insert(cursorTexture, pic->mTextureNum, 0.0f);
 	}
 
 	for (int i = 0; i < 13; ++i) {
-		u32 tag = (i / 10 << 8) + i % 10 + '00';
-		unk168[i] = unkBC->search(tag);
-		unk1C0[i] = new TExPane(unkBC, (tag << 16) + '_0');
-		unk218[i] = unk1C0[i]->getPane()->getBounds();
-		unk378[i] = new TExPane(unkBC, (tag << 16) + '_1');
-		((J2DTextBox*)unkBC->search((tag << 16) + '_3'))->setFont(gpSystemFont);
-		((J2DTextBox*)unkBC->search((tag << 16) + '_5'))->setFont(gpSystemFont);
+		u32 tag           = ((i / 10) << 8) + i % 10 + '00';
+		mStagePanes[i]    = mScreen->search(tag);
+		mPanelsA[i]       = new TExPane(mScreen, (tag << 16) + '_0');
+		mPanelRects[i]    = mPanelsA[i]->getPane()->getBounds();
+		mPanelsB[i]       = new TExPane(mScreen, (tag << 16) + '_1');
+		((J2DTextBox*)mScreen->search((tag << 16) + '_3'))
+		    ->setFont((JUTFont*)gpSystemFont);
+		((J2DTextBox*)mScreen->search((tag << 16) + '_5'))
+		    ->setFont((JUTFont*)gpSystemFont);
 	}
 
-	unk168[13] = unkBC->search('20');
-	unk1C0[13] = new TExPane(unkBC, 'lwin');
-	unk218[13] = unk1C0[13]->getPane()->getBounds();
-	unk378[13] = new TExPane(unkBC, 'llin');
+	mStagePanes[13] = mScreen->search('20');
+	mPanelsA[13]    = new TExPane(mScreen, 'lwin');
+	mPanelRects[13] = mPanelsA[13]->getPane()->getBounds();
+	mPanelsB[13]    = new TExPane(mScreen, 'llin');
 
 	for (int i = 0; i < 10; ++i)
-		unk44C[i] = unkBC->search('pn00' + i);
+		mPointPanes[i] = mScreen->search('pn00' + i);
 
-	unk430 = unkBC->search('01mi');
-	unk434 = unkBC->search('01_9')->getBounds();
-	unk474 = JKRGetResource("/cmn2d/stagename.bmg");
+	mMarioMarker = mScreen->search('01mi');
+	mMapRect     = mScreen->search('01_9')->getBounds();
 
-	unk134 = (J2DPicture*)unkBC->search('10');
-	// TODO: the ROM keeps a second copy of the new texture pointer here
-	unk134->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
-	                   "/guide/timg/guide_draw_sun_2.bti")),
-	               unk134->mTextureNum, 0.0f);
-	unk138 = (J2DPicture*)unkBC->search('13');
-	// TODO: the ROM keeps a second copy of the new texture pointer here
-	unk138->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
-	                   "/guide/timg/guide_draw_ship_2.bti")),
-	               unk138->mTextureNum, 0.0f);
-	unk13C = (J2DPicture*)unkBC->search('16');
-	// TODO: the ROM keeps a second copy of the new texture pointer here
-	unk13C->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
-	                   "/guide/timg/guide_draw_palmtree_2.bti")),
-	               unk13C->mTextureNum, 0.0f);
-	unk140 = (J2DPicture*)unkBC->search('17');
-	// TODO: the ROM keeps a second copy of the new texture pointer here
-	unk140->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
-	                   "/guide/timg/guide_draw_palmtree_1.bti")),
-	               unk140->mTextureNum, 0.0f);
-	unk144 = (J2DPicture*)unkBC->search('18');
-	// TODO: the ROM keeps a second copy of the new texture pointer here
-	unk144->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
-	                   "/guide/timg/guide_draw_fish_2.bti")),
-	               unk144->mTextureNum, 0.0f);
+	mStageNameBmg = JKRGetResource("/common/2d/stagename.bmg");
 
-	unk148 = (J2DPicture*)unkBC->search('11');
-	unk14C = (J2DPicture*)unkBC->search('14');
-	unk150 = (J2DPicture*)unkBC->search('15');
-	unk154 = unkBC->search('12');
-	unk154->setBasePosition(J2DBasePosition_4);
-	unk158 = unkBC->search('19');
-	unk158->setBasePosition(J2DBasePosition_4);
+	mSunPane = (J2DPicture*)mScreen->search('10');
+	mSunPane->insert(
+	    new JUTTexture(
+	        (const ResTIMG*)JKRGetResource("/guide/timg/guide_draw_sun_2.bti")),
+	    mSunPane->mTextureNum, 0.0f);
 
-	void* guideMessage = JKRGetResource("/guide/guidemess.bmg");
+	mShipPane = (J2DPicture*)mScreen->search('13');
+	mShipPane->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
+	                      "/guide/timg/guide_draw_ship_2.bti")),
+	                  mShipPane->mTextureNum, 0.0f);
+
+	mPalmPane2 = (J2DPicture*)mScreen->search('16');
+	mPalmPane2->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
+	                       "/guide/timg/guide_draw_palmtree_2.bti")),
+	                   mPalmPane2->mTextureNum, 0.0f);
+
+	mPalmPane1 = (J2DPicture*)mScreen->search('17');
+	mPalmPane1->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
+	                       "/guide/timg/guide_draw_palmtree_1.bti")),
+	                   mPalmPane1->mTextureNum, 0.0f);
+
+	mFishPane = (J2DPicture*)mScreen->search('18');
+	mFishPane->insert(new JUTTexture((const ResTIMG*)JKRGetResource(
+	                      "/guide/timg/guide_draw_fish_2.bti")),
+	                  mFishPane->mTextureNum, 0.0f);
+
+	mCloudPane = (J2DPicture*)mScreen->search('11');
+	mWavePane1 = (J2DPicture*)mScreen->search('14');
+	mWavePane2 = (J2DPicture*)mScreen->search('15');
+	mBirdPane1 = (J2DPicture*)mScreen->search('12');
+	mBirdPane1->setBasePosition(J2DBasePosition_4);
+	mBirdPane2 = (J2DPicture*)mScreen->search('19');
+	mBirdPane2->setBasePosition(J2DBasePosition_4);
+
+	void* bmg = JKRGetResource("/guide/guidemess.bmg");
 	for (int i = 0; i < 13; ++i) {
-		u32 tag = (i / 10 << 24) + 0x30300000 + (i % 10 << 16);
+		// The ROM keeps `tag` biased by '_0' and adds 3 and 5 for the panes.
+		u32 tag = (((i / 10) << 24) + ('00' << 16)) + ((i % 10) << 16) + '_0';
 
-		J2DTextBox* name = (J2DTextBox*)unkBC->search(tag + '_3');
-		SMSMakeTextBuffer(name, 0x40);
-		name->setFont(gpSystemFont);
-		strncpy(name->getStringPtr(), SMSGetMessageData(guideMessage, i + 13),
-		        0x40);
+		J2DTextBox* title = (J2DTextBox*)mScreen->search(tag + 3);
+		SMSMakeTextBuffer(title, 30);
+		title->setFont((JUTFont*)gpSystemFont);
+		strncpy(title->getStringPtr(), SMSGetMessageData(bmg, i + 13), 30);
 
-		J2DTextBox* text = (J2DTextBox*)unkBC->search(tag + '_5');
-		SMSMakeTextBuffer(text, 0x200);
-		text->setFont(gpSystemFont);
-		strncpy(text->getStringPtr(), SMSGetMessageData(guideMessage, i),
-		        0x200);
+		J2DTextBox* body = (J2DTextBox*)mScreen->search(tag + 5);
+		SMSMakeTextBuffer(body, 512);
+		body->setFont((JUTFont*)gpSystemFont);
+		strncpy(body->getStringPtr(), SMSGetMessageData(bmg, i), 512);
 	}
 
-	unk478 = new TExPane(unkBC, 'mark');
-	unk444 = new TBoundPane(unkBC, '20');
+	mMarkPane       = new TExPane(mScreen, 'mark');
+	mShineBoundPane = new TBoundPane(mScreen, '20');
+
 	resetObjects();
 	unkC5 = 1;
 }
 
+// TODO: the extra-shine and blue-coin clamps are `bge; b` pairs that clamp in
+// place in retail (ours: `blt` for the if, an `mr` for a ternary); the first
+// isGetShine miss returns the zeroed counter (`mr r3, r24`); callee-saved
+// registers rotate (retail i r31, total r28); frame 0x50 against 0x60.
 void TGuide::resetObjects()
 {
 	int total = 0;
 	for (u32 i = 0; i < 13; ++i) {
-		if (i >= 10)
-			continue;
+		if (i < 10) {
+			mScores[i].unk0         = 0;
 
-		unk14[i].unk0 = 0;
+			int shines = 0;
+			if (i != 0 && i != 1) {
+				for (u32 j = 0; j < 8; ++j)
+					if (SMS_isGetShine(i, j, false))
+						shines++;
+			}
+			int num              = shines < 100 ? shines : 99;
+			mScores[i].mShineNum = num;
+			total += num;
 
-		int shineNum = 0;
-		if (i != 0 && i != 1) {
-			for (u32 j = 0; j < 8; ++j)
-				if (SMS_isGetShine(i, j, false))
-					++shineNum;
-		}
-		int clampedShineNum = shineNum < 100 ? shineNum : 99;
-		unk14[i].mShineNum  = clampedShineNum;
-		total += clampedShineNum;
+			int etcShines = 0;
+			if (i != 0 && i != 1) {
+				if (SMS_isGetShine(i, 1, true))
+					etcShines = 1;
+				if (SMS_isGetShine(i, 2, true))
+					etcShines++;
+			}
+			if (etcShines >= 10)
+				etcShines = 9;
+			mScores[i].mEtcShineNum = etcShines;
+			total += etcShines;
 
-		int etcShineNum = 0;
-		if (i != 0 && i != 1) {
-			if (SMS_isGetShine(i, 1, true))
-				etcShineNum = 1;
-			if (SMS_isGetShine(i, 2, true))
-				++etcShineNum;
-		}
-		// TODO: target has an extra branch around both clamps below
-		if (etcShineNum >= 10)
-			etcShineNum = 9;
-		unk14[i].mEtcShineNum = etcShineNum;
-		total += etcShineNum;
+			int coins = (u16)TFlagManager::getInstance()->getFlag(0x20005 + i);
+			mScores[i].mCoinNum = coins < 1000 ? coins : 999;
 
-		int coinNum
-		    = (u16)TFlagManager::getInstance()->getFlag(0x20005 + i);
-		unk14[i].mCoinNum = coinNum < 1000 ? coinNum : 999;
+			mScores[i].mHasFirstEtcShine = SMS_isGetShine(i, 0, true);
+			if (mScores[i].mHasFirstEtcShine)
+				total++;
 
-		unk14[i].mHundredCoinShine = SMS_isGetShine(i, 0, true);
-		if (unk14[i].mHundredCoinShine)
-			++total;
+			int blueCoins = 0;
+			if (i != 0) {
+				for (u8 j = 0; j < 50; ++j)
+					if (TFlagManager::getInstance()->getBlueCoinFlag(
+					        scNormalStageTable[i], j))
+						blueCoins++;
+			}
+			mScores[i].mBlueCoinNum = blueCoins < 1000 ? blueCoins : 999;
 
-		int blueCoinNum = 0;
-		if (i != 0) {
-			for (u8 j = 0; j < 50; ++j)
-				if (TFlagManager::getInstance()->getBlueCoinFlag(
-				        scNormalStageTable[i], j))
-					++blueCoinNum;
-		}
-		if (blueCoinNum >= 1000)
-			blueCoinNum = 999;
-		unk14[i].mBlueCoinNum = blueCoinNum;
-
-		if (TFlagManager::getInstance()->getBool(0x103A5 + i)) {
-			unk44C[i]->show();
-			unk168[i]->show();
-		} else {
-			unk44C[i]->hide();
-			unk168[i]->hide();
+			if (TFlagManager::getInstance()->getBool(0x103A5 + i)) {
+				mPointPanes[i]->mVisible = true;
+				mStagePanes[i]->mVisible = true;
+			} else {
+				mPointPanes[i]->mVisible = false;
+				mStagePanes[i]->mVisible = false;
+			}
 		}
 	}
 
-	unk14[9].unk0 = 1;
-	u8 corona     = 0;
-	for (u8 j = 0; j < 50; ++j)
-		if (TFlagManager::getInstance()->getBlueCoinFlag(scNormalStageTable[9],
-		                                                 j))
-			++corona;
-	unk14[9].mBlueCoinNum = corona;
+	mScores[9].unk0 = 1;
 
-	s16 extra = 0;
+	int blueCoins = 0;
+	for (u8 i = 0; i < 50; ++i)
+		if (TFlagManager::getInstance()->getBlueCoinFlag(scNormalStageTable[9],
+		                                                i))
+			blueCoins++;
+	mScores[9].mBlueCoinNum = blueCoins;
+
+	int bosses = 0;
 	if (TFlagManager::getInstance()->getBool(0x10056))
-		extra = 1;
+		bosses = 1;
 	if (TFlagManager::getInstance()->getBool(0x10058))
-		++extra;
-	unk14[0].mShineNum = extra;
-	total += extra;
-	unk14[1].mShineNum = TFlagManager::getInstance()->getFlag(0x40000) - total;
+		bosses++;
+	mScores[0].mShineNum = bosses;
+	total += (s16)bosses;
+
+	mScores[1].mShineNum = TFlagManager::getInstance()->getFlag(0x40000) - total;
 
 	changeBotStatus(-1);
 	resetScore();
-	unk128[0]->getPane()->show();
-	unk128[1]->getPane()->show();
+	mCursors[0]->getPane()->mVisible = true;
+	mCursors[1]->getPane()->mVisible = true;
 }
 
+// TODO: retail keeps `remaining` in r5 apart from the clamp's compare temp
+// (r0); ours coalesces them (IRO @ web). Clamp spellings and total types inert.
+// c-k12: retail's `remaining` holds the untruncated difference (subf r5, then
+// clrlwi r0 for the compare and clrlwi r19 at the use), where our plain u8
+// initialisation truncates it into the compare register. A compound
+// `u8 remaining = allShines; remaining -= total;` gives retail's r5 web but
+// truncates allShines instead of total (one instruction moves, 99.6%);
+// `remaining = ...` split from the declaration, `>= 100`, `99 < remaining` and
+// a ternary are inert or worse. hsearch 150 s: no gain.
 void TGuide::resetScore()
 {
-	u8 etcShineTotal = 0;
-	int shineTotal   = 0;
+	int etcTotal = 0;
+	u8 total = 0;
 	for (int i = 0; i < 10; ++i) {
 		if (i == 9)
 			continue;
 
 		if (TFlagManager::getInstance()->getBool(0x103A5 + i))
-			unkBC->search('0_mn' + (i << 24))->show();
+			mScreen->search((i << 24) + '0_mn')->show();
 		else
-			unkBC->search('0_mn' + (i << 24))->hide();
+			mScreen->search((i << 24) + '0_mn')->hide();
 
-		if ((u32)i > 1) {
-			for (int j = 0; j < 8; ++j) {
-				if (j < unk14[i].mShineNum)
-					unkBC->search('0ss1' + (i << 24) + j)->show();
-				else
-					unkBC->search('0ss1' + (i << 24) + j)->hide();
-			}
+		if (i == 0 || i == 1)
+			continue;
 
-			J2DPane* etc1 = unkBC->search('0sq1' + (i << 24));
-			etc1->hide();
-			J2DPane* etc2 = unkBC->search('0sq2' + (i << 24));
-			etc2->hide();
-			if (unk14[i].mEtcShineNum != 0)
-				etc1->show();
-			if (unk14[i].mEtcShineNum > 1)
-				etc2->show();
-
-			etcShineTotal += unk14[i].mEtcShineNum;
-			shineTotal += unk14[i].mShineNum;
+		for (int j = 0; j < 8; ++j) {
+			if (j < mScores[i].mShineNum)
+				mScreen->search((i << 24) + '0ss1' + j)->show();
+			else
+				mScreen->search((i << 24) + '0ss1' + j)->hide();
 		}
+
+		J2DPane* etc1     = mScreen->search((i << 24) + '0sq1');
+		etc1->mVisible    = false;
+		J2DPane* etc2     = mScreen->search((i << 24) + '0sq2');
+		etc2->mVisible    = false;
+		if (mScores[i].mEtcShineNum != 0)
+			etc1->mVisible = true;
+		if (mScores[i].mEtcShineNum > 1)
+			etc2->mVisible = true;
+
+		etcTotal += mScores[i].mEtcShineNum;
+		total += mScores[i].mShineNum;
 	}
 
-	shineTotal += etcShineTotal;
-	if (etcShineTotal == 0)
-		unkBC->search('lqus')->hide();
+	total += etcTotal;
+	if ((u8)etcTotal == 0)
+		mScreen->search('lqus')->hide();
 	else
-		unkBC->search('lqus')->show();
+		mScreen->search('lqus')->show();
 
 	for (int i = 1; i < 10; ++i) {
-		unk3D0[i] = unkBC->search('mi00' + i);
+		mMarkerPanes[i] = mScreen->search('mi00' + i);
 		if (i == 9)
 			continue;
 
-		u16 coinNum = unk14[i].mCoinNum;
-		u32 tag     = '0c_1' + (i << 24);
-		if (coinNum > 999)
-			coinNum = 999;
+		u32 tag   = (i << 24) + '0c_1';
+		u16 coins = mScores[i].mCoinNum;
+		if (coins > 999)
+			coins = 999;
 
-		J2DPicture* digit0 = (J2DPicture*)unkBC->search(tag);
-		J2DPicture* digit1 = (J2DPicture*)unkBC->search(tag + 1);
-		J2DPicture* digit2 = (J2DPicture*)unkBC->search(tag + 2);
-		if (coinNum < 100) {
-			digit0->hide();
-			digit1->changeTexture(unkC8[coinNum / 10]->getTexInfo(), 0);
-			digit2->changeTexture(unkC8[coinNum % 10]->getTexInfo(), 0);
+		J2DPicture* digit100 = (J2DPicture*)mScreen->search(tag);
+		J2DPicture* digit10  = (J2DPicture*)mScreen->search(tag + 1);
+		J2DPicture* digit1   = (J2DPicture*)mScreen->search(tag + 2);
+		u16 rest             = coins;
+		if (rest < 100) {
+			digit100->mVisible = false;
+			digit10->changeTexture(mNumberTextures[rest / 10]->getTexInfo(), 0);
+			digit1->changeTexture(mNumberTextures[rest % 10]->getTexInfo(), 0);
 		} else {
-			digit0->show();
-			int hundreds = coinNum / 100;
-			digit0->changeTexture(unkC8[hundreds]->getTexInfo(), 0);
-			coinNum -= hundreds * 100;
-			digit1->changeTexture(unkC8[coinNum / 10]->getTexInfo(), 0);
-			digit2->changeTexture(unkC8[coinNum % 10]->getTexInfo(), 0);
+			int hundreds       = rest / 100;
+			digit100->mVisible = true;
+			digit100->changeTexture(mNumberTextures[hundreds]->getTexInfo(), 0);
+			coins -= hundreds * 100;
+			rest = coins;
+			digit10->changeTexture(mNumberTextures[rest / 10]->getTexInfo(), 0);
+			digit1->changeTexture(mNumberTextures[rest % 10]->getTexInfo(), 0);
 		}
 
-		if (unk14[i].mHundredCoinShine) {
-			unkBC->search('0c_s' + (i << 24))->show();
-			++shineTotal;
+		if (mScores[i].mHasFirstEtcShine) {
+			mScreen->search((i << 24) + '0c_s')->show();
+			total++;
 		} else {
-			unkBC->search('0c_s' + (i << 24))->hide();
+			mScreen->search((i << 24) + '0c_s')->hide();
 		}
 	}
 
-	unk3D0[0] = unkBC->search('mi00');
-	unk448    = unkBC->search('clic');
+	mMarkerPanes[0] = mScreen->search('mi00');
+	mClickPane      = mScreen->search('clic');
 
-	s16 extra = 0;
+	s16 bosses = 0;
 	if (TFlagManager::getInstance()->getBool(0x10056))
-		extra = 1;
+		bosses = 1;
 	if (TFlagManager::getInstance()->getBool(0x10058))
-		++extra;
-	((J2DPicture*)unkBC->search('0s_1'))
-	    ->changeTexture(unkC8[extra]->getTexInfo(), 0);
+		bosses++;
+	((J2DPicture*)mScreen->search('0s_1'))
+	    ->changeTexture(mNumberTextures[bosses]->getTexInfo(), 0);
+	total += bosses;
 
-	shineTotal += extra;
-	int shineNum = TFlagManager::getInstance()->getFlag(0x40000);
-	u8 rest      = shineNum - (u8)shineTotal;
-	if (rest > 99)
-		rest = 99;
-	((J2DPicture*)unkBC->search('1s_1'))
-	    ->changeTexture(unkC8[rest / 10]->getTexInfo(), 0);
-	((J2DPicture*)unkBC->search('1s_2'))
-	    ->changeTexture(unkC8[rest % 10]->getTexInfo(), 0);
+	s32 allShines = TFlagManager::getInstance()->getFlag(0x40000);
+	u8 remaining  = allShines - total;
+	if (remaining > 99)
+		remaining = 99;
+	((J2DPicture*)mScreen->search('1s_1'))
+	    ->changeTexture(mNumberTextures[remaining / 10]->getTexInfo(), 0);
+	((J2DPicture*)mScreen->search('1s_2'))
+	    ->changeTexture(mNumberTextures[remaining % 10]->getTexInfo(), 0);
 
-	if (shineNum > 999)
-		shineNum = 999;
-	J2DPicture* digit0 = (J2DPicture*)unkBC->search('lt_1');
-	J2DPicture* digit1 = (J2DPicture*)unkBC->search('lt_2');
-	J2DPicture* digit2 = (J2DPicture*)unkBC->search('lt_3');
-	if (shineNum < 100) {
-		digit0->hide();
-		digit1->changeTexture(unkC8[shineNum / 10]->getTexInfo(), 0);
-		digit2->changeTexture(unkC8[shineNum % 10]->getTexInfo(), 0);
+	if (allShines > 999)
+		allShines = 999;
+	J2DPicture* total100 = (J2DPicture*)mScreen->search('lt_1');
+	J2DPicture* total10  = (J2DPicture*)mScreen->search('lt_2');
+	J2DPicture* total1   = (J2DPicture*)mScreen->search('lt_3');
+	if (allShines < 100) {
+		total100->mVisible = false;
+		total10->changeTexture(mNumberTextures[allShines / 10]->getTexInfo(), 0);
+		total1->changeTexture(mNumberTextures[allShines % 10]->getTexInfo(), 0);
 	} else {
-		digit0->show();
-		int hundreds = shineNum / 100;
-		digit0->changeTexture(unkC8[hundreds]->getTexInfo(), 0);
-		shineNum -= hundreds * 100;
-		digit1->changeTexture(unkC8[shineNum / 10]->getTexInfo(), 0);
-		digit2->changeTexture(unkC8[shineNum % 10]->getTexInfo(), 0);
+		s32 hundreds       = allShines / 100;
+		total100->mVisible = true;
+		total100->changeTexture(mNumberTextures[hundreds]->getTexInfo(), 0);
+		allShines -= hundreds * 100;
+		total10->changeTexture(mNumberTextures[allShines / 10]->getTexInfo(), 0);
+		total1->changeTexture(mNumberTextures[allShines % 10]->getTexInfo(), 0);
 	}
 
 	switch (gpApplication.mSaveFile) {
 	case 0:
-		unkBC->search('ld_a')->show();
-		unkBC->search('ld_b')->hide();
-		unkBC->search('ld_c')->hide();
+		mScreen->search('ld_a')->show();
+		mScreen->search('ld_b')->hide();
+		mScreen->search('ld_c')->hide();
 		break;
 	case 1:
-		unkBC->search('ld_a')->hide();
-		unkBC->search('ld_b')->show();
-		unkBC->search('ld_c')->hide();
+		mScreen->search('ld_a')->hide();
+		mScreen->search('ld_b')->show();
+		mScreen->search('ld_c')->hide();
 		break;
 	case 2:
-		unkBC->search('ld_a')->hide();
-		unkBC->search('ld_b')->hide();
-		unkBC->search('ld_c')->show();
+		mScreen->search('ld_a')->hide();
+		mScreen->search('ld_b')->hide();
+		mScreen->search('ld_c')->show();
 		break;
 	}
 
-	unk47C = 255.0f
-	         * (1.0f
-	            - (TFlagManager::getInstance()->getFlag(0x40000) / 30) * 0.25f);
-	unk478->getPane()->setAlpha(unk47C);
+	mMarkAlpha
+	    = 255.0f
+	      * (1.0f
+	         - (f32)(TFlagManager::getInstance()->getFlag(0x40000) / 30)
+	               / 4.0f);
+	mMarkPane->getPane()->setAlpha(mMarkAlpha);
 }
 
 JKRMemArchive* TGuide::setup(JKRMemArchive* archive)
 {
-	if (archive)
+	if (archive != nullptr)
 		SMSMountAramArchive(archive, gArBkGuide);
 	else
-		setup_wait = 0x10;
+		setup_wait = 16;
 	unkC4 = 0;
 	return archive;
 }
 
-// TODO: body is a guess, size not verified
-void TGuide::setup2(JKRMemArchive* archive)
+// UNUSED; the loaded variant, without the fallback delay.
+JKRMemArchive* TGuide::setup2(JKRMemArchive* archive)
 {
-	SMSMountAramArchive(archive, gArBkGuide);
+	if (archive != nullptr)
+		SMSMountAramArchive(archive, gArBkGuide);
 	unkC4 = 0;
+	return archive;
 }
 
 void TGuide::startMoveCursor()
 {
-	unk10  = 9;
-	unk164 = 0;
+	mState         = STATE_MOVE_CURSOR;
+	mCursorBlinkUp = 0;
 }
 
+// UNUSED
 void TGuide::startMoveCursor2()
 {
-	u8 stage   = gpMarDirector->mMap;
-	u8 shineSt = SMS_getShineStage(stage);
-	if (stage == 0x14)
-		shineSt = 0;
-
-	unk42C = shineSt;
-	resetObjects();
-	s16 current = shineSt;
-	changeBotStatus(current);
-	for (int i = 0; i < 10; ++i) {
-		if (i == current)
-			unk3D0[i]->show();
-		else
-			unk3D0[i]->hide();
-	}
-	unk164 = 0;
+	mState         = STATE_MOVE_CURSOR;
+	mCursorBlinkUp = 0;
+	mSelectedPoint = -1;
+	mTimer         = 0;
+	changeBotStatus(-1);
 }
 
+// TODO: frame 0xf0 against 0x140 (getAlpha/setAlpha gave +0x18); retail loads the stick x before 3.2f
+// (the operand order, a named stick value and `* 3.2f` are inert, as are
+// named f32 stick pairs, s16 deltas, a stick pointer, `x = d + x` and
+// folding the delta into the declaration).
 void TGuide::linkSelect()
 {
-	unkC0->mFlags |= TMarioGamePad::PAD_FLAG_GUIDE_INPUT;
-	if (unkC0->checkFrameMeaning(TMarioGamePad::MEANING_MENU_B)
-	    || (unkC0->mButton.mTrigger & 0x10))
-		unk10 = 7;
+	mGamePad->onFlag(TMarioGamePad::PAD_FLAG_0x80);
+	if (mGamePad->mEnabledFrameMeaning & TMarioGamePad::MEANING_0x40
+	    || mGamePad->mButton.mTrigger & 0x10)
+		mState = STATE_CLOSE;
 
-	J2DPane* cursor = unk128[0]->getPane();
-	// TODO: mCompSPos[8]/[9] are probably the stick values
-	int x = cursor->getBounds().x1;
-	int y = cursor->getBounds().y1;
-	x += (s16)(3.2f * unkC0->mCompSPos[8]);
-	y += (s16)(-3.2f * unkC0->mCompSPos[9]);
+	J2DPane* cursor = mCursors[0]->getPane();
+	int x = cursor->mBounds.x1;
+	int y = cursor->mBounds.y1;
+	x += (s16)(3.2f * mGamePad->mCompSPos[8]);
+	y += (s16)(-3.2f * mGamePad->mCompSPos[9]);
 	if (x > 568)
 		x = 568;
 	if (x < 0)
@@ -460,496 +479,601 @@ void TGuide::linkSelect()
 	if (y < 56)
 		y = 56;
 	cursor->move(x, y);
-	unk128[1]->getPane()->move(x + 7, y + 4);
+	mCursors[1]->getPane()->move(x + 7, y + 4);
 
 	int point = checkPoint(x - 2, y + 10);
-	if (point != -1 && unkC0->checkMeaning(TMarioGamePad::MEANING_MENU_A))
+	if (point != -1
+	    && (mGamePad->mMeaning & TMarioGamePad::MEANING_0x20))
 		appearGuidePane(point);
 
 	if (point != -1 && point < 10) {
-		u8 current = unk44C[point]->getAlpha();
+		u8 cur = mPointPanes[point]->getAlpha();
 		int alpha;
-		if (unk164)
-			alpha = current + 4;
+		if (mCursorBlinkUp)
+			alpha = cur + 4;
 		else
-			alpha = current - 4;
-
+			alpha = cur - 4;
 		if (alpha < 30) {
-			unk164 = 1;
-			alpha  = 30;
+			mCursorBlinkUp = 1;
+			alpha          = 30;
 		} else if (alpha > 255) {
-			unk164 = 0;
-			alpha  = 255;
+			mCursorBlinkUp = 0;
+			alpha          = 255;
 		}
-		unk44C[point]->setAlpha(alpha);
-
-		changePattern((J2DPicture*)unk128[0]->getPane(), 45, unkF0);
-		changePattern((J2DPicture*)unk128[1]->getPane(), 45, unkF0);
+		mPointPanes[point]->setAlpha(alpha);
+		changePattern((J2DPicture*)mCursors[0]->getPane(), mTimer, 45);
+		changePattern((J2DPicture*)mCursors[1]->getPane(), mTimer, 45);
 	}
 
-	if (unk480 != point) {
+	if (mSelectedPoint != point) {
 		changeBotStatus(point);
-		if (unk480 != -1 && unk480 < 10)
-			unk44C[unk480]->setAlpha(255);
-
+		if (mSelectedPoint != -1 && mSelectedPoint < 10)
+			mPointPanes[mSelectedPoint]->setAlpha(255);
 		if (point == -1) {
-			J2DPicture* cursor0 = (J2DPicture*)unk128[0]->getPane();
-			cursor0->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
-			cursor0->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
-			J2DPicture* cursor1 = (J2DPicture*)unk128[1]->getPane();
-			cursor1->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
-			cursor1->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
+			J2DPicture* pic = (J2DPicture*)mCursors[0]->getPane();
+			pic->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
+			pic->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
+			pic = (J2DPicture*)mCursors[1]->getPane();
+			pic->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
+			pic->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
 		}
-		unk164 = 0;
-		unk480 = point;
+		mCursorBlinkUp = 0;
+		mSelectedPoint = point;
 	}
 
-	changePattern(unk134, 90, unkF0);
-	mirrorPattern(unk148, 90, unkF0);
-	rotatePattern((J2DPicture*)unk154, 90, unkF0, 30);
-	changePattern(unk138, 90, unkF0);
-	mirrorPattern(unk14C, 90, unkF0);
-	mirrorPattern(unk150, 90, unkF0);
-	changePattern(unk13C, 90, unkF0);
-	changePattern(unk140, 90, unkF0);
-	changePattern(unk144, 90, unkF0);
-	rotatePattern((J2DPicture*)unk158, 90, unkF0, -45);
-	shinePattern(unk444, 90, unkF0);
-	// NOTE: calling mmarkPattern here instead keeps setPaneAlpha out-of-line,
-	// unlike the ROM, so this was probably written out by hand.
-	TExPane* mark = unk478;
-	u32 frame     = unkF0;
-	if (frame % 270 == 0) {
-		if (!((frame / 270) & 1))
-			mark->setPaneAlpha(270, 0, unk47C);
-		else
-			mark->setPaneAlpha(270, unk47C, 0);
-	}
-	mark->update();
+	changePattern(mSunPane, mTimer, 90);
+	mirrorPattern(mCloudPane, mTimer, 90);
+	rotatePattern(mBirdPane1, mTimer, 90, 30);
+	changePattern(mShipPane, mTimer, 90);
+	mirrorPattern(mWavePane1, mTimer, 90);
+	mirrorPattern(mWavePane2, mTimer, 90);
+	changePattern(mPalmPane2, mTimer, 90);
+	changePattern(mPalmPane1, mTimer, 90);
+	changePattern(mFishPane, mTimer, 90);
+	rotatePattern(mBirdPane2, mTimer, 90, -45);
 
-	if (unk15C) {
-		unk160 += 3;
-		if (unk160 > 300)
-			unk15C = 0;
+	shinePattern(mShineBoundPane, mTimer, 90);
+	mmarkPattern(mMarkPane, mTimer, 270);
+
+	if (mMapBlinkUp) {
+		mMapAlpha += 3;
+		if (mMapAlpha > 300)
+			mMapBlinkUp = false;
 	} else {
-		unk160 -= 3;
-		if (unk160 < 30)
-			unk15C = 1;
+		mMapAlpha -= 3;
+		if (mMapAlpha < 30)
+			mMapBlinkUp = true;
 	}
 
 	u8 alpha;
-	if (unk160 < 30)
+	if (mMapAlpha < 30)
 		alpha = 30;
-	else if (unk160 > 255)
+	else if (mMapAlpha > 255)
 		alpha = 255;
 	else
-		alpha = unk160;
-
+		alpha = mMapAlpha;
 	for (int i = 0; i < 10; ++i)
-		unk168[i]->setAlpha(alpha);
+		mStagePanes[i]->setAlpha(alpha);
 
-	++unkF0;
-	if (unkF0 > 540)
-		unkF0 = 0;
+	mTimer++;
+	if (mTimer > 540)
+		mTimer = 0;
 }
 
-void TGuide::changePattern(J2DPicture* picture, s16 period, u32 frame)
+// UNUSED; inlined into linkSelect for all nine decorative panes.
+//
+// The `u16 t` copy is load-bearing, not cosmetic: mTimer is a u16 and retail
+// feeds it straight into the unsigned `% period`, with no sign extension
+// anywhere in linkSelect. Spelling the modulo on the s16 parameter the map
+// gives adds an extsh at every one of the eleven inline sites (linkSelect
+// 87.9% -> 93.7%). All five helpers share the shape.
+void TGuide::changePattern(J2DPicture* pane, s16 timer, u32 period)
 {
-	if (frame % period == 0) {
-		if ((frame / period) & 1) {
-			picture->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
-			picture->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
+	u16 t = timer;
+	if (t % period == 0) {
+		if ((t / period) % 2 == 0) {
+			pane->setBlendKonstColor(0.0f, 1.0f, 0.0f, 0.0f);
+			pane->setBlendKonstAlpha(0.0f, 1.0f, 0.0f, 0.0f);
 		} else {
-			picture->setBlendKonstColor(0.0f, 1.0f, 0.0f, 0.0f);
-			picture->setBlendKonstAlpha(0.0f, 1.0f, 0.0f, 0.0f);
+			pane->setBlendKonstColor(1.0f, 0.0f, 0.0f, 0.0f);
+			pane->setBlendKonstAlpha(1.0f, 0.0f, 0.0f, 0.0f);
 		}
 	}
 }
 
-void TGuide::mirrorPattern(J2DPicture* picture, s16 period, u32 frame)
+// UNUSED
+void TGuide::mirrorPattern(J2DPicture* pane, s16 timer, u32 period)
 {
-	if (frame % period == 0) {
-		if ((frame / period) & 1)
-			picture->mMirror = (J2DMirror)2;
+	u16 t = timer;
+	if (t % period == 0) {
+		if ((t / period) % 2 == 0)
+			pane->mMirror = MIRROR0;
 		else
-			picture->mMirror = (J2DMirror)0;
+			pane->mMirror = J2DMirror_X;
 	}
 }
 
-void TGuide::rotatePattern(J2DPicture* picture, s16 period, u32 frame,
-                           s16 angle)
+// UNUSED
+void TGuide::rotatePattern(J2DPicture* pane, s16 timer, u32 period, s16 angle)
 {
-	if (frame % period == 0) {
-		if ((frame / period) & 1)
-			picture->mRotation = angle;
+	u16 t = timer;
+	if (t % period == 0) {
+		if ((t / period) % 2 == 0)
+			pane->mRotation = 0.0f;
 		else
-			picture->mRotation = 0.0f;
+			pane->mRotation = angle;
 	}
 }
 
-void TGuide::shinePattern(TBoundPane* pane, s16 period, u32 frame)
+// UNUSED; the click-prompt blink and the pane update belong to it (retail's
+// linkSelect keeps the timer and pane in the helper's registers across both).
+// TODO: 0x11c against the map's 0x140; the expansion in linkSelect is exact.
+void TGuide::shinePattern(TBoundPane* pane, s16 timer, u32 period)
 {
-	int phase = frame % period;
-	if (phase == 0) {
+	u16 t     = timer;
+	int phase = t % period;
+	if (phase == 0)
 		pane->setPanePosition(45, JUTPoint(0, 0), JUTPoint(0, -5),
 		                      JUTPoint(0, 0));
-	} else if (phase == 45) {
+	else if (phase == 45)
 		pane->setPanePosition(45, JUTPoint(0, 0), JUTPoint(0, 5),
 		                      JUTPoint(0, 0));
-	}
-
-	u8 alpha;
-	if (frame % (period * 2) < 130)
-		alpha = 255;
-	else
-		alpha = 0;
-	unk448->setAlpha(alpha);
+	mClickPane->mAlpha = t % 180u < 130 ? 255 : 0;
 	pane->update();
 }
 
-void TGuide::mmarkPattern(TExPane* pane, s16 period, u32 frame)
+// UNUSED
+void TGuide::mmarkPattern(TExPane* pane, s16 timer, u32 period)
 {
-	if (frame % period == 0) {
-		if (!((frame / period) & 1))
-			pane->setPaneAlpha(period, 0, unk47C);
+	u16 t = timer;
+	if (t % period == 0) {
+		if ((t / period) % 2 == 0)
+			pane->setPaneAlpha(period, 0, mMarkAlpha);
 		else
-			pane->setPaneAlpha(period, unk47C, 0);
+			pane->setPaneAlpha(period, mMarkAlpha, 0);
 	}
 	pane->update();
 }
 
-// TODO: body is unknown
-void TGuide::searchNearPoint(s16*, s16*, s16, s16) { }
-
-int TGuide::checkPoint(int param_1, int param_2)
+// UNUSED; the cursor snap that shipped disabled.
+void TGuide::searchNearPoint(s16* out_x, s16* out_y, s16 x, s16 y)
 {
-	int result = -1;
+	int nearest     = -1;
+	int nearestDist = 0;
+	for (int i = 0; i < 10; ++i) {
+		JUTRect bounds = mPointPanes[i]->mBounds;
+		int dx         = (bounds.x1 + bounds.x2) / 2 - x;
+		int dy         = (bounds.y1 + bounds.y2) / 2 - y;
+		int dist       = dx * dx + dy * dy;
+		if (nearest == -1 || dist < nearestDist) {
+			nearest     = i;
+			nearestDist = dist;
+		}
+	}
+	if (nearest != -1) {
+		JUTRect bounds = mPointPanes[nearest]->mBounds;
+		*out_x         = (bounds.x1 + bounds.x2) / 2;
+		*out_y         = (bounds.y1 + bounds.y2) / 2;
+	}
+}
+
+// fabricated: checkPoint's frame is 0x1c of low region above what the two
+// loops on their own reserve. Two binder expansions are +0x18 and the fork
+// nested at the first of them the remaining +4 (closure 262).
+static inline J2DPane* GuidePaneFork(J2DPane** panes, int i)
+{
+	return panes[i];
+}
+
+static inline J2DPane* GuidePaneFB(J2DPane** panes, int i)
+{
+	J2DPane* x = GuidePaneFork(panes, i);
+	return x;
+}
+
+static inline J2DPane* GuidePane(J2DPane** panes, int i)
+{
+	J2DPane* x = panes[i];
+	return x;
+}
+
+static inline TExPane* GuideExPane(TExPane** panes, int i)
+{
+	TExPane* x = panes[i];
+	return x;
+}
+
+static inline J2DPane* GuideGetPane(TExPane* p)
+{
+	J2DPane* x = p->getPane();
+	return x;
+}
+
+int TGuide::checkPoint(int x, int y)
+{
+	int hit = -1;
 	for (int i = 0; i < 14; ++i) {
-		JUTRect rect = unk168[i]->getBounds();
-		if (param_1 > rect.x1 && param_1 < rect.x2 && param_2 > rect.y1
-		    && param_2 < rect.y2) {
-			result = i;
+		JUTRect bounds = GuidePaneFB(mStagePanes, i)->mBounds;
+		if (x > bounds.x1 && x < bounds.x2 && y > bounds.y1 && y < bounds.y2) {
+			hit = i;
 			break;
 		}
 	}
-
-	if (result == -1) {
+	if (hit == -1) {
 		for (int i = 0; i < 10; ++i) {
-			JUTRect rect = unk44C[i]->getBounds();
-			if (param_1 > rect.x1 && param_1 < rect.x2 && param_2 > rect.y1
-			    && param_2 < rect.y2) {
-				result = i;
+			JUTRect bounds = GuidePane(mPointPanes, i)->mBounds;
+			if (x > bounds.x1 && x < bounds.x2 && y > bounds.y1
+			    && y < bounds.y2) {
+				hit = i;
 				break;
 			}
 		}
 	}
-
-	if (result >= 0 && result < 10 && !unk44C[result]->isVisible())
-		result = -1;
-
-	return result;
+	if (hit >= 0 && hit < 10 && !mPointPanes[hit]->mVisible)
+		hit = -1;
+	return hit;
 }
 
 void TGuide::changeBotStatus(int stage)
 {
 	if (stage == -1 || stage >= 10) {
-		unk124->hide();
+		mStageNameBox->hide();
 		return;
 	}
 
-	if (unk14[stage].unk0 == 0) {
-		unk124->show();
-		unkF4->show();
-		strncpy(unk124->getStringPtr(), SMSGetMessageData(unk474, stage),
-		        0x1a);
+	if (mScores[stage].unk0 == 0) {
+		mStageNameBox->show();
+		mShineIcon->show();
+		strncpy(mStageNameBox->getStringPtr(),
+		        SMSGetMessageData(mStageNameBmg, stage), 26);
 
-		int shineNum = unk14[stage].mShineNum;
-		if (shineNum < 0)
-			shineNum = 0;
-		if (shineNum > 99)
-			shineNum = 99;
-		if (shineNum < 10) {
-			unkF8[1]->hide();
-			unkF8[0]->changeTexture(unkC8[shineNum]->getTexInfo(), 0);
+		int shines = mScores[stage].mShineNum;
+		if (shines < 0)
+			shines = 0;
+		if (shines > 99)
+			shines = 99;
+		if (shines < 10) {
+			mShineDigits[1]->hide();
+			mShineDigits[0]->changeTexture(
+			    mNumberTextures[shines]->getTexInfo(), 0);
 		} else {
-			unkF8[1]->show();
-			unkF8[0]->changeTexture(unkC8[shineNum / 10]->getTexInfo(), 0);
-			unkF8[1]->changeTexture(unkC8[shineNum % 10]->getTexInfo(), 0);
+			mShineDigits[1]->show();
+			mShineDigits[0]->changeTexture(
+			    mNumberTextures[shines / 10]->getTexInfo(), 0);
+			mShineDigits[1]->changeTexture(
+			    mNumberTextures[shines % 10]->getTexInfo(), 0);
 		}
 
-		if ((u32)stage <= 1 || unk14[stage].mEtcShineNum == 0) {
-			unk100->hide();
-			unk104[0]->hide();
-			unk104[1]->hide();
-		} else if (unk14[stage].mEtcShineNum == 1) {
-			unk100->show();
-			unk104[0]->show();
-			unk104[1]->hide();
+		if (stage == 0 || stage == 1 || mScores[stage].mEtcShineNum == 0) {
+			mEtcShineIcon->hide();
+			mEtcShineMarks[0]->hide();
+			mEtcShineMarks[1]->hide();
+		} else if (mScores[stage].mEtcShineNum == 1) {
+			mEtcShineIcon->show();
+			mEtcShineMarks[0]->show();
+			mEtcShineMarks[1]->hide();
 		} else {
-			unk100->show();
-			unk104[0]->show();
-			unk104[1]->show();
+			mEtcShineIcon->show();
+			mEtcShineMarks[0]->show();
+			mEtcShineMarks[1]->show();
 		}
 
-		int coinNum = unk14[stage].mCoinNum;
-		if (coinNum < 0)
-			coinNum = 0;
-		if (coinNum > 999)
-			coinNum = 999;
-		if (coinNum < 100) {
-			unk10C[2]->hide();
-			unk10C[0]->changeTexture(unkC8[coinNum / 10]->getTexInfo(), 0);
-			unk10C[1]->changeTexture(unkC8[coinNum % 10]->getTexInfo(), 0);
+		int coins = mScores[stage].mCoinNum;
+		if (coins < 0)
+			coins = 0;
+		if (coins > 999)
+			coins = 999;
+		if (coins < 100) {
+			mCoinDigits[2]->hide();
+			mCoinDigits[0]->changeTexture(
+			    mNumberTextures[coins / 10]->getTexInfo(), 0);
+			mCoinDigits[1]->changeTexture(
+			    mNumberTextures[coins % 10]->getTexInfo(), 0);
 		} else {
-			unk10C[2]->show();
-			int hundreds = coinNum / 100;
-			unk10C[0]->changeTexture(unkC8[hundreds]->getTexInfo(), 0);
-			coinNum -= hundreds * 100;
-			unk10C[1]->changeTexture(unkC8[coinNum / 10]->getTexInfo(), 0);
-			unk10C[2]->changeTexture(unkC8[coinNum % 10]->getTexInfo(), 0);
+			mCoinDigits[2]->show();
+			int hundreds = coins / 100;
+			mCoinDigits[0]->changeTexture(
+			    mNumberTextures[hundreds]->getTexInfo(), 0);
+			coins -= hundreds * 100;
+			mCoinDigits[1]->changeTexture(
+			    mNumberTextures[coins / 10]->getTexInfo(), 0);
+			mCoinDigits[2]->changeTexture(
+			    mNumberTextures[coins % 10]->getTexInfo(), 0);
 		}
 
-		if (unk14[stage].mHundredCoinShine)
-			unk118->show();
+		if (mScores[stage].mHasFirstEtcShine)
+			mCoinIcon->show();
 		else
-			unk118->hide();
+			mCoinIcon->hide();
 
-		int blueCoinNum = unk14[stage].mBlueCoinNum;
-		if (blueCoinNum < 0)
-			blueCoinNum = 0;
-		if (blueCoinNum > 99)
-			blueCoinNum = 99;
+		int blueCoins = mScores[stage].mBlueCoinNum;
+		if (blueCoins < 0)
+			blueCoins = 0;
+		if (blueCoins > 99)
+			blueCoins = 99;
 
 		if (stage == 0) {
-			unkBC->search('sb_i')->hide();
-			unkBC->search('sc_t')->hide();
+			mScreen->search('sb_i')->hide();
+			mScreen->search('sc_t')->hide();
 		} else {
-			unkBC->search('sb_i')->show();
-			unkBC->search('sc_t')->show();
+			mScreen->search('sb_i')->show();
+			mScreen->search('sc_t')->show();
 		}
 
-		if (blueCoinNum < 10) {
-			unk11C[1]->hide();
-			unk11C[0]->changeTexture(unkC8[blueCoinNum % 10]->getTexInfo(), 0);
+		if (blueCoins < 10) {
+			mBlueCoinDigits[1]->hide();
+			mBlueCoinDigits[0]->changeTexture(
+			    mNumberTextures[blueCoins % 10]->getTexInfo(), 0);
 		} else {
-			unk11C[1]->show();
-			unk11C[0]->changeTexture(unkC8[blueCoinNum / 10]->getTexInfo(), 0);
-			unk11C[1]->changeTexture(unkC8[blueCoinNum % 10]->getTexInfo(), 0);
+			mBlueCoinDigits[1]->show();
+			mBlueCoinDigits[0]->changeTexture(
+			    mNumberTextures[blueCoins / 10]->getTexInfo(), 0);
+			mBlueCoinDigits[1]->changeTexture(
+			    mNumberTextures[blueCoins % 10]->getTexInfo(), 0);
 		}
 	} else {
-		unk124->show();
-		unkF4->hide();
+		mStageNameBox->show();
+		mShineIcon->hide();
 
-		int blueCoinNum = unk14[stage].mBlueCoinNum;
-		if (blueCoinNum < 0)
-			blueCoinNum = 0;
-		if (blueCoinNum > 99)
-			blueCoinNum = 99;
-		if (blueCoinNum < 10) {
-			unk11C[1]->hide();
-			unk11C[0]->changeTexture(unkC8[blueCoinNum % 10]->getTexInfo(), 0);
+		int blueCoins = mScores[stage].mBlueCoinNum;
+		if (blueCoins < 0)
+			blueCoins = 0;
+		if (blueCoins > 99)
+			blueCoins = 99;
+		if (blueCoins < 10) {
+			mBlueCoinDigits[1]->hide();
+			mBlueCoinDigits[0]->changeTexture(
+			    mNumberTextures[blueCoins % 10]->getTexInfo(), 0);
 		} else {
-			unk11C[1]->show();
-			unk11C[0]->changeTexture(unkC8[blueCoinNum / 10]->getTexInfo(), 0);
-			unk11C[1]->changeTexture(unkC8[blueCoinNum % 10]->getTexInfo(), 0);
+			mBlueCoinDigits[1]->show();
+			mBlueCoinDigits[0]->changeTexture(
+			    mNumberTextures[blueCoins / 10]->getTexInfo(), 0);
+			mBlueCoinDigits[1]->changeTexture(
+			    mNumberTextures[blueCoins % 10]->getTexInfo(), 0);
 		}
 
-		unkBC->search('sb_i')->show();
-		unkBC->search('sc_t')->hide();
-		unkBC->search('sq_i')->hide();
-		strncpy(unk124->getStringPtr(), SMSGetMessageData(unk474, stage),
-		        0x1a);
+		mScreen->search('sb_i')->show();
+		mScreen->search('sc_t')->hide();
+		mScreen->search('sq_i')->hide();
+
+		strncpy(mStageNameBox->getStringPtr(),
+		        SMSGetMessageData(mStageNameBmg, stage), 26);
 	}
 }
 
+// The scaled position is one TVec3::set: its right-to-left arguments request
+// 21200.0f (@2954) before 25000.0f (@2955), retail's pool order.
+// x and y are s32 (long): an `int` x made a second
+// conversion object and stored x's fctiwz result twice.
+// TODO: frame 0x80 against retail's 0x100; retail's pos sits at 0xac with a
+// 0x84-byte dead region below it (a missing inline level around the pos math?).
 void TGuide::placeMario()
 {
-	u8 stage = gpMarDirector->mMap;
-	if (SMS_getShineStage(stage) != 1 || stage == 0x14) {
-		unk430->hide();
+	if ((u8)SMS_getShineStage(gpMarDirector->getCurrentMap()) != 1) {
+		mMarioMarker->mVisible = false;
 		return;
 	}
 
-	// TODO: stack frame is 0x70 bytes too small, some inline is missing
-	JGeometry::TVec3<f32> pos = *gpMarioPos;
-	int mapW                  = unk434.getWidth();
-	int mapH                  = unk434.getHeight();
-	pos.x                     = pos.x * mapW / 25000.0f;
-	pos.y                     = 0.0f;
-	pos.z                     = pos.z * mapH / 21200.0f;
+	JGeometry::TVec3<f32> pos = SMS_GetMarioPos();
+	int mapWidth              = mMapRect.getWidth();
+	int mapHeight             = mMapRect.getHeight();
+	pos.set(pos.x * (f32)mapWidth / 25000.0f, 0.0f,
+	        pos.z * (f32)mapHeight / 21200.0f);
 
-	J2DPane* marker = unk430;
-	int w           = marker->getBounds().getWidth();
-	int h           = marker->getBounds().getHeight();
-	int x           = 0.5f * mapW + pos.x - 0.5f * w - 2.0f;
-	int y           = 0.5f * mapH + pos.z + 0.5f * h;
-	if (x > mapW - w)
-		x = mapW - w;
+	J2DPane* marker = mMarioMarker;
+	int paneWidth   = marker->getWidth();
+	s32 x = 0.5f * (f32)mapWidth + pos.x - 0.5f * (f32)paneWidth - 2.0f;
+	int paneHeight  = marker->getHeight();
+	s32 y = 0.5f * (f32)mapHeight + pos.z + 0.5f * (f32)paneHeight;
+	if (x > mapWidth - paneWidth)
+		x = mapWidth - paneWidth;
 	if (x < 0)
 		x = 0;
-	if (y > mapH - h)
-		y = mapH - h;
+	if (y > mapHeight - paneHeight)
+		y = mapHeight - paneHeight;
 	if (y < 0)
 		y = 0;
-	marker->show();
-	unk430->move(x, y);
+	marker->mVisible = true;
+	mMarioMarker->move(x, y);
 
 	for (int i = 2; i < 10; ++i) {
 		if (TFlagManager::getInstance()->getBool(0x103A5 + i))
-			unkBC->search('01g1' + (i - 2))->show();
+			mScreen->search('01g0' + i - 1)->show();
 		else
-			unkBC->search('01g1' + (i - 2))->hide();
+			mScreen->search('01g0' + i - 1)->hide();
 	}
 }
 
-void TGuide::appearGuidePane(int index)
+void TGuide::appearGuidePane(int stage)
 {
-	unk424 = unk1C0[index];
-	unk428 = unk378[index];
-	JUTRect paneRect(unk218[index]);
-	JUTRect pointRect(unk168[index]->getBounds());
+	mOpenPanelA = GuideExPane(mPanelsA, stage);
+	mOpenPanelB = GuideExPane(mPanelsB, stage);
 
-	unk424->getPane()->show();
-	unk424->setCenteredSize(20, paneRect.getWidth(), paneRect.getHeight(), 0,
-	                        0);
-	unk424->setPaneOffset(20, 0, 0, pointRect.x1 - paneRect.x1,
-	                      pointRect.y1 - paneRect.x1 - 40);
+	JUTRect rect   = mPanelRects[stage];
+	JUTRect bounds = mStagePanes[stage]->mBounds;
 
-	unk428->getPane()->setAlpha(0);
-	unk428->getPane()->show();
-	unk428->setPaneAlpha(20, 255, 0);
-	unk128[0]->setPaneAlpha(20, 0, 255);
-	unk128[1]->setPaneAlpha(20, 0, 80);
+	GuideGetPane(mOpenPanelA)->mVisible = true;
+	int height                       = rect.getHeight();
+	int width                        = rect.getWidth();
+	mOpenPanelA->setCenteredSize(20, width, height, 0, 0);
+	// TODO: rect.x1 twice really is what retail subtracts; the y term looks
+	// like a copy-paste slip in the original.
+	// TODO: r24/r29 swap on the offset y-term vs the reloaded mOpenPanelA;
+	// frame is exact (0x148). Known-open callee-saved ranking.
+	mOpenPanelA->setPaneOffset(20, 0, 0, bounds.x1 - rect.x1,
+	                           bounds.y1 - rect.x1 - 40);
 
-	if (index == 1)
+	mOpenPanelB->getPane()->setAlpha(0);
+	mOpenPanelB->getPane()->mVisible = true;
+	mOpenPanelB->setPaneAlpha(20, 255, 0);
+	GuideExPane(mCursors, 0)->setPaneAlpha(20, 0, 255);
+	mCursors[1]->setPaneAlpha(20, 0, 80);
+
+	if (stage == 1)
 		placeMario();
 
-	gpMSound->startSoundSystemSE(0x4804, 0, nullptr, 0);
-	unk42C = index;
-	unk10  = 1;
-	if (index != -1 && index < 10) {
-		unk164 = 0;
-		unk44C[index]->setAlpha(255);
+	gpMSound->startSoundSystemSE(MSD_SE_SY_TALK_MODE_IN, 0, nullptr, 0);
+
+	mCurrentStage = stage;
+	mState        = STATE_APPEARING;
+	if (stage != -1 && stage < 10) {
+		mCursorBlinkUp                = 0;
+		mPointPanes[stage]->mAlpha = 255;
 	}
 }
 
-void TGuide::disappearGuidePane(int index)
+// UNUSED: inlined into perform's STATE_SHOWING case, its only call site.
+// Nine statements: the depth-2 budget, so width and height are not named.
+void TGuide::disappearGuidePane(int stage)
 {
-	unk428->setPaneAlpha(20, 0, 255);
-	JUTRect paneRect(unk218[index]);
-	JUTRect pointRect(unk168[index]->getBounds());
-	gpMSound->startSoundSystemSE(0x4805, 0, nullptr, 0);
-	unk424->setCenteredSize(20, 0, 0, paneRect.getWidth(),
-	                        paneRect.getHeight());
-	unk424->setPaneOffset(20, pointRect.x1 - paneRect.x1,
-	                      pointRect.y1 - paneRect.x1 - 40, 0, 0);
-	unk128[0]->setPaneAlpha(20, 255, 0);
-	unk128[1]->setPaneAlpha(20, 80, 0);
-	unk10 = 3;
+	mOpenPanelB->setPaneAlpha(20, 0, 255);
+
+	JUTRect rect   = mPanelRects[stage];
+	JUTRect bounds = mStagePanes[stage]->getBounds();
+
+	gpMSound->startSoundSystemSE(MSD_SE_SY_TALK_MODE_OUT, 0, nullptr, 0);
+
+	mOpenPanelA->setCenteredSize(20, 0, 0, rect.getWidth(), rect.getHeight());
+	mOpenPanelA->setPaneOffset(20, bounds.x1 - rect.x1,
+	                           bounds.y1 - rect.x1 - 40, 0, 0);
+	mCursors[0]->setPaneAlpha(20, 255, 0);
+	mCursors[1]->setPaneAlpha(20, 80, 0);
+	mState = STATE_DISAPPEAR;
 }
 
-// fabricated
-// TODO: the ROM needs one more inline level between perform and
-// disappearGuidePane (otherwise setPaneSize/setPaneAlpha/setPaneOffset get
-// inlined into it), the real split of perform is unknown.
-inline void TGuide::control()
+// fabricated: retail calls setPaneAlpha, setPaneSize and setPaneOffset out
+// of line inside the disappearGuidePane expansion, one inline level deeper
+// than a direct call from perform: the STATE_SHOWING case body was its own
+// inline.
+static inline void GuideShowing(TGuide* guide)
 {
-	bool done = true;
-	switch (unk10) {
-	case 9: {
-		if (unkC5 && gpApplication.mFader->mFadeStatus == 0) {
-			gpApplication.mFader->startWipe(5, 1.0f, 0.0f);
-			unk10 = 10;
-		}
-		u32 stage = gpMarDirector->mMap;
-		if (stage == 0x14)
-			stage = 0;
-		JUTRect rect(unk168[SMS_getShineStage(stage)]->getBounds());
-		unk128[0]->getPane()->move(rect.x1 + 6, rect.y1 - 1);
-		unk128[1]->getPane()->move(rect.x1 + 6, rect.y1 - 1);
-		break;
-	}
-	case 10:
-		if (gpApplication.mFader->mFadeStatus == 1) {
-			unk10  = 0;
-			unk428 = nullptr;
-			unk424 = nullptr;
-			unk128[0]->getPane()->setAlpha(255);
-			unk128[1]->getPane()->setAlpha(80);
-		}
-		break;
-	case 0:
-		linkSelect();
-		break;
-	case 1:
-		done &= unk424->update();
-		for (int i = 0; i < 2; ++i)
-			done &= unk128[i]->update();
-		if (done) {
-			if (unk428->update())
-				unk10 = 2;
-		}
-		break;
-	case 2:
-		if (unkC0->checkFrameMeaning(TMarioGamePad::MEANING_MENU_A
-		                             | TMarioGamePad::MEANING_MENU_B)) {
-			disappearGuidePane(unk42C);
-		} else if (unkC0->mButton.mTrigger & 0x10) {
-			unk10 = 7;
-		}
-		break;
-	case 3:
-		if (unk428->update()) {
-			done &= unk424->update();
-			for (int i = 0; i < 2; ++i)
-				done &= unk128[i]->update();
-			if (done) {
-				unk424->getPane()->hide();
-				unk428->getPane()->hide();
-				unk10 = 0;
-				unkF0 = 0;
-			}
-		}
-		break;
-	case 7:
-		gpApplication.mFader->startWipe(6, 1.0f, 0.0f);
-		unkC0->mFlags &= ~TMarioGamePad::PAD_FLAG_GUIDE_INPUT;
-		gpMSound->startSoundSystemSE(0x4818, 0, nullptr, 0);
-		unk10 = 11;
-		break;
-	case 11:
-		if (gpApplication.mFader->mFadeStatus == 0) {
-			gpApplication.mFader->startWipe(5, 1.0f, 0.0f);
-			if (unk424 && unk424->getPane()->mVisible)
-				unk424->getPane()->hide();
-			if (unk428 && unk428->getPane()->mVisible)
-				unk428->getPane()->hide();
-			unkC4 = 1;
-			unk10 = 8;
-		}
-		break;
+	if (guide->mGamePad->mEnabledFrameMeaning
+	    & (TMarioGamePad::MEANING_0x20 | TMarioGamePad::MEANING_0x40)) {
+		guide->disappearGuidePane(guide->mCurrentStage);
+	} else if (guide->mGamePad->mButton.mTrigger & 0x10) {
+		guide->mState = TGuide::STATE_CLOSE;
 	}
 }
 
-void TGuide::perform(u32 param_1, JDrama::TGraphics* param_2)
+// TODO: frame 0x2a8 against retail's 0x2b8 (show/hide/isVisible/getBounds and
+// getWidth/getHeight gave +0x38, getCurrentMap() +0x10), the loop's i copies
+// retail's zero register (r28) where ours loads `li 0`, and the
+// disappearGuidePane expansion's callee-saved registers rotate (retail: stage r27, height r31,
+// width r28). setPaneAlpha's out-of-line copy is 8 bytes short of frame in
+// GC2D/ExPane.hpp (shared header, not changed here). Clamping through a
+// second local, `s16 b = a > 255 ? s16(255) : a; mPane->setAlpha(b);`,
+// matches that copy 100% but costs the inlined sites (CardLoad::titleDraw,
+// ConsoleStr::startOpenWipe and appearGuidePane lose their matches).
+void TGuide::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (setup_wait != 0) {
-		--setup_wait;
+		setup_wait--;
 		if (setup_wait == 0) {
 			SMSSwitch2DArchive("game_6", gArBkGuide);
-			unkC4 = 0;
-			startMoveCursor2();
+			unkC4         = 0;
+			s16 stage     = SMS_getShineStage(gpMarDirector->getCurrentMap());
+			mCurrentStage = stage;
+			resetObjects();
+			changeBotStatus(stage);
+			for (int i = 0; i < 10; ++i) {
+				if (i == stage)
+					mMarkerPanes[i]->show();
+				else
+					mMarkerPanes[i]->hide();
+			}
+			mCursorBlinkUp = 0;
 		} else {
 			return;
 		}
 	}
 
-	if ((param_1 & 8) && unk10 != 9 && unk10 != 8) {
-		J2DOrthoGraph graph(param_2->getViewport());
-		graph.setup2D();
-		unkBC->draw(0, 0, &graph);
+	if (cue & CUE_DRAW) {
+		if (mState != STATE_MOVE_CURSOR && mState != STATE_CLOSED) {
+			J2DOrthoGraph graph(graphics->getViewport());
+			graph.setup2D();
+			mScreen->draw(0, 0, &graph);
+		}
 	}
 
-	if (param_1 & 1)
-		control();
+	if (!(cue & CUE_MOVE))
+		return;
+
+	u8 done = 1;
+	int i;
+	switch (mState) {
+	case STATE_MOVE_CURSOR:
+		if (unkC5 && gpApplication.getFader()->isFullyFadedOut()) {
+			gpApplication.getFader()->startWipe(5, 1.0f, 0.0f);
+			mState = STATE_FADE_IN;
+		}
+		{
+			JUTRect bounds
+			    = mStagePanes[SMS_getShineStage(gpMarDirector->getCurrentMap())]
+			          ->getBounds();
+			mCursors[0]->getPane()->move(bounds.x1 + 6, bounds.y1 - 1);
+			mCursors[1]->getPane()->move(bounds.x1 + 6, bounds.y1 - 1);
+		}
+		break;
+
+	case STATE_FADE_IN:
+		if (gpApplication.getFader()->isFullyFadedIn()) {
+			mState      = STATE_SELECT;
+			mOpenPanelB = nullptr;
+			mOpenPanelA = nullptr;
+			mCursors[0]->getPane()->setAlpha(255);
+			mCursors[1]->getPane()->setAlpha(80);
+		}
+		break;
+
+	case STATE_SELECT:
+		linkSelect();
+		break;
+
+	case STATE_APPEARING:
+		done &= mOpenPanelA->update();
+		for (i = 0; i < 2; ++i)
+			done &= mCursors[i]->update();
+		if (done && mOpenPanelB->update())
+			mState = STATE_SHOWING;
+		break;
+
+	case STATE_SHOWING:
+		GuideShowing(this);
+		break;
+
+	case STATE_DISAPPEAR:
+		if (mOpenPanelB->update()) {
+			done &= mOpenPanelA->update();
+			for (i = 0; i < 2; ++i)
+				done &= mCursors[i]->update();
+			if (done) {
+				mOpenPanelA->getPane()->hide();
+				mOpenPanelB->getPane()->hide();
+				mState                           = STATE_SELECT;
+				mTimer                           = 0;
+			}
+		}
+		break;
+
+	case STATE_CLOSE:
+		gpApplication.getFader()->startWipe(6, 1.0f, 0.0f);
+		mGamePad->offFlag(TMarioGamePad::PAD_FLAG_0x80);
+		gpMSound->startSoundSystemSE(MSD_SE_SY_WIPE_OUT, 0, nullptr, 0);
+		mState = STATE_FADE_OUT;
+		break;
+
+	case STATE_FADE_OUT:
+		if (gpApplication.getFader()->isFullyFadedOut()) {
+			gpApplication.getFader()->startWipe(5, 1.0f, 0.0f);
+			if (mOpenPanelA != nullptr
+			    && mOpenPanelA->getPane()->isVisible())
+				mOpenPanelA->getPane()->hide();
+			if (mOpenPanelB != nullptr
+			    && mOpenPanelB->getPane()->isVisible())
+				mOpenPanelB->getPane()->hide();
+			unkC4  = 1;
+			mState = STATE_CLOSED;
+		}
+		break;
+	}
 }

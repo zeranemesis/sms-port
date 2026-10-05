@@ -21,6 +21,17 @@ public:
 	// returns TRUE if the value was found, otherwise FALSE
 	BOOL GetValue(int entryIndex, const char* key,
 	              const char*& pValueOut) const;
+	BOOL GetValue(int entryIndex, const char* key, f32& pValueOut) const;
+	BOOL GetValue(int entryIndex, const char* key, bool& pValueOut) const;
+	BOOL GetValue(int entryIndex, const char* key, u32& pValueOut) const;
+	void Detach();
+	static u32 Hash(const char* key);
+	s32 SearchItemInfo(const char* key) const;
+	int FindElement(int itemIndex, u32 value, int start) const;
+	int FindElement(int itemIndex, s32 value, int start) const;
+	int FindElement(int itemIndex, bool value, int start) const;
+	int FindElement(int itemIndex, const char* value, int start) const;
+	int FindElement(int itemIndex, f32 value, int start) const;
 
 	inline bool dataExists() const { return !!mData; }
 
@@ -56,32 +67,6 @@ public:
 	};
 
 private:
-	inline u32 hashString(const char* key) const
-	{
-		u32 stringHash = 0;
-		char current_char;
-
-		while ((current_char = *key) != 0) {
-			key++;
-			stringHash = (current_char + (stringHash << 8)) % 0x1FFFFD9;
-		}
-		return stringHash;
-	}
-
-	inline s32 searchItemInfo(const char* pKey) const
-	{
-		s32 nFields = mData->mNumFields;
-		u32 hash    = hashString(pKey);
-
-		for (int i = 0; i < nFields; ++i) {
-			if (hash == mData->mItems[i].mHash) {
-				return i;
-			}
-		}
-
-		return -1;
-	}
-
 	inline const char* getEntryAddress(const JMapData* pData,
 	                                   const s32 dataOffset,
 	                                   const int entryIndex) const
@@ -107,6 +92,41 @@ private:
 		const JMapItem* item = &mData->mItems[itemIndex];
 		*pValueOut = getEntryAddress(mData, mData->mDataOffset, entryIndex)
 		             + item->mOffsData;
+		return TRUE;
+	}
+
+	inline BOOL getValue(const int entryIndex, const int itemIndex,
+	                     f32* pValueOut) const
+	{
+		const JMapItem* item = &mData->mItems[itemIndex];
+		const char* valuePtr
+		    = getEntryAddress(mData, mData->mDataOffset, entryIndex)
+		      + item->mOffsData;
+		*pValueOut = *reinterpret_cast<const f32*>(valuePtr);
+		return TRUE;
+	}
+
+	inline BOOL getValue(const int entryIndex, const int itemIndex,
+	                     u32* pValueOut) const
+	{
+		const JMapItem* item = &mData->mItems[itemIndex];
+		const char* valuePtr
+		    = getEntryAddress(mData, mData->mDataOffset, entryIndex)
+		      + item->mOffsData;
+		*pValueOut = (*reinterpret_cast<const u32*>(valuePtr) & item->mMask)
+		             >> item->mShift;
+		return TRUE;
+	}
+
+	inline BOOL getValue(const int entryIndex, const int itemIndex,
+	                     bool* pValueOut) const
+	{
+		const JMapItem* item = &mData->mItems[itemIndex];
+		const char* valuePtr
+		    = getEntryAddress(mData, mData->mDataOffset, entryIndex)
+		      + item->mOffsData;
+		*pValueOut
+		    = (*reinterpret_cast<const u32*>(valuePtr) & item->mMask) != 0;
 		return TRUE;
 	}
 

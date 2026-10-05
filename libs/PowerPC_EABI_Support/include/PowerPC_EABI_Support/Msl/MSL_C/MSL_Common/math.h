@@ -76,6 +76,49 @@ extern inline double sqrt(double x)
 	return HUGE_VALF;
 }
 
+/* Audited against the map: sqrtf is the *only* float entry point that MSL
+ * defines in this header and that C translation units therefore need a body
+ * for. The others resolve as follows.
+ *
+ *   sinf/cosf/tanf  real out-of-line globals (trigf.c, linked at 0x8033c7e4,
+ *                   0x8033c650, 0x8033c5cc); the prototypes above are all a C
+ *                   unit needs. GXDraw.c, mtx.c and mtx44.c match on them.
+ *   atan2f          same, inverse_trig.c at 0x8033c4f4.
+ *   powf            same, exponentialsf.c at 0x8033c9b8.
+ *   fmodf           never emitted unqualified; the map's only copy is the weak
+ *                   fmodf__3stdFff in wireTrap.cpp, so no C unit ever sees it,
+ *                   and `fmod` itself is a prototype with no definition
+ *                   anywhere in the image.
+ *   fabsf / fabs    already declared inline outside this guard, and the map
+ *                   proves C units get them: fabsf__Ff is weak in
+ *                   hyperbolicsf.c and fabs__Fd weak in e_asin.c, both .c
+ *                   files, both matching.
+ *
+ * So there is nothing else to move out of namespace std. */
+#ifndef __cplusplus
+#define _MSL_HAS_SQRTF
+/* In C++ this lives in namespace std (MAnmSound.cpp carries the weak copy).
+ * C has no namespaces, so the same body is a plain global there, and that is
+ * how the map records it: hx_wiper.c's local statics are named
+ * _half$localstatic0$sqrtf__Ff and _three$localstatic1$sqrtf__Ff, with no std
+ * qualifier. */
+extern inline float sqrtf(float x)
+{
+	const double _half  = .5;
+	const double _three = 3.0;
+	volatile float y;
+	if (x > 0.0f) {
+		double guess = __frsqrte((double)x);
+		guess        = _half * guess * (_three - guess * guess * x);
+		guess        = _half * guess * (_three - guess * guess * x);
+		guess        = _half * guess * (_three - guess * guess * x);
+		y            = (float)(x * guess);
+		return y;
+	}
+	return x;
+}
+#endif
+
 #ifdef __cplusplus
 };
 
@@ -89,7 +132,43 @@ inline float atan2(float x, float y) { return atan2f(x, y); }
 namespace std {
 inline float fabsf(float f) { return ::fabsf(f); }
 inline float abs(float f) { return ::fabs(f); }
-inline float fmodf(float x, float y) { return ::fmod(x, y); }
+// The ROM never inlines this: wireTrap.cpp carries the surviving weak 0x5c
+// copy and MapObjCorona.cpp, limitkoopa.cpp, BathtubPeach.cpp, Koopa.cpp and
+// koopajr.cpp all carry unreferenced duplicates of it. The body below is
+// byte-exact against that copy (0x5c, 23 instructions, verified through
+// objdiff on wireTrap.o), and it is the same computation as
+// JGeometry::TUtil<f32>::mod. The named `unsigned long long quotient` is
+// load-bearing: folding the conversion into the return expression gives the
+// same 23 instructions with a 0x20 frame instead of the ROM's 0x28.
+//
+// Header round 13 replaced the old `return ::fmod(x, y);` forwarder with it.
+// That forwarder was certainly wrong -- the map has no `fmod` symbol at all,
+// so every site was emitting a `bl` to a function that does not exist in the
+// image -- but it scored better at the sites where MWCC expands this body
+// instead of calling it, so the switch costs two nonmatching functions some
+// fuzzy score (TDirectionCalc::calcNearerDirection 97.3% -> 69.9%,
+// TNervePeachEscape::execute 94.2% -> 93.9%) while improving eleven others
+// and making this symbol exact.
+//
+// TODO: the open question is *why* the ROM never expands this body. It is not
+// inline depth. TDirectionCalc::calcNearerDirection (koopajr.cpp, 0xa0, whose
+// asm is the wrap written out with `lo`/`range` as separate literal loads)
+// `bl`s it from depth one. Our build expands it at depth one and two and calls
+// it from depth three, which is why the wrap helpers in wireTrap.cpp,
+// MapObjCorona.cpp, BathtubPeach.cpp, KoopaNerve.hpp and koopajr.cpp are
+// two levels deep: that is the only lever we have, and it is a stand-in, not
+// the mechanism. Tried and ruled out for the declaration: `extern inline`
+// (no change), a named `long long` temporary, the body split into three, five
+// and seven statements, plain `inline`. Caller size is irrelevant. Something
+// about the real declaration refuses expansion outright; find it and the two
+// regressions above, plus the six remaining expanded sites, all close.
+inline float fmodf(float x, float y)
+{
+	if (::fabsf(y) > ::fabsf(x))
+		return x;
+	unsigned long long quotient = (unsigned long long)(x / y);
+	return x - y * (float)(long long)quotient;
+}
 inline float atan2f(float y, float x) { return ::atan2((double)y, (double)x); }
 inline float sinf(float x) { return ::sin((double)x); }
 inline float cosf(float x) { return ::cos((double)x); }

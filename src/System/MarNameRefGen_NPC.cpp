@@ -1,11 +1,50 @@
+// The four MActorMtxCalcType strings and the shared dummy strings head this
+// object's .rodata blob; without them every string offset in the factory is
+// 0xE0 low.  Same prefix as MarNameRefGen_Map.cpp.
+// rogue include needed for matching the .rodata string pool
+#include <M3DUtil/InfectiousStrings.hpp>
+
 #include "NPC/NpcBase.hpp"
 #include "NPC/NpcManager.hpp"
 #include "Strategic/LiveManager.hpp"
 #include <System/MarNameRefGen.hpp>
 
-// rogue includes needed for matching sinit & bss
-#include <M3DUtil/InfectiousStrings.hpp>
+// TODO: these two marker managers are weak in MarNameRefGen_NPC.o and nowhere
+// else in the map (__vt__13TMare{M,W}Manager and their destructors), so their
+// class bodies were visible here and their constructors and destructors were
+// in-class.  Their vtables are byte-for-byte TMare{M,W}BaseManager's apart
+// from the destructor slot, so they override nothing.  They most likely lived
+// in NPC/NpcManager.hpp next to their siblings; this batch may not edit that
+// header, so they are parked here.
+class TMareMManager : public TMareMBaseManager {
+public:
+	TMareMManager()
+	    : TMareMBaseManager("?")
+	{
+	}
+};
 
+class TMareWManager : public TMareWBaseManager {
+public:
+	TMareWManager()
+	    : TMareWBaseManager("?")
+	{
+	}
+};
+
+// TODO: the 28 manager branches below each differ from retail by exactly four
+// instructions, because retail defined every one of those manager constructors
+// in-class: the branch is `bl <base ctor>` with the "?" name plus the derived
+// class's own vtable store, and no `__ct__<derived>Fv` exists anywhere in the
+// map.  NPC/NpcManager.hpp declares them without bodies (and TKinopioManager,
+// TKinojiiManager, TPeachManager, TRaccoonDogManager, TSunflowerLManager,
+// TSunflowerSManager, TMonteWCManager and TBoardNpcManager declare no
+// constructor at all), so this unit cannot reach them.  The bodies are
+//   TMonteMManager()  : TMonteMBaseManager("?") { }        (and siblings)
+//   TMonteMEManager() : TMonteMSpecialManager() { }        (the E/F/G/H four)
+//   TBoardNpcManager(): TLiveManager("?") { }
+// Measured: adding the 28 bodies to NPC/NpcManager.hpp takes this function from
+// 87.9% to 100.0% and the whole unit to fully matching, with zero regressions.
 JDrama::TNameRef* TMarNameRefGen::getNameRef_NPC(const char* name) const
 {
 	if (strcmp(name, "NPCMonteM") == 0)

@@ -1,184 +1,335 @@
-// This TU owns an out-of-line MsMtxSetRotX; see the comment on its definition
-// below. Must precede every include, since MathUtil.hpp decides on
-// `inline` vs. a declaration at include time.
-#define SMS_MSMtxSetRotX_OUTOFLINE 1
-
 #include <MoveBG/MapObjPinna.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
-#include <M3DUtil/MActorUtil.hpp>
-#include <Camera/cameralib.hpp>
-#include <Player/MarioAccess.hpp>
-#include <System/EmitterViewObj.hpp>
-#include <System/Particles.hpp>
-#include <Map/Map.hpp>
+#include <MoveBG/Item.hpp>
+#include <MoveBG/ItemManager.hpp>
 #include <MoveBG/MapObjManager.hpp>
+#include <Camera/cameralib.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/EffectObj.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/MActorUtil.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
-#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <Player/MarioAccess.hpp>
 #include <Player/Yoshi.hpp>
+#include <Strategic/ObjManager.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
-#include <MarioUtil/MathUtil.hpp>
+#include <System/Particles.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
-// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
-// (see the same block in src/Enemy/effectObj.cpp).
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-// The ROM keeps a real out-of-line copy of MsMtxSetRotX in this TU: it is a
-// `weak` symbol (config/GMSP01/symbols.txt, 0x801CD87C, size 0x7C) and
-// TShellCup::perform reaches it through `bl MsMtxSetRotX__FPA4_ff`. With the
-// header's `inline` spelling MWCC always expands the call site and both the
-// 124-byte body and the `bl` vanish. MathUtil.hpp gates the inline body behind
-// SMS_MSMtxSetRotX_OUTOFLINE so only this TU opts out.
-#pragma dont_inline on
-void MsMtxSetRotX(MtxPtr mtx, f32 x)
+// TFerrisWheel
+
+static inline J3DFrameCtrl* MapObjPinnaFrameCtrl(TMapObjBase* p)
 {
-	f32 s = MsSin(x);
-	f32 c = MsCos(x);
-
-	mtx[0][0] = 1.0f;
-	mtx[0][1] = 0.0f;
-	mtx[0][2] = 0.0f;
-	mtx[0][3] = 0.0f;
-	mtx[1][0] = 0.0f;
-	mtx[1][1] = c;
-	mtx[1][2] = -s;
-	mtx[1][3] = 0.0f;
-	mtx[2][0] = 0.0f;
-	mtx[2][1] = s;
-	mtx[2][2] = c;
-	mtx[2][3] = 0.0f;
+	return p->getMActor()->getFrameCtrl(0);
 }
-#pragma dont_inline off
 
-
-// The original calls JGeometry::TUtil<f32>::sqrt(v) out-of-line here
-// (bl sqrt__Q29JGeometry8TUtil<f>Ff), with the range guard inside the
-// callee. JGUtil.hpp only offers the inline spelling, so MWCC always
-// expands these sites and the call never appears.
-// FABRICATED: the callee is orig_sqrt, so the `bl` itself still shows as
-// one mismatched instruction. Making JGUtil.hpp out-of-line instead was
-// measured repo-wide at -32.2 points - see docs/AGENT_MATCHING_TIPS.md.
-#pragma dont_inline on
-static f32 orig_sqrt(f32 v) {
-	return JGeometry::TUtil<f32>::sqrt(v);
-}
-#pragma dont_inline off
-
-
-// TODO: names recovered from marioEU.MAP; the values are guesses.
-static f32 rotate_frame_rate = 1.0f;
-// TODO: name recovered from marioEU.MAP; toggled every coaster frame.
-static u32 switchSnd;
-
-void TMerrygoround::draw() const {}
-
-void TChangeStageMerrygoround::calc()
+static inline MSound* MapObjPinnaGetMSound()
 {
-	if (unk13C) {
-		gpMarioParticleManager->emitAndBindToPosPtr(0x100,
-		                                             &SMS_GetMarioPos(), 1, this);
-		gpMarioParticleManager->emitAndBindToPosPtr(0x101,
-		                                             &SMS_GetMarioPos(), 1, this);
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+static inline J3DModel* MapObjPinnaGetModel(TLiveActor* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+s32 TFerrisWheel::becomeCalmlyCallback(u32 param_1, u32 param_2)
+{
+	if (param_2 == 0) {
+		TFerrisWheel* wheel = reinterpret_cast<TFerrisWheel*>(param_1);
+		wheel->setState(2);
+
+		MSound* sound = SMSGetMSound();
+		if (sound->unk80) {
+			sound->unk80->setVolume(0.0f, 200, 0);
+			sound->unk80->setPitch(0.5f, 200, 0);
+		}
+
+		wheel->startStateTimer(120);
 	}
+
+	return 0;
 }
 
-TPinnaCoaster::TPinnaCoaster(const char* name)
-    : TMapObjBase(name)
-    , unk138(0)
+// The rate as an inlined helper's argument gives retail's f31 (rate) / f30
+// (frame) colouring; a caller-level `f32 rate` local swaps them.
+static inline void MapObjPinnaAdvance(TMapObjBase* p, f32 rate)
 {
-	unk140 = unk144 = unk148 = 0.0f;
+	MapObjPinnaFrameCtrl(p)->setFrame(rate + MapObjPinnaFrameCtrl(p)->getFrame());
 }
 
-void TPinnaCoaster::initMapObj()
-{
-	TMapObjBase::initMapObj();
-	unk138 = SMS_MakeMActorWithAnmData("/scene/mapObj/CoasterRail.bmd",
-	                                   mManager->getMActorAnmData(), 3, 0x10210000);
-	unk138->setBck("coasterrail");
-	MsMtxSetXYZRPH(unk138->getModel()->getBaseTRMtx(), mPosition.x,
-	               mPosition.y, mPosition.z, mRotation.x, mRotation.y,
-	               mRotation.z);
-	unk138->getFrameCtrl(0)->setRate(0.25f * SMSGetAnmFrameRate());
-	unk140 = mPosition.x;
-	unk144 = mPosition.y;
-	unk148 = mPosition.z;
-}
-
-void TPinnaCoaster::control()
+void TFerrisWheel::control()
 {
 	TMapObjBase::control();
-	unk138->frameUpdate();
-	unk138->calc();
-	PSMTXCopy(getModel()->getBaseTRMtx(), unk138->getModel()->getAnmMtx(0));
-	mMActor->frameUpdate();
-	mMActor->calc();
-	MtxPtr mtx = getModel()->getAnmMtx(0);
-	mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
-	// TODO: the ROM copies the offset vector into a second local before
-	// taking its length; the reason for the extra copy is unknown.
-	JGeometry::TVec3<f32> offset = mPosition;
-	offset.x -= unk140;
-	offset.y -= unk144;
-	offset.z -= unk148;
-	JGeometry::TVec3<f32> delta = offset;
-	f32 len = orig_sqrt(
-	    delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
-	if (switchSnd != 0 && gpMSound->gateCheck(0x305A)) {
-		MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-		    0x305A, &mPosition, nullptr, len, 0, 0, nullptr, 0, 4);
+
+	// State 2 is "slowing down after the manta fight"; once the wheel has
+	// coasted back to the idle rate it goes back to state 1 for good.
+	if (isState(2) && !isStateTimerEngaged()) {
+		if (mAnmRate > SMSGetAnmFrameRate() / 4.0f)
+			mAnmRate -= 0.015f;
+		else
+			setState(1);
 	}
-	switchSnd ^= 1;
-	unk140 = mPosition.x;
-	unk144 = mPosition.y;
-	unk148 = mPosition.z;
+
+	if (mAnmRate > SMSGetAnmFrameRate() / 4.0f) {
+		MSound* sound = MapObjPinnaGetMSound();
+		sound->startSoundActor(MSD_SE_OBJ_MAHRE_GATE_LIGHT, &mPosition, 0,
+		                       &sound->unk80, 0, 4);
+	}
+
+	// TODO: 99.9%. Retail keeps the gpMSound receiver in r30 (shared with the
+	// gondola loop's offset) where ours takes r29. Tried: SMSGetMSound(),
+	// raw gpMSound and the three-argument startSoundActor overload (all -8),
+	// sound declared at function scope, the gondola loop in a TU-local level
+	// (-8, rotates the loop), getGondolaNum() bound, gondola/mtx reordered.
+	MapObjPinnaAdvance(this, mAnmRate);
+
+	for (int i = 0; i < mGondolaNum; i++) {
+		TMapObjBase* gondola = mGondolas[i];
+		MtxPtr mtx           = getModel()->getAnmMtx(i + 1);
+		MTXCopy(mtx, gondola->getModel()->getAnmMtx(0));
+		gondola->mPosition.set(mtx[0][3], mtx[1][3] + gondola->mYOffset,
+		                       mtx[2][3]);
+	}
 }
 
-void TAmiKing::touchPlayer(THitActor* actor)
+void TFerrisWheel::initMapObj()
 {
-	SMS_SendMessageToMario(this, HIT_MESSAGE_UNK9);
-}
+	TMapObjBase::initMapObj();
 
-void TAmiKing::bind()
-{
-	if (mLiveFlag & LIVE_FLAG_UNK10)
-		gpMap->checkGround(mPosition.x, mPosition.y + mHeadHeight,
-		                   mPosition.z, &mGroundPlane);
+	// One gondola per joint, minus the wheel's own root joint.
+	mGondolaNum = getModel()->getModelData()->getJointNum() - 1;
+	mGondolas   = new TMapObjBase*[mGondolaNum];
+
+	for (u16 i = 0; i < getGondolaNum(); i++) {
+		mGondolas[i] = TMapObjBaseManager::newAndRegisterObj("FerrisGondola");
+		mGondolas[i]->appear();
+	}
+
+	// The manta arena wants the wheel running much faster than usual.
+	if (SMSGetMarDirector()->getCurrentStage() == 2)
+		mAnmRate = 10.0f;
 	else
-		TLiveActor::bind();
+		mAnmRate = SMSGetAnmFrameRate() / 4.0f;
 }
 
-void TBalloonKoopaJr::touchActor(THitActor* actor) { kill(); }
-
-void TAmiKing::loadAfter()
+TFerrisWheel::TFerrisWheel(const char* name)
+    : TMapObjBase(name)
+    , mGondolaNum(0)
+    , mGondolas(nullptr)
+    , mAnmRate(0.0f)
 {
-	TMapObjBase::loadAfter();
-	SMS_LoadParticle("/scene/mapObj/amiking.jpa", 0x184);
 }
 
-void TPinnaEntrance::loadAfter()
+// THorizontalViking
+
+void THorizontalViking::updateTrans()
 {
-	TMapObjBase::loadAfter();
-	JGeometry::TVec3<f32> rotation(90.0f, 0.0f, 0.0f);
-	TMapObjBaseManager::newAndRegisterObj("GateManta", mPosition, rotation);
+	mPosition.x = getInitialPosition().x
+	              + mSwingRadius * sinf(3.14f * (mSwingAngle / 180.0f));
+
+	// Named so it is read before cosf(); retail parks it in f31 across the
+	// call.
+	f32 yOffset = mYOffset;
+	mPosition.y
+	    = yOffset
+	      + (getInitialPosition().y
+	         + mSwingRadius * (1.0f - cosf(3.14f * (mSwingAngle / 180.0f))));
 }
 
-void TWaterRecoverObj::touchPlayer(THitActor* player)
+void THorizontalViking::moveNormal()
 {
-	if (!player->isActorType(0x80000001))
-		return;
-	if (isStateTimerEngaged())
-		return;
-	player->receiveMessage(this, HIT_MESSAGE_ATTACK);
-	startStateTimer(0x258);
+	switch (mState) {
+	case STATE_SWING_DOWN:
+		mSwingSpeed -= mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+		if (mSwingAngle < 0.0f)
+			mState = STATE_SWING_UP;
+		break;
+
+	case STATE_SWING_UP:
+		mSwingSpeed += mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+		if (mSwingAngle > 0.0f)
+			mState = STATE_SWING_DOWN;
+		break;
+	}
+}
+
+void THorizontalViking::control()
+{
+	TMapObjBase::control();
+	moveNormal();
+	updateTrans();
+}
+
+void THorizontalViking::reset()
+{
+	mSwingSpeed = mSwingSpeedInit;
+	mSwingAngle = 0.0f;
+
+	if (mSwingSpeed > 0.0f)
+		mState = STATE_SWING_DOWN;
+	else
+		mState = STATE_SWING_UP;
+}
+
+void THorizontalViking::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	mSwingRadius    = 2500.0f;
+	mSwingAccel     = 0.0008f;
+	mSwingSpeedInit = 0.23f;
+
+	reset();
+}
+
+THorizontalViking::THorizontalViking(const char* name)
+    : TMapObjBase(name)
+    , mSwingRadius(0.0f)
+    , mSwingAccel(0.0f)
+    , mSwingSpeedInit(0.0f)
+    , mSwingSpeed(0.0f)
+    , mSwingAngle(0.0f)
+{
+}
+
+// TViking
+
+static inline MSound* VikingRollSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+void TViking::roll()
+{
+	switch (mState) {
+	case STATE_ROLL_DOWN_FWD:
+		mSwingSpeed *= mSpeedGainFwd;
+		mSwingSpeed -= mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+
+		if (mSwingAngle < 0.0f) {
+			VikingRollSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+			mState = STATE_ROLL_UP_FWD;
+		}
+
+		if (mSwingAngle > 180.0f) {
+			mSwingAngle -= 360.0f;
+			VikingRollSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+			mState = STATE_ROLL_UP_BACK;
+		}
+		break;
+
+	case STATE_ROLL_UP_FWD:
+		mSwingSpeed *= mSpeedGainFwd;
+		mSwingSpeed += mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+
+		if (mSwingAngle > 0.0f) {
+			SMSGetMSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+			mState = STATE_ROLL_DOWN_FWD;
+		}
+
+		if (mSwingAngle < -180.0f) {
+			mSwingAngle += 360.0f;
+			SMSGetMSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+			mState = STATE_ROLL_DOWN_BACK;
+		}
+		break;
+
+	case STATE_ROLL_DOWN_BACK:
+		mSwingSpeed *= mSpeedGainBack;
+		mSwingSpeed -= mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+
+		if (mSwingAngle < 0.0f) {
+			SMSGetMSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+
+			// Too slow to keep looping: fall back to swinging.
+			if (mSwingSpeed > -mSwingSpeedMin)
+				mState = STATE_ROLL_UP_FWD;
+			else
+				mState = STATE_ROLL_UP_BACK;
+		}
+		break;
+
+	case STATE_ROLL_UP_BACK:
+		mSwingSpeed *= mSpeedGainBack;
+		mSwingSpeed += mSwingAccel;
+		mSwingAngle += mSwingSpeed;
+
+		if (mSwingAngle > 0.0f) {
+			SMSGetMSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_PIN_BIKING_WING, &mPosition, nullptr,
+			    fabsf(mSwingSpeed), 0, 0, nullptr, 0, 4);
+
+			if (mSwingSpeed < mSwingSpeedMin)
+				mState = STATE_ROLL_DOWN_FWD;
+			else
+				mState = STATE_ROLL_DOWN_BACK;
+		}
+		break;
+	}
+}
+
+void TViking::control()
+{
+	switch (mMode) {
+	case MODE_SWING:
+		moveNormal();
+		break;
+
+	case MODE_ROLL:
+		roll();
+		break;
+	}
+
+	updateTrans();
+	mRotation.z = mSwingAngle;
+	updateObjMtx();
+}
+
+void TViking::reset()
+{
+	mSwingSpeed = mSwingSpeedInit;
+	mSwingAngle = 0.0f;
+
+	if (mSwingSpeedInit > 0.0f)
+		mState = STATE_ROLL_DOWN_FWD;
+	else
+		mState = STATE_ROLL_UP_FWD;
 }
 
 void TViking::loadAfter()
@@ -187,613 +338,769 @@ void TViking::loadAfter()
 	reset();
 }
 
-void TChangeStageMerrygoround::touchPlayer(THitActor* player)
+void TViking::initMapObj()
 {
+	mMode = MODE_ROLL;
 
-	
-	
-	if (isStateTimerEngaged())
-		return;
-	TYoshi* yoshi = SMS_GetYoshi();
-	if (yoshi->mType == 1) {
-		if (gpMSound->gateCheck(0x4840))
-			MSoundSESystem::MSoundSE::startSoundSystemSE(0x4840, 0, nullptr,
-			                                             0);
-		TMapObjChangeStage::touchPlayer(player);
-		unk13C = 1;
-	} else if (gpMSound->gateCheck(0x483E)) {
-		MSoundSESystem::MSoundSE::startSoundSystemSE(0x483E, 0, nullptr, 0);
+	// Only the first ship of the pair starts out swinging backwards.
+	if (strcmp(getName(), "viking 0") == 0) {
+		mSwingRadius    = 1400.0f;
+		mSwingAccel     = 0.001f;
+		mSpeedGainFwd   = 1.001f;
+		mSpeedGainBack  = 0.999f;
+		mSwingSpeedInit = -0.3f;
+		mSwingSpeedMin  = 0.3f;
+	} else {
+		mSwingRadius    = 1400.0f;
+		mSwingAccel     = 0.001f;
+		mSpeedGainFwd   = 1.001f;
+		mSpeedGainBack  = 0.999f;
+		mSwingSpeedInit = 0.3f;
+		mSwingSpeedMin  = 0.3f;
 	}
-	startStateTimer(0x258);
+
+	mPosition.y -= mSwingRadius;
+
+	TMapObjBase::initMapObj();
 }
 
 TViking::TViking(const char* name)
     : THorizontalViking(name)
+    , mMode(MODE_SWING)
+    , mSwingSpeedMin(0.0f)
+    , mSpeedGainFwd(0.0f)
+    , mSpeedGainBack(0.0f)
 {
-	unk14C = 0;
-	unk150.set(0.0f, 0.0f, 0.0f);
 }
 
-TMerrygoround::TMerrygoround(const char* name)
-    : TMapObjBase(name)
+// TPinnaShell
+
+void TPinnaShell::opened()
 {
+	mRotX  = -TShellCup::mOpenRotMax;
+	mTimer = 360;
 
-	
-	
-	int i;
-	unk1A0 = 0;
-	unk1A4 = 0;
-	unk138 = 0;
-	unk140 = 0;
-	unk13C = 0;
-	unk142 = 0;
-	for (i = 0; i < 9; ++i) {
-		unk144[i] = 0;
-		unk18C[i] = 0;
-		unk168[i] = 0;
-	}
-}
-
-f32 TShellCup::mOpenRotMax     = 90.0f;
-f32 TShellCup::mShellDamageRot = 45.0f;
-f32 TShellCup::mWaterOpenAccel = 5.0f;
-f32 TShellCup::mCloseAccel     = 3.5f;
-f32 TMerrygoround::mRotSpeed   = 0.1f;
-
-TFerrisWheel::TFerrisWheel(const char* name)
-    : TMapObjBase(name)
-{
-	unk138 = 0;
-	unk13C = nullptr;
-	unk140 = 0.0f;
-}
-
-void TFerrisWheel::initMapObj()
-{
-	TMapObjBase::initMapObj();
-	unk138 = getModel()->getModelData()->getJointNum() - 1;
-	unk13C = new TMapObjBase*[unk138];
-	for (u16 i = 0; i < unk138; ++i) {
-		// TODO: instructions match, but our frame is 0x40 short (16 words of
-		// unidentified stack objects below the three argument temporaries).
-		unk13C[i] = TMapObjBaseManager::newAndRegisterObj("FerrisGondola");
-		unk13C[i]->appear();
-	}
-	// Fast spin in the two scenes the wheel actually moves in.
-	if ((gpMarDirector->mMap == 13 && gpMarDirector->unk7D == 2)
-	    || (gpMarDirector->mMap == 5 && gpMarDirector->unk7D == 4)) {
-		unk140 = 10.0f;
+	if (mContent && !mContent->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		if (mContent->isActorType(0x20000010))
+			SMSGetMSound()->startSoundSystemSE(0x483F, 0, nullptr, 0);
+		else
+			SMSGetMSound()->startSoundSystemSE(0x4813, 0, nullptr, 0);
 	} else {
-		unk140 = rotate_frame_rate * 0.25f;
+		SMSGetMSound()->startSoundSystemSE(0x483D, 0, nullptr, 0);
 	}
+
+	mState = STATE_OPEN;
 }
 
-void TFerrisWheel::control()
+BOOL TPinnaShell::receiveMessage(THitActor* sender, u32 message)
 {
-	TMapObjBase::control();
-	if (isState(2)) {
-		if (!isStateTimerEngaged()) {
-			if (unk140 > 0.25f * rotate_frame_rate) {
-				unk140 -= 0.015f;
-			} else {
-				mState = 1;
-			}
+	if (message == 0xF) {
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
+		                             &sender->mPosition, 0, nullptr);
+		SMSGetMSound()->startSoundSet(0x6802, &mPosition, 0, 0.0f, 0, 0, 4);
+
+		if (mState == STATE_CLOSED) {
+			mRotX -= TShellCup::mWaterOpenAccel;
+			if (mRotX < -TShellCup::mOpenRotMax)
+				mState = STATE_OPENING;
 		}
+
+		return true;
 	}
-	if (unk140 > 0.25f * rotate_frame_rate) {
-		MSound* sound = SMSGetMSound();
-		if (sound->gateCheck(0x3085)) {
-			MSoundSESystem::MSoundSE::startSoundActor(0x3085, &mPosition, 0,
-			                                          &sound->unk80, 0, 4);
+
+	return false;
+}
+
+// TODO: 99.9%, instruction exact; frame 0x80 against retail's 0xb0. Retail's
+// Mtx sits at 0x64 (ours 0x40) with 12 bytes between it and the MsRandF
+// conversion slot at 0xa0, and 0x24 more pool below. Measured: a TVec3
+// temporary into mPosition.set (+0x18, but recolours the position FPRs), the
+// Mtx at function scope (+4 Mtx), the two-argument startSoundActor (+8), a
+// TU-local rate helper around MsRandF (+4), a shared `s16` angle in the
+// MsMtxSetRotX header (+0x10 but breaks its weak copy; not made).
+// Also inert (pinna1): a TU-local level for the position set, the Mtx at
+// the top, TMsRange<f32>(0.5f, 1.0f).rand() (+0x18 but stores the range).
+void TPinnaShell::control()
+{
+	if (mTimer > 0)
+		mTimer--;
+
+	switch (mState) {
+	case STATE_CLOSED:
+		// Drifting shut again at a randomised rate.
+		if (mRotX < 0.0f)
+			mRotX += TShellCup::mCloseAccel * (0.5f * MsRandF() + 0.5f);
+		else
+			mRotX = 0.0f;
+		break;
+
+	case STATE_OPENING:
+		mRotX -= 0.8f;
+		if (mRotX < -TShellCup::mOpenRotMax)
+			opened();
+		break;
+
+	case STATE_OPEN:
+		if (mTimer <= 0) {
+			mState = STATE_CLOSING;
+			SMSGetMSound()->startSoundActor(0x389F, &mPosition, 0, nullptr, 0,
+			                                4);
 		}
-	}
-	// TODO: the unk140 load is hoisted one slot too high here and our frame
-	// is 0x10 short (4 unidentified stack objects).
-	f32 spin = unk140;
-	mMActor->getFrameCtrl(0)->setFrame(spin + mMActor->getFrameCtrl(0)->getFrame());
-	for (s32 i = 0; i < (s32)unk138; ++i) {
-		TMapObjBase* gondola = unk13C[i];
-		MtxPtr mtx = getModel()->getAnmMtx(i + 1);
-		MTXCopy(mtx, gondola->getModel()->getAnmMtx(0));
-		gondola->mPosition.set(mtx[0][3], mtx[1][3] + gondola->mYOffset,
-		                       mtx[2][3]);
-	}
-}
+		break;
 
-void THorizontalViking::updateTrans()
-{
-	// TODO: implement (0x90 in target); distinct stub to avoid linker folding.
-	unk144 = mRotation.y;
-}
+	case STATE_CLOSING:
+		mRotX += mCloseSpeed;
+		if (mRotX >= -TShellCup::mShellDamageRot)
+			mDamageObj->offHitFlag(1);
+		if (mRotX >= 0.0f) {
+			mRotX  = 0.0f;
+			mState = STATE_CLOSED;
+			mDamageObj->onHitFlag(1);
+		}
+		break;
+	}
 
-void THorizontalViking::moveNormal()
-{
-	// TODO: implement (0x90 in target); distinct stub to avoid linker folding.
-	unk148 = mPosition.x;
+	// The shell hangs off the cup's joint, pulled 30% of the way back towards
+	// the cup's centre and 100 units down.
+	mPosition.set(0.7f * (mJointMtx[0][3] - mOwner->mPosition.x)
+	                  + mOwner->mPosition.x,
+	              mJointMtx[1][3] - 100.0f,
+	              0.7f * (mJointMtx[2][3] - mOwner->mPosition.z)
+	                  + mOwner->mPosition.z);
+	mDamageObj->mPosition.set(mPosition);
+
+	if (getColNum() != 0) {
+		Mtx mtx;
+		MsMtxSetRotX(mtx, mRotX);
+		TMapObjBase::concatOnlyRotFromRight(mJointMtx, mtx, mtx);
+		mCollision->moveMtx(mtx);
+	}
 }
 
 TPinnaShell::TPinnaShell(const char* name)
     : THitActor(name)
+    , mState(STATE_CLOSED)
+    , mRotX(0.0f)
+    , mCloseSpeed(0.0f)
+    , mJointMtx(nullptr)
+    , mJoint(nullptr)
+    , mTimer(0)
+    , mContent(nullptr)
+    , mCollision(nullptr)
+    , mDamageObj(nullptr)
+    , mOwner(nullptr)
 {
-	// NOTE: kept only for the linker's UNUSED symbol record; nothing calls it.
-	unk68 = 0;
-	unk6C = 0.0f;
-	unk70 = 0.0f;
-	unk74 = 0;
-	unk78 = 0;
-	unk7C = 0;
-	unk80 = 0;
-	unk84 = 0;
-	unk88 = 0;
-	unk8C = 0;
-	initHitActor(0x4000013A, 1, 0x80000000, 250.0f, 400.0f, 250.0f,
-	             200.0f);
+	initHitActor(0x4000013A, 1, 0x80000000, 250.0f, 400.0f, 250.0f, 200.0f);
 }
 
-void TShellCup::calcAfter()
+// TShellCup
+
+f32 TShellCup::mOpenRotMax      = 90.0f;
+// TODO: UNUSED, so the value is unknowable; it only has to be non-zero to land
+// in .sdata next to its neighbours.
+f32 TShellCup::mAutoOpenRot     = 45.0f;
+f32 TShellCup::mShellDamageRot  = 45.0f;
+f32 TShellCup::mWaterOpenAccel  = 5.0f;
+f32 TShellCup::mCloseAccel      = 3.5f;
+// TODO: UNUSED; 360 is the value TPinnaShell::opened() puts in mTimer.
+int TShellCup::mWaitTimeToClose = 360;
+
+void TShellCup::control()
 {
-	// TODO: implement; kept for the linker's UNUSED symbol record.
-	unk138[0].unk6C = 0.0f;
+	getMActor()->calc();
+
+	for (int i = 0; i < 6; i++)
+		mShells[i].control();
 }
 
 void TShellCup::attachCoin(TCoin* coin, int index)
 {
-	// TODO: implement; kept for the linker's UNUSED symbol record.
-	unk138[0].unk68 = (u32)coin + (u32)index;
+	// TODO: UNUSED (0x30 in the map) and this reconstruction is 0x1c. The
+	// missing four instructions are probably a second statement on the coin.
+	mShells[index].mContent = coin;
 }
 
-void TPinnaShell::opened()
+void TShellCup::calcAfter()
 {
-	// TODO: implement; kept for the linker's UNUSED symbol record.
-	unk6C = 0.0f;
-}
-
-void THorizontalViking::reset()
-{
-	unk144 = unk138.z;
-	unk148 = 0.0f;
-	if (unk144 > 0.0f)
-		mState = 1;
-	else
-		mState = 2;
-}
-
-void THorizontalViking::initMapObj()
-{
-	TMapObjBase::initMapObj();
-	unk138.x = 2500.0f;
-	unk138.y = 0.0008f;
-	unk138.z = 0.23f;
-	reset();
-}
-
-void THorizontalViking::control()
-{
-
-	
-	
-	TMapObjBase::control();
-	switch (mState) {
-	case 1:
-		unk144 -= unk138.y;
-		unk148 += unk144;
-		if (unk148 < 0.0f)
-			mState = 2;
-		break;
-	case 2:
-		unk144 += unk138.y;
-		unk148 += unk144;
-		if (unk148 > 0.0f)
-			mState = 1;
-		break;
-	}
-	f32 s = sinf(3.14f * (unk148 / 180.0f));
-	mPosition.x = unk138.x * s + mInitialPosition.x;
-	f32 yOff = mYOffset;
-	f32 c = cosf(3.14f * (unk148 / 180.0f));
-	mPosition.y = unk138.x * (1.0f - c) + mInitialPosition.y + yOff;
-}
-
-void TShellCup::control()
-{
-	mMActor->calc();
-	for (int i = 0; i < 6; ++i)
-		unk138[i].control();
-}
-
-// A pinna shell spends its life opening (0), being held open while it springs
-// shut (1), waiting on unk7C before slamming fully open (2), and taking the
-// hit that kills it (3). unk6C is the shell's rotation in degrees.
-//
-// TODO: @4037 (the per-tick step used in state 1) and @4038/@4039 (the lerp
-// weights used in the tail) are unnamed rodata constants in the ROM; their
-// values are not recovered, so they are left as named unknowns.
-static f32 unkStep1;
-static f32 unkLerpX;
-static f32 unkLerpY;
-
-void TPinnaShell::control()
-{
-	// `cmpwi r3, 0` + `ble` (signed), so this is `> 0`, not `!= 0`.
-	if (unk7C > 0)
-		unk7C--;
-	switch (unk68) {
-	case 0:
-		if (unk6C < 0.0f) {
-			// Springing shut: creep unk6C back toward zero at an
-			// accelerating rate driven by the ROM's `bl rand`.
-			// TODO: the ROM computes
-			//   unk6C += mCloseAccel * (c1 + c1 * c2 * (rand() - c3))
-			// with three unnamed rodata constants (c1..c3), and no
-			// `rand` declaration exists anywhere in include/ to call.
-			// Left as a placeholder rather than inventing both the
-			// declaration and the constants.
-			unk6C += TShellCup::mCloseAccel * 0.0f;
-		} else {
-			unk6C = 0.0f;
-		}
-		break;
-	case 1:
-		// TODO: @4037 is an unnamed f32 constant (asm `lfs f0, @4037`);
-		// its value has not been recovered, so the step is left as a
-		// named-but-unknown local rather than a guessed literal.
-		unk6C -= unkStep1;
-		if (unk6C < -TShellCup::mOpenRotMax) {
-			unk6C = -TShellCup::mOpenRotMax;
-			unk7C = 0x168;
-			// A shell that was hit open creaks once. Which creak
-			// depends on what the shell is holding (THitActor::
-			// mActorType, at 0x4C).
-			if (unk80 != nullptr
-			    && !(unk80->mLiveFlag & LIVE_FLAG_DEAD)) {
-				if ((unk80->mActorType - 0x2000) <= 0x10) {
-					if (gpMSound->gateCheck(0x483F))
-						MSoundSESystem::MSoundSE::startSoundSystemSE(
-						    0x483F, 0, nullptr, 0);
-				} else if (gpMSound->gateCheck(0x4813)) {
-					MSoundSESystem::MSoundSE::startSoundSystemSE(0x4813,
-					                                           0, nullptr, 0);
-				}
-			} else if (gpMSound->gateCheck(0x483D)) {
-				MSoundSESystem::MSoundSE::startSoundSystemSE(0x483D, 0,
-				                                           nullptr, 0);
-			}
-			unk68 = 2;
-		}
-		break;
-	case 2:
-		if (unk7C <= 0) {
-			unk68 = 3;
-			if (gpMSound->gateCheck(0x389F))
-				MSoundSESystem::MSoundSE::startSoundActor(
-				    0x389F, &mPosition, 0, nullptr, 0, 4);
-		}
-		break;
-	case 3:
-		unk6C += unk70;
-		if (unk6C <= -TShellCup::mShellDamageRot)
-			unk88->mLiveFlag &= ~1u;
-		if (unk6C >= 0.0f) {
-			unk6C = 0.0f;
-			unk68 = 0;
-			unk88->mLiveFlag |= 1u;
-		}
-		break;
+	// UNUSED, 0x1b4 in the map: that size needs perform()'s talk test here and
+	// MsMtxSetRotX expanded in the loop (a call in perform itself).
+	if (gpMarDirector->isTalkModeNow()) {
+		if (!gpMarDirector->isDemoModeNow())
+			return;
 	}
 
-	// Tail: slide the shell between its rest position (unk8C) and wherever
-	// unk74's joint transform put it, then copy mPosition onto the shell it
-	// is riding (unk88).
-	// TODO: @4038 (the horizontal weight) and @4039 (the vertical weight)
-	// are unnamed rodata constants; both are used as
-	// `mPosition.axis = saved + weight * (joint.axis - saved)`, so the
-	// structure is right but the two weights are still unknown.
-	MtxPtr jnt = unk74->getModel()->getAnmMtx(0);
-	f32 ox = unk8C[0][3];
-	f32 oy = unk8C[1][3];
-	f32 oz = unk8C[2][3];
-	mPosition.x = ox + unkLerpX * (jnt[0][3] - ox);
-	mPosition.y = jnt[1][3] - unkLerpY;
-	mPosition.z = oz + unkLerpX * (jnt[2][3] - oz);
-	unk88->mPosition = mPosition;
-	// When unk48 is set the ROM builds an X-rotation matrix from unk6C on
-	// the stack and calls the virtual at vtable + 0x14 on unk84 with it.
-	// TODO: vtable + 0x14 is a single-MtxPtr virtual. TMapObjBase has two
-	// candidates (changeObjMtx / setModelMtx) and this TU's __vt__ dump
-	// does not disambiguate them, so the call is left out rather than
-	// guessed -- emitting the wrong one would mismatch just as badly.
-	if (unk48 != 0) {
+	for (int i = 0; i < 6; i++) {
+		TPinnaShell* shell = &mShells[i];
 		Mtx mtx;
-		MsMtxSetRotX(mtx, unk6C);
-		unk74->concatOnlyRotFromRight(unk74->getModel()->getAnmMtx(0), mtx,
-		                              unk74->getModel()->getAnmMtx(0));
-		// TODO: unk84-><vtable + 0x14>(&mtx);
+		MsMtxSetRotX(mtx, shell->mRotX);
+		TMapObjBase::concatOnlyRotFromRight(shell->mJointMtx, mtx,
+		                                    shell->mJointMtx);
+	}
+
+	TMapObjBase* blueCoin = mBlueCoin;
+	if (!blueCoin->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		blueCoin->mPosition.x = getShell(0)->mPosition.x;
+		blueCoin->mPosition.y = getShell(0)->mPosition.y;
+		blueCoin->mPosition.z = getShell(0)->mPosition.z;
+	}
+
+	TCoin* coin0 = mCoin0;
+	if (!coin0->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		coin0->mPosition.x = mShells[2].mPosition.x;
+		coin0->mPosition.y = mShells[2].mPosition.y;
+		coin0->mPosition.z = mShells[2].mPosition.z;
+	}
+
+	TCoin* coin1 = mCoin1;
+	if (!coin1->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		coin1->mPosition.x = mShells[4].mPosition.x;
+		coin1->mPosition.y = mShells[4].mPosition.y;
+		coin1->mPosition.z = mShells[4].mPosition.z;
 	}
 }
 
-void TViking::roll()
+// The shell loop as its own level shares the counter's zero with the byte
+// offset (retail's `li r28, 0; addi r30, r28, 0`).
+static inline void MapObjPinnaCalcShells(TShellCup* cup)
 {
-	// The viking ride swings between the two ends of its arc; every state
-	// accelerates unk144, and crossing an end plays the creak sound once.
-	switch (mState) {
-	case 1:
-		unk144 *= unk150.y;
-		unk144 -= unk138.y;
-		unk148 += unk144;
-		if (unk148 < 0.0f) {
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			mState = 2;
-		}
-		if (unk148 > 180.0f) {
-			unk148 -= 360.0f;
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			mState = 4;
-		}
-		break;
-	case 2:
-		unk144 *= unk150.y;
-		unk144 += unk138.y;
-		unk148 += unk144;
-		if (unk148 > 0.0f) {
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			mState = 1;
-		}
-		if (unk148 < -180.0f) {
-			unk148 += 360.0f;
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			mState = 3;
-		}
-		break;
-	case 3:
-		unk144 *= unk150.z;
-		unk144 -= unk138.y;
-		unk148 += unk144;
-		if (unk148 < 0.0f) {
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			if (unk144 > -unk150.x)
-				mState = 2;
-			else
-				mState = 4;
-		}
-		break;
-	case 4:
-		unk144 *= unk150.z;
-		unk144 += unk138.y;
-		unk148 += unk144;
-		if (unk148 > 0.0f) {
-			f32 speed = fabsf(unk144);
-			if (gpMSound->gateCheck(0x38A0))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x38A0, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-			if (unk144 < unk150.x)
-				mState = 1;
-			else
-				mState = 3;
-		}
-		break;
-	}
-}
-
-void TViking::control()
-{
-	// unk14C picks the drive mode: 1 lets the ride swing freely, 0 just
-	// parks it at whichever end it stopped on.
-	switch (unk14C) {
-	case 0:
-		switch (mState) {
-		case 1:
-			unk144 -= unk138.y;
-			unk148 += unk144;
-			if (unk148 < 0.0f)
-				mState = 2;
-			break;
-		case 2:
-			unk144 += unk138.y;
-			unk148 += unk144;
-			if (unk148 > 0.0f)
-				mState = 1;
-			break;
-		}
-		break;
-	case 1:
-		roll();
-		break;
-	}
-	f32 s = sinf(3.14f * (unk148 / 180.0f));
-	mPosition.x = unk138.x * s + mInitialPosition.x;
-	f32 yOff = mYOffset;
-	f32 c = cosf(3.14f * (unk148 / 180.0f));
-	mPosition.y = unk138.x * (1.0f - c) + mInitialPosition.y + yOff;
-	mRotation.z = unk148;
-	updateObjMtx();
-}
-
-void TAmiKing::calc()
-{
-	gpMarioParticleManager->emitAndBindToMtxPtr(0x184, getModel()->getAnmMtx(0),
-	                                            1, this);
-	if (unk138 == 0) {
-		MtxPtr jointMtx = mMActor->getModel()->getAnmMtx(6);
-		unk13C.set(jointMtx[0][3], jointMtx[1][3], jointMtx[2][3]);
-		JGeometry::TVec3<f32> offset(0.0f, 0.0f, 200.0f);
-		Mtx mtx;
-		MsMtxSetRotRPH(mtx, 0.0f, mRotation.y, 0.0f);
-		PSMTXMultVec(mtx, &offset, &offset);
-		unk13C.x = unk13C.x + offset.x;
-		unk13C.y = unk13C.y + offset.y;
-		unk13C.z = unk13C.z + offset.z;
-		JPABaseEmitter* emitter =
-		    gpMarioParticleManager->emitAndBindToPosPtr(0x124, &unk13C, 1,
-		                                              this);
-		if (emitter) {
-			emitter->mGlobalDynamicsScale.set(2.0f, 2.0f, 2.0f);
-			emitter->mGlobalParticleScale.set(2.0f, 2.0f, 2.0f);
-		}
-		if (gpMSound->gateCheck(0x214F))
-			MSoundSESystem::MSoundSE::startSoundActor(0x214F, &mPosition, 0,
-			                                          nullptr, 0, 4);
-	} else {
-		if (gpMSound->gateCheck(0x2120))
-			MSoundSESystem::MSoundSE::startSoundActor(0x2120, &mPosition, 0,
-			                                          nullptr, 0, 4);
-	}
-}
-
-void TViking::reset()
-{
-	unk144 = unk138.z;
-	unk148 = 0.0f;
-	if (unk138.z > 0.0f)
-		mState = 1;
-	else
-		mState = 2;
-}
-
-void TViking::initMapObj()
-{
-	unk14C = 1;
-	if (strcmp(getName(), "viking 0") == 0) {
-		unk138.x = 1400.0f;
-		unk138.y = 0.001f;
-		unk150.y = 1.001f;
-		unk150.z = 0.999f;
-		unk138.z = -0.3f;
-		unk150.x = 0.3f;
-	} else {
-		unk138.x = 1400.0f;
-		unk138.y = 0.001f;
-		unk150.y = 1.001f;
-		unk150.z = 0.999f;
-		unk138.z = 0.3f;
-		unk150.x = 0.3f;
-	}
-	mPosition.y -= unk138.x;
-	TMapObjBase::initMapObj();
-}
-
-void TAmiKing::initMapObj()
-{
-	TMapObjBase::initMapObj();
-	initAnmSound();
-	mMActor->setBck("amiking_sleep1");
-	setAnmSound("/scene/mapObj/amiking_sleep1.bas");
-	offLiveFlag(LIVE_FLAG_UNK10);
-	for (u8 i = 0; i < mMActor->getModel()->getModelData()->getJointNum();
-	     ++i) {
-	}
-}
-
-void TBalloonKoopaJr::kill()
-{
-
-	
-	
-	TMapObjGeneral::kill();
-	emitAndScale(0x5A, 0, &unk148);
-	emitAndScale(0x5B, 0, &unk148);
-	emitAndScale(0x5C, 0, &unk148);
-	TFlagManager::getInstance()->incFlag(0x60001, 1);
-	if (gpMSound->gateCheck(0x28B8))
-		MSoundSESystem::MSoundSE::startSoundActor(0x28B8, &mPosition, 0,
-		                                          nullptr, 0, 4);
-}
-
-void TBalloonKoopaJr::load(JSUMemoryInputStream& stream)
-{
-	TMapObjBase::load(stream);
-	SMS_LoadParticle("/scene/mapObj/balloonKoopaJr.jpa", 0x5A);
-	SMS_LoadParticle("/scene/mapObj/balloonKoopaJrA.jpa", 0x5B);
-	SMS_LoadParticle("/scene/mapObj/balloonKoopaJrB.jpa", 0x5C);
-	s32 joint = getModel()->getModelData()->getJointName()->getIndex("center");
-	MtxPtr mtx = getModel()->getAnmMtx((u16)joint);
-	unk148.set(mtx[0][3], mtx[1][3], mtx[2][3]);
-}
-
-TShellCup::TShellCup(const char* name)
-    : TMapObjBase(name)
-{
-	unk498 = nullptr;
-	unk49C = nullptr;
-	unk4A0 = nullptr;
+	for (int i = 0; i < 6; i++)
+		cup->mShells[i].calcJointMtx();
 }
 
 void TShellCup::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TMapObjBase::perform(cue, graphics);
-	if (!(cue & 2))
-		return;
-	bool flag1 = gpMarDirector->unk124 == 1 || gpMarDirector->unk124 == 2;
-	if (flag1) {
-		bool flag2 = gpMarDirector->unk124 == 3 || gpMarDirector->unk124 == 4;
-		if (!flag2)
-			return;
+
+	if (cue & 2) {
+		// Frozen during conversations, but demo cameras still need the shells
+		// and their coins placed.
+		if (gpMarDirector->isTalkModeNow()) {
+			if (!gpMarDirector->isDemoModeNow())
+				return;
+		}
+
+		MapObjPinnaCalcShells(this);
+
+		// TODO: 99.4%. The loop as a TU-local level restores retail's
+		// `addi r30, r28, 0` offset seed; left: the shell pointer and the
+		// counter swap r28/r29 and the Mtx sits 8 bytes low (0x20 vs 0x28).
+		// Tried: getShell(i) and a named shell pointer/reference inside the
+		// level (+8/+0x10 frame), u32/pre-increment counters, a per-shell
+		// level, named rot/joint/getter steps in calcJointMtx,
+		// SMSGetMarDirector() at either test, the two tests as one `&&`.
+		// Also inert (pinna1): `if (cue & 2) calcAfter()` (not inlined, bl), a
+		// shell pointer declared above the loop, the loop body spelled inline.
+		TMapObjBase* blueCoin = mBlueCoin;
+		if (!blueCoin->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			blueCoin->mPosition.x = getShell(0)->mPosition.x;
+			blueCoin->mPosition.y = getShell(0)->mPosition.y;
+			blueCoin->mPosition.z = getShell(0)->mPosition.z;
+		}
+
+		TCoin* coin0 = mCoin0;
+		if (!coin0->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			coin0->mPosition.x = mShells[2].mPosition.x;
+			coin0->mPosition.y = mShells[2].mPosition.y;
+			coin0->mPosition.z = mShells[2].mPosition.z;
+		}
+
+		TCoin* coin1 = mCoin1;
+		if (!coin1->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			coin1->mPosition.x = mShells[4].mPosition.x;
+			coin1->mPosition.y = mShells[4].mPosition.y;
+			coin1->mPosition.z = mShells[4].mPosition.z;
+		}
 	}
-	for (int i = 0; i < 6; ++i) {
+}
+
+// Binding level worth +8 of low region, landing TShellCup::loadAfter's frame
+// at 0x68 (batch 121).
+static inline u32 MapObjPinnaGetEventId(TMapObjBase* p)
+{
+	u32 eventId = p->getEventId();
+	return eventId;
+}
+
+void TShellCup::loadAfter()
+{
+	TMapObjBase::loadAfter();
+
+	for (int i = 0; i < 6; i++)
+		joinToGroup("オブジェクトグループ", mShells[i].mDamageObj);
+
+	mBlueCoin = TMapObjBaseManager::newAndRegisterObj("coin_blue");
+	mCoin0    = gpItemManager->newAndRegisterCoinReal();
+	mCoin1    = gpItemManager->newAndRegisterCoinReal();
+
+	mBlueCoin->setEventId(2);
+	if (!TFlagManager::smInstance->getBlueCoinFlag(
+	        gpMarDirector->getCurrentMap(), MapObjPinnaGetEventId(mBlueCoin))) {
+		mBlueCoin->makeObjAppeared();
+		mShells[0].mContent = mBlueCoin;
+	}
+
+	mCoin0->makeObjAppeared();
+	mCoin0->onMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK10000000);
+	mCoin1->makeObjAppeared();
+	mCoin1->onMapObjFlag(TMapObjBase::MAP_OBJ_FLAG_UNK10000000);
+
+	mShells[2].mContent = mCoin0;
+	mShells[4].mContent = mCoin1;
+}
+
+void TShellCup::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	for (int i = 0; i < 6; i++) {
+		mShells[i].mState      = TPinnaShell::STATE_CLOSED;
+		mShells[i].mRotX       = 0.0f;
+		mShells[i].mCloseSpeed = 8.0f;
+		mShells[i].mJointMtx   = getModel()->getAnmMtx(i + 1);
+		mShells[i].mJoint
+		    = getModel()->getModelData()->getJointNodePointer(i + 1);
+		mShells[i].mTimer = (int)(1200.0f * MsRandF());
+		mShells[i].mOwner = this;
+
+		joinToGroup("オブジェクトグループ", &mShells[i]);
+
+		mShells[i].mCollision = new TMapCollisionMove();
+		mShells[i].mCollision->init("/mapObj/ShellCup", 0, this);
+		mShells[i].mCollision->setUp();
+
+		mShells[i].mDamageObj = new TDamageObj();
+		mShells[i].mDamageObj->mScaling.set(2.0f, 1.2f, 2.0f);
+		mShells[i].mDamageObj->init(0x10000036);
+		mShells[i].mDamageObj->onHitFlag(1);
+	}
+
+	TMapCollisionStatic* rink = new TMapCollisionStatic();
+	rink->init("/mapObj/ShellCup_rink", 2, this);
+	rink->setMtx(MapObjPinnaGetModel(this)->getAnmMtx(0));
+	rink->setUp();
+}
+
+TShellCup::TShellCup(const char* name)
+    : TMapObjBase(name)
+    , mBlueCoin(nullptr)
+    , mCoin0(nullptr)
+    , mCoin1(nullptr)
+{
+}
+
+// TMerrygoround
+
+f32 TMerrygoround::mRotSpeed = 0.1f;
+
+// TODO: 99.9%, frame exact. Retail's warp-block joint is r28 (the loops'
+// joint register), ours r27. Tried: joint/mtx/i at function scope in every
+// order, int/u32 joint, a separate warp local, mWarpJoint direct, the warp
+// placement as a TU-local level, MapObjPinnaGetModel.
+void TMerrygoround::control()
+{
+	u16 joint;
+	MtxPtr mtx;
+
+	TMapObjBase::control();
+
+	mRotation.y += mRotSpeed;
+	if (mRotation.y > 360.0f)
+		mRotation.y -= 360.0f;
+
+	for (int i = 0; i < 2; i++) {
+		joint = mEggJoints[i];
+		mtx = getModel()->getAnmMtx(joint);
+		mEggs[i]->setModelMtx(mtx);
+		mEggs[i]->mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	}
+
+	for (int i = 0; i < 9; i++) {
+		joint = mPoleJoints[i];
+		mtx = getModel()->getAnmMtx(joint);
+		mPoles[i]->unk138.set(mtx);
+		mPoles[i]->mPosition.set(mtx[0][3], mtx[1][3] - 600.0f, mtx[2][3]);
+	}
+
+	// The warp only accepts Mario while he is riding Yoshi.
+	if (SMS_IsMarioOnYoshi())
+		mWarp->offHitFlag(1);
+	else
+		mWarp->onHitFlag(1);
+
+	joint = mWarpJoint;
+	mtx = getModel()->getAnmMtx(joint);
+	mWarp->mPosition.set(mtx[0][3], mtx[1][3] - 600.0f, mtx[2][3]);
+}
+
+void TMerrygoround::draw() const { }
+
+// A setter level around the scalar assignment, worth +4 of low region in
+// TMerrygoround::initMapObj (research 312's 4-byte rung).
+static inline void MapObjPinnaSetWarpId(TMapObjChangeStage* warp, u32 id)
+{
+	warp->unk138 = id;
+}
+
+void TMerrygoround::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	int eggNum  = 0;
+	int poleNum = 0;
+
+	for (u16 i = 1; i < getModel()->getModelData()->getJointNum(); i++) {
+		const char* name
+		    = getModel()->getModelData()->getJointName()->getName(i);
+
+		if (strstr(name, "egg")) {
+			mEggJoints[eggNum] = i;
+			eggNum++;
+		} else if (strcmp(name, "yoshi_warp") == 0) {
+			mWarpJoint = i;
+		} else if (strcmp(name, "up") != 0 && strcmp(name, "down") != 0
+		           && strcmp(name, "KAGE_2") != 0) {
+			mPoleJoints[poleNum] = i;
+			poleNum++;
+		}
+	}
+
+	for (int i = 0; i < 2; i++) {
+		mEggs[i] = TMapObjBaseManager::newAndRegisterObj("merry_egg");
+		mEggs[i]->appear();
+	}
+
+	for (int i = 0; i < 9; i++) {
+		mPoles[i] = (TMerryPole*)TMapObjBaseManager::newAndRegisterObj(
+		    "merry_pole");
+		mPoles[i]->appear();
+
+		mPoleCollisions[i] = new TMapCollisionMove();
+		mPoleCollisions[i]->init("/scene/mapObj/merry_yoshi.col", 0, this);
+		mPoleCollisions[i]->setUp();
+	}
+
+	mWarp = (TMapObjChangeStage*)TMapObjBaseManager::newAndRegisterObj(
+	    "ChangeStageMerrygoround");
+	MapObjPinnaSetWarpId(mWarp, 0x29);
+	mWarp->mScaling.y *= 1.5f;
+	mWarp->makeObjAppeared();
+	joinToGroup("マップグループ", mWarp);
+}
+
+TMerrygoround::TMerrygoround(const char* name)
+    : TMapObjBase(name)
+{
+	mWarp      = nullptr;
+	mWarpJoint = 0;
+
+	for (int i = 0; i < 2; i++) {
+		mEggs[i]      = nullptr;
+		mEggJoints[i] = 0;
+	}
+
+	for (int i = 0; i < 9; i++) {
+		mPoles[i]          = nullptr;
+		mPoleJoints[i]     = 0;
+		mPoleCollisions[i] = nullptr;
+	}
+}
+
+// TChangeStageMerrygoround
+
+void TChangeStageMerrygoround::touchPlayer(THitActor* sender)
+{
+	if (!isStateTimerEngaged()) {
+		if (SMS_GetYoshi()->mType == 1) {
+			SMSGetMSoundBound()->startSoundSystemSE(
+			    0x4840, 0, nullptr, 0);
+			TMapObjChangeStage::touchPlayer(sender);
+			unk13C = 1;
+		} else {
+			SMSGetMSoundBound()->startSoundSystemSE(
+			    0x483E, 0, nullptr, 0);
+		}
+
+		startStateTimer(600);
+	}
+}
+
+void TChangeStageMerrygoround::calc()
+{
+	if (unk13C) {
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_HIKAGE1_A, &SMS_GetMarioPos(), 1, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    (E_SMS_EFFECT_LOOP_NORMAL)0x101, &SMS_GetMarioPos(), 1, this);
+	}
+}
+
+// TBalloonKoopaJr
+
+void TBalloonKoopaJr::touchActor(THitActor* sender) { kill(); }
+
+void TBalloonKoopaJr::kill()
+{
+	TMapObjGeneral::kill();
+
+	// TODO: these three ids are the .jpa files load() registers; they have no
+	// name in System/Particles.hpp yet.
+	emitAndScale(0x5A, 0, &mCenterPos);
+	emitAndScale(0x5B, 0, &mCenterPos);
+	emitAndScale(0x5C, 0, &mCenterPos);
+
+	TFlagManager::smInstance->incFlag(0x60001, 1);
+
+	SMSGetMSound()->startSoundActor(0x28B8, &mPosition);
+}
+
+void TBalloonKoopaJr::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+
+	SMS_LoadParticle("/scene/mapObj/balloonKoopaJr.jpa", 0x5A);
+	SMS_LoadParticle("/scene/mapObj/balloonKoopaJrA.jpa", 0x5B);
+	SMS_LoadParticle("/scene/mapObj/balloonKoopaJrB.jpa", 0x5C);
+
+	s32 joint = getModel()->getModelData()->getJointName()->getIndex("center");
+	MtxPtr mtx = getModel()->getAnmMtx((u16)joint);
+	mCenterPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+}
+
+// TPinnaEntrance
+
+void TPinnaEntrance::loadAfter()
+{
+	TMapObjBase::loadAfter();
+
+	JGeometry::TVec3<f32> rotation(90.0f, 0.0f, 0.0f);
+	TMapObjBaseManager::newAndRegisterObj("GateManta", mPosition, rotation);
+}
+
+// TWaterRecoverObj
+
+void TWaterRecoverObj::touchPlayer(THitActor* sender)
+{
+	if (sender->isActorType(0x80000001) && !isStateTimerEngaged()) {
+		sender->receiveMessage(this, 0xE);
+		startStateTimer(600);
+	}
+}
+
+// TAmiKing
+
+void TAmiKing::loadAfter()
+{
+	TMapObjBase::loadAfter();
+	SMS_LoadParticle("/scene/mapObj/amiking.jpa", 0x184);
+}
+
+void TAmiKing::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	initAnmSound();
+	getMActor()->setBck("amiking_sleep1");
+	setAnmSound("/scene/mapObj/amiking_sleep1.bas");
+	offLiveFlag(LIVE_FLAG_UNK10);
+
+	// TODO: the ROM really does walk every joint with an empty body here; the
+	// statement that used to be inside was dead-stripped or optimised away.
+	for (u8 i = 0;
+	     i < getMActor()->getModel()->getModelData()->getJointNum(); i++) {
+		;
+	}
+}
+
+// Parked here: retail materialises each of the four `isState` results and then
+// the whole `||` chain once more before the `if`, which is what a predicate
+// with a two-`return` body emits. It belongs on TMapObjBase in MapObjBase.hpp.
+// The explicit no-op upcast on the first test stops MWCC reusing its
+// `mState` load for the second, which retail reloads.
+static inline bool MapObjPinnaIsGateBroken(TMapObjGeneral* gate)
+{
+	if (((TMapObjBase*)gate)->isState(TMapObjGeneral::STATE_BREAKING)
+	    || gate->isState(TMapObjGeneral::STATE_TOUCHING_WATER)
+	    || gate->isState(TMapObjGeneral::STATE_TOUCHING_PLAYER)
+	    || gate->isState(TMapObjGeneral::STATE_HOLDING))
+		return true;
+	return false;
+}
+
+// TODO: 99.9%, instruction exact; the frame is 0xa8 against retail's 0xd8
+// (0x88 before the two-argument startSoundActor, getActor() at both gate
+// reads and getActorType(), c-hs5; getGroundPlane() breaks instructions).
+// Before those, retail's pool below the two TFlagT temporaries was 0x48
+// longer and 0x10 more sat above the column-water scale vector. A named
+// splash scale TVec3 moves only the vector; raw gpMarDirector and getModel()
+// for getMActor()->getModel() are negative or break instructions.
+// Also (pinna1): the wake-up branch as a TU-local level is inert; the
+// water-landing branch as one adds ten instructions.
+void TAmiKing::moveObject()
+{
+	TLiveActor::moveObject();
+
+	if (mFlying) {
+		if (getMActor()->checkCurAnm("amiking_flying1_start", 0)) {
+			if (getMActor()->curAnmEndsNext(0, nullptr))
+				getMActor()->setBck("amiking_flying1_loop");
+		} else if (mGroundPlane->isWaterSurface() && !isAirborne()) {
+			SMSGetMSound()->startSoundActor(0x2921, &mPosition);
+
+			JPABaseEmitter* splash
+			    = gpMarioParticleManager->emitAndBindToMtxPtr(
+			        PARTICLE_MS_DNK_SHIBIRE_B,
+			        getMActor()->getModel()->getAnmMtx(0), 0, nullptr);
+			if (splash)
+				splash->setGlobalScale(
+				    JGeometry::TVec3<f32>(4.0f, 4.0f, 4.0f));
+
+			TSpineEnemy* column = gpConductor->makeOneEnemyAppear(
+			    mPosition, "エフェクト水柱マネージャー", 1);
+			if (column) {
+				JGeometry::TVec3<f32> scale(4.0f, 4.0f, 4.0f);
+				((TEffectColumWater*)column)->generate(mPosition, scale);
+			}
+
+			gpItemManager->makeShineAppearWithDemo(
+			    "シャイン（観覧車シャイン用）", "観覧車シャインカメラ",
+			    mPosition.x, mPosition.y, mPosition.z);
+
+			TFerrisWheel* wheel
+			    = JDrama::TNameRefGen::search<TFerrisWheel>("FerrisWheel");
+			SMSGetMarDirector()->fireStartDemoCamera(
+			    "観覧車正常化カメラ", &wheel->mPosition, -1, 0.0f, true,
+			    &TFerrisWheel::becomeCalmlyCallback,
+			    reinterpret_cast<u32>(wheel), nullptr,
+			    JDrama::TFlagT<u16>(0));
+
+			kill();
+		}
+	} else if (mGroundPlane->getActor()) {
+		// Wake up when the gate the net is sitting on gets broken.
+		TMapObjGeneral* gate = (TMapObjGeneral*)mGroundPlane->getActor();
+		if (gate->getActorType() == 0x4000006A) {
+			if (MapObjPinnaIsGateBroken(gate)) {
+				mFlying = true;
+
+				mVelocity.x = 5.0f;
+				mVelocity.y = 10.0f;
+				mVelocity.z = -10.0f;
+
+				offLiveFlag(LIVE_FLAG_UNK10);
+				getMActor()->setBck("amiking_flying1_start");
+				setAnmSound(nullptr);
+
+				SMSGetMarDirector()->fireStartDemoCamera(
+				    "観覧車ボス撃沈カメラ", &mPosition, -1, 0.0f, true, nullptr,
+				    0, nullptr, JDrama::TFlagT<u16>(0));
+			}
+		}
+	}
+}
+
+void TAmiKing::calc()
+{
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    (E_SMS_EFFECT_LOOP_NORMAL)0x184, getModel()->getAnmMtx(0), 1, this);
+
+	if (mFlying == 0) {
+		MtxPtr joint = getMActor()->getModel()->getAnmMtx(6);
+		mEffectPos.set(joint[0][3], joint[1][3], joint[2][3]);
+
+		JGeometry::TVec3<f32> offset(0.0f, 0.0f, 200.0f);
 		Mtx mtx;
-		MsMtxSetRotX(mtx, unk138[i].unk6C);
-		// The ROM does `lwz r3, 0x74(r29)` and passes r3 straight
-		// through as the concatOnlyRotFromRight receiver/argument, i.e.
-		// the shell's stored pointer is handed over verbatim.
-		concatOnlyRotFromRight(*(MtxPtr*)&unk138[i].unk74, mtx,
-		                       *(MtxPtr*)&unk138[i].unk74);
-	}
-	if (!(unk498->mLiveFlag & LIVE_FLAG_DEAD)) {
-		unk498->mPosition.x = unk138[0].mPosition.x;
-		unk498->mPosition.y = unk138[0].mPosition.y;
-		unk498->mPosition.z = unk138[0].mPosition.z;
-	}
-	if (!(unk49C->mLiveFlag & LIVE_FLAG_DEAD)) {
-		unk49C->mPosition.x = unk138[2].mPosition.x;
-		unk49C->mPosition.y = unk138[2].mPosition.y;
-		unk49C->mPosition.z = unk138[2].mPosition.z;
-	}
-	if (!(unk4A0->mLiveFlag & LIVE_FLAG_DEAD)) {
-		unk4A0->mPosition.x = unk138[4].mPosition.x;
-		unk4A0->mPosition.y = unk138[4].mPosition.y;
-		unk4A0->mPosition.z = unk138[4].mPosition.z;
+		MsMtxSetRotRPH(mtx, 0.0f, mRotation.y, 0.0f);
+		MTXMultVec(mtx, &offset, &offset);
+
+		mEffectPos.x += offset.x;
+		mEffectPos.y += offset.y;
+		mEffectPos.z += offset.z;
+
+		JPABaseEmitter* zzz = gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_POI_ZZZ, &mEffectPos, 1, this);
+		if (zzz)
+			zzz->setGlobalScale(JGeometry::TVec3<f32>(2.0f, 2.0f, 2.0f));
+
+		SMSGetMSound()->startSoundActor(0x214F, &mPosition);
+	} else {
+		SMSGetMSound()->startSoundActor(0x2120, &mPosition);
 	}
 }
 
-u32 TFerrisWheel::becomeCalmlyCallback(u32 arg1, u32 arg2)
+void TAmiKing::bind()
 {
-	if (arg1 == 0) {
-		mState = 2;
-		MSound* sound = gpMSound;
-		if (sound->unk80 != nullptr) {
-			sound->unk80->setVolume(0.0f, 200, 0);
-			sound->unk80->setPitch(0.5f, 200, 0);
-		}
-		mStateTimer = 0x78;
-	}
-	return 0;
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
+		gpMap->checkGround(mPosition.x, mPosition.y + mHeadHeight, mPosition.z,
+		                   &mGroundPlane);
+	else
+		TLiveActor::bind();
 }
 
-BOOL TPinnaShell::receiveMessage(THitActor* sender, u32 message)
+void TAmiKing::touchPlayer(THitActor* sender)
 {
-	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
-		gpMarioParticleManager->emit(0xE7, &sender->mPosition, 0, nullptr);
-		gpMSound->startSoundSet(0x6802, &mPosition, 0, 0.0f, 0, 0, 4);
-		if (unk68 == 0) {
-			unk6C -= TShellCup::mWaterOpenAccel;
-			if (unk6C < -TShellCup::mOpenRotMax)
-				unk68 = 1;
-		}
-		return TRUE;
-	}
-	return FALSE;
+	SMS_SendMessageToMario(this, 9);
 }
+
+// TPinnaCoaster
+
+static int switchSnd;
+
+void TPinnaCoaster::control()
+{
+	TMapObjBase::control();
+
+	mRail->frameUpdate();
+	mRail->calc();
+
+	MtxPtr railMtx = mRail->getModel()->getAnmMtx(0);
+	MapObjPinnaGetModel(this)->setBaseTRMtx(railMtx);
+
+	getMActor()->frameUpdate();
+	getMActor()->calc();
+
+	MtxPtr mtx = getModel()->getAnmMtx(0);
+	mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+
+	// Same idiom as TMario::soundTorocco, which drives the same sound id.
+	// TODO: 99.9%. Frame exact; the subtract TVec3 sits 4 bytes high
+	// (known `a = b - c` residue).
+	f32 speed = JGeometry::TVec3<f32>(mPosition - mPrevPos).length();
+
+	// Only every other frame, so two coaster cars don't fight over the channel.
+	if (switchSnd) {
+		MapObjPinnaGetMSound()->startSoundActorWithInfo(
+		    MSD_SE_OBJ_JET_COASTER, &mPosition, nullptr, speed, 0, 0, nullptr,
+		    0, 4);
+	}
+	switchSnd ^= 1;
+
+	mPrevPos.set(mPosition);
+}
+
+void TPinnaCoaster::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	mRail = SMS_MakeMActorWithAnmData("/scene/mapObj/CoasterRail.bmd",
+	                                  getManager()->getMActorAnmData(), 3,
+	                                  0x10210000);
+	mRail->setBck("coasterrail");
+
+	MsMtxSetXYZRPH(mRail->getModel()->getBaseTRMtx(), mPosition.x, mPosition.y,
+	               mPosition.z, mRotation.x, mRotation.y, mRotation.z);
+
+	mRail->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate() / 4.0f);
+
+	mPrevPos.set(mPosition);
+}
+
+TPinnaCoaster::TPinnaCoaster(const char* name)
+    : TMapObjBase(name)
+{
+	mRail = nullptr;
+	mPrevPos.zero();
+}
+
+// The map records every destructor in this file as weak, so they are all
+// defined in the class body; MWCC emits them here because the vtables refer to
+// them.

@@ -58,7 +58,7 @@ public:
 		       && mWrapS == other.mWrapS && mWrapT == other.mWrapT
 		       && mMinFilter == other.mMinFilter
 		       && mMagFilter == other.mMagFilter && mMinLOD == other.mMinLOD
-		       && mMaxLOD == other.mMaxLOD && mLODBias == other.mLODBias;
+		       && mMinLOD == other.mMinLOD && mLODBias == other.mLODBias;
 	}
 	bool operator!=(const JUTTexture& other) { return !operator==(other); }
 

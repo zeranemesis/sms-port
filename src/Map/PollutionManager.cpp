@@ -30,10 +30,7 @@ void TPollutionManager::stamp(u16 stamp_type, f32 x, f32 y, f32 z, f32 size)
 
 void TPollutionManager::clean(f32 x, f32 y, f32 z, f32 size)
 {
-
-	
-	
-	if (gpMarDirector->getCurrentMap() == 1 && y < -10.0f)
+	if (SMSGetMarDirector()->getCurrentMap() == 1 && y < -10.0f)
 		return;
 
 	stamp(0, x, y, z, size);
@@ -61,7 +58,11 @@ u32 TPollutionManager::getPollutionDegree() const
 	u32 totalDegree = 0;
 	for (int i = 0; i < getJointModelNum(); ++i) {
 		TPollutionLayer* layer = getLayer(i);
-		totalDegree += layer->getPollutionDegree();
+		// Raw, not `layer->getPollutionDegree()`: that accessor is one inline
+		// level this body did not pay for. It is free in this emitted copy
+		// (where it sits at depth 1) but costs 8 bytes of frame in
+		// `cleanedAll`, which inlines the whole loop at depth 2.
+		totalDegree += layer->mCounter;
 	}
 	return totalDegree;
 }
@@ -87,6 +88,9 @@ static void dummy()
 	(Vec) { 1.0f, 1.0f, 1.0f };
 }
 
+// The 8-byte frame excess here was one inline level inside the inlined
+// `getPollutionDegree` loop: `TPollutionLayer::getPollutionDegree()` on the
+// layer, where retail reads `mCounter` raw (see the note there).
 bool TPollutionManager::cleanedAll() const
 {
 	return getPollutionDegree() < TMapEventSink::mCleanedDegree ? true : false;
@@ -147,7 +151,8 @@ void TPollutionManager::setDataAddress(TPollutionManager::TPollutionInfo* info)
 	(void)0;
 	// pointer patching ewwww
 	info->mLayerInfos
-	    = (TPollutionLayerInfo*)((u8*)info->mLayerInfos + (u32)info);
+	    = (TPollutionLayerInfo*)((u8*)(TPollutionLayerInfo*)info->mLayerInfos
+	                            + (u32)info);
 	mLayerInfos = info->mLayerInfos;
 	for (int i = 0; i < mJointModelNum; ++i)
 		mLayerInfos[i].mHeightMap += (u32)info;
@@ -160,8 +165,8 @@ void TPollutionManager::initPollutionInfo()
 		mJointModelNum = info->mLayerCount;
 		setDataAddress(info);
 
-		if (gpMarDirector->getCurrentMap() == 0x9
-		    && gpMarDirector->getCurrentStage() != 0x7) {
+		if (SMSGetMarDirector()->getCurrentMap() == 0x9
+		    && SMSGetMarDirector()->getCurrentStage() != 0x7) {
 			static const char* mare_name_table[] = {
 				"pollution00", "pollution01", "pollution02", "pollution03",
 				"pollution04", "pollution05", "pollution06", "pollutionA",
@@ -182,28 +187,43 @@ void TPollutionManager::initPollutionInfo()
 	}
 }
 
+// Binding level worth +8 of low region, landing TPollutionManager::load's
+// frame at 0x60 (batch 121).
+static inline TPollutionCounterLayer&
+PollutionManagerGetCounterLayer(TPollutionManager* p)
+{
+	TPollutionCounterLayer& counterLayer = p->getCounterLayer();
+	return counterLayer;
+}
+
+// TODO: 99.9%, instruction-identical, frame 0x58 vs 0x60 with no slot
+// referenced on either side. The accessor ladder is exhausted at 0x58:
+// `getJointModelNum()` for the guard and `SMSGetPollution()->getCounterObj()`
+// are +8 each and saturate, and the two `SMSGetMarDirector()` levels inside
+// the inlined initPollutionInfo are +8 (its UNUSED size stays 0xe0). Every
+// further +8 measured (SMSGetPollution() in front of getCounterLayer() at
+// any of its four sites, SMSGetPollutionLayer(i) at either registerLayer
+// argument) also adds an instruction, so the last 8 bytes are a
+// zero-instruction object, not another level.
 void TPollutionManager::load(JSUMemoryInputStream& stream)
 {
-
-	
-	
 	TJointModelManager::load(stream);
 
 	initPollutionInfo();
 
-	if (mJointModelNum != 0) {
+	if (getJointModelNum() != 0) {
 		mDefaultPolluteStampTex
 		    = (ResTIMG*)JKRGetResource("/common/map/pollute.bti");
 		mDefaultCleanStampTex
 		    = (ResTIMG*)JKRGetResource("/common/map/clean.bti");
 
-		getCounterLayer().init(getJointModelNum(), 15, 5);
+		PollutionManagerGetCounterLayer(this).init(getJointModelNum(), 15, 5);
 
 		for (int i = 0; i < getJointModelNum(); ++i)
 			getCounterLayer().registerLayer(getLayer(i),
 			                                &getLayer(i)->mCounter);
 
-		gpPollution->getCounterObj().init(30);
+		SMSGetPollution()->getCounterObj().init(30);
 
 		getCounterLayer().registerTexStamp(0, 0xff, mDefaultCleanStampTex);
 		getCounterLayer().registerTexStamp(1, 0xff, mDefaultPolluteStampTex);

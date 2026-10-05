@@ -1,7 +1,3 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <MoveBG/MapObjTown.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/Item.hpp>
@@ -13,8 +9,6 @@
 #include <Player/Yoshi.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Map/MapData.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <Map/MapCollisionManager.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
@@ -27,10 +21,17 @@
 #include <string.h>
 #include <stdio.h>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
 
 TMapObjSwitch* gpMapObjSwitch;
+
+// SMSGetMSoundBound is worth +8 of low region at each site that expands
+// TMapObjBillboard::swing and in TMapObjChangeStage::touchPlayer (batch 127).
 
 f32 TManhole::mDownHeight            = 12.0f;
 f32 TManhole::mDownSpeed             = 1.5f;
@@ -74,22 +75,39 @@ TDoor::TDoor(const char* name)
 {
 }
 
+// TODO: 98.8%, frame 0x48 against retail's 0x90. Retail binds
+// &mInitialPosition.y once (`addi r3, r31, 0x110`) and reads the sink offset
+// through it; a TU-local reference-returning inline is folded straight back to
+// the member offset, so the binding has to come from somewhere else.
+// Binding level worth +16 of low region, landing
+// TManhole::animationFinished's frame at 0x58 (batch 121).
+static inline MActor* MapObjTownGetMActor(const TManhole* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
+static inline TMapCollisionManager* MapObjTownColManager(const TManhole* p)
+{
+	TMapCollisionManager* manager = p->mMapCollisionManager;
+	return manager;
+}
+
 void TManhole::touchPlayer(THitActor*)
 {
 	mState = STATE_NORMAL;
 	if (!animationFinished()) {
-		mPosition.y = mInitialPosition.y;
+		mPosition.y = getInitialPosition().y;
 		return;
 	}
 	if (gpMarioOriginal->getStatus() == MARIO_STATUS_HIP_DROP
-	    && gpMarioOriginal->mPosition.y < mPosition.y) {
+	    && gpMarioOriginal->getPosition().y < getPosition().y) {
 		getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setRate(SMSGetAnmFrameRate());
 		getMActor()
 		    ->getFrameCtrl(ANM_TYPE_BCK)
 		    ->setFrame(getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
 		               + SMSGetAnmFrameRate());
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_OPEN, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_OPEN, &mPosition);
 		offMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		SMSRumbleMgr->start(0x15, 0xF, (f32*)nullptr);
 		return;
@@ -104,8 +122,7 @@ void TManhole::touchPlayer(THitActor*)
 		               + SMSGetAnmFrameRate());
 		offMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		mMapCollisionManager->unk8->setAllBGType(0x400);
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_OPEN, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_OPEN, &mPosition);
 		unk150 = 1;
 		SMSRumbleMgr->start(0x15, 0xF, (f32*)nullptr);
 		return;
@@ -118,33 +135,29 @@ void TManhole::touchPlayer(THitActor*)
 		}
 		if (!unk152) {
 			unk152 = 1;
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_DOWN, &mPosition,
-			                                0, nullptr, 0, 4);
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_DOWN, &mPosition);
 		}
-		if (mPosition.y > mInitialPosition.y - mDownHeight)
-			mPosition.y = mPosition.y - mDownSpeed;
+		if (getPosition().y > getInitialPosition().y - mDownHeight)
+			mPosition.y = getPosition().y - mDownSpeed;
 		else
-			mPosition.y = mInitialPosition.y - mDownHeight;
+			mPosition.y = getInitialPosition().y - mDownHeight;
 		unk148 = 1.0f;
-		unk14C = mInitialPosition.y - mPosition.y;
+		unk14C = getInitialPosition().y - mPosition.y;
 		offMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		return;
 	}
 
 	if (unk152) {
 		unk152 = 0;
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_UP, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_UP, &mPosition);
 	}
 	appeared();
 }
 
 bool TManhole::animationFinished()
 {
-
-	
-	
-	J3DFrameCtrl* frameCtrl = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
+	J3DFrameCtrl* frameCtrl
+	    = MapObjTownGetMActor(this)->getFrameCtrl(ANM_TYPE_BCK);
 	if (frameCtrl->getRate() == 0.0f)
 		return true;
 	f32 next = getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
@@ -171,9 +184,6 @@ bool TManhole::animationFinished()
 
 void TManhole::appeared()
 {
-
-	
-	
 	const TMapObjBase* assoc = unk154;
 	if (assoc) {
 		if (assoc->checkLiveFlag(LIVE_FLAG_DEAD)) {
@@ -184,8 +194,8 @@ void TManhole::appeared()
 		}
 	}
 	if (unk150) {
-		if (gpMarioOriginal->mVel.y <= 0.0f) {
-			mMapCollisionManager->unk8->setAllBGType(
+		if (SMSGetMarioBound()->mVel.y <= 0.0f) {
+			MapObjTownColManager(this)->unk8->setAllBGType(
 			    BG_TYPE_GROUND_POUND_TO_PASS_THROUGH);
 			unk150 = 0;
 		}
@@ -193,12 +203,11 @@ void TManhole::appeared()
 	if (animationFinished()) {
 		if (unk152 == 1 && mColCount == 0) {
 			unk152 = 0;
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_UP, &mPosition,
-			                                0, nullptr, 0, 4);
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_MANHOLE_UP, &mPosition);
 		}
 		if (unk14C > mVibrationEndHeight) {
 			mPosition.y = unk14C * JMASCos((s16)(unk148 * 32768.0f))
-			              + mInitialPosition.y;
+			              + getInitialPosition().y;
 			unk148 += mVibrationSpeed;
 			if (unk148 >= 2.0f)
 				unk148 = unk148 - 2.0f;
@@ -210,18 +219,16 @@ void TManhole::appeared()
 			unk151 = 1;
 		}
 		onMapObjFlag(MAP_OBJ_FLAG_UNK100);
-		mPosition.y = mInitialPosition.y;
+		mPosition.y = getInitialPosition().y;
 	}
 }
 
 void TManhole::calc()
 {
-
-	
-	
-	f32 next = getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
-	           + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getRate();
-	if ((getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() <= 45.0f
+	f32 next = MapObjTownGetMActor(this)->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	           + MapObjTownGetMActor(this)->getFrameCtrl(ANM_TYPE_BCK)->getRate();
+	if ((MapObjTownGetMActor(this)->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	         <= 45.0f
 	     && 45.0f < next)
 	    || (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() <= 125.0f
 	        && 125.0f < next)) {
@@ -244,14 +251,24 @@ void TManhole::setGroundCollision()
 	}
 }
 
+// A setter level around the user store and a by-value fork over getModel()
+// are +0 apart but +8 of low region as a pair in
+// TManhole::makeManholeUnuseful.
+static inline void MapObjTownSetUser(TManhole* p, const TMapObjBase* user)
+{
+	p->unk154 = user;
+}
+
+static inline J3DModel* MapObjTownGetModel(const TManhole* p)
+{
+	return p->getModel();
+}
+
 void TManhole::makeManholeUnuseful(const TMapObjBase* param_1)
 {
-
-	
-	
 	if (unk154 == nullptr) {
-		unk154 = param_1;
-		unk158->setUpMtx(getModel()->getAnmMtx(0));
+		MapObjTownSetUser(this, param_1);
+		unk158->setUpMtx(MapObjTownGetModel(this)->getAnmMtx(0));
 	}
 }
 
@@ -292,24 +309,37 @@ void TMapObjBillboard::swing(THitActor* param_1)
 		else
 			startAnim(1);
 		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_BILLBOARD_MOVE, &mPosition,
-		                                0, &unk150, 0, 4);
+		                                &unk150);
 	}
 }
 
-void TMapObjBillboard::touchActor(THitActor* param_1) {
+void TMapObjBillboard::touchActor(THitActor* param_1) { swing(param_1); }
 
-	
-	 swing(param_1); }
+// Direct-return fork over the hidden-object member read.
+static inline TMapObjBase* MapObjTownHiddenObj(const TMapObjBillboard* p)
+{
+	return p->mHiddenObj;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TMapObjBillboard::touchWater (batch 127).
+// Binding level over a raw member read, worth +16 of low region in
+// TMapObjBillboard::touchWater (batch 127).
+static inline bool MapObjTownAllowReveal(const TMapObjBillboard* p)
+{
+	bool allowReveal = p->mAllowReveal;
+	return allowReveal;
+}
 
 u32 TMapObjBillboard::touchWater(THitActor* param_1)
 {
 	swing(param_1);
-	if (mHiddenObj && mAllowReveal) {
+	if (MapObjTownHiddenObj(this) && MapObjTownAllowReveal(this)) {
 		JGeometry::TVec3<f32> rot = mRotation;
 		JGeometry::TVec3<f32> pos = mPosition;
 		rot.y -= 90.0f;
-		pos.y += mYOffset;
-		TMapObjBase* obj = mHiddenObj;
+		pos.y += getObjCollisionHeightOffset();
+		TMapObjBase* obj = MapObjTownHiddenObj(this);
 		if (obj->isActorType(0x2000000E))
 			obj = gpItemManager->makeObjAppear(0x2000000E);
 		if (obj) {
@@ -327,7 +357,7 @@ void TMapObjChangeStage::touchPlayer(THitActor*)
 	gpMarDirector->setNextStage(unk138, nullptr);
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 	mColCount = 0;
-	gpMSound->startSoundActor(MSD_SE_MA_WARP_EX, &mPosition, 0, nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_MA_WARP_EX, &mPosition);
 }
 
 void TMapObjChangeStage::load(JSUMemoryInputStream& stream)
@@ -338,14 +368,19 @@ void TMapObjChangeStage::load(JSUMemoryInputStream& stream)
 	unk138 = val;
 }
 
+// Binding level over the director singleton, worth +0x10 of low region in
+// TMapObjChangeStageHipDrop::touchPlayer.
+static inline TMarDirector* MapObjTownGetMarDirector()
+{
+	TMarDirector* director = SMSGetMarDirector();
+	return director;
+}
+
 void TMapObjChangeStageHipDrop::touchPlayer(THitActor*)
 {
-
-	
-	
 	if (SMS_IsMarioStatusHipDrop()
 	    && gpMarioPos->y + *gpMarioSpeedY < SMS_GetMarioGrLevel()) {
-		SMSGetMarDirector()->setNextStage(unk138, nullptr);
+		MapObjTownGetMarDirector()->setNextStage(unk138, nullptr);
 		gpMarioParticleManager->emit(MAPOBJ_MS_EX_HAHEN, &mPosition, 0,
 		                             nullptr);
 	}
@@ -405,15 +440,30 @@ void TDamageObj::load(JSUMemoryInputStream& stream)
 	}
 }
 
-void TShadowObj::load(JSUMemoryInputStream&) { }
+// UNUSED. The map gives TShadowObj TDamageObj's exact dtor (0x84) and vtable
+// (0xa4) sizes, so it is a THitActor overriding load. Its body is evidenced
+// only by the pool: it must request 50.0f before TDamageObj::load's
+// "normal", or .sdata2 comes out in the wrong order and the DOL changes.
+// TODO: 0x60 against the map's 0x70; four instructions (perhaps a flag
+// update like TDamageObj's) are unknown.
+void TShadowObj::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TActor::load(stream);
+	initHitActor(0, 1, 0x80000000, 50.0f * mScaling.x, 100.0f * mScaling.y,
+	             0.0f, 0.0f);
+}
 
 void TMapObjWaterSpray::calc()
 {
 	JPABaseEmitter* em
 	    = gpMarioParticleManager->emit(unk138, &mPosition, 1, this);
 	if (em) {
-		em->setRotation(mRotation.x, mRotation.y, mRotation.z);
-		em->setGlobalScale(mScaling);
+		// Named s16 components: the conversions land in retail's buffer order.
+		s16 rx = mRotation.x;
+		s16 ry = mRotation.y;
+		s16 rz = mRotation.z;
+		em->setRotation(rx, ry, rz);
+		em->setGlobalScale(getScaling());
 		em->setRate(unk13C);
 		em->setGlobalParticleScale(unk140);
 		em->setGlobalPrmColor(unk14C.r, unk14C.g, unk14C.b);
@@ -421,15 +471,24 @@ void TMapObjWaterSpray::calc()
 	}
 }
 
+// Particle id read through a u16 accessor: the narrowing in the argument
+// gives the flag pointer r28 and the string base r29 as in retail (raw
+// `unk138`, a u32 accessor, a named-local accessor and a whole-call helper
+// all swap them).
+static inline u16 MapObjTownParticleID(const TMapObjWaterSpray* p)
+{
+	return p->unk138;
+}
+
 void TMapObjWaterSpray::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
 	if (strcmp(unkF4, "WaterSprayCylinder") == 0) {
 		unk138 = 0x154;
-		SMS_LoadParticle("/scene/mapObj/ms_shib_cyl1.jpa", unk138);
+		SMS_LoadParticle("/scene/mapObj/ms_shib_cyl1.jpa", MapObjTownParticleID(this));
 	} else {
 		unk138 = 0x155;
-		SMS_LoadParticle("/scene/mapObj/ms_shib_cub1.jpa", unk138);
+		SMS_LoadParticle("/scene/mapObj/ms_shib_cub1.jpa", MapObjTownParticleID(this));
 	}
 
 	stream >> unk13C;
@@ -497,30 +556,38 @@ THideObjInfo::THideObjInfo(const char* name)
 	unk4C = 0.0f;
 }
 
+// Forwarding level for playTimer: its arguments evaluate right to left, so
+// the timer is loaded before gpMSound as in retail.
+static inline void MapObjTownPlayTimer(MSound* sound, u32 timer)
+{
+	sound->playTimer(timer);
+}
+
+// Retail reloads mStateTimer at the call (`lwz r4, 0x104` after the gate's
+// own load). An explicit `(TMapObjBase*)this` on either the gate or the
+// argument is what stops MWCC reusing the gate's load (as in MapEventMare's
+// `((TMapObjBase*)this)->calcMap()`); a qualified `TMapObjBase::` name, an
+// implicit base conversion, const or reference forks, `getStateTimer()` and
+// a TU-local const-pointer gate all keep the CSE.
 void TMapObjSwitch::control()
 {
 	TMapObjBase::control();
-	// The target materialises the test into a bool (`li r0, 1 / b / li r0, 0 /
-	// clrlwi. r0, r0, 24 / beq`) instead of branching straight off the compare,
-	// and re-reads 0x104 for the argument, so the test has to be a bool
-	// expression and must not share its read with the argument.
-	if (mStateTimer > 0 ? true : false)
-		SMSGetMSound()->playTimer(mStateTimer);
+	if (((TMapObjBase*)this)->isStateTimerEngaged())
+		MapObjTownPlayTimer(SMSGetMSound(), mStateTimer);
 }
 
 BOOL TMapObjSwitch::receiveMessage(THitActor*, u32 message)
 {
 	if (message == HIT_MESSAGE_HIP_DROP) {
 		startBck("objswitch");
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_AP_BUTTON, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_AP_BUTTON, &mPosition);
 		removeMapCollision();
 		for (int i = 0; i < unk13C; ++i)
 			unk144[i]->action(unk140);
 		SMSGetMarDirector()->fireStartDemoCamera(
 		    "オブジェスイッチ用カメラ", nullptr, -1, 0.0f, true, nullptr, 0,
 		    nullptr, JDrama::TFlagT<u16>(0));
-		mStateTimer = unk140;
+		startStateTimer(unk140);
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		return TRUE;
 	}
@@ -532,6 +599,26 @@ void TMapObjSwitch::registerObjInfo(THideObjInfo* info)
 {
 	unk144[unk13C] = info;
 	unk13C += 1;
+}
+
+// Setter level around the first colour store, worth +4 of low region in
+// TMapObjSwitch::load.
+static inline void MapObjTownSetColorR(TMapObjSwitch* p, u8 v)
+{
+	p->unk148.r = v;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TMapObjSwitch::load (batch 127).
+static inline s32 MapObjTownUnk138L0(const TMapObjSwitch* p)
+{
+	return p->unk138;
+}
+
+static inline s32 MapObjTownUnk138(const TMapObjSwitch* p)
+{
+	s32 v138 = MapObjTownUnk138L0(p);
+	return v138;
 }
 
 void TMapObjSwitch::load(JSUMemoryInputStream& stream)
@@ -549,12 +636,12 @@ void TMapObjSwitch::load(JSUMemoryInputStream& stream)
 	stream >> r;
 	stream >> g;
 	stream >> b;
-	unk148.r = (u8)r;
+	MapObjTownSetColorR(this, (u8)r);
 	unk148.g = (u8)g;
 	unk148.b = (u8)b;
 
 	unk138 = 100;
-	unk144 = new THideObjInfo*[unk138];
+	unk144 = new THideObjInfo*[MapObjTownUnk138(this)];
 
 	SMS_LoadParticle("/scene/mapObj/ms_watcoin_hit.jpa", 0x57);
 }
@@ -574,18 +661,21 @@ TMapObjSwitch::TMapObjSwitch(const char* name)
 	gpMapObjSwitch = this;
 }
 
+static inline MActor* MapObjTownGetMActor(const TRedCoinSwitch* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
 BOOL TRedCoinSwitch::receiveMessage(THitActor*, u32 message)
 {
-
-	
-	
 	if (message == HIT_MESSAGE_HIP_DROP) {
 		startBck("redcoinswitch");
-		gpMarDirector->unk18[0]->mDisabledFrames
-		    = (s32)(getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getEnd() * 2
+		MapObjTownGetMarDirector()->unk18[0]->mDisabledFrames
+		    = (s32)(MapObjTownGetMActor(this)->getFrameCtrl(ANM_TYPE_BCK)->getEnd()
+		                * 2
 		            + 0x3C);
-		gpMSound->startSoundActor(MSD_SE_OBJ_AP_BUTTON, &mPosition, 0, nullptr,
-		                          0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_AP_BUTTON, &mPosition);
 		removeMapCollision();
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		mState = 2;
@@ -595,22 +685,37 @@ BOOL TRedCoinSwitch::receiveMessage(THitActor*, u32 message)
 	return FALSE;
 }
 
+// Binding level worth +8 of low region, landing TRedCoinSwitch::load's frame
+// at 0x30 (batch 121).
+// Setter level around the timer store, worth +4 of low region in
+// TRedCoinSwitch::load.
+static inline void MapObjTownSetTime(TRedCoinSwitch* p, s32 time)
+{
+	p->unk138 = time;
+}
+
+static inline TFlagManager* MapObjTownGetInstance()
+{
+	TFlagManager* instance = TFlagManager::getInstance();
+	return instance;
+}
+
 void TRedCoinSwitch::control()
 {
 	TMapObjBase::control();
-	// The target frame is 0x20 and it only ever touches 0x4, 0x1c and 0x24, so
-	// 0x18 bytes of it are unreferenced; ours is 0x18 and the saved r31 sits 8
-	// bytes too low.
-	
-	
+	// TODO: 95.0%. `case 1: return;` is what keeps the case in the pivot
+	// tree at all (as `break` MWCC folds it into the default and the tree
+	// loses the `cmpwi 1`), but retail's tree still pivots on 3 and ours on
+	// 2; reordering the arms only moves the bodies. Frame is 8 short.
 	switch (mState) {
 	case 1:
+	case 4:
 		break;
 	case 2:
 		if (getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 			mStateTimer = 120;
 			mState      = 3;
-			TFlagManager::getInstance()->setBool(true, 0x50009);
+			MapObjTownGetInstance()->setBool(true, 0x50009);
 		}
 		break;
 	case 3:
@@ -626,8 +731,9 @@ void TRedCoinSwitch::loadAfter()
 	for (int i = 0; i < 8; ++i) {
 		char buf[0x40];
 		snprintf(buf, 0x40, "赤コイン %d", i);
-		static_cast<TMapObjBase*>(JDrama::TNameRefGen::search(buf))
-		    ->makeObjDead();
+		TMapObjBase* coin
+		    = JDrama::TNameRefGen::getInstance()->search<TMapObjBase>(buf);
+		coin->makeObjDead();
 	}
 }
 
@@ -636,15 +742,15 @@ void TRedCoinSwitch::load(JSUMemoryInputStream& stream)
 	TMapObjBase::load(stream);
 	u32 tmp;
 	stream >> tmp;
-	unk138 = tmp;
+	MapObjTownSetTime(this, tmp);
 	if (unk138 <= 0)
 		unk138 = 1200;
 	else
 		unk138 *= 10;
 
-	u8 shineId = SMS_getShineIDofExStage(gpMarDirector->getCurrentMap());
+	u8 shineId = SMS_getShineIDofExStage(gpMarDirector->mMap);
 	if (shineId != 0xFF
-	    && !TFlagManager::getInstance()->getShineFlag(shineId)) {
+	    && !MapObjTownGetInstance()->getShineFlag(shineId)) {
 		makeObjDead();
 	}
 }
@@ -661,16 +767,12 @@ TRedCoinSwitch::TRedCoinSwitch(const char* name)
 
 void TBasketReverse::kill()
 {
-
-	
-	
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_A_W,
 	                                            &mPosition, 0, nullptr);
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_B,
 	                                            &mPosition, 0, nullptr);
 
-	SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition, 0,
-	                                nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition);
 	SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_COLLECT_DELIGHT, 0, nullptr,
 	                                   0);
 	TMapObjBase::makeObjDead();

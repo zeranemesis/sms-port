@@ -69,8 +69,7 @@ void TSpineEnemy::load(JSUMemoryInputStream& stream)
 
 	char buffer[256];
 	stream.readString(buffer, 256);
-	TLiveManager* mgr
-	    = static_cast<TLiveManager*>(JDrama::TNameRefGen::search(buffer));
+	TLiveManager* mgr = JDrama::TNameRefGen::search<TLiveManager>(buffer);
 
 	char buffer2[256];
 	stream.readString(buffer2, 256);
@@ -81,6 +80,9 @@ void TSpineEnemy::load(JSUMemoryInputStream& stream)
 	init(mgr);
 }
 
+// TODO: instruction-exact apart from FPRs and frame (0x100 vs 0x128). Retail
+// keeps the normal copy's y/z in f30/f31 across inv_sqrt; our TVec3 user copy
+// constructor stops that promotion (dropping it from JGVec3.hpp gives 97.8).
 void TSpineEnemy::calcEnemyRootMatrix()
 {
 	J3DModel* pJVar13 = getModel();
@@ -117,8 +119,8 @@ void TSpineEnemy::calcEnemyRootMatrix()
 		} else {
 			if (unk130 >= 1
 			    && !mGroundPlane->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
-				JGeometry::TVec3<f32> v1(MsSin(mRotation.y), 0.0f,
-				                         MsCos(mRotation.y));
+				JGeometry::TVec3<f32> v1(JMASin(mRotation.y), 0.0f,
+				                         JMACos(mRotation.y));
 
 				JGeometry::TVec3<f32> v2 = mGroundPlane->getNormal();
 				v1.cross(v2, v1);
@@ -151,9 +153,17 @@ void TSpineEnemy::calcEnemyRootMatrix()
 	mtx[2][3] = mPosition.z;
 }
 
+// Binding level worth +8 of low region. Same shape as
+// SmallEnemyGetHeldObject, which lands TSmallEnemy::isEaten at 0x30.
+static inline TTakeActor* EnemyGetHeldObject(TTakeActor* p)
+{
+	TTakeActor* heldObject = p->getHeldObject();
+	return heldObject;
+}
+
 void TSpineEnemy::calcRootMatrix()
 {
-	if (mHolder && mHolder->getHeldObject() == this) {
+	if (mHolder && EnemyGetHeldObject(mHolder) == this) {
 		MtxPtr src = mHolder->getTakingMtx();
 		if (src) {
 			getModel()->setBaseTRMtx(src);
@@ -176,7 +186,7 @@ void TSpineEnemy::resetToPosition(const JGeometry::TVec3<f32>& position)
 	offLiveFlag(LIVE_FLAG_UNK8);
 	offLiveFlag(LIVE_FLAG_DEAD);
 	reset();
-	mHitPoints = getSaveParam() ? getSaveParam()->mSLHitPointMax.get() : 1;
+	mHitPoints = getMaxHitPoints();
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	mVelocity = JGeometry::TVec3<f32>(0.0f, 5.0f, 0.0f);
 	onLiveFlag(LIVE_FLAG_UNK8000);
@@ -209,11 +219,11 @@ f32 TSpineEnemy::calcMinimumTurnRadius(f32 param_1, f32 param_2) const
 	if (param_2 >= 90.0f) {
 		result = 0.0f;
 	} else {
-		f32 thing = MsSin(param_2);
+		f32 thing = JMASin(param_2);
 		if (thing == 0.0f)
 			result = 100000.0f;
 		else
-			result = param_1 * MsSin(-(param_2 * 0.5f - 90.0f)) / thing;
+			result = param_1 * JMASin(-(param_2 * 0.5f - 90.0f)) / thing;
 	}
 	return result;
 }
@@ -235,7 +245,13 @@ f32 TSpineEnemy::calcTurnSpeedToReach(f32 march_speed, f32 param_2) const
 
 	f32 fVar32 = -(dVar11 * dVar11 - 1.0f);
 
-	// TODO: THitActor::calcEntryRadius has same problem
+	// TODO: THitActor::calcEntryRadius has same problem. Frame 8 short and the
+	// fnmsubs/frsqrte pair swaps f0/f1; a HitActor-style TU-local sqrt inline
+	// (volatile-first, double guess, inline argument) is inert, as are
+	// 1.0f - d * d, the unnamed operand, a named guess and swapped operands.
+	// feetinv's FeetInvAcosDeg (the same ==1/==-1/acos tail) as a TU-local
+	// helper is inert too, with or without a named result; inlining the
+	// MsClamp result into its argument is 8 shorter still.
 	volatile f32 f = fVar32 * __frsqrte(fVar32);
 	f32 tmp        = matan(f, dVar11) * (360.0f / 65536.0f);
 	return 90.0f - tmp;
@@ -245,7 +261,7 @@ void TSpineEnemy::updateSquareToMario()
 {
 	// assert?
 	(void)gpMarioPos;
-	mDistToMarioSquared = VECSquareDistance(&mPosition, gpMarioPos);
+	mDistToMarioSquared = PSVECSquareDistance(&mPosition, gpMarioPos);
 }
 
 BOOL TSpineEnemy::receiveMessage(THitActor* sender, u32 message)
@@ -269,33 +285,60 @@ BOOL TSpineEnemy::isInSight(const JGeometry::TVec3<f32>& pos, f32 length,
 	return MsIsInSight(mPosition, mRotation.y, pos, length, angle, aware);
 }
 
+// A forwarder around TGraphNode::getPoint(Vec*): the extra inline level is
+// frame-only pool that the ROM's expansions of this body carry.
+static inline void getNodePoint(const TGraphNode& node,
+                                JGeometry::TVec3<f32>* out)
+{
+	node.getPoint(out);
+}
+
 void TSpineEnemy::setGoalPathFromGraph()
 {
 	JGeometry::TVec3<f32> local_48;
-	unk124->getCurrent().getPoint(&local_48);
-	TPathNode local_3c(local_48);
-	unkF4  = local_3c;
-	unk104 = local_3c;
-	unk114.clear();
+	getNodePoint(getTracer()->getGraph()->getGraphNode(
+	                 getTracer()->getCurGraphIndex()),
+	             &local_48);
+	setGoalPath(TPathNode(local_48));
 }
 
-void TSpineEnemy::goToInitialVisibleNode(f32, f32) { }
+// UNUSED (0xfc); TBossHanachan::goToInitialRecoverGraphNode is the same
+// search with its own fallback.
+void TSpineEnemy::goToInitialVisibleNode(f32 dist, f32 degree)
+{
+	unk124->reset();
+	unk124->reset2();
+	int node = unk124->getGraph()->findNearestVisibleIndex(
+	    mPosition, mRotation.y, dist, degree, 0xffffffff);
+	if (node >= 0) {
+		unk124->setTo(node);
+		setGoalPathFromGraph();
+		unk128 = 0;
+		unk12C = 0.0f;
+	}
+}
 
 void TSpineEnemy::goToInitialGraphNodeCheckY(f32 param_1) { }
 
+// Pragma residue (enemy ladder 339, re-measured in sweep 360): protects
+// TSpineEnemy::reset (100 -> 0, the body pasted into it). Our spelling is
+// about 12 statements against the depth-1 budget of 14.
+// TODO (cc38): fillers before `return 0;` put the gap at four statements;
+// naming the graph in both arms is +2, does not tip it, and costs bytes.
 #pragma dont_inline on
 int TSpineEnemy::goToShortestNextGraphNode()
 {
-	if (unk124->unk0 == nullptr)
+	if (getTracer()->getGraph() == nullptr)
 		return -1;
 
-	if (unk124->mCurrIdx < 0)
-		unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
+	if (getTracer()->getCurGraphIndex() < 0)
+		unk124->setTo(
+		    getTracer()->getGraph()->findNearestNodeIndex(mPosition, -1));
 	else
-		unk124->moveTo(unk124->unk0->getShortestNextIndex(
-		    unk124->mCurrIdx, unk124->mPrevIdx, -1));
+		unk124->moveTo(getTracer()->getGraph()->getShortestNextIndex(
+		    getTracer()->getCurGraphIndex(), getTracer()->getPrevIndex(), -1));
 
-	if (unk124->mCurrIdx < 0)
+	if (getTracer()->getCurGraphIndex() < 0)
 		return -1;
 
 	setGoalPathFromGraph();
@@ -305,13 +348,21 @@ int TSpineEnemy::goToShortestNextGraphNode()
 }
 #pragma dont_inline off
 
+// TODO: instruction-exact and the frame agrees; setGoalPathFromGraph's
+// block still sits 0xc low (0x88 vs 0x94): retail has 2 depth-1 tracer
+// bindings above it where ours has 5. The checkFlag test as a this-taking
+// inline (as goToRandomNextGraphNode's node choice) gets it to 0x8c.
 int TSpineEnemy::jumpToNextGraphNode()
 {
-	if (unk124->mCurrIdx < 0 || !unk124->getCurrent().checkFlag(0x1))
+	if (getTracer()->getCurGraphIndex() < 0
+	    || !getTracer()
+	            ->getGraph()
+	            ->getGraphNode(getTracer()->getCurGraphIndex())
+	            .checkFlag(0x1))
 		return -1;
 
-	int idx = unk124->unk0->getNeighborNodeIndexByFlag(unk124->mCurrIdx,
-	                                                   unk124->mPrevIdx, 2);
+	int idx = getTracer()->getGraph()->getNeighborNodeIndexByFlag(
+	    getTracer()->getCurGraphIndex(), getTracer()->getPrevIndex(), 2);
 	if (idx >= 0) {
 		unk124->moveTo(idx);
 		setGoalPathFromGraph();
@@ -323,47 +374,72 @@ int TSpineEnemy::jumpToNextGraphNode()
 	return -1;
 }
 
+// The node choice is one inline level below the caller: its tracer
+// bindings are then created after setGoalPathFromGraph's locals, which sit
+// at the top of the frame as in retail.
+static inline void moveToRandomNextNode(TSpineEnemy* enemy)
+{
+	if (enemy->getTracer()->getCurGraphIndex() < 0)
+		enemy->unk124->setTo(enemy->getTracer()->getGraph()->findNearestNodeIndex(
+		    enemy->mPosition, -1));
+	else
+		enemy->unk124->moveTo(enemy->getTracer()->getGraph()->getRandomNextIndex(
+		    enemy->getTracer()->getCurGraphIndex(),
+		    enemy->getTracer()->getPrevIndex(), -1));
+}
+
 void TSpineEnemy::goToRandomNextGraphNode()
 {
-	if (unk124->getCurGraphIndex() < 0)
-		unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
-	else
-		unk124->moveTo(unk124->unk0->getRandomNextIndex(
-		    unk124->getCurGraphIndex(), unk124->getPrevIndex(), -1));
+	moveToRandomNextNode(this);
 
 	setGoalPathFromGraph();
 	unk128 = 0;
 	unk12C = 0.0f;
+}
+
+static inline void moveToEscapeNode(TSpineEnemy* enemy)
+{
+	if (enemy->getTracer()->getCurGraphIndex() < 0)
+		enemy->unk124->setTo(enemy->getTracer()->getGraph()->findNearestNodeIndex(
+		    enemy->mPosition, -1));
+	else
+		enemy->unk124->moveTo(
+		    enemy->getTracer()->getGraph()->getEscapeFromMarioIndex(
+		        enemy->getTracer()->getCurGraphIndex(), -1, enemy->mPosition,
+		        -1));
 }
 
 void TSpineEnemy::goToRandomEscapeGraphNode()
 {
-	if (unk124->getCurGraphIndex() < 0)
-		unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
-	else
-		unk124->moveTo(unk124->unk0->getEscapeFromMarioIndex(
-		    unk124->getCurGraphIndex(), -1, mPosition, -1));
+	moveToEscapeNode(this);
 
 	setGoalPathFromGraph();
 	unk128 = 0;
 	unk12C = 0.0f;
 }
 
+// TODO: frame 0x170 exact through getManager() at all three reads (+8) and
+// the named previous index (+8); the slots still differ. The whole else
+// branch as a this-taking inline copies the loop counter
+// (`addi r30, r29, 0`), so the loop is caller-level code.
 void TSpineEnemy::goToExclusiveNextGraphNode()
 {
-	if (mManager == nullptr) {
+	if (getManager() == nullptr) {
 		goToRandomNextGraphNode();
 	} else {
-		if (unk124->mCurrIdx < 0) {
-			unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
+		if (getTracer()->getCurGraphIndex() < 0) {
+			unk124->setTo(
+			    getTracer()->getGraph()->findNearestNodeIndex(mPosition, -1));
 		} else {
-			int idx = unk124->unk0->getRandomNextIndex(
-			    unk124->getCurGraphIndex(), unk124->getPrevIndex(), -1);
-			for (int i = 0; i < mManager->getObjNum(); ++i) {
-				TSpineEnemy* enemy = (TSpineEnemy*)mManager->getObj(i);
-				if (this != enemy && idx == enemy->unk124->mCurrIdx)
-					idx = unk124->unk0->getRandomNextIndex(
-					    unk124->getCurGraphIndex(), idx, -1);
+			int prevIdx = getTracer()->getPrevIndex();
+			int idx = getTracer()->getGraph()->getRandomNextIndex(
+			    getTracer()->getCurGraphIndex(), prevIdx, -1);
+			for (int i = 0; i < getManager()->getObjNum(); ++i) {
+				TSpineEnemy* enemy = (TSpineEnemy*)getManager()->getObj(i);
+				if (this != enemy
+				    && idx == enemy->getTracer()->getCurGraphIndex())
+					idx = getTracer()->getGraph()->getRandomNextIndex(
+					    getTracer()->getCurGraphIndex(), idx, -1);
 			}
 			unk124->moveTo(idx);
 		}
@@ -374,16 +450,22 @@ void TSpineEnemy::goToExclusiveNextGraphNode()
 	}
 }
 
+// TODO: frame 0x90 vs 0x98; retail has none of our 4 tracer bindings above
+// setGoalPathFromGraph's block. The node choice as a this-taking inline
+// lands the block 8 low and drops the two `mr` copies of currIdx and idx.
+// A named `TGraphWeb* graph` in the else arm lands the 0x98 frame, but the
+// block stays 0x14 low (the tracer bindings are still created above it).
 void TSpineEnemy::goToDirectedNextGraphNode(
     const JGeometry::TVec3<f32>& param_1)
 {
-	int currIdx = unk124->mCurrIdx;
-	int prevIdx = unk124->mPrevIdx;
+	int currIdx = getTracer()->getCurGraphIndex();
+	int prevIdx = getTracer()->getPrevIndex();
 	if (currIdx < 0) {
-		unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
+		unk124->setTo(
+		    getTracer()->getGraph()->findNearestNodeIndex(mPosition, -1));
 	} else {
-		int idx = unk124->unk0->getAimToDirNextIndex(currIdx, prevIdx, param_1,
-		                                             mPosition, -1);
+		int idx = getTracer()->getGraph()->getAimToDirNextIndex(
+		    currIdx, prevIdx, param_1, mPosition, -1);
 		unk124->moveTo(idx);
 	}
 
@@ -395,20 +477,25 @@ void TSpineEnemy::goToDirectedNextGraphNode(
 // TODO: fake
 static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
 {
-	f32 c = radius * MsCos(theta);
-	f32 s = radius * MsSin(theta);
+	f32 c = radius * JMACos(theta);
+	f32 s = radius * JMASin(theta);
 	return JGeometry::TVec3<f32>(s, 0.0f, c);
 }
 
+// TODO: setGoalPathFromGraph's block is 0x10 low: retail creates our four
+// tracer bindings (prevIdx, currIdx, both getGraph) after it. Moving the
+// node choice into an inline also moves polarXZ a level down (-0x10 frame).
 void TSpineEnemy::goToDirLimitedNextGraphNode(f32 param_1)
 {
-	int currIdx = unk124->mCurrIdx;
-	int prevIdx = unk124->mPrevIdx;
+	int prevIdx = getTracer()->getPrevIndex();
+	int currIdx = getTracer()->getCurGraphIndex();
 	if (currIdx < 0) {
-		unk124->setTo(unk124->unk0->findNearestNodeIndex(mPosition, -1));
+		unk124->setTo(
+		    getTracer()->getGraph()->findNearestNodeIndex(mPosition, -1));
 	} else {
-		TGraphWeb* web                 = unk124->unk0;
-		JGeometry::TVec3<f32> local_3c = polarXZ(mRotation.y, 1.0f);
+		TGraphWeb* web                 = getTracer()->getGraph();
+		f32 rotY                       = mRotation.y;
+		JGeometry::TVec3<f32> local_3c = polarXZ(rotY, 1.0f);
 
 		int idx = web->getRandomButDirLimited(currIdx, prevIdx, local_3c,
 		                                      mPosition, param_1, -1);
@@ -420,25 +507,34 @@ void TSpineEnemy::goToDirLimitedNextGraphNode(f32 param_1)
 	unk12C = 0.0f;
 }
 
-void TSpineEnemy::updateStayCount(f32) { }
+void TSpineEnemy::updateStayCount(f32 dist)
+{
+	if (abs(dist - unk12C) < 100.0f) {
+		unk128 += 1;
+	} else {
+		unk128 = 0;
+		unk12C = dist;
+	}
+}
 
 BOOL TSpineEnemy::turnToCurPathNode(f32 param_1)
 {
-	JGeometry::TVec3<f32> tmp = getUnkF4().getPoint();
+	const TPathNode& node     = getUnkF4();
+	JGeometry::TVec3<f32> tmp = node.getPoint();
 	tmp -= mPosition;
 
 	f32 rot = MsAngleDiff(MsGetRotFromZaxisY(tmp), mRotation.y);
 
-	BOOL uVar2 = false;
+	BOOL uVar2 = FALSE;
 	if (rot > 0.0f) {
 		if (rot < param_1) {
-			uVar2 = true;
+			uVar2 = TRUE;
 		} else {
 			rot = param_1;
 		}
 	} else {
 		if (rot > -param_1) {
-			uVar2 = true;
+			uVar2 = TRUE;
 		} else {
 			rot = -param_1;
 		}
@@ -451,41 +547,30 @@ BOOL TSpineEnemy::turnToCurPathNode(f32 param_1)
 void TSpineEnemy::walkToCurPathNode(f32 march_speed, f32 turn_speed,
                                     f32 param_3)
 {
-	JGeometry::TVec3<f32> tmp = getUnkF4().getPoint();
+	JGeometry::TVec3<f32> tmp = unkF4.getPoint();
 	tmp -= mPosition;
 
 	f32 fVar7 = tmp.length();
 	f32 angle = MsWrap(param_3 + MsGetRotFromZaxisY(tmp), 0.0f, 360.0f);
 	f32 fVar2 = MsAngleDiff(angle, mRotation.y);
 
-// TODO: identical to a piece of code below, what is this?
- 	f32 fVar3;
- 	if (turn_speed >= 90.0f) {
- 		fVar3 = 0.0f;
- 	} else {
- 		f32 s = MsSin(turn_speed);
- 		if (s == 0.0f) {
- 			fVar3 = 100000.0f;
- 		} else {
- 			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
- 		}
- 	}
+	f32 fVar3 = calcMinimumTurnRadius(march_speed, turn_speed);
 
 	// TODO: tons of thi stuff should actually be inlines
 	f32 fVar5 = fVar2;
 	if (fVar7 > fVar3 * 2.0f) {
 		if (fVar2 > 0.0f) {
-			fVar5 = MsMin(fVar2, turn_speed);
+			fVar5 = fVar2 > turn_speed ? turn_speed : fVar2;
 		} else {
-			fVar5 = MsMax(fVar2, -turn_speed);
+			fVar5 = fVar2 > -turn_speed ? fVar2 : -turn_speed;
 		}
 	} else {
 		f32 fVar3 = calcTurnSpeedToReach(march_speed, fVar7 * 0.5f);
 
 		if (fVar2 > 0.0f) {
-			fVar5 = MsMin(fVar2, fVar3);
+			fVar5 = fVar2 > fVar3 ? fVar3 : fVar2;
 		} else {
-			fVar5 = MsMax(fVar2, -fVar3);
+			fVar5 = fVar2 > -fVar3 ? fVar2 : -fVar3;
 		}
 	}
 
@@ -495,32 +580,33 @@ void TSpineEnemy::walkToCurPathNode(f32 march_speed, f32 turn_speed,
 	vel += polarXZ(mRotation.y, march_speed);
 	mLinearVelocity = vel;
 
-	if (abs(fVar7 - unk12C) < 100.0f) {
-		unk128 += 1;
-	} else {
-		unk128 = 0;
-		unk12C = fVar7;
-	}
+	updateStayCount(fVar7);
 }
 
+// TODO: 98.0%. Retail keeps march_speed in f31 and its frame is 0x18 larger.
+// Naming the `dVar13 * cycle` product keeps it unfused after getPhaseShift(),
+// as retail rounds it (a single expression fused into an fmadds).
+// Routing the stay-count tail through the UNUSED updateStayCount (0x38, as
+// the map has it) is inert here and in walkToCurPathNode.
 void TSpineEnemy::zigzagToCurPathNode(f32 march_speed, f32 turn_speed,
                                       f32 cycle, f32 angle)
 {
-	if (unk124->unk10 == 0.0f) {
+	if (getTracer()->unk10 == 0.0f) {
 		walkToCurPathNode(march_speed, turn_speed, 0.0f);
 		return;
 	}
 
-	f32 f29 = angle * unk124->unk10;
+	f32 f29 = angle * getTracer()->unk10;
 
 	f32 dVar9 = (unkF4.getPoint() - mPosition).length();
 
 	f32 dVar13 = MsWrap(dVar9, 0.0f, cycle);
 
-	dVar13 *= 360.0f * (1.0f / cycle);
-	dVar13 += getPhaseShift();
+	cycle = 360.0f * (1.0f / cycle);
+	f32 phase = dVar13 * cycle;
+	dVar13 = phase + getPhaseShift();
 
-	f29 *= MsSin(dVar13);
+	f29 *= JMASin(dVar13);
 
 	JGeometry::TVec3<f32> local_58 = unkF4.getPoint();
 	local_58 -= mPosition;
@@ -528,24 +614,14 @@ void TSpineEnemy::zigzagToCurPathNode(f32 march_speed, f32 turn_speed,
 
 	f32 fVar1 = MsAngleDiff(dVar12, mRotation.y);
 
-f32 fVar3;
- 	if (turn_speed >= 90.0f) {
- 		fVar3 = 0.0f;
- 	} else {
- 		f32 s = MsSin(turn_speed);
- 		if (s == 0.0f) {
- 			fVar3 = 100000.0f;
- 		} else {
- 			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
- 		}
- 	}
+	f32 fVar3 = calcMinimumTurnRadius(march_speed, turn_speed);
 
-	f32 fVar2;
+	f32 fVar2 = fVar1;
 	if (dVar9 > fVar3 * 2.0f) {
 		if (fVar1 > 0.0f) {
-			fVar2 = MsMin(fVar1, turn_speed);
+			fVar2 = fVar1 > turn_speed ? turn_speed : fVar1;
 		} else {
-			fVar2 = MsMax(fVar1, -turn_speed);
+			fVar2 = fVar1 > -turn_speed ? fVar1 : -turn_speed;
 		}
 	}
 
@@ -555,12 +631,7 @@ f32 fVar3;
 	vel += polarXZ(mRotation.y, march_speed);
 	mLinearVelocity = vel;
 
-	if (abs(dVar9 - unk12C) < 100.0f) {
-		unk128 += 1;
-	} else {
-		unk128 = 0;
-		unk12C = dVar9;
-	}
+	updateStayCount(dVar9);
 }
 
 void TSpineEnemy::doShortCut()
@@ -568,15 +639,32 @@ void TSpineEnemy::doShortCut()
 	if (unk114.size() <= 0)
 		return;
 
-	if ((unkF4.getPoint() - mPosition).length() < getBodyRadius()) {
+	const JGeometry::TVec3<f32>& goal = unkF4.getPoint();
+	if ((goal - mPosition).length() < getBodyRadius()) {
 		if (!unk114.empty())
 			unkF4 = unk114.pop();
 		return;
 	}
 
-	TPathNode node = unk114.pop();
+	// A peek, not a pop: the node is only consumed below, once the wall probe
+	// says the short cut is clear. Retail inlines `mData[mSize - 1]` here with
+	// no decrement and no empty guard, which is exactly TSolidStack::top().
+	// Declared then assigned, not copy-initialised: retail default-constructs
+	// the node (a null owner and a zero point) before the four-word copy.
+	//
+	// TODO: the frame is exact now (the TU-local raw getPoint below is -0x10),
+	// and with the goal reference named above node and local_28 sit at
+	// retail's slots (c-t6), but every temporary sits 0xc above retail's
+	// slot, so retail reserves 0xc more below them than we do. Retail's
+	// slots (frame 0xb0): node 0x94, local_28 0x88, first diff 0x70, first
+	// pop 0x60, second pop 0x48, sub temp 0x38 -- the second pop is
+	// allocated before the sub temp, ours the other way round. A named
+	// node.getPointRaw() reference moves local_28 down a word instead. switchNextGoalPath() at either or both pop sites
+	// is +8 frame each, and node.getPoint() at the second site +0x10.
+	TPathNode node;
+	node = unk114.top();
 
-	JGeometry::TVec3<f32> local_28 = node.getPoint() - mPosition;
+	JGeometry::TVec3<f32> local_28 = node.getPointRaw() - mPosition;
 	if (local_28.x == 0.0f && local_28.y == 0.0f && local_28.z == 0.0f)
 		local_28.x = 1.0f;
 	local_28.normalize();
@@ -621,12 +709,17 @@ BOOL TSpineEnemy::checkCurAnmEnd(int type) const
 	}
 }
 
+// Binding level worth +8 of low region, landing TSpineEnemy::perform's frame
+// at 0x30 (batch 124).
+static inline TLiveManager* EnemyGetManager(TSpineEnemy* p)
+{
+	TLiveManager* manager = p->getManager();
+	return manager;
+}
+
 void TSpineEnemy::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
-	TEnemyManager* mgr = (TEnemyManager*)getManager();
+	TEnemyManager* mgr = (TEnemyManager*)EnemyGetManager(this);
 
 	if (mgr != nullptr) {
 		if ((cue & CUE_CALC_ANIM)

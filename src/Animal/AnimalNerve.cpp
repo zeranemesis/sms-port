@@ -8,24 +8,41 @@
 #include <Camera/cameralib.hpp>
 #include <Strategic/Spine.hpp>
 
-static inline f32 calcDist(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b)
+// `inline`, not a plain function: the map's closure for AnimalNerve.o lists
+// exactly four weak duplicates (JGeometry::TUtil<f32>::sqrt, TPathNode::~TPathNode,
+// TNerveBase<TLiveActor>'s vtable and destructor) and nothing else, so whatever
+// computed these two distances left no symbol of its own. Plain and `static`
+// both emit a 0xac global the map has no room for; `inline` removes it with no
+// codegen change.
+//
+// Matching levers that closed execute (frame already 0xe8 from batch 131's raw
+// member reads + TSpineEnemy::calcDist's by-value `a`):
+//   * `mSLSharedAnmNum.value` not `.get()` — the const-ref temporary from
+//     `.get()` was the uniform +4 on every low-pool slot (getUnkF4 at the
+//     height test is kept; raw unkF4 lands the pool but drops retail's
+//     `addi r3, r31, 0xf4` getPoint receiver).
+//   * `s32 count` not `int` — restores retail's r7/r6 count/index colouring.
+//   * `resetAnmTimer` around the shared MsRandI setup — restores `other` in
+//     r27 (open-coded sites leave it in r28).
+
+inline void resetAnmTimer(TAnimalBase* actor, int lo, int hi)
 {
-	JGeometry::TVec3<f32> diff = a;
-	diff.sub(b);
-	return JGeometry::TUtil<f32>::sqrt(diff.squared());
+	int* timer = actor->mFrameTimer;
+	timer[0]   = 0;
+	timer[1]   = MsRandI(lo, hi);
 }
 
 DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 {
 	TAnimalBase* actor          = (TAnimalBase*)spine->getBody();
-	MActor* mActor              = actor->getMActor();
-	TAnimalManagerBase* manager = (TAnimalManagerBase*)actor->getManager();
+	MActor* mActor              = actor->mMActor;
+	TAnimalManagerBase* manager = (TAnimalManagerBase*)actor->mManager;
 
 	TAnimalSaveIndividual* save = manager->mAnimalSave;
-	int count                   = save->mSLSharedAnmNum.get();
+	s32 count                   = save->mSLSharedAnmNum.value;
 
-	if (count != 0 && actor->getInstanceIndex() >= count) {
-		TLiveActor* other = manager->getObj(actor->getInstanceIndex() % count);
+	if (count != 0 && actor->mInstanceIndex >= count) {
+		TLiveActor* other = (TLiveActor*)manager->unk18[actor->mInstanceIndex % count];
 
 		int anmIdx = other->getMActor()->getCurAnmIdx(ANM_TYPE_BCK);
 		mActor->setBckFromIndex(anmIdx);
@@ -34,15 +51,11 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 		J3DFrameCtrl* otherCtrl
 		    = other->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 		myCtrl->setFrame(otherCtrl->getFrame());
-	} else if (actor->getActorType() != 0x800001) {
+	} else if (actor->mActorType != 0x800001) {
 		// not the right type, skip animation setup
 	} else {
 		if (spine->getTime() == 0) {
-			int hi     = CLBPalFrame<int>(500);
-			int lo     = CLBPalFrame<int>(150);
-			int* timer = actor->mFrameTimer;
-			timer[0]   = 0;
-			timer[1]   = MsRandI(lo, hi);
+			resetAnmTimer(actor, CLBPalFrame<int>(150), CLBPalFrame<int>(500));
 		}
 
 		int* timer = actor->mFrameTimer;
@@ -59,11 +72,7 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 				if (!mActor->checkCurBckFromIndex(0))
 					mActor->setBckFromIndex(0);
 
-				int hi     = CLBPalFrame<int>(500);
-				int lo     = CLBPalFrame<int>(150);
-				int* timer = actor->mFrameTimer;
-				timer[0]   = 0;
-				timer[1]   = MsRandI(lo, hi);
+				resetAnmTimer(actor, CLBPalFrame<int>(150), CLBPalFrame<int>(500));
 			}
 			break;
 		}
@@ -73,14 +82,14 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 
 	if (!actor->unk114.empty()) {
 		const JGeometry::TVec3<f32>& goalPos = actor->unkF4.getPoint();
-		f32 dist = calcDist(goalPos, actor->mPosition);
+		f32 dist = TSpineEnemy::calcDist(goalPos, actor->mPosition);
 
 		if (dist < 200.0f && !actor->unk114.empty()) {
 			actor->unkF4 = actor->unk114.pop();
 		}
 	} else {
 		const JGeometry::TVec3<f32>& curPos = actor->unk104.getPoint();
-		f32 dist = calcDist(curPos, actor->mPosition);
+		f32 dist = TSpineEnemy::calcDist(curPos, actor->mPosition);
 
 		if (dist < 100.0f) {
 			actor->goToRandomNextGraphNode();
@@ -90,20 +99,12 @@ DEFINE_NERVE(TNerveAnimalGraphWander, TLiveActor)
 				if (!mActor->checkCurBckFromIndex(1))
 					mActor->setBckFromIndex(1);
 
-				int hi     = CLBPalFrame<int>(180);
-				int lo     = CLBPalFrame<int>(60);
-				int* timer = actor->mFrameTimer;
-				timer[0]   = 0;
-				timer[1]   = MsRandI(lo, hi);
+				resetAnmTimer(actor, CLBPalFrame<int>(60), CLBPalFrame<int>(180));
 			} else {
 				if (!mActor->checkCurBckFromIndex(0))
 					mActor->setBckFromIndex(0);
 
-				int hi     = CLBPalFrame<int>(500);
-				int lo     = CLBPalFrame<int>(150);
-				int* timer = actor->mFrameTimer;
-				timer[0]   = 0;
-				timer[1]   = MsRandI(lo, hi);
+				resetAnmTimer(actor, CLBPalFrame<int>(150), CLBPalFrame<int>(500));
 			}
 		}
 	}

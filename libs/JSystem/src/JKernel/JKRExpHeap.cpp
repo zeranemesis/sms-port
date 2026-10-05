@@ -111,7 +111,7 @@ JKRExpHeap::JKRExpHeap(void* data, u32 size, JKRHeap* parent, bool errorFlag)
 	mCurrentGroupID   = 0xFF;
 	mHead             = static_cast<CMemBlock*>(data);
 	mTail             = mHead;
-	mHead->initiate(nullptr, nullptr, size - 0x10, 0, 0);
+	mHead->initiate(nullptr, nullptr, size - sizeof(CMemBlock), 0, 0);
 	mHeadUsedList = nullptr;
 	mTailUsedList = nullptr;
 }
@@ -168,6 +168,74 @@ void* JKRExpHeap::alloc(u32 size, int alignment)
 	return ptr;
 }
 
+// TODO: 98.8%, frame 0x38 and all 185 instructions now match; the residue is
+// three instructions' worth of scheduling. The hoisted `~(align - 1)` mask sits
+// in the prologue for us (`nor r6, r0, r0` before the `stwu`) and *after* the
+// `size = ALIGN_NEXT(size, 4)` pair for retail (`nor r4, r0, r0`), so retail
+// reuses the freed `size` parameter register r4 for the mask while we take r6
+// and put the block content in r4 -- five swapped operands in the loop follow
+// from that one slot. Naming the aligned address (below) was what landed the
+// frame: it is +8 with no instruction change. Ruled out for the mask slot: an
+// explicit `u32 alignMask`/`alignMinus1` local before the loop (+81 differing
+// operands, the mask stops being folded into the `and`), `(u32)align` at the
+// call (186 instructions), spelling ALIGN_NEXT out (188), a separate
+// `alignedSize` local instead of reassigning `size` (187), and moving the size
+// alignment below the declaration block (neutral).
+// TODO: 98.8%. All 185 instructions are the right ones and the frame is exact;
+// the single residue is the placement of the hoisted `nor` that forms
+// `~(align - 1)`. Retail emits it at 0x568, *between* the `size` rounding and
+// the zero-initialisations, which leaves r4 (the dead `size` parameter) free
+// for the mask and puts `content` in r6; we hoist it into the pre-`stwu` slot
+// at 0x554 while r4 still holds `size`, so the mask takes r6 and `content`
+// takes r4. Six operands plus one insert/delete pair.
+// Measured 2026-09-18: dropping the named `content` (two `getContent()` calls)
+// is 97.3% at 186 instructions; a `u32 content` instead of `void* content` is
+// 97.1% at 184 with frame 0x40; and hoisting the mask by hand
+// (`u32 alignMask = ~(align - 1);` after the size rounding, used as
+// `(content + (align - 1)) & alignMask`) is 98.7% and does *not* move the
+// `nor`, which refutes the "a statement between them introduces it" reading.
+// None of the four rules of batch 142-146 applies: this is scheduling, not a
+// temp, a level or a callee-saved rank.
+// Library re-pass 2026-09-18, three more spellings measured and all refuted:
+// folding `aligned` away (`u32 offset = ALIGN_NEXT((u32)content, align)
+// - (u32)content;`) drops the frame to 0x30 (9 operands); hoisting `content`,
+// `aligned` and `offset` to function scope is byte-identical (declaration
+// order is inert on them, as the rank rule predicts, because they live in
+// volatile registers); and splitting the rounding into `size += 3; size &= ~3;`
+// is 98.6%. The residue is the coloring, not the schedule: the mask has to be
+// the value that takes the dead `size` parameter register r4, and every
+// spelling that keeps `size` alive long enough to free r4 for it also changes
+// the instruction count.
+// Closure round 2026-09-18, five more spellings, none better than the 185/185
+// instruction baseline: a `while` loop with an explicit `block = block->mNext`
+// (6 markers), moving `size = ALIGN_NEXT(size, 4)` below the five
+// zero-initialisations (identical, 4 markers), `u32 alignMask = ~(align - 1);`
+// as the *first* statement (12 markers) and as the last statement before the
+// loop (93 markers, frame 0x40), and `u32 alignM = align - 1;` after the
+// rounding with `& ~alignM` at the use (186 instructions). The `nor` is placed
+// by the scheduler's pre-`stwu` slot, not by source order, so the mask cannot
+// be pushed below the rounding from the source side; this needs a reason for
+// the slot to be unavailable, not another spelling of the mask.
+// Lib pass 2026-09-23, all no better: C-style top declarations (0x40 frame),
+// `int foundSize` (98.5), the `ALIGN_PREV(align - 1 + content, align)` offset
+// spelling (0x30 frame or 186 instructions), and `u32`/`u8*` content (184).
+// Unit pass c-jdr 2026-09-23, 28 more spellings, none better: C-style top
+// declarations crossed with u32/int foundSize and five offset spellings
+// (ALIGN_PREV with/without named content, one-line ALIGN_NEXT) are 94.6-96.4%,
+// and `(u32)align`, int aligned/offset, `~mask & (...)` and hand-spelled
+// rounding are 94.3-98.8% with the `nor` still in the pre-`stwu` slot.
+// Closure c-k4, debugger reading (unit flags): the pre-allocation schedule
+// already has the `not` after `addi r55,r4,3`, so the placement follows from
+// colouring. The mask is the loop-invariant hoist `@167`, created by the IR
+// optimiser after getContent()'s forced-load inline result `@166` (which is
+// what `content` becomes), so it is numbered lower, pushed earlier and
+// coloured after it: `content` takes r4 and the mask r6. Retail colours the
+// mask first. A raw `(void*)(block + 1)` removes the inline result and gives
+// retail's `nor r4` and exact structure, but `content` then stays a named web
+// and every other register moves (97.1, one more callee-saved register);
+// naming the mask inside the loop (any type), a second getContent() at the
+// `aligned` or `offset` use, and a split `content` declaration are inert or
+// worse.
 void* JKRExpHeap::allocFromHead(u32 size, int align)
 {
 	size                    = ALIGN_NEXT(size, 4);
@@ -177,11 +245,10 @@ void* JKRExpHeap::allocFromHead(u32 size, int align)
 	CMemBlock* newFreeBlock = nullptr;
 	CMemBlock* newUsedBlock = nullptr;
 
-
 	for (CMemBlock* block = mHead; block; block = block->mNext) {
-		// this bastard is the problem
 		void* content = block->getContent();
-		u32 offset = ALIGN_NEXT((uintptr_t)content, align) - (uintptr_t)content;
+		u32 aligned   = ALIGN_NEXT((u32)content, align);
+		u32 offset    = aligned - (u32)content;
 
 		if (block->mAllocatedSpace < size + offset) {
 			continue;
@@ -410,7 +477,7 @@ void JKRExpHeap::free(void* ptr)
 			block->free(this);
 		}
 	} else {
-		JUT_WARNING_F("free: memblock %x not in heap %x", memblock, this);
+		JUT_WARNING_F2("free: memblock %x not in heap %x", ptr, this);
 	}
 	unlock();
 }

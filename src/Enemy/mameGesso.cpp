@@ -81,16 +81,21 @@ TSmallEnemy* TMameGessoManager::createEnemyInstance() { return new TMameGesso; }
 
 void TMameGessoManager::initSetEnemies() { }
 
+// Binding level worth +8 of low region, landing TMameGessoManager::perform's
+// frame at 0x48 (batch 124).
+static inline bool MameGessoCheckLiveFlag(const TMameGesso* p, u32 i)
+{
+	bool liveFlag = p->checkLiveFlag(i);
+	return liveFlag;
+}
+
 void TMameGessoManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	for (int i = 0; i < mObjNum; i++) {
 		if (!(cue & CUE_MOVE))
 			continue;
 		TMameGesso* gesso = getObj(i);
-		if (gesso->checkLiveFlag(LIVE_FLAG_DEAD) && gesso->unk1D2) {
+		if (MameGessoCheckLiveFlag(gesso, LIVE_FLAG_DEAD) && gesso->unk1D2) {
 			gesso->unk1CC += 1;
 			if (gesso->unk1CC > gesso->unk194->mSLGenerateInterval.get()) {
 				gesso->reset();
@@ -175,13 +180,15 @@ void TMameGesso::calcRootMatrix()
 	}
 }
 
+void TMameGesso::rebirth() { }
+
 void TMameGesso::reset()
 {
 	TWalkerEnemy::reset();
 
-	// TODO: still don't know the real rand function/class...
-	f32 interval = unk194->mSLGenerateInterval.get();
-	unk1CC = MsRandF() * interval;
+	TMsRange<int> interval(0, unk194->mSLGenerateInterval.get());
+
+	unk1CC    = interval.rand();
 	unk1D0    = 0;
 	unk1E8    = 0.0f;
 	unk1EC    = 1;
@@ -226,7 +233,7 @@ void TMameGesso::kill()
 f32 TMameGesso::getGravityY() const
 {
 	f32 result = mGravity;
-	if (mSpine->getCurrentNerve() == &TNerveMameGessoObject::theNerve())
+	if (mSpine->getCurrentNerve() == &TNerveMameGessoGraphJumpWander::theNerve())
 		result = unk194->mSLJumpWanderGravityY.get();
 
 	if (mSpine->getCurrentNerve() == &TNerveMameGessoThrown::theNerve())
@@ -283,14 +290,23 @@ bool TMameGesso::isCollidMove(THitActor*)
 		return true;
 }
 
+// Binding level over the head joint's matrix: with the compiler-unrolled
+// loop below it lands calcObjCollision's 0x58 frame.
+static inline MtxPtr MameGessoHeadMtx(TMameGesso* p)
+{
+	MtxPtr mtx = p->mMActor->getModel()->getAnmMtx(1);
+	return mtx;
+}
+
 void TMameGesso::calcObjCollision()
 {
 	mHeadHeight = 50.0f;
 
-	f32 scale = unk194->mSLCollisionScale.get() * mAttackRadius * mBodyScale;
+	f32 scale = unk194->mSLCollisionScale.get();
+	scale *= mAttackRadius * mBodyScale;
 
-	MtxPtr mtx = mMActor->getModel()->getAnmMtx(1);
 	JGeometry::TVec3<f32> pos;
+	MtxPtr mtx = MameGessoHeadMtx(this);
 	pos.x = mtx[0][3];
 	pos.y = mtx[1][3];
 	pos.z = mtx[2][3];
@@ -299,25 +315,12 @@ void TMameGesso::calcObjCollision()
 		1.0f, -1.0f, 1.0f, 1.0f, -1.0f, 1.0f, -1.0f, -1.0f,
 	};
 
-	unk19C[0] = pos;
-	unk19C[0].y += 90.0f;
-	unk19C[0].x += scale * xzTable[0];
-	unk19C[0].z += scale * xzTable[1];
-
-	unk19C[1] = pos;
-	unk19C[1].y += 90.0f;
-	unk19C[1].x += scale * xzTable[2];
-	unk19C[1].z += scale * xzTable[3];
-
-	unk19C[2] = pos;
-	unk19C[2].y += 90.0f;
-	unk19C[2].x += scale * xzTable[4];
-	unk19C[2].z += scale * xzTable[5];
-
-	unk19C[3] = pos;
-	unk19C[3].y += 90.0f;
-	unk19C[3].x += scale * xzTable[6];
-	unk19C[3].z += scale * xzTable[7];
+	for (int i = 0; i < 4; i++) {
+		unk19C[i] = pos;
+		unk19C[i].y += 90.0f;
+		unk19C[i].x += scale * xzTable[i * 2];
+		unk19C[i].z += scale * xzTable[i * 2 + 1];
+	}
 }
 
 void TMameGesso::entryObjCollision()
@@ -336,14 +339,21 @@ bool TMameGesso::doKeepDistance()
 		return false;
 }
 
+void TMameGesso::checkMarioState() { }
+
 const char** TMameGesso::getBasNameTable() const { return mameGesso_bastable; }
 
+// TODO: instruction-exact at retail's frame 0xe8, but every stack object sits
+// 4 bytes high (the low region is one 4-byte item too big). Inert: explicit
+// `!= 0`/`== 0` at every call condition; `.get()` -> `.value` on the return
+// jump params is -8 each, as is `getTime() == 0`.
 DEFINE_NERVE(TNerveMameGessoGraphJumpWander, TLiveActor)
 {
 	TMameGesso* self = (TMameGesso*)spine->getBody();
 
-	if (spine->getTime() == 0) {
-		if (self->getGroundPlane()->isWaterSurface())
+	if (!spine->getTime()) {
+		const TBGCheckData* groundPlane = self->getGroundPlane();
+		if (groundPlane->isWaterSurface())
 			self->setBckAnm(12);
 		else
 			self->setBckAnm(11);
@@ -359,7 +369,7 @@ DEFINE_NERVE(TNerveMameGessoGraphJumpWander, TLiveActor)
 
 			if (self->unk1EC) {
 				self->goToShortestNextGraphNode();
-				f32 jumpWanderSpeed = self->unk194->mSLJumpWanderSpeed.get();
+				f32 jumpWanderSpeed = self->unk194->mSLJumpWanderSpeed.value;
 				JGeometry::TVec3<f32> local_4c = self->calcVelocityToJumpToY(
 				    self->getUnk104().getPoint(), jumpWanderSpeed,
 				    self->getGravityY());
@@ -388,15 +398,22 @@ DEFINE_NERVE(TNerveMameGessoGraphJumpWander, TLiveActor)
 				    local_34, returnJumpSp, self->getGravityY());
 				self->mPosition.y += 2.0f;
 				self->setVelocity(vel);
-				self->onHitFlag(LIVE_FLAG_AIRBORNE);
+				self->onLiveFlag(LIVE_FLAG_AIRBORNE);
 			}
 		}
 	}
 
 	if (self->unk1EC != 0) {
-		// TODO: one more condition that is kind of like
-		// mGroundPlane->isWaterSurface() but not really
-		if (!self->isReachedToGoal() || self->isAirborne()) {
+		if (self->isReachedToGoal()) {
+			if (self->isAirborne()) {
+				// Retail evaluates isWaterSurface() here and does nothing
+				// with it: the guarded statement was stripped, but the
+				// inlined predicate's compare chain survives (all but its
+				// last term).
+				if (self->getGroundPlane()->isWaterSurface()) {
+				}
+			}
+		} else {
 			if (!self->isAirborne())
 				self->walkBehavior(2, 1.0f);
 			else
@@ -433,11 +450,16 @@ DEFINE_NERVE(TNerveMameGessoGraphJumpWander, TLiveActor)
 	return false;
 }
 
+// Binding level worth +8 of low region, landing
+// TNerveMameGessoDamage::execute's frame at 0x78 (batch 121).
+static inline bool MameGessoIsAirborne(const TMameGesso* p)
+{
+	bool airborne = p->isAirborne();
+	return airborne;
+}
+
 DEFINE_NERVE(TNerveMameGessoDamage, TLiveActor)
 {
-
-	
-	
 	TMameGesso* self = (TMameGesso*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -450,16 +472,17 @@ DEFINE_NERVE(TNerveMameGessoDamage, TLiveActor)
 		self->setBckAnm(13);
 	}
 
-	if (!self->isAirborne() && self->getGroundPlane()->isWaterSurface()) {
+	if (!MameGessoIsAirborne(self)
+	    && self->getGroundPlane()->isWaterSurface()) {
 		spine->pushAfterCurrent(&TNerveMameGessoObject::theNerve());
 		return true;
 	}
 
 	if (self->checkCurAnmEnd(0)) {
-		if (self->isBckAnm(13) && self->isAirborne())
+		if (self->isBckAnm(13) && MameGessoIsAirborne(self))
 			self->setBckAnm(0);
 
-		if (!self->isAirborne()) {
+		if (!MameGessoIsAirborne(self)) {
 			if (self->getGroundPlane()->isWaterSurface())
 				spine->pushAfterCurrent(&TNerveMameGessoObject::theNerve());
 			else
@@ -480,11 +503,13 @@ DEFINE_NERVE(TNerveMameGessoJitabata, TLiveActor)
 	} else {
 		if (self->checkCurAnmEnd(0)) {
 			if (self->isBckAnm(15)) {
-				if (spine->getTime() > self->unk194->mSLFreezeWait.get())
+				s32 freezeWait = self->unk194->mSLFreezeWait.value;
+				if (spine->getTime() > freezeWait)
 					self->setBckAnm(5);
 			} else if (self->isBckAnm(5)) {
 				// TODO: operator- inline is wrong here, too much stack frame
-				if ((self->unk104.getPoint() - self->getPosition()).length()
+				if ((self->unk104.getPointRaw() - self->getPosition())
+				        .length()
 				    > 300.0f)
 					self->unk1EC = 0;
 
@@ -546,15 +571,23 @@ DEFINE_NERVE(TNerveMameGessoThrown, TLiveActor)
 	if (spine->getTime() == 0) {
 		TMameGessoSaveLoadParams* params = self->getSaveLoadParam();
 
-		f32 thrownRateXZ = params->mSLThrownRateXZ.get();
-
-		// TODO: ugly matching
-		s16 angle = *gpMarioAngleY & 0xffff;
-		JGeometry::TVec3<f32> vel(
-		    thrownRateXZ * *gpMarioThrowPower * JMASSin(angle),
-		    params->mSLThrownVY.get(),
-		    thrownRateXZ * *gpMarioThrowPower * JMASCos(angle));
-
+		// The ROM groups the throw as `rate * (power * sin)`, not
+		// `rate * power * sin`: the first fmuls multiplies the power by the
+		// table value and only the second brings the rate in. Named
+		// power/rate/z/x with component stores put the VY load after the
+		// x store as in the ROM (97.1 -> 99.8).
+		// The throw power comes through an inline accessor, which makes
+		// `power` an IR-optimiser temporary: its dead stack word and
+		// `rate`'s are the ROM's 8 bytes above `vel`, and it is created
+		// ahead of the cosine's temporary, so it takes f2.
+		f32 power = SMS_GetMarioThrowPower();
+		f32 rate = params->mSLThrownRateXZ.get();
+		JGeometry::TVec3<f32> vel;
+		f32 z = rate * (power * JMASCos(SMS_GetMarioAngleY()));
+		f32 x = rate * (power * JMASSin(SMS_GetMarioAngleY()));
+		vel.x = x;
+		vel.y = params->mSLThrownVY.get();
+		vel.z = z;
 		self->setVelocity(vel);
 
 		self->mPosition.y += 2.0f;
@@ -580,11 +613,16 @@ DEFINE_NERVE(TNerveMameGessoThrown, TLiveActor)
 	return false;
 }
 
+// Binding level worth +16 of low region, landing
+// TNerveMameGessoObject::execute's frame at 0x48 (batch 124).
+static inline bool MameGessoIsBckAnm(const TMameGesso* p, int i)
+{
+	bool bckAnm = p->isBckAnm(i);
+	return bckAnm;
+}
+
 DEFINE_NERVE(TNerveMameGessoObject, TLiveActor)
 {
-
-	
-	
 	TMameGesso* self = (TMameGesso*)spine->getBody();
 
 	if (SMS_IsMarioStatusTypeSwimming()) {
@@ -606,14 +644,14 @@ DEFINE_NERVE(TNerveMameGessoObject, TLiveActor)
 		self->unk1E8 = 80.0f;
 	}
 
-	if (self->checkCurAnmEnd(0) && self->isBckAnm(2))
+	if (self->checkCurAnmEnd(0) && MameGessoIsBckAnm(self, 2))
 		self->setBckAnm(16);
 
 	if (spine->getTime() > self->unk194->mSLObjectRecoverTime.get()) {
 		if (self->checkCurAnmEnd(0)) {
-			if (self->isBckAnm(16)) {
+			if (MameGessoIsBckAnm(self, 16)) {
 				self->setBckAnm(18);
-			} else if (self->isBckAnm(18)) {
+			} else if (MameGessoIsBckAnm(self, 18)) {
 				self->calcObjCollision();
 				self->entryObjCollision();
 				self->offHitFlag(HIT_FLAG_NO_COLLISION);
@@ -649,7 +687,7 @@ DEFINE_NERVE(TNerveMameGessoWait, TLiveActor)
 		int wait = self->getGroundPlane()->isWaterSurface()
 		               ? self->unk194->mSLWaitTimeInWater.get()
 		               : self->unk194->mSLWaitTimeOnGround.get();
-		if (spine->getTime() > wait + self->mInstanceIndex * 10) {
+		if (spine->getTime() > wait + self->getInstanceIndex() * 10) {
 			spine->pushAfterCurrent(
 			    &TNerveMameGessoGraphJumpWander::theNerve());
 			return true;

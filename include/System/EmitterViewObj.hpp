@@ -13,6 +13,15 @@ class TMarioParticleManager;
 
 extern TMarioParticleManager* gpMarioParticleManager;
 
+// Fabricated: the particle manager bound to a named local before it is
+// returned, +8 of low region per expansion over a raw gpMarioParticleManager
+// read. Formerly parked TU-locally in 19 units under 21 names.
+inline TMarioParticleManager* SMSGetParticleManagerBound()
+{
+	TMarioParticleManager* manager = gpMarioParticleManager;
+	return manager;
+}
+
 class TMarioParticleManager : public JDrama::TViewObj {
 public:
 	enum {

@@ -1,20 +1,29 @@
 #include <Enemy/RiccoHook.hpp>
 #include <Strategic/Spine.hpp>
 #include <Enemy/Graph.hpp>
+#include <JSystem/JMath.hpp>
 #include <MarioUtil/MathUtil.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/SoundEffects.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template statics,
-// which is what marioEU.dol registers from __sinit_riccohook_cpp (764 bytes,
-// the same 15 registrations as every other TU) and lays out in .bss after this
-// object's own statics (target .bss 0xC0 = 0xC + 15 * 0xC).
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-// @non-matching -- the issue seems to stem from the JDrama TNameRefGen
-// search/push_back calls.
+// Binding level over the group's child list: the pointer-then-reference
+// pair keeps two binding temporaries' homes inside the JGadget push chain,
+// which is where retail's between-group words sit (research batch cc39; with
+// one named reference the second pool group lands exact but the first is 4
+// high).
+static inline JGadget::TList_pointer<THitActor*>&
+RiccohookChildren(TIdxGroupObj* group)
+{
+	JGadget::TList_pointer<THitActor*>* list = &group->getChildren();
+	JGadget::TList_pointer<THitActor*>& children = *list;
+	return children;
+}
+
 THookTake::THookTake(TRiccoHook* owner, const char* name)
     : TTakeActor(name)
     , mOwner(owner)
@@ -25,9 +34,8 @@ THookTake::THookTake(TRiccoHook* owner, const char* name)
 	             mOwner->getSaveLoadParam()->mSLHitRadius.get(),
 	             mOwner->getSaveLoadParam()->mSLHitHeight.get());
 
-	static_cast<TIdxGroupObj*>(
-	    JDrama::TNameRefGen::search("オブジェクトグループ"))
-	    ->getChildren()
+	RiccohookChildren(
+	    JDrama::TNameRefGen::search<TIdxGroupObj>("オブジェクトグループ"))
 	    .push_back(this);
 }
 
@@ -86,7 +94,6 @@ TRiccoHook::TRiccoHook(const char* name)
 {
 }
 
-// @non-matching - stack issues, maybe caused by THookTake ctor?
 void TRiccoHook::init(TLiveManager* manager)
 {
 	TSpineEnemy::init(manager);
@@ -95,7 +102,8 @@ void TRiccoHook::init(TLiveManager* manager)
 	mHookTake = new THookTake(this);
 	unk124->reset();
 	goToShortestNextGraphNode();
-	mMarchSpeed = getSaveLoadParam()->mSLMoveSpeed.get();
+	THookParams* params = getSaveLoadParam();
+	mMarchSpeed         = params->mSLMoveSpeed.get();
 	mTurnSpeed  = 10.0f;
 	onLiveFlag(LIVE_FLAG_UNK10);
 }
@@ -107,21 +115,27 @@ BOOL TRiccoHook::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TRiccoHook::perform (batch 127).
+static inline TTakeActor* RiccohookHookTake(const TRiccoHook* p)
+{
+	TTakeActor* hookTake = p->mHookTake;
+	return hookTake;
+}
+
 void TRiccoHook::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TSpineEnemy::perform(cue, graphics);
-	mHookTake->perform(cue, graphics);
+	RiccohookHookTake(this)->perform(cue, graphics);
 	if (cue & CUE_MOVE) {
 		if (mTimer > 0) {
 			mTimer--;
+		} else if (mInstanceIndex & 1) {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE1,
+			                                &mPosition, 0, nullptr, 0, 4);
 		} else {
-			if (mInstanceIndex & 1) {
-				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE1,
-				                                &mPosition, 0, nullptr, 0, 4);
-			} else {
-				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE2,
-				                                &mPosition, 0, nullptr, 0, 4);
-			}
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE2,
+			                                &mPosition, 0, nullptr, 0, 4);
 		}
 	}
 }
@@ -150,10 +164,11 @@ TSpineEnemy* TRiccoHookManager::createEnemyInstance() { return nullptr; }
 // Can't find any other way to get the * 1.0f's to emit
 static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
 {
-	f32 c = radius * MsCos(theta);
-	f32 s = radius * MsSin(theta);
+	f32 c = radius * JMACos(theta);
+	f32 s = radius * JMASin(theta);
 	return JGeometry::TVec3<f32>(s, 0.0f, c);
 }
+
 
 DEFINE_NERVE(TNerveRHGraphWander, TLiveActor)
 {
@@ -166,7 +181,8 @@ DEFINE_NERVE(TNerveRHGraphWander, TLiveActor)
 		self->goToDirectedNextGraphNode(polar);
 	}
 
-	if (self->unk104.getPoint().distance(self->getPosition()) < 10.0f) {
+	if (MsDistance(self->unk104.getPoint(), self->getPosition())
+	    < 10.0f) {
 		TGraphNode& node = self->unk124->getCurrent();
 
 		if (node.checkFlag(0x800)) {
@@ -184,9 +200,18 @@ DEFINE_NERVE(TNerveRHGraphWander, TLiveActor)
 			return false;
 		}
 
+		// TODO (closure batch 212): exactly one of this function's three
+		// accessor reads is a raw member read in retail -- the dead
+		// 4-byte temporary it drops is the last word of low region
+		// (pool base 0x9c, not 0xa0). `self->mRotation.y`,
+		// `MsDistance(..., self->mPosition)` and this `sub`
+		// argument each land the function byte-exact on their own and
+		// nothing distinguishes them; this one is chosen because the
+		// same block writes `self->mPosition.add(dPos)` raw two lines
+		// below.
 		JGeometry::TVec3<f32> dPos = self->getUnkF4().getPoint();
-		dPos.sub(self->getPosition());
-		VECNormalize(&dPos, &dPos);
+		dPos.sub(self->mPosition);
+		PSVECNormalize(&dPos, &dPos);
 		dPos.scale(self->getMarchSpeed());
 		self->mPosition.add(dPos);
 		return false;

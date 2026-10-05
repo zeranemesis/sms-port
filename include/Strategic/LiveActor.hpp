@@ -3,10 +3,9 @@
 
 #include <version.h>
 #include <Strategic/TakeActor.hpp>
-
-class TSpcInterp;
 #include <Strategic/LiveManager.hpp>
 #include <Strategic/Nerve.hpp>
+#include <Strategic/Spine.hpp>
 
 // TODO: where should this live?
 struct TLodAnmIndex;
@@ -19,12 +18,7 @@ class TLodAnm;
 class J3DModel;
 class TBinder;
 class TMapCollisionManager;
-
-#ifdef VERSION_GMSP01
-#define LIVE_FLAG_ABOVE_4000(v) ((v) << 1)
-#else
-#define LIVE_FLAG_ABOVE_4000(v) (v)
-#endif
+class TSpcInterp;
 
 enum {
 	LIVE_FLAG_DEAD        = 0x1,
@@ -44,26 +38,26 @@ enum {
 #ifdef VERSION_GMSP01
 	LIVE_FLAG_CALC_INT_FRAME = 0x4000,
 #endif
-	LIVE_FLAG_UNK4000  = VERSION_SELECT(GMSJ01(0x4000), GMSP01(0x8000)),
-	LIVE_FLAG_UNK8000  = VERSION_SELECT(GMSJ01(0x8000), GMSP01(0x10000)),
-	LIVE_FLAG_UNK10000 = VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000)),
+	LIVE_FLAG_UNK4000  = VERSION_SELECT(GMSJ01(0x4000), GMSP01(0x8000), GMSE01(0x4000)),
+	LIVE_FLAG_UNK8000  = VERSION_SELECT(GMSJ01(0x8000), GMSP01(0x10000), GMSE01(0x8000)),
+	LIVE_FLAG_UNK10000 = VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000), GMSE01(0x10000)),
 	// WARNING: some flag values are overloaded between derived classes. E.g.
 	// LIVE_FLAG_UNK10000 means different things for NPCs and small enemies.
 	// Be careful about placing stuff here -- it might belong to derived classes
 	// instead.
-	LIVE_FLAG_UNK20000   = VERSION_SELECT(GMSJ01(0x20000), GMSP01(0x40000)),
-	LIVE_FLAG_UNK40000   = VERSION_SELECT(GMSJ01(0x40000), GMSP01(0x80000)),
-	LIVE_FLAG_UNK80000   = VERSION_SELECT(GMSJ01(0x80000), GMSP01(0x100000)),
-	LIVE_FLAG_UNK100000  = VERSION_SELECT(GMSJ01(0x100000), GMSP01(0x200000)),
-	LIVE_FLAG_UNK200000  = VERSION_SELECT(GMSJ01(0x200000), GMSP01(0x400000)),
-	LIVE_FLAG_UNK400000  = VERSION_SELECT(GMSJ01(0x400000), GMSP01(0x800000)),
-	LIVE_FLAG_UNK1000000 = VERSION_SELECT(GMSJ01(0x1000000), GMSP01(0x2000000)),
-	LIVE_FLAG_UNK2000000 = VERSION_SELECT(GMSJ01(0x2000000), GMSP01(0x4000000)),
-	LIVE_FLAG_UNK4000000 = VERSION_SELECT(GMSJ01(0x4000000), GMSP01(0x8000000)),
+	LIVE_FLAG_UNK20000   = VERSION_SELECT(GMSJ01(0x20000), GMSP01(0x40000), GMSE01(0x20000)),
+	LIVE_FLAG_UNK40000   = VERSION_SELECT(GMSJ01(0x40000), GMSP01(0x80000), GMSE01(0x40000)),
+	LIVE_FLAG_UNK80000   = VERSION_SELECT(GMSJ01(0x80000), GMSP01(0x100000), GMSE01(0x80000)),
+	LIVE_FLAG_UNK100000  = VERSION_SELECT(GMSJ01(0x100000), GMSP01(0x200000), GMSE01(0x100000)),
+	LIVE_FLAG_UNK200000  = VERSION_SELECT(GMSJ01(0x200000), GMSP01(0x400000), GMSE01(0x200000)),
+	LIVE_FLAG_UNK400000  = VERSION_SELECT(GMSJ01(0x400000), GMSP01(0x800000), GMSE01(0x400000)),
+	LIVE_FLAG_UNK1000000 = VERSION_SELECT(GMSJ01(0x1000000), GMSP01(0x2000000), GMSE01(0x1000000)),
+	LIVE_FLAG_UNK2000000 = VERSION_SELECT(GMSJ01(0x2000000), GMSP01(0x4000000), GMSE01(0x2000000)),
+	LIVE_FLAG_UNK4000000 = VERSION_SELECT(GMSJ01(0x4000000), GMSP01(0x8000000), GMSE01(0x4000000)),
 	LIVE_FLAG_UNK8000000
-	= VERSION_SELECT(GMSJ01(0x8000000), GMSP01(0x10000000)),
+	= VERSION_SELECT(GMSJ01(0x8000000), GMSP01(0x10000000), GMSE01(0x8000000)),
 	LIVE_FLAG_UNK10000000
-	= VERSION_SELECT(GMSJ01(0x10000000), GMSP01(0x20000000)),
+	= VERSION_SELECT(GMSJ01(0x10000000), GMSP01(0x20000000), GMSE01(0x10000000)),
 };
 
 class TLiveActor : public TTakeActor {
@@ -100,7 +94,8 @@ public:
 	int getJointTransByName(const char*, JGeometry::TVec3<f32>*) const;
 	JGeometry::TVec3<f32> calcVelocityToJumpToY(const JGeometry::TVec3<f32>&,
 	                                            f32 speed, f32 gravity) const;
-	void calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>&, f32, f32) const;
+	JGeometry::TVec3<f32> calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>&,
+	                                             f32 speed, f32 gravity) const;
 	void perform(u32 cue, JDrama::TGraphics* graphics);
 	void load(JSUMemoryInputStream&);
 	void initLodAnm(const TLodAnmIndex*, int, f32);
@@ -116,10 +111,48 @@ public:
 	const TBGCheckData* getGroundPlane() const { return mGroundPlane; }
 	f32 getGroundHeight() const { return mGroundHeight; }
 	// TODO: which one is real?
+	//
+	// TODO: a non-const checkLiveFlag(u32) overload is ruled out. The const
+	// `this` does block CSE with the non-const onLiveFlag/offLiveFlag, so the
+	// three hamukuri isHitValid overrides read mLiveFlag raw to get retail's
+	// single load, but adding the overload here costs far more than it buys
+	// (measured whole-tree, 375 call sites in 87 files):
+	//
+	//   | spelling                                        | up | down |
+	//   | ----------------------------------------------- | -- | ---- |
+	//   | non-const forwarder to the const body           |  2 |   32 |
+	//   | non-const body `return mLiveFlag & flag;`        |  0 |   17 |
+	//
+	// The forwarder's extra inline level moves frames and registers all over
+	// (TBEelTears::perform 99.8 -> 84.9, THanaSambo::moveObject 99.9 -> 87.6,
+	// TLiveManager::clipActorsAux and five other exact functions broken); the
+	// direct body keeps the level but hands the CSE to every site that
+	// currently reproduces retail's two loads (TTelesa::kill, TChuuHana::kill,
+	// TWireTrap::kill, THamuKuriManager::setSearchHamuKuri all 100 -> ~98,
+	// MapObjBall data 83 -> 12). Neither trial improved any hamukuri function:
+	// isHitValid's residue there is an 8-byte frame gap, not the flag load.
+	// So the sharing is a per-site property and the raw read is the local fix.
 	bool checkLiveFlag(u32 flag) const { return mLiveFlag & flag; }
-	bool checkLiveFlag2(u32 flag) const
+	// Returns a *signed 32-bit* value, not `bool`: retail tests it with
+	// `cmpwi rN, 0` where a `bool` return makes MWCC emit `clrlwi. r0, rN,
+	// 24` and a `u32` return `cmplwi rN, 0` (all three measured in header
+	// round 22 at TWalker::bind's two sites, 0x138 and 0x5b0). Worth
+	// TNerveSmallEnemyJump::execute 98.94 -> 99.82,
+	// TNerveSmallEnemyHitWaterJump::execute 99.29 -> 99.75,
+	// TMapObjGeneral::calcVelocity 99.38 -> 99.95, ::bind 99.28 -> 99.65 and
+	// TWalker::bind 92.19 -> 92.34.
+	//
+	// There is a bool-returning twin of this accessor that has no name yet:
+	// TBaseNPC::perform stores two flag tests into `bool` locals and retail
+	// narrows them with `clrlwi. r0, r3, 24`, which none of `bool` locals off
+	// this accessor (62.78), `BOOL` locals (64.15), `checkLiveFlag` (63.10)
+	// or a `? true : false` at the site (62.30) reproduces -- only the raw
+	// `mLiveFlag & flag ? true : false` written out there does, so that is
+	// what NpcBase.cpp spells. Do not "fix" those two sites to use an
+	// accessor before the twin is identified.
+	BOOL checkLiveFlag2(u32 flag) const
 	{
-		return mLiveFlag & flag ? true : false;
+		return mLiveFlag & flag ? TRUE : FALSE;
 	}
 	bool isAirborne() const
 	{
@@ -130,6 +163,18 @@ public:
 	const TMActorKeeper* getActorKeeper() const { return mMActorKeeper; }
 	TMActorKeeper* getActorKeeper() { return mMActorKeeper; }
 	TLiveManager* getManager() { return mManager; }
+	TSpineBase<TLiveActor>* getSpine() const { return mSpine; }
+	// fabricated. One inline level above TSpineBase::getLatestNerve(), whose
+	// two-`return` body then refuses to expand: the ROM `bl`s
+	// getLatestNerve() from evCheckLatestNerve4Npc while expanding the
+	// one-word getCurrentNerve() in evCheckCurNerve4Npc, so the latest-nerve
+	// read sits one level deeper than the current-nerve read. Adding it is
+	// codegen-neutral tree-wide; it pays at TBPHeadHit::receiveMessage
+	// (87.7 -> 89.9) and TBWBinder::bind (88.6 -> 91.4).
+	const TNerveBase<TLiveActor>* getLatestNerve() const
+	{
+		return mSpine->getLatestNerve();
+	}
 	s16 getInstanceIndex() const { return mInstanceIndex; }
 	MAnmSound* getAnmSound() { return mAnmSound; }
 	TMapCollisionManager* getMapCollisionManager()
@@ -147,6 +192,10 @@ public:
 		result.add(velocity);
 	}
 	const JGeometry::TVec3<f32>& getVelocity() const { return mVelocity; }
+	const JGeometry::TVec3<f32>& getLinearVelocity() const
+	{
+		return mLinearVelocity;
+	}
 	void setVelocity(const JGeometry::TVec3<f32>& v) { mVelocity = v; }
 	void setVelocityAndFlag10(f32 x, f32 y, f32 z)
 	{
@@ -157,14 +206,7 @@ public:
 	{
 		mLinearVelocity = v;
 	}
-	TLodAnm* getLodAnm() { return unkD0; }
-	const char* getBas(int idx) const
-	{
-		const char** basTable = getBasNameTable();
-		if (!basTable)
-			return nullptr;
-		return basTable[idx];
-	}
+	TLodAnm* getLodAnm() const { return unkD0; }
 
 public:
 	/* 0x70 */ TLiveManager* mManager;
@@ -175,7 +217,7 @@ public:
 	/* 0x84 */ const char* mAnmSoundPath;
 	/* 0x88 */ TBinder* mBinder;
 	/* 0x8C */ TSpineBase<TLiveActor>* mSpine;
-	/* 0x90 */ TSpcInterp* mInterp;
+	/* 0x90 */ TSpcInterp* mSpcInterp;
 	// TODO: Analyze mLinearVelocity vs mVelocity some more
 	// and decide on better names
 	/* 0x94 */ JGeometry::TVec3<f32> mLinearVelocity;

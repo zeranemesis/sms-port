@@ -68,11 +68,16 @@ namespace HardStream {
 
 	void moveVolume(f32, u32) { }
 
+// Binding level worth +16 of low region, landing
+// JASystem::HardStream::main's frame at 0x48 (batch 124).
+static inline TPlayList* JASHardStreamGetNext(TPlayList* p)
+{
+	TPlayList* next = p->getNext();
+	return next;
+}
+
 	void main()
 	{
-
-	
-	
 		static DVDFileInfo finfo[3];
 		static u32 cur_finfo   = 0;
 		static u8 cur_addr_cmd = 0;
@@ -172,7 +177,7 @@ namespace HardStream {
 				}
 				if (strCtrl.getPlayArea() == 0) {
 					if (list->getPair()->getLoop() == 0xffff) {
-						if (list->getNext() == nullptr) {
+						if (JASHardStreamGetNext(list) == nullptr) {
 							DVDStopStreamAtEndAsync(&stop_cmd, 0);
 							strCtrl.clearListOne();
 							strCtrl.setPlayArea(2);
@@ -322,11 +327,42 @@ namespace HardStream {
 		return mList->getPair()->getLoop();
 	}
 
+	// Closed by structural pass 167.  `startFirst`/`startSecond` inline
+	// `fileOpen` and always matched instruction for instruction; the whole
+	// residue was 24 bytes of dead low region (their frame 0x70 against retail's
+	// 0x88, the path buffer at 0x18 against 0x30), and earlier passes looked for
+	// it as a 24-byte class local, which no class in this TU's map reach could
+	// supply.  It is three stacked levels over the two file-local statics
+	// instead, priced here from the 0x70 base: the one-parameter binding that
+	// returns the file name is +12 (an 8-byte parameter temp plus a 4-byte
+	// pointer return), the parameterless binding over `rootDir` another +8, and
+	// the direct-return fork over `streamFiles` the last +4 -- which is exactly
+	// the "global fork is +4 per read" step, and it has to be nested inside the
+	// name binding, not spelled at the call site.  Refuted on the way: a
+	// void-returning `strcpy` wrapper for `rootDir` is +0 (the return type is
+	// what is priced), and binding the `index * 0x24` product as well overshoots
+	// to 0x90.  Earlier rejected: routing the strcpy/strcat through
+	// `extendFilename`, `&fi[*idx]` instead of `fi + *idx`, naming the DVDOpen
+	// result, declaring `ptr` before `buffer`, and a wider outgoing area.
+	static inline char* HardStreamFiles() { return streamFiles; }
+
+	static inline char* HardStreamRootDir()
+	{
+		char* dir = rootDir;
+		return dir;
+	}
+
+	static inline char* HardStreamFileName(u16 index)
+	{
+		char* name = HardStreamFiles() + index * 0x24;
+		return name;
+	}
+
 	BOOL TControl::fileOpen(u16 param_1, DVDFileInfo* param_2)
 	{
 		char buffer[64];
-		char* ptr = streamFiles + param_1 * 0x24;
-		strcpy(buffer, rootDir);
+		char* ptr = HardStreamFileName(param_1);
+		strcpy(buffer, HardStreamRootDir());
 		strcat(buffer, ptr);
 		if (!DVDOpen(buffer, param_2))
 			return false;
@@ -477,18 +513,20 @@ namespace HardStream {
 
 	u32 TControl::msecToFrames(u32) { return 0; }
 
-	u8 TControl::volFloatToU8(f32 param_1)
+	u8 TControl::volFloatToU8(f32 vol)
 	{
+		// The two bounds are named locals: retail's frame reserves 8 bytes
+		// for them even though both fold into @sda21 loads (0x20 vs 0x18).
+		f32 max = 1.0f;
+		f32 min = 0.0f;
 
-	
-	
-		if (param_1 > 1.0f)
-			param_1 = 1.0f;
+		if (vol > max)
+			vol = max;
 
-		if (param_1 < 0.0f)
-			param_1 = 0.0f;
+		if (vol < min)
+			vol = min;
 
-		return param_1 * 255.0f;
+		return vol * 255.0f;
 	}
 
 	THardStreamFile::THardStreamFile() { }

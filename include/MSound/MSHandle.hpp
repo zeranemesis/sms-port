@@ -12,6 +12,26 @@ struct SeCategory {
 	f32 unkC;
 };
 
+// Fabricated name: the smSeCategory index of a sound id (MSHandle,
+// MAnmSoundMario::startAnimSound, MSoundSE's gate). The map has no symbol for
+// it in any of those units, so every copy was expanded.
+inline u32 MSGetSeCategory(u32 param_1)
+{
+	u32 uVar1 = param_1 >> 30;
+	u32 uVar2 = param_1 >> 12 & 0xF;
+
+	if (uVar1 == 0)
+		return uVar2;
+
+	if (uVar1 == 2)
+		return 0x10;
+
+	if (uVar1 == 3)
+		return 0x11;
+
+	return 0xffffffff;
+}
+
 class MSHandle : public JAISound {
 public:
 	static SeCategory smSeCategory[];

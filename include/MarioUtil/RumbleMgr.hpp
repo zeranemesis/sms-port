@@ -89,6 +89,15 @@ class RumbleMgr;
 
 extern RumbleMgr* SMSRumbleMgr;
 
+// Fabricated: the rumble manager bound to a named local before it is
+// returned, +8 of low region per expansion over a raw SMSRumbleMgr read.
+// Formerly parked TU-locally in three units.
+inline RumbleMgr* SMSGetRumbleMgrBound()
+{
+	RumbleMgr* mgr = SMSRumbleMgr;
+	return mgr;
+}
+
 class RumbleMgr {
 public:
 	RumbleMgr(bool, bool, bool, bool);

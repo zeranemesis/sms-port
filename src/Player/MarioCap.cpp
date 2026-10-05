@@ -1,10 +1,4 @@
 #include <Player/MarioCap.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
@@ -15,13 +9,51 @@
 #include <MarioUtil/TexUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 
-const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-const char cDirtyTexName[]  = "H_ma_rak_dummy";
+// The DummyStrings pair has to precede the dirty-texture names: retail's
+// .rodata opens with its 12- and 20-byte strings and only then cDirtyFileName,
+// which is what puts cDirtyTexName at 0x44 instead of 0x24.
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
+#include <Player/MarioDirtyStrings.hpp>
+
+// cc28 closed the constructor. Two instruction residues: the helmet matrix is
+// `unk10[2]->setBaseTRMtx(getAnmMtx(mJointIdHead))` (retail copies the head
+// joint into the helmet's base, not the reverse), and unk30 is a one-element
+// array, stored at [0] and re-read through `unk30[thingIdx]` -- that indexed
+// re-read is retail's "second copy of `this`" (`add r4, r31, idx*4`).
+// TMario::getM3UModel() at the four body-model reads still renumbers
+// registers (17 markers), so they go through the TU-local binder below.
+// Named-result levels (cc28). The body is instruction-exact without them;
+// retail's frame is 120 bytes larger, and every construction site plus the
+// four Mario body-model reads going through a level that names its result
+// prices exactly that (+0x10 per body-model binder, +8 per factory; the
+// direct-return forms are +8 / +0).
+static inline J3DModel* MarioCapBodyModel(TMario* mario)
+{
+	J3DModel* model = mario->mModel->getModel();
+	return model;
+}
+
+static inline J3DModel* MarioCapNewModel(J3DModelData* data)
+{
+	J3DModel* model = new J3DModel(data, 0, 1);
+	return model;
+}
+
+static inline TMultiMtxEffect* MarioCapNewMtxEffect()
+{
+	TMultiMtxEffect* effect = new TMultiMtxEffect();
+	return effect;
+}
+
+static inline TTrembleModelEffect* MarioCapNewTremble()
+{
+	TTrembleModelEffect* effect = new TTrembleModelEffect;
+	return effect;
+}
 
 TMarioCap::TMarioCap(TMario* mario)
 {
-	// Unused stack space
-	// volatile u32 padding[51];
 	mMario = mario;
 
 	J3DModelData* maCap1ModelData = J3DModelLoaderDataBase::load(
@@ -30,10 +62,10 @@ TMarioCap::TMarioCap(TMario* mario)
 	// Might be an inlined function?
 	maCap1ModelData->getTexture()->setResTIMG(
 	    0,
-	    *mMario->mModel->getModel()->getModelData()->getTexture()->getResTIMG(
+	    *MarioCapBodyModel(mMario)->getModelData()->getTexture()->getResTIMG(
 	        0));
 	DCFlushRange(maCap1ModelData->getTexture()->getResTIMG(0), sizeof(ResTIMG));
-	unk10[0] = new J3DModel(maCap1ModelData, 0, 1);
+	unk10[0] = MarioCapNewModel(maCap1ModelData);
 
 	J3DModelData* maCap3ModelData = J3DModelLoaderDataBase::load(
 	    JKRFileLoader::getGlbResource("/mario/bmd/ma_cap3.bmd"),
@@ -41,15 +73,20 @@ TMarioCap::TMarioCap(TMario* mario)
 	// I could see this being an inlined
 	maCap3ModelData->getTexture()->setResTIMG(
 	    0,
-	    *mMario->mModel->getModel()->getModelData()->getTexture()->getResTIMG(
+	    *MarioCapBodyModel(mMario)->getModelData()->getTexture()->getResTIMG(
 	        0));
 	DCFlushRange(maCap3ModelData->getTexture()->getResTIMG(0), sizeof(ResTIMG));
-	unk10[1] = new J3DModel(maCap3ModelData, 0, 1);
+	unk10[1] = MarioCapNewModel(maCap3ModelData);
 
 	if (mMario->mBodyPollutionTex != 0) {
 		for (int i = 0; i < 2; ++i) {
-			SMS_ChangeTextureAll(unk10[i]->getModelData(), cDirtyTexName,
-			                     *mMario->mBodyPollutionTex);
+			// The named reference is what puts the dereference chain in
+			// retail's registers: with the dereference spelled at the call
+			// site the mMario fetch lands in a scratch register and the
+			// getModelData chain is renumbered (99.04 -> 99.1, no instruction
+			// change).
+			const ResTIMG& tex = *mMario->mBodyPollutionTex;
+			SMS_ChangeTextureAll(unk10[i]->getModelData(), cDirtyTexName, tex);
 			SMS_MakeDLAndLock(unk10[i]);
 		}
 	}
@@ -57,28 +94,28 @@ TMarioCap::TMarioCap(TMario* mario)
 	J3DModelData* diverHelmModelData = J3DModelLoaderDataBase::load(
 	    JKRFileLoader::getGlbResource("/mario/watergun2/body/diver_helm.bmd"),
 	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
-	unk10[2] = new J3DModel(diverHelmModelData, 0, 1);
+	unk10[2] = MarioCapNewModel(diverHelmModelData);
 
 	J3DModelData* maGlass1 = J3DModelLoaderDataBase::load(
 	    JKRFileLoader::getGlbResource("/mario/bmd/ma_glass1.bmd"),
 	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
-	unk10[3] = new J3DModel(maGlass1, 0, 1);
+	unk10[3] = MarioCapNewModel(maGlass1);
 
 	// Mmmh, nintendo plz? I hope this is forgotten and not a check to crash the
 	// game if it is missing this bone
 	unk10[2]->getModelData()->getJointName()->getIndex("null_airtube");
-	MtxPtr mtx = mMario->mModel->getModel()->getAnmMtx(mMario->mJointIdMHead);
+	MtxPtr mtx = MarioCapBodyModel(mMario)->getAnmMtx(mMario->mJointIdMHead);
 
 	unk10[0]->setBaseTRMtx(mtx);
 	unk10[0]->calc();
 	unk10[1]->setBaseTRMtx(mtx);
 	unk10[1]->calc();
-	mMario->mModel->getModel()->setAnmMtx(mMario->mJointIdHead,
-	                                      unk10[2]->getBaseTRMtx());
+	unk10[2]->setBaseTRMtx(
+	    MarioCapBodyModel(mMario)->getAnmMtx(mMario->mJointIdHead));
 	unk10[2]->calc();
 
-	unk20 = new TMultiMtxEffect();
-	unk24 = new TMultiMtxEffect();
+	unk20 = MarioCapNewMtxEffect();
+	unk24 = MarioCapNewMtxEffect();
 
 	// This feels very wrong
 	// Probably some inline constructor?
@@ -104,8 +141,8 @@ TMarioCap::TMarioCap(TMario* mario)
 	unkC = unk10[0];
 
 	int thingIdx = 0;
-	unk30        = new TTrembleModelEffect;
-	unk30->init(unk10[thingIdx]);
+	unk30[0]     = MarioCapNewTremble();
+	unk30[thingIdx]->init(unk10[thingIdx]);
 	unk34 = 4.0f;
 
 	for (int idx = 0; idx < 2; idx++) {
@@ -125,11 +162,27 @@ void TMarioCap::createMirrorCap()
 	}
 }
 
+// UNUSED
+// TODO: body unknown (map 0x90). The constructor's pollution loop (with its
+// `mBodyPollutionTex != 0` guard) compiles to 0x80 here, but calling it from
+// the constructor costs 7 markers, so the constructor does not inline it.
+void TMarioCap::addDirty() { }
+
 void TMarioCap::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Unused stack space
-	// volatile u32 padding[42];
-
+	// TODO: frame 0x178 vs 0x1e0. mMario->getStatus() bought 48 and
+	// getPrevPosition() 16. Closure batch 120 read the slot map and this is
+	// **not** an accessor-lever gap: it is the batch-113/116 `a = b - c`
+	// pool-ordering residue. The two referenced vector slots are the
+	// `operator-` by-value left-operand copy and the explicit
+	// `TVec3<f32>(...)` whose `.length()` is taken, and retail spaces them 56
+	// bytes apart (0x174 and 0x1ac) where we pack them 12 apart (0x140,
+	// 0x14c); the 44 bytes retail keeps *between* them are the statement's
+	// level bytes, which our build hoists to the bottom of the pool (52 bytes
+	// below the first vector). The f64 conversion pair is 8 further down in
+	// retail than the packing accounts for. 52 + 44 + 8 = the whole 104-byte
+	// gap, so this function closes with the `bl sub` census and not on its
+	// own -- do not spend accessor levers on it.
 	if ((cue & CUE_CALC_ANIM) != 0) {
 		if (mMario->mAnimationId == TMario::ANIM_DEMO_GATE_OUT_GET2) {
 			J3DFrameCtrl& frameCtrl = mMario->getMotionFrameCtrl();
@@ -152,15 +205,15 @@ void TMarioCap::perform(u32 cue, JDrama::TGraphics* graphics)
 			// Missing a copy of TVec3, i still suspect that operations should
 			// do a copy
 			f32 distance = JGeometry::TVec3<f32>(mMario->mPosition
-			                                     - mMario->mPrevPosition)
+			                                     - mMario->getPrevPosition())
 			                   .length();
-			if (mMario->mStatus == MARIO_STATUS_SURF && distance > 20.0f) {
+			if (mMario->getStatus() == MARIO_STATUS_SURF && distance > 20.0f) {
 				doTremble = true;
 			}
-			if (mMario->mStatus == 0x281089A) {
+			if (mMario->getStatus() == 0x281089A) {
 				doTremble = true;
 			}
-			if (mMario->mStatus == 0x81089B) {
+			if (mMario->getStatus() == 0x81089B) {
 				doTremble = true;
 			}
 
@@ -168,14 +221,14 @@ void TMarioCap::perform(u32 cue, JDrama::TGraphics* graphics)
 			    && distance > 20.0f) {
 				doTremble = true;
 			}
-			if (mMario->mStatus == MARIO_STATUS_DIVE) {
+			if (mMario->getStatus() == MARIO_STATUS_DIVE) {
 				doTremble = false;
 			}
 
 			if (doTremble == true) {
-				unk30->clash(unk34);
+				unk30[0]->clash(unk34);
 			} else {
-				unk30->clash(0.0f);
+				unk30[0]->clash(0.0f);
 			}
 		} else {
 
@@ -221,16 +274,16 @@ void TMarioCap::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if ((cue & CUE_ENTRY) != 0) {
 		unkC->entry();
-		if (isModelActive(2)) {
+		if (isModelActive(E_CAP_MODEL_HELMET)) {
 			unk10[2]->entry();
 		}
-		if (isModelActive(4)) {
+		if (isModelActive(E_CAP_MODEL_SUNGLASSES)) {
 			unk10[3]->entry();
 		}
 	}
 
 	if ((cue & CUE_UNK10000000) != 0 && isModelActive(E_CAP_MODEL_HAT)) {
-		unk30->movement();
+		unk30[0]->movement();
 	}
 }
 

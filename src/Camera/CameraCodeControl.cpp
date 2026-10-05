@@ -10,8 +10,9 @@ bool CPolarSubCamera::controlByCameraCode_(int* param_1)
 	bool result = true;
 	*param_1    = -1;
 	if (SMS_IsMarioOpeningDoor()) {
-		if (mMode == CAMERA_MODE_DELFINO_B
-		    && gpCameraMario->mFramesSinceMarioStatusChange == 120) {
+		if (getCamMode() == CAMERA_MODE_DELFINO_B
+		    && SMSGetCameraMario()->getFramesSinceMarioStatusChange()
+		           == 120) {
 			changeCamModeSpecifyFrame_(CAMERA_MODE_DELFINO, 1);
 			warpPosAndAt(mCurrentTarget.unk28, *gpMarioAngleY + 0x9C4);
 		}
@@ -22,19 +23,17 @@ bool CPolarSubCamera::controlByCameraCode_(int* param_1)
 
 		JGeometry::TVec3<f32> local_24 = SMS_GetMarioPos();
 		local_24.y += 75.0f;
-		// TODO: the ROM's frame here is 0x28 bytes larger than ours; the extra
-		// space comes from temporaries of an inline chain we have not
-		// identified yet. Do not paper over it with a stack padding array.
 		for (int i = 0; i < count; ++i) {
 			if (gpCubeCamera->isInCube(local_24, i)) {
-				TCubeCameraInfo* info
-				    = (TCubeCameraInfo*)&(*gpCubeCamera->unk14)[i];
+				TCubeGeneralInfo* general = (*gpCubeCamera->unk14)[i];
+				TCubeCameraInfo* info     = (TCubeCameraInfo*)general;
 
 				TCameraMapTool* tool = info->getCameraMapTool();
 				if (tool) {
-					if (mMode != tool->mCameraMode || tool != unk70)
+					if (getCamMode() != tool->getCameraMode()
+					    || tool != getUnk70())
 						changeCamModeSpecifyCamMapTool_(tool);
-					*param_1 = tool->mCameraMode;
+					*param_1 = tool->getCameraMode();
 				} else {
 					*param_1 = gpCubeCamera->getDataNo(i);
 				}

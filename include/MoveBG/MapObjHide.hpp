@@ -115,7 +115,10 @@ public:
 	virtual void control();
 	virtual void touchActor(THitActor*);
 	virtual u32 touchWater(THitActor*);
-	virtual const JGeometry::TVec3<f32>& getObjAppearPos() const { return mPosition; }
+	virtual const JGeometry::TVec3<f32>& getObjAppearPos() const
+	{
+		return mPosition;
+	}
 	virtual void afterFinishedAnim();
 	virtual void forward(f32);
 
@@ -173,8 +176,7 @@ public:
 	virtual void loadAfter();
 	virtual void kill();
 
-	// Fabricated
-	void fabricatedGroundKillCheck(f32, f32);
+	void killNearWoodBox(f32, f32) const;
 };
 
 #endif

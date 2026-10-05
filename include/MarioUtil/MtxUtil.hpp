@@ -74,9 +74,9 @@ public:
 		// no ctor exists in symbol map so weak inlined?
 		TDeParams(const char* prm)
 		    : TParams(prm)
-		    , PARAM_INIT(mAcc, JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f))
+		    , PARAM_INIT(mAcc, JGeometry::TVec3<f32>(0.0f, -4.0f, 0.0f))
 		    , PARAM_INIT(mL, 50.0f)
-		    , PARAM_INIT(mBrake, 0.9f)
+		    , PARAM_INIT(mBrake, 0.7f)
 		    , PARAM_INIT(mVelScale, 1.0f)
 		{
 			TParams::load(mPrmPath);
@@ -161,7 +161,8 @@ void SMS_GetLightPerspectiveForEffectMtx(MtxPtr);
 
 class TRopePoint {
 public:
-	TRopePoint();
+	// __ct__10TRopePointFv is weak (4 bytes) in the map: the implicit
+	// default constructor, non-trivial only because TVec3<f32> has one.
 
 	/* 0x00 */ JGeometry::TVec3<f32> unk0;
 	/* 0x0C */ JGeometry::TVec3<f32> unkC;
@@ -190,11 +191,9 @@ public:
 
 void SMS_GetActorMtx(const THitActor&, MtxPtr);
 
-// Not inline: marioEU.MAP lists this as a global function defined in
-// Enemy.a Kazekun.cpp, and both Kazekun.cpp and fireWanwan.cpp emit
-// out-of-line `bl` calls to it.
-void SMS_CalcToDirMatrix(TPosition3f& param_1,
-                         const JGeometry::TVec3<float>& param_2,
-                         const JGeometry::TVec3<float>& param_3);
+// Not an inline: the map has exactly one global copy of this, emitted from
+// Enemy/Kazekun.cpp, and fireWanwan and wireTrap both call it out of line.
+void SMS_CalcToDirMatrix(TPosition3f& mtx, const JGeometry::TVec3<f32>& dir,
+                         const JGeometry::TVec3<f32>& up);
 
 #endif

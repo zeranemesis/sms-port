@@ -1,11 +1,6 @@
 #include <MSound/MSoundSE.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
 #include <MSound/MSound.hpp>
+#include <MSound/MSHandle.hpp>
 #include <MSound/MSRandVol.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <JSystem/JAudio/JALibrary/JALSystem.hpp>
@@ -16,6 +11,8 @@
 
 // rogue
 #include <MSound/MSoundBGM.hpp>
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 
 using namespace MSoundSESystem;
 
@@ -29,17 +26,21 @@ MSoundSE* MSoundSE::mObj = 0;
 
 void MSRandVol::construct(u32 param)
 {
-	smList.append(&(new MSRandVol(param))->mLink);
+	MSRandVol* p = new MSRandVol(param);
+	smList.append(&p->mLink);
 }
 
+// TODO: instruction-exact; frame 0x18 vs retail 0x20 (8 bytes of low region,
+// as in MSRandPlay's ctor). Inert: body assignments instead of initialisers,
+// an empty base, an inline dtor, dropping `virtual`. A named `f32 half`
+// for the three 0.5f stores fills the frame (100%), but nothing in the code
+// asks for it and MSRandPlay's ctor has the same gap with no constant to
+// name, so it is not used.
 MSRandVol::MSRandVol(u32 param)
     : mLink(this)
     , unk14(param)
     , mAmplitude(0.5f)
 {
-
-	
-	
 	mPSlopes[0] = 0.0f;
 	mPSlopes[1] = 0.25f;
 	mPSlopes[2] = 0.5f;
@@ -56,13 +57,23 @@ MSRandVol::MSRandVol(u32 param)
 	mAmplitudes[3] = 1.0f;
 }
 
+u32 MSRandVol::getRandomVolume(u32 param_1, u32 param_2) { }
+
+// TODO: instructions exact but for scheduling; retail computes the CSlope
+// index before the PSlope one (and swaps their registers). Named u32 indices,
+// named slope locals, parenthesised or pre-masked indices are inert.
+// Also inert (2026-09-23): mAmplitude * amp, named product, `d += 1.0f`,
+// `1.0f + ...`, a pointer to the CSlope entry; named p/c locals cost 3-4 insns.
+// Swapping the two slope shifts gets the scheduling (99.6) but indexes each
+// table with the other field, which retail does not do.
 f32 MSRandVol::getRandVol(u32 param_1)
 {
-	f32 amp = mAmplitudes[param_1 >> MSSeSwBit_RandomVolumeAmplitudeShift & 3]
-	          * mAmplitude;
-	f32 p   = mPSlopes[param_1 >> MSSeSwBit_RandomVolumePSlopeShift & 3];
-	f32 c   = mCSlopes[param_1 >> MSSeSwBit_RandomVolumeCSlopeShift & 3];
-	f32 d   = JALCalc::getRandom(amp, c, p) + 1.0f;
+	f32 d = JALCalc::getRandom(
+	            mAmplitudes[param_1 >> MSSeSwBit_RandomVolumeAmplitudeShift & 3]
+	                * mAmplitude,
+	            mCSlopes[param_1 >> MSSeSwBit_RandomVolumeCSlopeShift & 3],
+	            mPSlopes[param_1 >> MSSeSwBit_RandomVolumePSlopeShift & 3])
+	        + 1.0f;
 
 	f32 x = d < 0.0f ? 0.0f : d;
 	return x > 2.0f ? 2.0f : x;
@@ -71,9 +82,8 @@ f32 MSRandVol::getRandVol(u32 param_1)
 void MSRandPlay::construct(u32 sound_id, s32 wait_min, s32 wait_max,
                            f32 curve_slope, f32 plus_slope)
 {
-	smList.append(
-	    &(new MSRandPlay(sound_id, wait_min, wait_max, curve_slope, plus_slope))
-	         ->mLink);
+	MSRandPlay* p = new MSRandPlay(sound_id, wait_min, wait_max, curve_slope, plus_slope);
+	smList.append(&p->mLink);
 }
 
 int MSRandPlay::registerTrans(u32 sound_id, const Vec* trans)
@@ -125,6 +135,8 @@ void MSRandPlay::startSeRandPlay(u32 sound_id, u32 vec_idx)
 	}
 }
 
+// TODO: instruction-exact; frame 0x40 vs retail 0x48, same 8-byte low-region
+// gap as MSRandVol's ctor. Inert: members assigned in the body (all or some).
 MSRandPlay::MSRandPlay(u32 sound_id, s32 wait_min, s32 wait_max,
                        f32 curve_slope, f32 plus_slope)
     : mLink(this)
@@ -137,11 +149,16 @@ MSRandPlay::MSRandPlay(u32 sound_id, s32 wait_min, s32 wait_max,
     , mCurveSlope(curve_slope)
     , mPlusSlope(plus_slope)
 {
-
-	
-	
 }
 
+// TODO: `actor` sits at 0x18 vs retail 0x14. Inert: fVar3 at function scope
+// (either order), a braced default arm, a named s32 wait, an s32 fVar3.
+// Retail's 4-byte slot at 0x24 (between actor and the fctiwz temp) is what a
+// named `u32 id = mSoundID;` switch operand takes; with `const Vec* trans`
+// for the actor arguments (-8 low) actor lands at 0x10, 4 short of 0x14.
+// c-k28: the 35 placements of `id` and `trans` over the two calls, the switch
+// and the actor give no other code-identical form; std::max/std::min for the
+// wait clamps change the code (96.9) and SMSGetMSound() names gpMSound.
 void MSRandPlay::randPlay(u32 vec_idx)
 {
 	MSRandPlayVec* vec = &mRandPlayVecs[vec_idx];
@@ -197,9 +214,20 @@ void MSRandPlay::randPlay(u32 vec_idx)
 
 MSoundSE::MSoundSE() { }
 
+// TODO: construct is instruction-exact; the inlined MSSetSoundGrp ctor's
+// homed `this` sits at 0x4c vs retail 0x50. Retail has no `se` slot (frame
+// 0x98 without it) and one more inline temporary below that `this` (twelve
+// vs our eleven: two from the grp chain, one per member from getUnk4).
+// Inert: grp declared at top or unnamed-block, named MSSetSoundMember
+// locals (+0x20), `se` declaration order, explicit JALListGrp/JALListD
+// ctors, grp ctor param types, raw setUnk14 (raw getUnk4 is -0x24).
+// c-k12: `mObj = new MSoundSE;` (retail stores the new result straight to
+// mObj) is frame 0x98 with every other slot 8 low; hsearch on top of it
+// found only machine-cut helpers that restore 0xa0 with this same pair.
 void MSoundSE::construct()
 {
-	mObj = new MSoundSE;
+	MSoundSE* se = new MSoundSE;
+	mObj = se;
 
 	MSRandVol::construct(0);
 	// clang-format off
@@ -215,7 +243,7 @@ void MSoundSE::construct()
 	MSRandPlay::construct(MSD_SE_OBJ_BIRD_DOL_CHUN, 0x66, 0x181, JALCalc::cEqualCSlope, JALCalc::cPlusPSlope);
 	MSRandPlay::construct(MSD_SE_OBJ_BIRD_BIA_1, 0x2d, 0xad,  JALCalc::cEqualCSlope, JALCalc::cPlusPSlope);
 	MSRandPlay::construct(MSD_SE_OBJ_MONTE_DAY_A1, 0x2d, 0xad,  JALCalc::cEqualCSlope, JALCalc::cPlusPSlope);
-	MSRandPlay::construct(MSD_SE_OBJ_MONTE_NIGHT_A1, 0x2d, 0xad, JALCalc::cEqualCSlope, JALCalc::cPlusPSlope);
+	MSRandPlay::construct(MSD_SE_OBJ_MONTE_NIGHT_A1, 0x2d, 0xad,  JALCalc::cEqualCSlope, JALCalc::cPlusPSlope);
 	// clang-format on
 
 	// clang-format off
@@ -240,9 +268,9 @@ void MSoundSE::construct()
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "上下向回転門",
     MSD_SE_OBJ_BI_UPDOWNMILL, 0.0f,     10.0f,    3.4f,  0.44f, 1.35f, JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     0);
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "足台風車(足台移動音)",
-    MSD_SE_OBJ_BI_STEPMILL_MOVE, 0.0f,     0.05f,    6.0f,  0.0f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     1);
+    MSD_SE_OBJ_BI_STEPMILL_MOVE, 0.01f,    0.1f,     6.0f,  0.5f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     1);
   JALSystem::append(JALSystem::ModType_JALSeModPitFunk, "足台風車(風車音)",
-    MSD_SE_OBJ_BI_STEPMILL_WIND, 0.0f,     2.36f,    6.0f,  0.3f,  1.5f,  JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     0);
+    MSD_SE_OBJ_BI_STEPMILL_WIND, 0.37f,    2.36f,    6.0f,  0.84f, 2.7f,  JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     1);
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "足台風車(風車音)",
     MSD_SE_OBJ_BI_STEPMILL_WIND, 0.0f,     2.36f,    6.0f,  0.2f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 20.0f,     0);
   JALSystem::append(JALSystem::ModType_JALSeModPitFunk, "放水音",
@@ -254,9 +282,9 @@ void MSoundSE::construct()
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "ジャンプキノコ",
     MSD_SE_OBJ_JUMP_KINOKO, 3000.0f,  15000.0f, 1.0f,  0.68f, 1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 30000.0f,  0);
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "マーレー壷を支えるロープ",
-    MSD_SE_OBJ_MR_TSUBO_PULL, 0.0f,     20.0f,    1.0f,  0.0f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 50.0f,     1);
+    MSD_SE_OBJ_MR_TSUBO_PULL, 0.0f,     20.0f,    1.0f,  0.4f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 50.0f,     1);
   JALSystem::append(JALSystem::ModType_JALSeModPitFunk, "マーレー壷を支えるロープ",
-    MSD_SE_OBJ_MR_TSUBO_PULL, 0.0f,     20.0f,    1.0f,  0.5f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 50.0f,     1);
+    MSD_SE_OBJ_MR_TSUBO_PULL, 0.0f,     20.0f,    1.0f,  0.76f, 1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 50.0f,     1);
   JALSystem::append(JALSystem::ModType_JALSeModPitFunk, "マーレー壷",
     MSD_SE_OBJ_MR_TSUBO_WATER, 0.0f,     20.0f,    1.0f,  0.5f,  1.5f,  JALCalc::CS_UNKNOWN_2,      0.0f, 300.0f,    0);
   JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "コインバウンド音",
@@ -275,7 +303,7 @@ void MSoundSE::construct()
     MSD_SE_OBJ_WATERMELON_BROLL, 0.01f,    10.0f,    1.0f,  0.8f,  1.2f,  JALCalc::CS_NEGATIVE_CURVE, 0.0f, 30.0f,     1);
   JALSystem::append(JALSystem::ModType_JALSeModPitFunk, "通常スイカバ回転",
     MSD_SE_OBJ_WATERMELON_SROLL, 0.01f,    10.0f,    1.0f,  0.8f,  1.2f,  JALCalc::CS_NEGATIVE_CURVE, 0.0f, 30.0f,     1);
-  JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "設置鏡音",
+  JALSystem::append(JALSystem::ModType_JALSeModVolFunk, "鏡衝撃音",
     MSD_SE_OBJ_MA_MIRROR_IMPACT, 0.05f,    1.0f,     0.0f,  0.3f,  1.0f,  JALCalc::CS_UNKNOWN_2,      0.0f, 10.0f,     1);
 
   JALSystem::append(JALSystem::ModType_JALSeModVolFGrp, "ロープ揺れ音",
@@ -319,7 +347,7 @@ void MSoundSE::construct()
   JALSystem::append(JALSystem::ModType_JALSeModVolDist, "コロパク着地音",
     MSD_SE_BS_KRPAKU_GND, 38468.0f, 0.0f,    12.2f, 0.0f,  1.0f, JALCalc::CS_POSITIVE_CURVE, 0.0f, 100000.0f, 0);
   JALSystem::append(JALSystem::ModType_JALSeModVolDist, "コロパク回転音",
-    MSD_SE_BS_KRPAKU_ROLL, 40966.0f, 0.0f,    16.8f, 0.0f,  1.0f, JALCalc::CS_POSITIVE_CURVE, 0.0f, 100000.0f, 0);
+    MSD_SE_BS_KRPAKU_ROLL, 9000.0f,  0.0f,    10.0f, 0.0f,  1.0f, JALCalc::CS_UNKNOWN_2,      0.0f, 100000.0f, 0);
   JALSystem::append(JALSystem::ModType_JALSeModVolDist, "ボスパックン汚染飛行音(real)",
     MSD_SE_BS_BSPAKU_POLLUT_FLY, 50000.0f, 0.0f,    20.0f, 0.0f,  1.0f, JALCalc::CS_POSITIVE_CURVE, 0.0f, 100000.0f, 0);
   JALSystem::append(JALSystem::ModType_JALSeModVolDist, "ボスパックン汚染飛行音(imit)",
@@ -363,7 +391,7 @@ void MSoundSE::construct()
 
 	{
 		MSSetSoundGrp* grp = new MSSetSoundGrp(
-		    0, "カモメ", 3, 2, 13, 2, 3.0f, 1, 44.0f, 3.0f, 1.0f, 1.0f, 0.0f,
+		    0, "カモメ", 3, 2, 0x13, 2, 3.0f, 1, 44.0f, 3.0f, 1.0f, 1.0f, 0.0f,
 		    0xf, 200.0f, 0xb4, 1.0f, 1.0f, 0.0f, false);
 		// clang-format off
 		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_SOLO, nullptr, 60.0f));
@@ -372,12 +400,14 @@ void MSoundSE::construct()
 		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_SOLO_21, nullptr, 60.0f));
 		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_SOLO_22, nullptr, 60.0f));
 		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_SOLO_23, nullptr, 60.0f));
-		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB, nullptr, 60.0f));
-		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB_2, nullptr, 60.0f));
-		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB_3, nullptr, 60.0f));
+		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB, nullptr, 180.0f));
+		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB_2, nullptr, 180.0f));
+		grp->append(new MSSetSoundMember(MSD_SE_OBJ_KAMOME_ENSB_3, nullptr, 180.0f));
 		// clang-format on
 	}
 }
+
+static inline u32 msWeightAt(u32* arr, u32 i) { return arr[i]; }
 
 u32 MSoundSE::getRandomID(u32 id)
 {
@@ -411,7 +441,7 @@ u32 MSoundSE::getRandomID(u32 id)
 
 	f32 dVar10 = 0.0f;
 	for (u32 j = 0; j < i; ++j)
-		dVar10 += (f32)local_a0[j];
+		dVar10 += (f32)msWeightAt(local_a0, j);
 
 	f32 dVar9 = JALCalc::getRandom_0_1();
 	f32 fVar1 = 0.0;
@@ -483,22 +513,41 @@ JAISound* MSoundSE::startSoundSystemSE(u32 id, u32 param_2,
 	return sound;
 }
 
-static f32 vecLength(const Vec& vec)
+// The ROM computes this squared sum in startSoundActorWithInfo itself and then
+// `bl`s std::sqrtf (weak 0x64, MAnmSound.cpp holds the copy). Research batch
+// 146 measured math.h's body at exactly 8 statements against a 14 / 9 / 6 / 2
+// budget at depths 1-5, so it expands through depth 2 and is called from
+// depth 3: one wrapper is not enough, and the second level below is what
+// reaches it (82.9 -> 98.4, frame 0x90 -> the ROM's 0x88).
+// Passing the three components instead of the vector also reaches depth 3 but
+// pays 8 bytes of extra frame, so the reference form is the ROM's.
+// TODO: one branch is still placed differently (`b 0xa6c` ahead of the
+// `lfs f30, 4(r27)` arm) and f30/f31 are swapped below it - a term-order
+// problem in the switch, not an inlining one.
+static inline f32 vecLengthOf(const Vec& vec)
 {
-	return JGeometry::TUtil<f32>::sqrt(vec.x * vec.x + vec.y * vec.y
-	                                   + vec.z * vec.z);
+	return std::sqrtf(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z);
 }
 
+static f32 vecLength(const Vec& vec) { return vecLengthOf(vec); }
+
+// TODO: 99.9%, registers exact; our JAIActor sits 4 bytes low (0x4c, retail
+// 0x50) and the two fabs temporaries 4 bytes low with it (retail has 4 more
+// low bytes). Inert (2026-09-23): `sound != nullptr`, unnamed linearTransform,
+// one-line fabs(vecLength), split fVar1 init; raw frame counter is -8.
 void MSoundSE::startSoundActorWithInfo(u32 id, const Vec* position,
                                        Vec* param_3, f32 param_4, u32 param_5,
                                        u32 ground_no,
                                        JAISoundHandle* out_handle, u32 fade,
                                        u8 camera_idx)
 {
-	f32 fVar7 = param_4;
+	f32 speed = param_4;
 	switch (id) {
+	case MSD_SE_OBJ_MA_MIRROR_MOVE:
+		return;
+
 	case MSD_SE_BS_BSPAKU_POLLUT_IMI:
-		fVar7 = position->y;
+		param_4 = position->y;
 		break;
 
 	case MSD_SE_OBJ_ROPE_CLEAK_A:
@@ -506,20 +555,17 @@ void MSoundSE::startSoundActorWithInfo(u32 id, const Vec* position,
 	case MSD_SE_OBJ_ROPE_CLEAK_ROLL:
 	case MSD_SE_OBJ_ROPE_CLEAK_HALFA:
 	case MSD_SE_OBJ_ROPE_CLEAK_HALFB:
-		fVar7 = std::fabs(fVar7);
+		param_4 = std::fabs(param_4);
 		break;
 
 	case MSD_SE_OBJ_JET_COASTER_IMI:
-		fVar7 = position->y;
+		param_4 = position->y;
 		break;
-
-	case MSD_SE_OBJ_MA_MIRROR_MOVE:
-		return;
 
 	case MSD_SE_IT_EGG_BOUND:
 	case MSD_SE_IT_DRIAN_BOUND:
-		fVar7 = vecLength(*param_3);
-		fVar7 = std::fabs(fVar7);
+		param_4 = vecLength(*param_3);
+		param_4 = std::fabs(param_4);
 		break;
 
 	case MSD_SE_MA_KICK_ENEMY:
@@ -530,7 +576,7 @@ void MSoundSE::startSoundActorWithInfo(u32 id, const Vec* position,
 		break;
 	}
 
-	if (JALSystem::gateCheckFunc(id, fVar7) != true) {
+	if (JALSystem::gateCheckFunc(id, param_4) != true) {
 		JAIActor actor(position, position, position, ground_no);
 		JAISound* sound
 		    = startSoundActorInner(id, out_handle, &actor, fade, camera_idx);
@@ -545,15 +591,21 @@ void MSoundSE::startSoundActorWithInfo(u32 id, const Vec* position,
 			}
 
 			case MSD_SE_OBJ_JET_COASTER_IMI:
-				f32 d = JALCalc::linearTransform(param_4, 0.0f, 20.0f, 0.0f,
+				f32 d = JALCalc::linearTransform(speed, 0.0f, 20.0f, 0.0f,
 				                                 1.0f, true);
 				sound->setVolume(d, 0, 0);
 				break;
 			}
 
-			JALSystem::processModFunc(sound, fVar7, 0, 0);
+			JALSystem::processModFunc(sound, param_4, 0, 0);
 		}
 	}
+}
+
+// Direct-return level over the camera's position pointer.
+static inline const Vec* MSoundSECameraPos(const MSound* p, int i)
+{
+	return p->unkAC[i].mPosition;
 }
 
 bool MSoundSE::checkSoundArea(u32 param_1, const Vec& param_2)
@@ -562,15 +614,9 @@ bool MSoundSE::checkSoundArea(u32 param_1, const Vec& param_2)
 
 	switch (param_1) {
 	case 7: {
-		Vec vec = *MSGMSound->unkAC[0].mPosition;
-		vec.y += 75.0f;
-		Vec vec1  = vec;
-		int iVar2 = gpCubeCamera->getInCubeNo(vec1);
-
-		Vec vec2 = param_2;
-		vec2.y += 75.0f;
-		Vec vec3  = vec2;
-		int iVar3 = gpCubeCamera->getInCubeNo(vec3);
+		int iVar2 = gpCubeCamera->getInCubeNo(
+		    MSGetEarPos(*MSoundSECameraPos(MSGMSound, 0)));
+		int iVar3 = gpCubeCamera->getInCubeNo(MSGetEarPos(param_2));
 
 		if (iVar3 != -1) {
 			if (iVar3 == iVar2)
@@ -601,41 +647,26 @@ bool MSoundSE::checkSoundArea(u32 param_1, const Vec& param_2)
 	return result;
 }
 
-// TODO: find a home for this
-static u32 get_thing(u32 param_1)
-{
-	u32 uVar1 = param_1 >> 30;
-	u32 uVar2 = param_1 >> 12 & 0xF;
-
-	if (uVar1 == 0)
-		return uVar2;
-
-	if (uVar1 == 2)
-		return 0x10;
-
-	if (uVar1 == 3)
-		return 0x11;
-
-	return 0xffffffff;
-}
-
+// The switch and the `== 8` test read unkCD through an inline accessor: each
+// leaves one dead forced-load word at the bottom of the frame (0x58), while
+// the two checkSoundArea arguments read it raw.
 JAISound* MSoundSE::startSoundActorInner(u32 id, JAISoundHandle* out_handle,
                                          JAIActor* actor, u32 fade,
                                          u8 camera_idx)
 {
 	u32 uVar2 = MSound::getBstSwitch(id);
 	if (actor != (JAIActor*)0xffffffff) {
-		switch (MSGMSound->unkCD) {
+		switch (MSGMSound->getUnkCD()) {
 		case 7:
 			if (!checkSoundArea(MSGMSound->unkCD, *actor->mTranslation)) {
-				if (get_thing(id) != 1 && get_thing(id) != 0)
+				if (MSGetSeCategory(id) != 1 && MSGetSeCategory(id) != 0)
 					return nullptr;
 			}
 			break;
 
 		case 8:
 			if (!checkSoundArea(MSGMSound->unkCD, *actor->mTranslation)) {
-				if (get_thing(id) != 1 && get_thing(id) != 0)
+				if (MSGetSeCategory(id) != 1 && MSGetSeCategory(id) != 0)
 					return nullptr;
 			}
 
@@ -697,7 +728,7 @@ JAISound* MSoundSE::startSoundActorInner(u32 id, JAISoundHandle* out_handle,
 	if (uVar2 & MSSeSwBit_RandomID)
 		id = getRandomID(id);
 
-	if (MSGMSound->unkCD == 8 && id >= MSD_SE_MA_WALK_METALNET_LH1
+	if (MSGMSound->getUnkCD() == 8 && id >= MSD_SE_MA_WALK_METALNET_LH1
 	    && id <= MSD_SE_MA_WALK_METALNET_RT2) {
 		id -= 8;
 	}
@@ -791,6 +822,16 @@ u32 MSoundSE::getNewIDBySurfaceCode(u32 id, JAIActor* actor)
 	return id;
 }
 
+// TODO: instruction-exact; frame 0x78 vs retail 0x88 (actor 0x58 vs 0x64,
+// the inlined checkMonoSound's info slot shifted with it). Inert: `if`
+// on checkMonoSound's result, early return, qualified calls; a copy-initialised
+// actor is +0x20.
+// Also inert (2026-09-23): raw basic/getID/getNextSound/getAct/stop/category
+// in checkMonoSound, alone or paired (only shrink NpcActor); a named actor ptr.
+// Retail has 4 bytes above actor (a named `u32 ground = ground_no` takes 8
+// there) and 0xc more low region below the info slot; no carrier found yet.
+// JAIBasic::getData() at checkMonoSound's getInfoPointer read makes NpcActor
+// byte-exact (+3 IRO words) but costs the out-of-line checkMonoSound 0x10.
 void MSoundSE::startSoundNpcActor(u32 id, const Vec* position, u32 ground_no,
                                   JAISoundHandle* out_handle, u32 fade,
                                   u8 camera_idx)

@@ -73,3 +73,4 @@ SampleCtrlModelData::SampleCtrlModelData(J3DModelData* model_data)
 	mRootJoint = makeHierarchy(model_data->getRootNode());
 }
 
+SampleCtrlModel::SampleCtrlModel(J3DModel*) { }

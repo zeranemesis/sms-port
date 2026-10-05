@@ -4,6 +4,7 @@
 #include <JSystem/JUtility/JUTResource.hpp>
 #include <JSystem/JSupport/JSURandomInputStream.hpp>
 #include <dolphin/gx.h>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
 
 J2DTextBox::J2DTextBox(const ResFONT* font, const char* str)
     : J2DPane()
@@ -13,7 +14,16 @@ J2DTextBox::J2DTextBox(const ResFONT* font, const char* str)
 	initiate(font, str, HBIND_LEFT, VBIND_TOP);
 }
 
-J2DTextBox::J2DTextBox(const char* fontName, const char* str) { }
+// The UNUSED font-name constructors are the ResFONT ones with the font looked
+// up by name first, three instructions each (0xa0 and 0xa8).
+J2DTextBox::J2DTextBox(const char* fontName, const char* str)
+    : J2DPane()
+    , mFont(nullptr)
+    , mText(nullptr)
+{
+	initiate((const ResFONT*)JKRGetNameResource(fontName, nullptr), str, HBIND_LEFT,
+	         VBIND_TOP);
+}
 
 J2DTextBox::J2DTextBox(J2DPane* parent, JSURandomInputStream* stream,
                        bool is_ex)
@@ -123,7 +133,12 @@ J2DTextBox::J2DTextBox(u32 tag, const JUTRect& bounds, const ResFONT* font,
 J2DTextBox::J2DTextBox(u32 tag, const JUTRect& bounds, const char* fontName,
                        const char* str, J2DTextBoxHBinding hBinding,
                        J2DTextBoxVBinding vBinding)
+    : J2DPane(0x13, tag, bounds)
+    , mFont(nullptr)
+    , mText(nullptr)
 {
+	initiate((const ResFONT*)JKRGetNameResource(fontName, nullptr), str, hBinding,
+	         vBinding);
 }
 
 void J2DTextBox::initiate(const ResFONT* font, const char* str,
@@ -166,7 +181,15 @@ J2DTextBox::~J2DTextBox()
 		delete[] mText;
 }
 
-void J2DTextBox::setFontSize() { }
+// UNUSED; J2DPrint::setFontSize's body (both 0x60), as the stream
+// constructor reads the font's size.
+void J2DTextBox::setFontSize()
+{
+	if (mFont) {
+		mFontSizeX = mFont->getWidth();
+		mFontSizeY = mFont->getHeight();
+	}
+}
 
 void J2DTextBox::setFont(JUTFont* font)
 {
@@ -180,7 +203,13 @@ void J2DTextBox::setFont(JUTFont* font)
 	mTextFontOwned = false;
 }
 
-void J2DTextBox::setLineSpace() { }
+// UNUSED; the leading read the stream constructor makes, behind the font
+// test setFontSize has (0x48).
+void J2DTextBox::setLineSpace()
+{
+	if (mFont)
+		mLineSpace = mFont->getLeading();
+}
 
 void J2DTextBox::draw(int x, int y)
 {
@@ -201,7 +230,8 @@ void J2DTextBox::draw(int x, int y)
 
 void J2DTextBox::draw(int x, int y, int z) { }
 
-void J2DTextBox::getString(char* out) { }
+// UNUSED; copies the text getStringPtr returns (0x2c).
+void J2DTextBox::getString(char* out) { strcpy(out, mText); }
 
 char* J2DTextBox::getStringPtr() const { return mText; }
 

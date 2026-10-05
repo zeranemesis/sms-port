@@ -13,7 +13,7 @@ inline void J3DGDWrite_u16(u16 param)
 	__GDWrite((u8)(param & 0xff));
 }
 
-inline void J3DGDWrite_u32(u32 param)
+static inline void J3DGDWrite_u32(u32 param)
 {
 	__GDWrite((u8)((param >> 24) & 0xff));
 	__GDWrite((u8)((param >> 16) & 0xff));
@@ -249,11 +249,7 @@ void JRNISetFogRangeAdj(GXBool enable, u16 center, GXFogAdjTable* table);
  * @brief Sets whether the depth test happens before the texture lookup.
  * @see GXSetZCompLoc
  */
-inline void J3DGDSetZCompLoc(u32 compLocEnable)
-{
-	J3DGDWriteBPCmdCheck(0xFE000040);
-	J3DGDWriteBPCmdCheck(compLocEnable << 6 | 0x43 << 24);
-}
+void J3DGDSetZCompLoc(u32 compLocEnable);
 
 /**
  * @brief Sets the constant colour selection and the swap table of two TEV

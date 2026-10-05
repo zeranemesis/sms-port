@@ -23,11 +23,12 @@ public:
 
 	void load(JSUMemoryInputStream& stream);
 	void initData(TMarioGamePad*);
+	void changeMessage(u32, u32, int);
 	void init(int);
 	void perform(u32 cue, JDrama::TGraphics* graphics);
 	void makeBuffer(J2DTextBox*, int);
 	void setMessage(J2DTextBox*, s32, u32);
-	void setMessageC(J2DTextBox*, long, u32);
+	void setMessageC(J2DTextBox*, s32, u32);
 	s8 waitForStop(TEProgress);
 	void endWaitForChoice();
 	s8 waitForChoice(TEProgress, TEProgress, signed char);
@@ -41,7 +42,7 @@ public:
 	s8 waitForSelect3(TEProgress, TEProgress, TEProgress);
 	s8 waitForAnyKeyBM(TEProgress);
 	void selectBookmarks(TEProgress, TEProgress, TEProgress, TEProgress);
-	void changePattern(J2DPicture*, short, u32);
+	void changePattern(J2DPicture*, s16, u32);
 	void execMovement_();
 	u8 getNextState();
 	void execIssueGX_(JDrama::TGraphics*);
@@ -51,8 +52,16 @@ public:
 	// fabricated
 	u16 getCurMessageID() { return cMessageID[unk310]; }
 	TCardBookmarkInfo& getBookmarkInfo() { return unk278[unk2EA]; }
+	// execMovement_ indexes with an argument: each use there keeps one dead
+	// word (the index binding) that retail has at every read of a slot.
+	TCardBookmarkInfo& getBookmarkInfo(int idx) { return unk278[idx]; }
 
 public:
+	// fabricated: header round 20 accessor candidates
+	int getUnk10() const { return unk10; }
+	s8 getUnk2E9() const { return unk2E9; }
+	int getUnk308() const { return unk308; }
+
 	/* 0x10 */ int unk10;
 	/* 0x14 */ J2DScreen* unk14;
 	/* 0x18 */ bool unk18;

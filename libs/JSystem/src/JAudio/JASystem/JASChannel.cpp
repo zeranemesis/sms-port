@@ -142,11 +142,34 @@ namespace Driver {
 		return value;
 	}
 
+	// TODO: both __UpdateJcToDSP and __UpdateJcToDSPInit are instruction-exact
+	// but 16 bytes of frame short (retail 0x30, ours 0x20).  Measured levers
+	// (batch 152): one binding level over channel->unk4->unk5A[i] is (+8, +8),
+	// a two-deep one over channel->unkB4[i] (+16, +8), one over
+	// channel->unk20->mDSPHandle (+8, +16), one over unk4->unk61 (+24, +24);
+	// a three-deep chain over unk4->unk5A[i] lands both frames exactly but
+	// reorders the loop's two index computations, and *any* two levers move
+	// `channel` from r31 to r30, so the missing 16 bytes come from one
+	// construct, not from two accessors.  A void helper shared by the two
+	// filter tails costs nothing.
+	// Batch 158 added the binder ladder on the `buf` chain itself, all
+	// measured as (__UpdateJcToDSP, __UpdateJcToDSPInit) from the 0x20/0x20
+	// baseline: a reference-*returning* accessor
+	// (`DSPBuffer*& f(ch) { return ch->unk20->mDSPHandle; }`) is (+0, +0); a
+	// one-deep binder that binds `DSPBuffer*& handle` and returns it is
+	// (+8, +8), with both bodies still instruction-exact; binding
+	// `TDSPChannel*& dsp = channel->unk20` alone is also (+8, +8) but costs
+	// Init's dolby re-read; nesting the two is (+24, +16), where Init's frame
+	// lands exactly at 0x30 with only the dolby branch one instruction out.
+	// So the wanted uniform +16 is not on this chain: binder depth on it steps
+	// 8, 8, 24/16 and never 16/16. Init's dolby branch is spelled through the
+	// same chain as `buf` in retail (it CSEs `lwz r3,0x20(r3); lwz r3,0xc(r3)`
+	// and copies the result into r30 with `addi`), so whatever carries the 16
+	// has to leave that CSE intact.
+	// Also inert or worse (session c-jas): isDolbyMode() as a ternary fork,
+	// with or without a named result (92%, frame unchanged).
 	static void __UpdateJcToDSP(TChannel* channel)
 	{
-
-	
-	
 		DSPInterface::DSPBuffer* buf = channel->unk20->mDSPHandle;
 		if (channel->unkD0) {
 			for (u8 i = 0; i < 6; ++i)
@@ -173,9 +196,6 @@ namespace Driver {
 
 	static void __UpdateJcToDSPInit(TChannel* channel)
 	{
-
-	
-	
 		DSPInterface::DSPBuffer* buf = channel->unk20->mDSPHandle;
 
 		if (channel->isDolbyMode()) {
@@ -384,12 +404,19 @@ namespace Driver {
 		}
 	}
 
+	// TDSPChannel::getLogicalChannel as retail spelled it: the ternary through a
+	// named result is 8 bytes of frame per site, and lands updatecallDSPChannel's
+	// 0x48.  Parked here because JASDSPChannel.hpp is shared; the header body
+	// should become this one.
+	static inline TChannel* JASDSPChannelGetLogicalChannel(TDSPChannel* d)
+	{
+		TChannel* ch = d->mCallback != nullptr ? (TChannel*)d->mSign : nullptr;
+		return ch;
+	}
+
 	int updatecallDSPChannel(TDSPChannel* dspChannel, u32 param)
 	{
-
-	
-	
-		TChannel* channel = dspChannel->getLogicalChannel();
+		TChannel* channel = JASDSPChannelGetLogicalChannel(dspChannel);
 		TChannelMgr* mgr  = channel->unk4;
 
 		u32 i;
@@ -404,7 +431,7 @@ namespace Driver {
 
 		if (channel->unk20 != dspChannel) {
 			if (channel->unk20 != nullptr
-			    && channel == channel->unk20->getLogicalChannel()) {
+			    && channel == JASDSPChannelGetLogicalChannel(channel->unk20)) {
 				killBrokenLogicalChannels(dspChannel);
 			} else {
 				channel->stopLogicalChannel();
@@ -553,7 +580,7 @@ void TChannel::init()
 		unk58[2] = unk4->unk62[2];
 	}
 	for (u32 i = 0; i < 4; i++) {
-		JUT_ASSERT(osc[i]);
+		JUT_ASSERT(unk38[i]);
 		unk38[i]->setOsc(nullptr);
 		unk38[i]->init();
 	}
@@ -646,7 +673,10 @@ void TChannel::overwriteOsc(u32 index, TOscillator::Osc_* src)
 {
 	JUT_ASSERT(index < 4);
 	setOscInit(index, src);
-	effectOsc(index, bankOscToOfs(index));
+	// Written out rather than calling bankOscToOfs(index): an inlined
+	// one-argument accessor would reserve another 8 bytes of frame here
+	// (retail's frame is 0x38, a bankOscToOfs level makes it 0x40).
+	effectOsc(index, unk38[index]->isOsc() ? unk38[index]->getOffset() : 1.0f);
 }
 
 void TChannel::overwriteOscMultiple(TOscillator::Osc_* osc1,
@@ -794,12 +824,20 @@ BOOL TChannel::forceStopLogicalChannel()
 	return TRUE;
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// JASystem::TChannel::stopLogicalChannel (batch 127).
+static inline TDSPChannel* JASChannelUnk20(const TChannel* p)
+{
+	TDSPChannel* v20 = p->unk20;
+	return v20;
+}
+
 BOOL TChannel::stopLogicalChannel()
 {
 	if (!unk20)
 		return FALSE;
 
-	unk20->mCallback   = 0;
+	JASChannelUnk20(this)->mCallback   = 0;
 	unk20->mCBInterval = 0;
 	unk20->stop();
 	TDSPChannel::free(unk20, (uintptr_t)this);
@@ -862,9 +900,12 @@ BOOL TChannel::playLogicalChannel()
 
 	unk9C = unk4;
 
+	// bankOscToOfs(i) written out for the same reason as in overwriteOsc: the
+	// extra inlined-accessor level would push the frame from 0x50 to 0x58.
 	for (u32 i = 0; i < 4; ++i)
 		if (unk38[i]->isOsc())
-			effectOsc(i, bankOscToOfs(i));
+			effectOsc(i,
+			          unk38[i]->isOsc() ? unk38[i]->getOffset() : 1.0f);
 
 	updateEffectorParam();
 	Driver::__UpdateJcToDSPInit(this);
@@ -915,6 +956,16 @@ void TChannel::updateEffectorParam()
 		break;
 	}
 
+	// TODO: the frame and every instruction match; retail keeps the Clamp01
+	// result temporaries (f5, f6) live into the auto-mixer branch and reads
+	// them there, where we read the variables' homes f31/f30 (5 operands).
+	// Rejected: computing `volume` after the three clamps (moves the temps to
+	// f0/f1), and a Clamp01 written with a named result (adds fmr pairs).
+	// Also worse: clamps in reverse order, unk98 before the clamps, volume
+	// after unk98, and the branch inverted (updateAutoMixer first).
+	// Also inert (session c-jas): isDolbyMode() in the condition, `volume`
+	// declared at the top, four Clamp01 body shapes as TU forks, and a named
+	// DSPBuffer or `32767.5f * volume` in updateAutoMixer.
 	f32 volume = unkA4 * (unk54 * unk90);
 
 	pan   = Driver::Clamp01(pan);

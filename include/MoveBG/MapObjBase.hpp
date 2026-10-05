@@ -1,6 +1,7 @@
 #ifndef MOVE_BG_MAP_OBJ_BASE_HPP
 #define MOVE_BG_MAP_OBJ_BASE_HPP
 
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <Strategic/LiveActor.hpp>
 
 class J3DJoint;
@@ -134,6 +135,12 @@ struct TMapObjData {
 	/* 0x30 */ f32 unk30;
 	/* 0x34 */ u32 unk34; // TODO: these are flags
 	/* 0x38 */ u32 unk38;
+
+	// Invented names (c-k15): the physical parameters and the move
+	// animation's frame control.
+	const TMapObjPhysicalInfo* getPhysical() const { return mPhysical; }
+	TMapObjPhysicalData* getPhysicalData() const { return mPhysical->unk4; }
+	J3DFrameCtrl* getMoveFrameCtrl() const { return mMove->unk8; }
 };
 
 class TMapObjBase : public TLiveActor {
@@ -145,14 +152,14 @@ public:
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	// The bodies below are defined here rather than in the .cpp, exactly like
-	// kill()/appear(): the map records them as weak symbols, and each TU whose
-	// vtable mentions one keeps its own copy after dead-strip.
+	// The six trivial bodies below, plus getRadiusAtY, setModelMtx and
+	// getHitObjNumMax, are all weak in the map and read out of
+	// bosstelesa.cpp's copies at 0x800C6E94 onwards.
 	virtual MtxPtr getTakingMtx()
 	{
-		if (unkF8 & MAP_OBJ_FLAG_UNK40) {
+		if (checkMapObjFlag(MAP_OBJ_FLAG_UNK40))
 			return nullptr;
-		}
+
 		return TLiveActor::getTakingMtx();
 	}
 	virtual void ensureTakeSituation();
@@ -175,11 +182,7 @@ public:
 	virtual void updateObjMtx();
 	virtual void setUpCurrentMapCollision();
 	virtual void setObjHitData(u16);
-	// TODO: not reconstructed yet. The target body is
-	// PSMTXCopy(mtx, getModel()->mNodeMatrices), but mNodeMatrices is
-	// protected in J3DModel, so this needs either a friend declaration there
-	// (JSystem: out of bounds for an agent) or a public accessor.
-	virtual void setModelMtx(MtxPtr);
+	virtual void setModelMtx(MtxPtr mtx) { getModel()->setAnmMtx(0, mtx); }
 	virtual void initMapObj();
 	virtual void loadBeforeInit(JSUMemoryInputStream&) { }
 	virtual void initMapCollisionData();
@@ -230,7 +233,7 @@ public:
 	                                 const JGeometry::TVec3<f32>&) const;
 	JPABaseEmitter* emitAndScale(s32, u8, const JGeometry::TVec3<f32>*) const;
 	void emitAndRotateScale(s32, u8, const JGeometry::TVec3<f32>*) const;
-			static void emitAndSRT(s32, u8, const JGeometry::TVec3<f32>*,
+	static void emitAndSRT(s32, u8, const JGeometry::TVec3<f32>*,
 	                       const JGeometry::TVec3<f32>&,
 	                       const JGeometry::TVec3<f32>&);
 	void emitColumnWater();
@@ -238,10 +241,10 @@ public:
 	bool marioHeadAttack() const;
 	bool marioIsOn() const;
 	static bool marioIsOn(const TLiveActor*);
-	void actorIsOn(TLiveActor*) const;
+	bool actorIsOn(TLiveActor*) const;
 	void sendMsgToAll(u32);
 	void sendMsg(u32, u32);
-	static BOOL waterHitPlane(THitActor*);
+	static bool waterHitPlane(THitActor*);
 	static const JGeometry::TVec3<f32>& getWaterPos(THitActor*);
 	static const JGeometry::TVec3<f32>& getWaterSpeed(THitActor*);
 	static const TBGCheckData* getWaterPlane(THitActor*);
@@ -283,9 +286,9 @@ public:
 	static void setJointTransX(J3DJoint*, f32);
 	static void setJointTransY(J3DJoint*, f32);
 	static void setJointTransZ(J3DJoint*, f32);
-	static f32 getJointRotateX(J3DJoint*);
-	static f32 getJointRotateY(J3DJoint*);
-	static f32 getJointRotateZ(J3DJoint*);
+	static s16 getJointRotateX(J3DJoint*);
+	static s16 getJointRotateY(J3DJoint*);
+	static s16 getJointRotateZ(J3DJoint*);
 	void setJointRotate(J3DJoint*, short, short, short);
 	void setJointRotateX(J3DJoint*, short);
 	void setJointRotateY(J3DJoint*, short);
@@ -301,9 +304,9 @@ public:
 	static void setJointScaleY(J3DJoint*, f32);
 	static void setJointScaleZ(J3DJoint*, f32);
 	static void calcMap();
-	void getMapModel();
-	void getMapModelData();
-	void getMapMActor();
+	static J3DModel* getMapModel();
+	static J3DModelData* getMapModelData();
+	static MActor* getMapMActor();
 	static TJointObj* getBuildingJointObj(int);
 	static J3DJoint* getBuildingJoint(int);
 
@@ -330,13 +333,7 @@ public:
 	static void loadHideObjInfo(JSUMemoryInputStream&, s32*, f32*, f32*, s32*);
 	static bool isDemo();
 	static bool isHideObj(THitActor*);
-	// weak 0x8 in the map: `lfs f1, 0x108(r3); blr`.
-	// TMuddyBoat::bind reaches this through a real `bl` three times, so the
-	// definition lives in src/MoveBG/MapObjMare.cpp under #pragma
-	// dont_inline -- MWCC ignores that pragma for a header body, and an
-	// `inline` definition here is always expanded away instead. The cost is
-	// that the emitted symbol is global where the map says weak.
-	f32 getObjCollisionHeightOffset() const;
+	f32 getObjCollisionHeightOffset() const { return mYOffset; }
 
 	// fabricated
 	bool checkMapObjFlag(u32 flag) const { return unkF8 & flag; }
@@ -348,6 +345,17 @@ public:
 
 	// fabricated
 	u32 getEventId() { return mEventId; }
+	// Header round 22: `setEventId` is a plain setter and cannot be the
+	// dead-low-region carrier frame-gaps.md once parked here for
+	// `TItemManager::newAndRegisterCoin`. That function has since been
+	// matched (and ItemManager linked) with a raw `mEventId =` write, and a
+	// dead 12-byte non-trivial local in this body costs six functions that
+	// are currently exact: `TCoinBlue::loadBeforeInit` 100 -> 99.57,
+	// `THideObjBase::load`, `TWaterHitHideObj::load`,
+	// `TFruitHitHideObj::load` 100 -> 99.74, `TShellCup::loadAfter` 100 ->
+	// 99.76 and `evSetEventID` 100 -> 99.81, for a single 0.12-point gain on
+	// `TShine::loadBeforeInit`. Whatever that function's 8 bytes are, they
+	// belong to an expansion only it has.
 	void setEventId(u32 v) { mEventId = v; }
 
 	// Fabricated
@@ -367,6 +375,16 @@ public:
 	}
 
 	const char* getUnkF4() { return unkF4; }
+
+	// Rejected (header round 20): a binding override of
+	// TLiveActor::getMapCollisionManager() here
+	// (`TMapCollisionManager* manager = mMapCollisionManager; return manager;`)
+	// is the level TRideCloud::setGroundCollision's parked
+	// `RideCloudCollisionManager` stands in for, but every TMapObjBase
+	// subclass that spells `getMapCollisionManager()` pays the binding too:
+	// TLeafBoatRotten::control 100 -> 99.79, TMapObjTree::initMapObj
+	// 99.86 -> 99.79, TBiancoWatermillVertical::setGroundCollision
+	// 96.21 -> 96.03. The binding is per call site; the helper stays parked.
 
 public:
 	enum {
@@ -421,12 +439,6 @@ public:
 	/* 0x124 */ JGeometry::TVec3<f32> mInitialScaling;
 	/* 0x130 */ TMapObjData* mMapObjData;
 	/* 0x134 */ u32 mEventId;
-	// sizeof(TMapObjBase) == 0x138: the ROM's ctor stores nothing past
-	// mEventId, and every subclass here starts its own fields at 0x138
-	// (e.g. TShellCup's unk138[6] of 0x90-byte TPinnaShell ends exactly at
-	// unk498). TNerveBossTelesaDie writes one f32 per mStageSlotObjects[i]
-	// at +0x144, but that is a *subclass* field reached through a
-	// TMapObjBase* -- not a base-class member.
 };
 
 #endif

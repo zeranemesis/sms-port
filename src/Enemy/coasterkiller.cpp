@@ -37,15 +37,31 @@
 #include <Enemy/EffectObj.hpp>
 #include <macros.h>
 
-// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-const char* killer_bastable[] = {
+static const char* killer_bastable[] = {
 	"/scene/killer/bas/downkiller_down1.bas", nullptr, nullptr,
 	"/scene/killer/bas/killer_search1.bas",   nullptr,
 };
+
+TCoasterEnemyParams::TCoasterEnemyParams(const char* path)
+    : TWalkerEnemyParams(path)
+    , PARAM_INIT(mSLCoasterSpeedInOrder, 20.0f)
+    , PARAM_INIT(mSLCoasterSpeedReverse, 20.0f)
+{
+	TParams::load(mPrmPath);
+	mSLCoasterSpeedInOrder.set(20.0f);
+	mSLCoasterSpeedReverse.set(16.0f);
+}
+
+TCoasterKillerSaveLoadParams::TCoasterKillerSaveLoadParams(const char* path)
+    : TCoasterEnemyParams(path)
+    , PARAM_INIT(mSLBombRange, 300.0f)
+{
+	TParams::load(mPrmPath);
+}
 
 void TCoasterEnemy::init(TLiveManager* mgr)
 {
@@ -61,6 +77,12 @@ void TCoasterEnemy::init(TLiveManager* mgr)
 
 void TCoasterEnemy::moveObject() { TWalkerEnemy::moveObject(); }
 
+// TODO: 99.9% and instruction-exact. The `nextPos - mPosition` receiver sits
+// at 0x1c where retail has it at 0x10, i.e. the 16-versus-4 `operator-`
+// parameter prefix that research batch 116 measured as `8 x (reference returns
+// the caller copies out of)`. Known-open class, see the note on `operator-` in
+// JGVec3.hpp; `.add()` for the two `+=`s and a direct `mLinearVelocity =`
+// assignment are both inert here.
 void TCoasterEnemy::bind()
 {
 	JGeometry::TVec3<f32> nextPos = mPosition;
@@ -81,7 +103,10 @@ void TCoasterEnemy::reset()
 void TCoasterEnemy::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TWalkerEnemy::perform(cue, graphics);
-	if (cue & CUE_MOVE) { } // required to move param_1 into r31
+	// TODO: fabricated. Retail keeps cue in r31 across the call and drops
+	// the test after register allocation; only a statement the preprocessor
+	// empties reproduces that (see TEffectObjBase::perform's c-k8 note).
+	if (cue & CUE_MOVE) { }
 }
 
 f32 TCoasterEnemy::getGravityY() const { return 0.0f; }
@@ -93,11 +118,19 @@ void TCoasterEnemy::makeCoasterGoalPath()
 	unk12C = 0.0f;
 }
 
+// TODO: frame 0x1f0 against retail's 0x208; getPathDir() and both speeds
+// through get() are +0x10, setLength(1.0f) is needed. Left: one extra
+// callee-saved FPR (f20), retail keeping delta.y/z in volatiles through the
+// first setRotate() cross product, and retail's `mr r4, r0` loading the
+// graph before the index in getCurrentPos(). Inert or worse after the TQuat4::mul rewrite
+// (2026-09-23): indexToPoint() spelled directly, direct/assigned delta,
+// mVelocity.scale(t, delta), mVelocity = delta, up before forward, steer
+// before up, the speed block after the rotation.
 void TCoasterEnemy::moveCoaster()
 {
 	JGeometry::TVec3<f32> delta = unk124->getCurrentPos();
-	delta -= mPosition;
-	delta.normalize();
+	delta -= getPosition();
+	delta.setLength(1.0f);
 
 	f32 t = getPathDir() == 0 ? getSaveParam2()->mSLCoasterSpeedInOrder.get()
 	                          : getSaveParam2()->mSLCoasterSpeedReverse.get();
@@ -107,15 +140,12 @@ void TCoasterEnemy::moveCoaster()
 	JGeometry::TVec3<f32> forward;
 	mQuat.getZDir(forward);
 
-	JGeometry::TVec3<f32> axis;
-	axis.cross(forward, delta);
-
 	JGeometry::TVec3<f32> up;
 	mQuat.getYDir(up);
 
 	JGeometry::TQuat4<f32> steer;
-	steer.setRotate(forward, axis, 0.1f);
-	mQuat.mul(steer);
+	steer.setRotate(forward, delta, 0.1f);
+	mQuat.mul(steer, mQuat);
 
 	// Y-axis rotation
 	JGeometry::TVec3<f32> right;
@@ -130,10 +160,10 @@ void TCoasterEnemy::moveCoaster()
 		tiltQuat.rotate(forward, curUp);
 
 		steer.setRotate(up, curUp, 0.1f);
-		mQuat.mul(steer);
+		mQuat.mul(steer, mQuat);
 	}
 
-	static_cast<JGeometry::TVec4<f32>&>(mQuat).normalize();
+	mQuat.normalize();
 }
 
 void TCoasterEnemy::calcRootMatrix()
@@ -143,11 +173,6 @@ void TCoasterEnemy::calcRootMatrix()
 	pos.setQT(mQuat, mPosition);
 	getModel()->setBaseScale(mScaling);
 	getModel()->setBaseTRMtx(pos);
-}
-
-void TCoasterEnemy::setNormalFlyAnm()
-{
-	// nothing
 }
 
 void TCoasterEnemy::setWalkAnm() { setNormalFlyAnm(); }
@@ -217,6 +242,12 @@ void TCoasterKiller::init(TLiveManager* mgr)
 
 void TCoasterKiller::reset() { TCoasterEnemy::reset(); }
 
+// TODO: 99.3%, frame exact. The getPosition() receiver gives retail's
+// schedule and its reference temporary the missing 8 bytes, but we then share
+// its `this + 0x10` with the `&mPosition` argument (`lfsu f3, 0x10(r31)` and
+// `addi r4, r31, 0`), where retail folds the offsets and recomputes the
+// address. Inert or worse: `&getPosition()` for the argument, `*gpMarioPos`,
+// gpMSound for SMSGetMSound(), a named distance or difference vector.
 void TCoasterKiller::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TCoasterEnemy::perform(cue, graphics);
@@ -230,7 +261,7 @@ void TCoasterKiller::perform(u32 cue, JDrama::TGraphics* graphics)
 		    != &TNerveCoasterKillerExplosion::theNerve()) {
 			SMSGetMSound()->startSoundActorWithInfo(
 			    MSD_SE_EN_KILLER_FLY_KUPPA, &mPosition, nullptr,
-			    mPosition.distance(SMS_GetMarioPos()), 0, 0, nullptr, 0, 4);
+			    getPosition().distance(SMS_GetMarioPos()), 0, 0, nullptr, 0, 4);
 		}
 	}
 }
@@ -340,7 +371,7 @@ DEFINE_NERVE(TNerveCoasterKillerExplosion, TLiveActor)
 		               * self->getBodyScale() / self->getAttackRadius();
 		self->mRotation.x = 0.0f;
 		self->setDeadAnm();
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK6, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_KILLER, 1.0f);
 	}
 
 	if (self->unk190 < self->get1AC()) {
@@ -371,25 +402,24 @@ TCoasterKillerManager::TCoasterKillerManager(const char* name)
 {
 }
 
-#define ASSERT_MSG(msg, line) (void)((msg), (line))
-#define ASSERT_TEST(expr)                                                      \
-	(void)((expr) ? true : (ASSERT_MSG(__FILE__, __LINE__), false));
+// The discarded `getActiveObjNum()` calls below are the same idiom as
+// TBathtubKillerManager::load and TKoopaJrSubmarineManager::load/loadAfter:
+// the inline opens with `if (!unk38) return getObjNum();`, so throwing the
+// result away leaves exactly the ROM's `lwz`/`cmplwi` of the params pointer
+// with no branch, plus the expansion pool the frame needs.
 
 void TCoasterKillerManager::load(JSUMemoryInputStream& stream)
 {
-	(void)(unk38 ? unk38 : unk38); // @hack to force cmplwi
+	getActiveObjNum();
 	TSmallEnemyManager::load(stream);
 	unk38 = new TCoasterKillerSaveLoadParams("/enemy/coasterkiller.prm");
-	unk38 = unk38 ? unk38 : unk38; // @hack to force cmplwi
+	getActiveObjNum();
 }
 
 void TCoasterKillerManager::loadAfter()
 {
-
-	
-	
 	TSmallEnemyManager::loadAfter();
-	ASSERT_TEST(unk38);
+	getActiveObjNum();
 }
 
 void TCoasterKillerManager::createModelData()

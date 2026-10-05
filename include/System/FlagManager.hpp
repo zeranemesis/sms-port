@@ -8,8 +8,8 @@
 
 enum {
 	FLAG_SAVED_OPTION_BOOL_END
-	= VERSION_SELECT(GMSJ01(0x70002), GMSP01(0x70003)),
-	FLAG_OPTION_BOOL_END = VERSION_SELECT(GMSJ01(0x90001), GMSP01(0x90002)),
+	= VERSION_SELECT(GMSJ01(0x70002), GMSP01(0x70003), GMSE01(0x70003)),
+	FLAG_OPTION_BOOL_END = VERSION_SELECT(GMSJ01(0x90001), GMSP01(0x90002), GMSE01(0x90002)),
 };
 
 class TFlagManager {
@@ -70,5 +70,21 @@ private:
 	s32 mSavedCardInts[21];
 	s64 mSavedLastSaveTime;
 };
+
+// The house global-accessor idiom (cf. SMSGetMarDirector, SMSGetCamera,
+// SMSGetMSound). A global accessor level is +4 bytes of low-region frame per
+// read site with no instruction change, so converting a raw
+// TFlagManager::getInstance() site is a per-site decision (194 raw sites
+// remain; sweep them against their frame gaps, not in bulk).
+inline TFlagManager* SMSGetFlagManager() { return TFlagManager::getInstance(); }
+
+// Fabricated: the singleton bound to a named local before it is returned, +8
+// of low region per expansion over a raw TFlagManager::smInstance read.
+// Formerly parked TU-locally in four units.
+inline TFlagManager* SMSGetFlagManagerBound()
+{
+	TFlagManager* flagManager = TFlagManager::smInstance;
+	return flagManager;
+}
 
 #endif

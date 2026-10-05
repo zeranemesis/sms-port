@@ -2,17 +2,26 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
 #include <M3DUtil/MActor.hpp>
 
+// Componentwise lerp; the ratio is computed as this inline's argument, so it
+// arrives as an inlined-callee parameter (no frame slot) and keeps retail's
+// register choice (a named `progress` local in the caller does not).
+static inline void NpcLerp(JGeometry::TVec3<f32>* dst,
+                           const JGeometry::TVec3<f32>& from,
+                           const JGeometry::TVec3<f32>& to, f32 t)
+{
+	dst->x = from.x + (to.x - from.x) * t;
+	dst->y = from.y + (to.y - from.y) * t;
+	dst->z = from.z + (to.z - from.z) * t;
+}
+
 void TNpcInbetween::execPosInbetween(JGeometry::TVec3<f32>* cur_pos)
 {
 	mCurrentPos.set(*cur_pos);
 	if (mPosInbetweenTimer >= 2) {
 		mPosInbetweenTimer -= 1;
 
-		f32 progress = mPosInbetweenTimer * (1.0f / mPosInbetweenFrame);
-
-		cur_pos->x = mCurrentPos.x + (mTargetPos.x - mCurrentPos.x) * progress;
-		cur_pos->y = mCurrentPos.y + (mTargetPos.y - mCurrentPos.y) * progress;
-		cur_pos->z = mCurrentPos.z + (mTargetPos.z - mCurrentPos.z) * progress;
+		NpcLerp(cur_pos, mCurrentPos, mTargetPos,
+		        mPosInbetweenTimer * (1.0f / mPosInbetweenFrame));
 	} else {
 		mTargetPos.set(*cur_pos);
 		mPosInbetweenTimer = 0;

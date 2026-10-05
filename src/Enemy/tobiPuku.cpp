@@ -1,77 +1,138 @@
-#include <Enemy/Conductor.hpp>
-#include <Enemy/EffectObj.hpp>
-#include <Enemy/Enemy.hpp>
-#include <Enemy/EnemyManager.hpp>
-#include <Enemy/SmallEnemy.hpp>
 #include <Enemy/TobiPuku.hpp>
-#include <Enemy/WalkerEnemy.hpp>
-#include <JSystem/JDrama/JDRActor.hpp>
-#include <JSystem/JDrama/JDRNameRef.hpp>
-#include <JSystem/JGeometry/JGVec3.hpp>
-#include <JSystem/JParticle/JPAEmitter.hpp>
-#include <JSystem/JStage/JSGActor.hpp>
-#include <JSystem/JStage/JSGObject.hpp>
-#include <JSystem/JSupport/JSUInputStream.hpp>
-#include <JSystem/JSupport/JSUList.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
-#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+
+#include <Strategic/Spine.hpp>
+
 #include <M3DUtil/MActor.hpp>
+
 #include <MarioUtil/MathUtil.hpp>
-#include <MoveBG/MapObjBlock.hpp>
-#include <MSound/MSound.hpp>
-#include <MSound/MSoundSE.hpp>
-#include <Map/Map.hpp>
-#include <Map/MapCollisionData.hpp>
+
 #include <Map/MapData.hpp>
+
+#include <Map/Map.hpp>
+
+#include <Map/MapCollisionData.hpp>
+
+#include <Enemy/SmallEnemy.hpp>
+
 #include <Player/MarioAccess.hpp>
-#include <Player/MarioFlags.hpp>
-#include <Strategic/HitActor.hpp>
-#include <Strategic/LiveActor.hpp>
-#include <Strategic/LiveManager.hpp>
-#include <Strategic/Nerve.hpp>
-#include <Strategic/ObjManager.hpp>
-#include <Strategic/TakeActor.hpp>
-#include <System/BaseParam.hpp>
-#include <System/EmitterViewObj.hpp>
-#include <System/ParamInst.hpp>
+
+#include <Enemy/PathNode.hpp>
+
+#include <Enemy/Conductor.hpp>
+
+#include <MoveBG/MapObjBlock.hpp>
+
+#include <Enemy/EffectObj.hpp>
+
+#include <MSound/MSound.hpp>
+
+#include <MSound/MSoundSE.hpp>
+
 #include <System/Particles.hpp>
-#include <System/Params.hpp>
+
+#include <JSystem/JParticle/JPAEmitter.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <M3DUtil/InfectiousStrings.hpp>
+
 #include <MSound/MSSetSound.hpp>
+
 #include <MSound/MSoundBGM.hpp>
 
-static TTobiPuku* gpCurTobiPuku;
+static const char* pukupuku_bastable[] = {
+	nullptr,
+	"/scene/pukupuku/bas/pukupuku_death.bas",
+	"/scene/pukupuku/bas/pukupuku_down_air.bas",
+	"/scene/pukupuku/bas/pukupuku_down_land.bas",
+	nullptr,
+	"/scene/pukupuku/bas/pukupuku_fall_end_land.bas",
+	nullptr,
+	nullptr,
+	"/scene/pukupuku/bas/pukupuku_pitipiti.bas",
+	"/scene/pukupuku/bas/pukupuku_swim.bas",
+	nullptr,
+};
 
-static BOOL TobiPukuRollCallback(J3DNode* param_1, BOOL param_2)
+static const char* moepuku_bastable[] = {
+	nullptr,
+	nullptr,
+	"/scene/moepuku/bas/moepuku_down_air.bas",
+	"/scene/moepuku/bas/moepuku_down_land.bas",
+	nullptr,
+	"/scene/moepuku/bas/moepuku_fall_end_land.bas",
+	nullptr,
+	nullptr,
+	"/scene/moepuku/bas/moepuku_pitipiti.bas",
+	nullptr,
+	nullptr,
+};
+
+// Animation slots shared by both variants.
+enum {
+	PUKU_ANM_ATTACK        = 0,
+	PUKU_ANM_DEAD          = 1,
+	PUKU_ANM_DOWN_AIR      = 2,
+	PUKU_ANM_DOWN_LAND     = 3,
+	PUKU_ANM_FALL          = 4,
+	PUKU_ANM_FALL_END_LAND = 5,
+	PUKU_ANM_JUMP          = 6,
+	PUKU_ANM_JUMP_START    = 7,
+	PUKU_ANM_PICHI         = 8,
+	PUKU_ANM_SWIM          = 9,
+};
+
+f32 TTobiPuku::mLandAngle = 90.0f;
+
+u8 TTobiPuku::mBoundSw = 1;
+
+f32 TTobiPuku::mBoundVelocityY = 0.8f;
+
+u8 TTobiPuku::mReturnLaunchSw = 1;
+
+static TMoePuku* gpCurTobiPuku;
+
+static int TobiPukuRollCallback(J3DNode* node, int param);
+
+// Rolls the whole model about Z while the puku is being flung, so it tumbles
+// instead of gliding flat. Only the three launch-related nerves want it.
+static int TobiPukuRollCallback(J3DNode* param_1, int param_2)
 {
 	if (param_2 == 0) {
-		TTobiPuku* puku = gpCurTobiPuku;
-		if (puku != nullptr) {
-			if (!puku->isRoll())
-				return true;
-			MtxPtr mA = gpCurTobiPuku->getMActor()->getModel()->getAnmMtx(
-			    ((J3DJoint*)param_1)->getJntNo());
+		TMoePuku* puku = gpCurTobiPuku;
+		if (!puku || !puku->isRoll())
+			return true;
 
-			Mtx mtx;
-			MsMtxSetRotZ(mtx, gpCurTobiPuku->unk1EC);
+		J3DJoint* joint = (J3DJoint*)param_1;
+		MtxPtr anmMtx   = gpCurTobiPuku->getMActor()->getModel()->getAnmMtx(
+            joint->getJntNo());
 
-			MTXConcat(mA, mtx, mA);
-			MTXConcat(J3DSys::mCurrentMtx, mtx, J3DSys::mCurrentMtx);
-		}
+		// A named pointer to the rotation binds &local_44 into r30 once, as
+		// retail does.
+		// TODO: 96.8%. Retail loads the 0.0f/1.0f literals after the sine
+		// table reads; ours hoists both. Tried: the rotation body written out
+		// with one shared s16 angle, a named zero, chained zero stores, a
+		// TPosition3f matrix.
+		// Also inert (c-ident): a TMtx34f, a named angle, the pointer declared
+		// above the joint (96.7-96.8); TMtx34f identity() first is 76.9.
+		// c-c5: 100% only with a no-op `(MtxPtr)local_44` argument plus an
+		// internal MtxPtr copy (stores the scheduler cannot resolve); natural
+		// stand-ins are inert: one reassigned row pointer 98.1, row pointers
+		// 98.0, *p++ stores 96.9, a modified parameter 96.7, an aggregate 74.5.
+		Mtx local_44;
+		MtxPtr rot = local_44;
+		MsMtxSetRotZ(rot, gpCurTobiPuku->unk1EC);
+
+		MTXConcat(anmMtx, rot, anmMtx);
+		MTXConcat(J3DSys::mCurrentMtx, rot, J3DSys::mCurrentMtx);
 	}
 	return true;
 }
 
-f32 TTobiPuku::mLandAngle       = 90.0f;
-bool TTobiPuku::mBoundSw        = true;
-f32 TTobiPuku::mBoundVelocityY  = 0.8f;
-bool TTobiPuku::mReturnLaunchSw = true;
-
+// The map emits both params constructors (UNUSED) immediately before
+// TobiPukuRollCallback, so in reverse source order they follow it.
 TTobiPukuLaunchPadSaveLoadParams::TTobiPukuLaunchPadSaveLoadParams(
-    const char* param_1)
-    : TSmallEnemyParams(param_1)
+    const char* prm)
+    : TSmallEnemyParams(prm)
     , PARAM_INIT(mSLLaunchInterval, 300)
     , PARAM_INIT(mSLLaunchVelocityY, 12.0f)
     , PARAM_INIT(mSLFlyDist, 1000.0f)
@@ -81,8 +142,8 @@ TTobiPukuLaunchPadSaveLoadParams::TTobiPukuLaunchPadSaveLoadParams(
 	TParams::load(mPrmPath);
 }
 
-TTobiPukuSaveLoadParams::TTobiPukuSaveLoadParams(const char* param_1)
-    : TWalkerEnemyParams(param_1)
+TTobiPukuSaveLoadParams::TTobiPukuSaveLoadParams(const char* prm)
+    : TWalkerEnemyParams(prm)
     , PARAM_INIT(mSLBoundNum, 3)
     , PARAM_INIT(mSLBoundVal, 0.8f)
     , PARAM_INIT(mSLLifeTimer, 200)
@@ -92,16 +153,16 @@ TTobiPukuSaveLoadParams::TTobiPukuSaveLoadParams(const char* param_1)
 	TParams::load(mPrmPath);
 }
 
-TTobiPukuLaunchPadManager::TTobiPukuLaunchPadManager(const char* param_1)
-    : TSmallEnemyManager(param_1)
+TTobiPukuLaunchPadManager::TTobiPukuLaunchPadManager(const char* name)
+    : TSmallEnemyManager(name)
 {
 	unk60 = 0;
 }
 
-void TTobiPukuLaunchPadManager::load(JSUMemoryInputStream& param_1)
+void TTobiPukuLaunchPadManager::load(JSUMemoryInputStream& stream)
 {
 	unk38 = new TTobiPukuLaunchPadSaveLoadParams("/enemy/tobipukulaunch.prm");
-	TSmallEnemyManager::load(param_1);
+	TSmallEnemyManager::load(stream);
 }
 
 TSpineEnemy* TTobiPukuLaunchPadManager::createEnemyInstance()
@@ -109,26 +170,27 @@ TSpineEnemy* TTobiPukuLaunchPadManager::createEnemyInstance()
 	return new TTobiPukuLaunchPad("とびプク発射台");
 }
 
-void TTobiPukuLaunchPadManager::perform(u32 param_1, JDrama::TGraphics* param_2)
+void TTobiPukuLaunchPadManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	for (int i = 0; i < getActiveObjNum(); ++i)
-		TLiveManager::getObj(i)->perform(param_1, param_2);
+		((TTobiPukuLaunchPad*)TLiveManager::getObj(i))
+		    ->perform(cue, graphics);
 }
 
 TSpineEnemy* TMoePukuLaunchPadManager::createEnemyInstance()
 {
-	return new TMoePukuLaunchPad();
+	return new TMoePukuLaunchPad("モエプク発射台");
 }
 
-TTobiPukuManager::TTobiPukuManager(const char* param_1)
-    : TSmallEnemyManager(param_1)
+TTobiPukuManager::TTobiPukuManager(const char* name)
+    : TSmallEnemyManager(name)
 {
 }
 
-void TTobiPukuManager::load(JSUMemoryInputStream& param_1)
+void TTobiPukuManager::load(JSUMemoryInputStream& stream)
 {
 	unk38 = new TTobiPukuSaveLoadParams("/enemy/tobipuku.prm");
-	TSmallEnemyManager::load(param_1);
+	TSmallEnemyManager::load(stream);
 }
 
 TSpineEnemy* TTobiPukuManager::createEnemyInstance()
@@ -136,48 +198,60 @@ TSpineEnemy* TTobiPukuManager::createEnemyInstance()
 	return new TTobiPuku("とびプク");
 }
 
-TSpineEnemy* TMoePukuManager::createEnemyInstance() { return new TMoePuku(); }
-
-TTobiPukuLaunchPad::TTobiPukuLaunchPad(const char* param_1)
-    : TSmallEnemy(param_1)
-    , unk194(0)
-    , unk19C(0.0f)
-    , unk1A8(0)
+TSpineEnemy* TMoePukuManager::createEnemyInstance()
 {
+	return new TMoePuku("モエプク");
 }
 
-void TTobiPukuLaunchPad::perform(u32 param_1, JDrama::TGraphics* param_2)
+TTobiPukuLaunchPad::TTobiPukuLaunchPad(const char* name)
+    : TSmallEnemy(name)
 {
-	if (!checkLiveFlag(LIVE_FLAG_UNK200) && !checkLiveFlag(LIVE_FLAG_DEAD)
-	    && (param_1 & 1)) {
-		if (TTobiPuku::mReturnLaunchSw) {
-			if (!unk1A8)
-				launch();
-			else if (unk1A8->checkLiveFlag(LIVE_FLAG_DEAD))
-				launch();
-		} else {
-			unk194++;
-			if (unk194 > unk198->mSLLaunchInterval.get()) {
-				unk194 = 0;
-				launch();
-			}
+	unk194 = 0;
+	unk19C = 0.0f;
+	unk1A8 = nullptr;
+}
+
+void TTobiPukuLaunchPad::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (checkLiveFlag(LIVE_FLAG_UNK200))
+		return;
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	if (!(cue & CUE_MOVE))
+		return;
+
+	if (TTobiPuku::mReturnLaunchSw) {
+		// Hold the next launch until the one already in flight is gone.
+		if (!unk1A8) {
+			launch();
+			return;
+		}
+		if (unk1A8->checkLiveFlag(LIVE_FLAG_DEAD))
+			launch();
+	} else {
+		unk194++;
+		if (unk194 > unk198->mSLLaunchInterval.get()) {
+			unk194 = 0;
+			launch();
 		}
 	}
 }
 
-void TTobiPukuLaunchPad::init(TLiveManager* param_1)
+void TTobiPukuLaunchPad::init(TLiveManager* manager)
 {
-	TSmallEnemy::init(param_1);
+	TSmallEnemy::init(manager);
 	mActorType = 0x10000012;
 	unk198     = (TTobiPukuLaunchPadSaveLoadParams*)getSaveParam();
 }
 
-void TTobiPukuLaunchPad::load(JSUMemoryInputStream& param_1)
+void TTobiPukuLaunchPad::load(JSUMemoryInputStream& stream)
 {
-	TSmallEnemy::load(param_1);
-	s32 launchPower;
-	param_1 >> launchPower;
-	unk19C = launchPower;
+	TSmallEnemy::load(stream);
+
+	int angle;
+	stream.read(&angle, 4);
+	unk19C = angle;
+
 	reset();
 }
 
@@ -185,7 +259,7 @@ void TTobiPukuLaunchPad::reset()
 {
 	TSmallEnemy::reset();
 	unk194 = 0;
-	unk1A8 = 0;
+	unk1A8 = nullptr;
 }
 
 void TTobiPukuLaunchPad::launch()
@@ -198,34 +272,52 @@ void TTobiPukuLaunchPad::launch()
 	}
 }
 
-void TTobiPukuLaunchPad::forceLaunch(TTobiPuku* param_1)
+// TODO: 99.3%. Frame 0xa0 against retail's 0xd8 (the pool below the target
+// vector is 0x38 short) and, in the fixed-direction arm, retail puts the
+// pitch conversion's product in f1 and sinYaw*speed in f3 (ours swapped).
+// Tried: a direction TVec3 scaled by speed, velocity.set(...), both
+// launch-arc arguments named.
+void TTobiPukuLaunchPad::forceLaunch(TTobiPuku* puku)
 {
-	JGeometry::TVec3<f32> pos = mPosition;
-	f32 sinY                  = MsSin(mRotation.y);
-	f32 cosY                  = MsCos(mRotation.y);
+	JGeometry::TVec3<f32> target(mPosition);
+
+	// 16384/90 is 65536/360 written the long way; the original spells the
+	// conversion out here rather than going through DEG2SHORTANGLE.
+	s16 yaw   = (s16)(16384.0f * mRotation.y / 90.0f);
+	f32 sinYaw = JMASSin(yaw);
+	f32 cosYaw = JMASCos(yaw);
 
 	JGeometry::TVec3<f32> velocity;
-	if (((TTobiPukuLaunchPadManager*)mManager)->unk60) {
+	if (((TTobiPukuLaunchPadManager*)getManager())->unk60) {
+		// Aim at a point mSLFlyDist ahead and solve for the arc.
 		f32 dist = unk198->mSLFlyDist.get();
-		pos.x += sinY * dist;
-		pos.z += cosY * dist;
-		f32 launchVelocityY = unk198->mSLLaunchVelocityY.get();
-		f32 flyGravityY     = param_1->unk19C->mSLFlyGravityY.get();
-		velocity = calcVelocityToJumpToY(pos, launchVelocityY, flyGravityY);
+		target.x += sinYaw * dist;
+		target.z += cosYaw * dist;
+		// Named so the pad's launch speed loads before the puku's gravity.
+		f32 vy   = unk198->mSLLaunchVelocityY.get();
+		velocity = calcVelocityToJumpToY(
+		    target, vy, puku->unk19C->mSLFlyGravityY.get());
 	} else {
-		velocity.set(sinY * unk19C * MsCos(mRotation.x),
-		             1.0f * unk19C * MsSin(mRotation.x),
-		             cosY * unk19C * MsCos(mRotation.x));
+		// Otherwise just fire along the pad's own facing at its own speed.
+		f32 speed    = unk19C;
+		s16 pitch    = (s16)(16384.0f * mRotation.x / 90.0f);
+		f32 cosPitch = JMASCos(pitch);
+		// Named, so the `* 1.0f` survives as retail's separate product.
+		f32 up       = 1.0f;
+		velocity.x   = sinYaw * speed * cosPitch;
+		velocity.y   = up * speed * JMASSin(pitch);
+		velocity.z   = cosYaw * speed * cosPitch;
 	}
 
-	param_1->reset();
-	param_1->mPosition                = mPosition;
-	param_1->mRotation                = mRotation;
-	param_1->unk1D0                   = velocity;
-	param_1->unk1B0                   = mPosition.y;
-	param_1->unk1DC                   = this;
-	JGeometry::TVec3<f32> padVelocity = mVelocity;
-	param_1->unk1B4                   = MsGetRotFromZaxis(padVelocity).x;
+	puku->reset();
+	puku->mPosition       = mPosition;
+	puku->mRotation       = mRotation;
+	puku->mLaunchVelocity = velocity;
+	puku->unk1B0          = mPosition.y;
+	puku->mLaunchPad      = this;
+
+	puku->mLaunchAngle
+	    = MsGetRotFromZaxis(JGeometry::TVec3<f32>(mVelocity)).x;
 }
 
 void TMoePukuLaunchPad::launch()
@@ -238,27 +330,32 @@ void TMoePukuLaunchPad::launch()
 	}
 }
 
-TTobiPuku::TTobiPuku(const char* param_1)
-    : TWalkerEnemy(param_1)
+// TODO: 0% of 180 bytes despite initialising the right fields. The original
+// default-constructs mLand[0] and mLand[1] through __construct_array with a
+// count of 2, and keeps `this` in a stack slot across the base call; ours
+// inlines both TVec3 constructors instead. The field set and their values are
+// confirmed by the assembly, so only the construction form is wrong.
+TTobiPuku::TTobiPuku(const char* name)
+    : TWalkerEnemy(name)
     , unk194(0)
-    , unk198(0)
-    , unk19C(0)
+    , mBoundCount(0)
+    , unk19C(nullptr)
     , unk1AC(1)
     , unk1AD(1)
     , unk1AE(0)
     , unk1B0(0.0f)
-    , unk1B4(0.0f)
-    , unk1E0(0.0f)
-    , unk1E4(0.0f)
-    , unk1E8(0.0f)
+    , mLaunchAngle(0.0f)
+    , mSwimBaseY(0.0f)
+    , mFlyVelocityY(0.0f)
+    , mReturnPitchStep(0.0f)
     , unk1EC(0.0f)
 {
 	gpCurTobiPuku = nullptr;
 }
 
-void TTobiPuku::init(TLiveManager* param_1)
+void TTobiPuku::init(TLiveManager* manager)
 {
-	TWalkerEnemy::init(param_1);
+	TWalkerEnemy::init(manager);
 	mActorType = 0x10000012;
 	unk150     = 0x31;
 	unk19C     = (TTobiPukuSaveLoadParams*)getSaveParam();
@@ -267,192 +364,188 @@ void TTobiPuku::init(TLiveManager* param_1)
 
 void TTobiPuku::reset()
 {
-	gpCurTobiPuku = this;
+	gpCurTobiPuku = (TMoePuku*)this;
 	TWalkerEnemy::reset();
 	mSpine->initWith(&TNerveTobiPukuGenerate::theNerve());
-	unk1AD    = 1;
-	unk194    = 0;
-	unk1B8[1] = getPosition();
-	unk1B8[0] = unk1B8[1];
-	unk1E0    = getPosition().y;
+	unk1AD          = 1;
+	unk194          = 0;
+	mLand[1]      = getPosition();
+	mLand[0]        = mLand[1];
+	mSwimBaseY      = getPosition().y;
 }
 
 void TTobiPuku::moveObject()
 {
-
-	
-	
 	mTurnSpeed = unk19C->mSLTurnSpeedLow.get();
-	if (mBoundSw && TTobiPuku::isInhibitedForceMove())
+
+	if (TTobiPuku::mBoundSw && isAirborne())
 		hitWall();
+
 	TWalkerEnemy::moveObject();
 }
 
 void TTobiPuku::hitWall()
 {
 	TBGWallCheckRecord record(mPosition.x, mPosition.y + mHeadHeight,
-	                          mPosition.z, 1.1f * (mBodyScale * mWallRadius), 1,
-	                          0);
+	                          mPosition.z, 1.1f * (mBodyScale * mWallRadius),
+	                          1, 0);
 
 	if (gpMap->isTouchedWallsAndMoveXZ(&record)) {
-		f32 dot = mVelocity.x * record.mResultWalls[0]->mNormal.x
-		          + mVelocity.y * record.mResultWalls[0]->mNormal.y
-		          + mVelocity.z * record.mResultWalls[0]->mNormal.z;
+		// TODO: 98.8%. Every instruction is in place; the frame is 0x58
+		// against retail's 0x90 (accessor pool inside the inlined
+		// TBGWallCheckRecord constructor), so the record's slots differ.
+		// Using `wall` for the two bounce updates too drops the reloads
+		// retail does (96.2%).
+		const TBGCheckData* wall = record.mResultWalls[0];
+		f32 dot                  = mVelocity.dot(wall->mNormal);
 		f32 bounce = -(2.0f * dot);
-
 		mVelocity.x += bounce * record.mResultWalls[0]->mNormal.x;
 		mVelocity.y *= 0.5f;
 		mVelocity.z += bounce * record.mResultWalls[0]->mNormal.z;
-
-		unk1D0 = mVelocity;
-		unk1B0 = mPosition.y;
-	} else {
-		const TBGCheckData* roof;
-		gpMap->checkRoof(mPosition.x, mPosition.y + mHeadHeight, mPosition.z,
-		                 &roof);
-		if (roof && roof->mActor) {
-			if (mVelocity.y > 0.0f)
-				mVelocity.y = 0.0f;
-		}
+		mLaunchVelocity = mVelocity;
+		unk1B0          = mPosition.y;
+		return;
 	}
+
+	const TBGCheckData* roof;
+	gpMap->checkRoof(mPosition.x, mPosition.y + mHeadHeight, mPosition.z,
+	                 &roof);
+	if (roof && roof->getActor() && mVelocity.y > 0.0f)
+		mVelocity.y = 0.0f;
 }
 
+// UNUSED, 0xc8 in the map and size-exact: the body TNerveTobiPukuBound::execute
+// pastes in once canBound() has passed. Damp the stored launch velocity,
+// rebuild the vertical component from the drop height, go airborne, and reset
+// the drop reference while still rising.
 void TTobiPuku::bound()
 {
-	unk1AE = 1;
-	if (unk198 < unk19C->mSLBoundNum.get()) {
-		unk198++;
-		f32 boundVal                   = unk19C->mSLBoundVal.get();
-		JGeometry::TVec3<f32> velocity = unk1D0;
-		velocity.x *= boundVal;
-		velocity.z *= boundVal;
-		velocity.y = TTobiPuku::mBoundVelocityY * boundVal
-		             * (unk1B0 - mGroundHeight) / 30.0f;
-		unk1D0    = velocity;
-		mVelocity = velocity;
-		onLiveFlag(LIVE_FLAG_AIRBORNE);
-	}
+	mBoundCount = mBoundCount + 1;
+
+	f32 damp = unk19C->mSLBoundVal.get();
+	JGeometry::TVec3<f32> vel(mLaunchVelocity);
+	vel.x *= damp;
+	vel.z *= damp;
+	vel.y = (TTobiPuku::mBoundVelocityY * damp * (unk1B0 - mGroundHeight))
+	        / 30.0f;
+
+	mLaunchVelocity = vel;
+	mVelocity       = vel;
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+
+	if (vel.y > 0.0f)
+		unk1B0 = mPosition.y;
 }
 
 void TTobiPuku::calcRootMatrix()
 {
-	gpCurTobiPuku = this;
+	gpCurTobiPuku = (TMoePuku*)this;
 	TSpineEnemy::calcRootMatrix();
+
 	if (mRotation.x != 0.0f) {
 		if (isEaten())
 			return;
-		MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
-		               mPosition.y + 70.0f * mRotation.x / mLandAngle,
+
+		// Tipping over on landing lifts the body so it pivots on its edge
+		// rather than sinking into the ground.
+		MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), getPosition().x,
+		               mPosition.y
+		                   + 70.0f * mRotation.x / TTobiPuku::mLandAngle,
 		               mPosition.z, mRotation.x, mRotation.y, mRotation.z);
 	}
+
 	if (isPichiEffect()) {
-		unk1A0.set(mMActor->getModel()->getAnmMtx(1)[0][3],
-		           mMActor->getModel()->getAnmMtx(1)[1][3],
-		           mMActor->getModel()->getAnmMtx(1)[2][3]);
-		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_PUKU_PICHI,
-		                                            &unk1A0, 1, this);
+		mFlamePos.set(getMActor()->getModel()->getAnmMtx(1)[0][3],
+		              getMActor()->getModel()->getAnmMtx(1)[1][3],
+		              getMActor()->getModel()->getAnmMtx(1)[2][3]);
+		gpMarioParticleManager->emitAndBindToPosPtr(0x177, &mFlamePos, 1,
+		                                            this);
 	}
 }
 
-bool TTobiPuku::isPichiEffect()
-{
-	if (isBckAnm(8))
-		return true;
-	return false;
-}
+bool TTobiPuku::isPichiEffect() { return isBckAnm(PUKU_ANM_PICHI) ? true : false; }
 
-bool TTobiPuku::isJumpBck()
-{
-	if (isBckAnm(6))
-		return true;
-	return false;
-}
+bool TTobiPuku::isJumpBck() { return isBckAnm(PUKU_ANM_JUMP) ? true : false; }
 
-bool TTobiPuku::isDeadBck()
-{
-	if (isBckAnm(1))
-		return true;
-	return false;
-}
+BOOL TTobiPuku::isDeadBck() { return isBckAnm(PUKU_ANM_DEAD) ? TRUE : FALSE; }
 
-bool TTobiPuku::isAttackBck()
-{
-	if (isBckAnm(0))
-		return true;
-	return false;
-}
+bool TTobiPuku::isAttackBck() { return isBckAnm(PUKU_ANM_ATTACK) ? true : false; }
 
 bool TTobiPuku::isFallEndLandBck()
 {
-	if (isBckAnm(5))
-		return true;
-	return false;
+	return isBckAnm(PUKU_ANM_FALL_END_LAND) ? true : false;
 }
 
 bool TTobiPuku::isJumpStartBck()
 {
-	if (isBckAnm(7))
-		return true;
-	return false;
+	return isBckAnm(PUKU_ANM_JUMP_START) ? true : false;
 }
 
-void TTobiPuku::setJumpAnm() { setBckAnm(6); }
+void TTobiPuku::setJumpAnm() { setBckAnm(PUKU_ANM_JUMP); }
 
-void TTobiPuku::setSwimAnm() { setBckAnm(9); }
+void TTobiPuku::setSwimAnm() { setBckAnm(PUKU_ANM_SWIM); }
 
-void TTobiPuku::setAttackAnm() { setBckAnm(0); }
+void TTobiPuku::setAttackAnm() { setBckAnm(PUKU_ANM_ATTACK); }
 
-void TTobiPuku::setPichiAnm() { setBckAnm(8); }
+void TTobiPuku::setPichiAnm() { setBckAnm(PUKU_ANM_PICHI); }
 
-void TTobiPuku::setFallAnm() { setBckAnm(4); }
+void TTobiPuku::setFallAnm() { setBckAnm(PUKU_ANM_FALL); }
 
-void TTobiPuku::setDownAirAnm() { setBckAnm(2); }
+void TTobiPuku::setDownAirAnm() { setBckAnm(PUKU_ANM_DOWN_AIR); }
 
-void TTobiPuku::setDownLandAnm() { setBckAnm(3); }
+void TTobiPuku::setDownLandAnm() { setBckAnm(PUKU_ANM_DOWN_LAND); }
 
-void TTobiPuku::setDeadAnm() { setBckAnm(1); }
+void TTobiPuku::setDeadAnm() { setBckAnm(PUKU_ANM_DEAD); }
 
-void TTobiPuku::setFallEndLandAnm() { setBckAnm(5); }
+void TTobiPuku::setFallEndLandAnm() { setBckAnm(PUKU_ANM_FALL_END_LAND); }
 
 void TTobiPuku::setJumpStartAnm()
 {
-	if (isBckAnm(7))
-		setBckAnm(7);
+	if (isBckAnm(PUKU_ANM_JUMP_START))
+		setBckAnm(PUKU_ANM_JUMP_START);
 }
 
+// UNUSED, 0x2c in the map and size-exact: the guard
+// TNerveTobiPukuBound::execute tests before bound(). The `unk1AE = 1` store is
+// what the last two instructions of the map's 0x2c are; without it the body is
+// 0x24.
 bool TTobiPuku::canBound()
 {
-	// TODO: size matches the map, but in TNerveTobiPukuLand the target
-	// stores unk1AE before testing the value, we test first.
-	bool result;
-	if (unk198 < unk19C->mSLBoundNum.get())
-		result = true;
-	else
-		result = false;
-	unk1AE = result;
-	return result;
+	if (mBoundCount < unk19C->mSLBoundNum.get())
+		return true;
+	unk1AE = 0;
+	return false;
 }
 
+// UNUSED, 0x140 in the map and size-exact as one `||` condition (three
+// separate `if (c) return true;` gave 0x150 and three `li r0, 1` blocks where
+// retail's inlined copies converge on one). Inlined into
+// TobiPukuRollCallback.
 bool TTobiPuku::isRoll()
 {
 	if (mSpine->getCurrentNerve() == &TNerveTobiPukuLand::theNerve()
 	    || mSpine->getCurrentNerve() == &TNerveTobiPukuPrepareFly::theNerve()
-	    || mSpine->getCurrentNerve() == &TNerveTobiPukuReturnLaunch::theNerve())
+	    || mSpine->getCurrentNerve()
+	           == &TNerveTobiPukuReturnLaunch::theNerve())
 		return true;
-	else
-		return false;
+	return false;
 }
 
 void TTobiPuku::behaveToWater(THitActor* param_1)
 {
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuHitWater::theNerve())
+		return;
 
-	
-	
-	if (mSpine->getCurrentNerve() != &TNerveTobiPukuHitWater::theNerve()) {
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_FLY, &mPosition, 0,
-		                                nullptr, 0, 4);
-		mSpine->pushNerve(&TNerveTobiPukuHitWater::theNerve());
-	}
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_FLY, &mPosition);
+	mSpine->pushNerve(&TNerveTobiPukuHitWater::theNerve());
+}
+
+// Binding level worth +8 of low region, landing TTobiPuku::walkBehavior's
+// frame at 0x68 (batch 124).
+static inline int TobiPukuGetTime(const TSpineBase<TLiveActor>* p)
+{
+	int time = p->getTime();
+	return time;
 }
 
 void TTobiPuku::walkBehavior(int param_1, f32 param_2)
@@ -460,83 +553,88 @@ void TTobiPuku::walkBehavior(int param_1, f32 param_2)
 	TWalkerEnemy::walkBehavior(param_1, param_2);
 
 	f32 prevY   = mPosition.y;
-	mPosition.y = unk1E0 + 10.0f * MsSin(2.0f * (f32)mSpine->getTime());
+	mPosition.y = mSwimBaseY + 10.0f * JMASin(2.0f * TobiPukuGetTime(mSpine));
 
-	JGeometry::TVec3<f32> velocity = mLinearVelocity;
-	velocity.y                     = prevY - mPosition.y;
-	mRotation.x                    = MsGetRotFromZaxis(velocity).x;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x68 against 0x60). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+	// Only the pitch is taken: the bob is vertical, so yaw and roll are
+	// left to whatever TWalkerEnemy::walkBehavior set.
+	JGeometry::TVec3<f32> vel(mLinearVelocity);
+	vel.y         = prevY - mPosition.y;
+	mRotation.x = MsGetRotFromZaxis(vel).x;
 }
 
 void TTobiPuku::swimEffect()
 {
-	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-		    PARTICLE_MS_PUKU_AWA, getMActor()->getModel()->getAnmMtx(6), 1,
-		    this);
-		if (emitter) {
-			s16 lifetime = (s16)(mGroundHeight - mPosition.y) * 16 / 100 + 20;
-			if (lifetime > 200)
-				lifetime = 200;
-			emitter->setLifeTime(lifetime);
-		}
-	}
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
+		return;
+
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    PARTICLE_MS_PUKU_AWA, getMActor()->getModel()->getAnmMtx(6), 1, this);
+	if (!emitter)
+		return;
+
+	// Deeper water gives the bubble trail a longer life, up to a cap.
+	s16 life = (s16)(mGroundHeight - mPosition.y) * 16 / 100 + 20;
+	if (life > 200)
+		life = 200;
+	emitter->mBaseLifetime = life;
 }
 
 bool TTobiPuku::isReachedToGoalXZ()
 {
-	JGeometry::TVec3<f32> tmp;
-	tmp = getUnk104().getPoint();
-	tmp -= mPosition;
-	tmp.y = 0.0f;
+	JGeometry::TVec3<f32> d(getUnk104().getPointRaw());
+	d.x -= mPosition.x;
+	d.y -= mPosition.y;
+	d.z -= mPosition.z;
+	d.y = 0.0f;
 
-	if (tmp.x == 0.0f && tmp.z == 0.0f)
+	if (d.x == 0.0f && d.z == 0.0f)
 		return true;
 
-	if (MsVECMag2(&tmp) < 200.0f)
+	if (MsVECMag2(d) < 200.0f)
 		return true;
-	else
-		return false;
+
+	return false;
 }
 
 void TTobiPuku::generateEffectColumWater()
 {
-
-	
-	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
-	TEffectColumWater* eff
+	TEffectColumWater* enemy
 	    = (TEffectColumWater*)gpConductor->makeOneEnemyAppear(
 	        mPosition, "エフェクト水柱マネージャー", 0);
-	if (eff)
-		eff->generate(mPosition, mScaling);
 
-	if (mSpine->getCurrentNerve() != &TNerveTobiPukuGenerate::theNerve()) {
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_TOBIPUKU_TOWATER, &mPosition,
-		                                0, nullptr, 0, 4);
-	} else {
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_TOBIPUKU_FRWATER, &mPosition,
-		                                0, nullptr, 0, 4);
-	}
+	if (enemy)
+		enemy->generate(mPosition, mScaling);
+
+	// Coming up out of the water while the Generate nerve is still running
+	// is the "from water" cue; anything else is an entry splash.
+	if (mSpine->getCurrentNerve() != &TNerveTobiPukuGenerate::theNerve())
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_TOBIPUKU_TOWATER,
+		                                &mPosition);
+	else
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_TOBIPUKU_FRWATER,
+		                                &mPosition, 0, nullptr, 0, 4);
 }
 
+// TODO: 97.3%. One instruction differs: the original computes &unk104 into a
+// register before the inlined getPoint, which neither the direct expression nor
+// binding the result to a reference reproduces.
 void TTobiPuku::attackToMario()
 {
 	SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
-	if (mSpine->getCurrentNerve() != &TNerveTobiPukuAttack::theNerve()
-	    && !unk1AE && !SMS_CheckMarioFlag(MARIO_FLAG_IN_WATER)) {
-		JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
-		unk1D0 = zero;
-		mSpine->pushNerve(&TNerveTobiPukuAttack::theNerve());
-	}
+
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuAttack::theNerve())
+		return;
+	if (unk1AE)
+		return;
+	if (SMS_CheckMarioFlag(MARIO_FLAG_IN_WATER))
+		return;
+
+	JGeometry::TVec3<f32> stop(0.0f, 0.0f, 0.0f);
+	mLaunchVelocity = stop;
+	mSpine->pushNerve(&TNerveTobiPukuAttack::theNerve());
 }
 
 f32 TTobiPuku::getGravityY() const
@@ -546,30 +644,56 @@ f32 TTobiPuku::getGravityY() const
 	return mGravity;
 }
 
-void TTobiPuku::flyStart() { }
+// UNUSED, 0x90 in the map and size-exact: the launch block
+// TNerveTobiPukuGenerate::execute pastes in before pushing the Fly nerve.
+// Rejected alternative: the Fly nerve's per-frame tail, which compiles to 0x74,
+// and a `pushNerve(&TNerveTobiPukuFly::theNerve())` wrapper, which is 0xcc
+// because the singleton expands inside it.
+void TTobiPuku::flyStart()
+{
+	mBoundCount  = 0;
+	unk194       = 1;
+	mVelocity    = mLaunchVelocity;
+	mLaunchAngle = MsGetRotFromZaxis(mVelocity).x;
+	generateEffectColumWater();
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	offLiveFlag(LIVE_FLAG_UNK10);
+}
 
-void TTobiPuku::fallStart() { }
+// UNUSED, 0x74 in the map and size-exact: the block
+// TNerveTobiPukuAttack::execute pastes in before pushing the Fall nerve --
+// stop the horizontal velocity, lift clear of the ground and go airborne.
+// Rejected alternative: the Fall nerve's own `getTime() == 0` head, 0x34.
+void TTobiPuku::fallStart()
+{
+	unk194 = 0;
+	JGeometry::TVec3<f32> vel(mVelocity);
+	JGeometry::TVec3<f32> stop(0.0f, vel.y, 0.0f);
+	mVelocity = stop;
+	mPosition.y += 2.0f;
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+}
 
 void TTobiPuku::hitWater()
 {
-	JGeometry::TVec3<f32> velocity = mVelocity;
+	JGeometry::TVec3<f32> vel(getVelocity());
+	JGeometry::TVec3<f32> away(getPosition().x - SMS_GetMarioPos().x,
+	                           getPosition().y - SMS_GetMarioPos().y,
+	                           mPosition.z - SMS_GetMarioPos().z);
+	if (away.x == 0.0f && away.y == 0.0f && away.z == 0.0f)
+		away.x += 1.0f;
 
-	JGeometry::TVec3<f32> dir;
-	dir.set(mPosition.x - gpMarioPos->x, mPosition.y - gpMarioPos->y,
-	        mPosition.z - gpMarioPos->z);
-	if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-		dir.x += 1.0f;
-	MsVECNormalize(&dir, &dir);
+	MsVECNormalize(away, away);
 
-	f32 power  = unk19C->mSLPowerFromWater.get();
-	velocity.x = dir.x * power;
-	velocity.y = 2.0f * (dir.y * power);
-	velocity.z = dir.z * power;
+	f32 push = unk19C->mSLPowerFromWater.get();
+	vel.x    = away.x * push;
+	vel.y    = 2.0f * (away.y * push);
+	vel.z     = away.z * push;
+	mVelocity = vel;
 
-	mVelocity   = velocity;
-	unk1D0      = velocity;
-	unk1B0      = mPosition.y;
-	mRotation.y = 180.0f - 0.005493164f * *gpMarioAngleY;
+	mLaunchVelocity = vel;
+	unk1B0          = mPosition.y;
+	mRotation.y     = -((*gpMarioAngleY * (360.0f / 65536.0f)) - 180.0f);
 }
 
 void TTobiPuku::kill()
@@ -578,22 +702,30 @@ void TTobiPuku::kill()
 		return;
 
 	mHitPoints = 1;
-	if (mSpine->getCurrentNerve() == &TNerveTobiPukuDie::theNerve() && unk1AD)
-		return;
-
-	unk1AD = 1;
-	mSpine->reset();
-	mSpine->setNext(&TNerveTobiPukuDie::theNerve());
-	mSpine->pushAfterCurrent(mSpine->getDefault());
+	if (mSpine->getCurrentNerve() != &TNerveTobiPukuDie::theNerve()
+	    || !unk1AD) {
+		unk1AD = 1;
+		mSpine->reset();
+		mSpine->setNext(&TNerveTobiPukuDie::theNerve());
+		mSpine->pushAfterCurrent(mSpine->getDefault());
+	}
 }
 
-// TODO: nothing follows the guard in the object.
 void TTobiPuku::forceKill()
 {
-	if (mSpine->getCurrentNerve() == &TNerveTobiPukuDie::theNerve()
-	    || mSpine->getCurrentNerve() == &TNerveTobiPukuPrepareFly::theNerve()
-	    || mSpine->getCurrentNerve() == &TNerveTobiPukuFly::theNerve()
-	    || checkLiveFlag(LIVE_FLAG_UNK10) || !isJumpBck())
+	// TODO: the trailing isJumpBck() is evaluated and tested but its result
+	// goes nowhere, like genEventCoin() above. Whatever consumed it was
+	// compiled out of the retail build.
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuDie::theNerve())
+		return;
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuPrepareFly::theNerve())
+		return;
+	if (mSpine->getCurrentNerve() == &TNerveTobiPukuFly::theNerve())
+		return;
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
+		return;
+
+	if (!isJumpBck())
 		return;
 }
 
@@ -601,15 +733,15 @@ void TTobiPuku::genEventCoin() { isDeadBck(); }
 
 void TTobiPuku::changeOut()
 {
-
-	
-	
 	offLiveFlag(LIVE_FLAG_HIDDEN);
+
+	// Note the direction: the puku takes the block's position when it pops
+	// out, where TSmallEnemy::changeOut moves the block to the enemy.
 	mPosition = mJuiceBlock->mPosition;
-	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
-	                                            &mPosition, 0, nullptr);
+
+	gpMarioParticleManager->emitAndBindToPosPtr(0xCD, &mPosition, 0, nullptr);
 	getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
-	mJuiceBlock->kill();
+	getJuiceBlock()->kill();
 	mJuiceBlock = nullptr;
 }
 
@@ -622,8 +754,11 @@ void TTobiPuku::initAttacker(THitActor* param_1)
 
 void TTobiPuku::scalingChangeActor()
 {
-	f32 xzScale           = MsClamp(mJuiceBlock->unk140.x + 0.02f, 0.0f, 3.0f);
-	mJuiceBlock->unk140.x = mJuiceBlock->unk140.z = xzScale;
+	// The flying variant caps its XZ growth at a fixed 3.0 rather than at
+	// TSmallEnemyManager::mBlockXZScale, which is what TSmallEnemy uses.
+	f32 xzScale = MsClamp(mJuiceBlock->unk140.x + 0.02f, 0.0f, 3.0f);
+
+	mJuiceBlock->unk140.x   = mJuiceBlock->unk140.z = xzScale;
 	mJuiceBlock->mScaling.x = mJuiceBlock->mScaling.z = xzScale;
 
 	f32 yScale              = MsClamp(mJuiceBlock->unk140.y + 0.01f, 0.0f,
@@ -632,41 +767,23 @@ void TTobiPuku::scalingChangeActor()
 	mJuiceBlock->mScaling.y = yScale;
 }
 
-static const char* pukupuku_bastable[] = {
-	0,
-	"/scene/pukupuku/bas/pukupuku_death.bas",
-	"/scene/pukupuku/bas/pukupuku_down_air.bas",
-	"/scene/pukupuku/bas/pukupuku_down_land.bas",
-	0,
-	"/scene/pukupuku/bas/pukupuku_fall_end_land.bas",
-	0,
-	0,
-	"/scene/pukupuku/bas/pukupuku_pitipiti.bas",
-	"/scene/pukupuku/bas/pukupuku_swim.bas",
-	0,
-};
-
 const char** TTobiPuku::getBasNameTable() const { return pukupuku_bastable; }
 
-TPukuPuku::TPukuPuku(const char* param_1)
-    : TTobiPuku(param_1)
+TPukuPuku::TPukuPuku(const char* name)
+    : TTobiPuku(name)
 {
 }
 
-void TPukuPuku::load(JSUMemoryInputStream& param_1)
+void TPukuPuku::load(JSUMemoryInputStream& stream)
 {
-	TSmallEnemy::load(param_1);
+	TSmallEnemy::load(stream);
 	reset();
 	unk1AC = 0;
 }
 
-void TPukuPuku::init(TLiveManager* param_1)
+void TPukuPuku::init(TLiveManager* manager)
 {
-	TWalkerEnemy::init(param_1);
-	mActorType = 0x10000012;
-	unk150     = 0x31;
-	unk19C     = (TTobiPukuSaveLoadParams*)getSaveParam();
-	mMActor->setJointCallback(1, TobiPukuRollCallback);
+	TTobiPuku::init(manager);
 	mSpine->initWith(&TNerveTobiPukuSwimWander::theNerve());
 	gpCurTobiPuku = nullptr;
 }
@@ -679,542 +796,591 @@ void TPukuPuku::reset()
 
 void TMoePuku::calcRootMatrix()
 {
-	gpCurTobiPuku = this;
-	TSpineEnemy::calcRootMatrix();
-	if (mRotation.x != 0.0f) {
-		if (isEaten())
-			return;
-		MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
-		               mPosition.y + 70.0f * mRotation.x / mLandAngle,
-		               mPosition.z, mRotation.x, mRotation.y, mRotation.z);
-	}
-	if (isPichiEffect()) {
-		unk1A0.set(mMActor->getModel()->getAnmMtx(1)[0][3],
-		           mMActor->getModel()->getAnmMtx(1)[1][3],
-		           mMActor->getModel()->getAnmMtx(1)[2][3]);
-		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_PUKU_PICHI,
-		                                            &unk1A0, 1, this);
-	}
-	if (mSpine->getCurrentNerve() == &TNerveTobiPukuFly::theNerve()) {
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_MOEKURI_FLAME, &mPosition, 0,
-		                                nullptr, 0, 4);
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    PARTICLE_MS_MPK_FIRE_A, mMActor->getModel()->getAnmMtx(1), 1, this);
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    PARTICLE_MS_MPK_FIRE_B, mMActor->getModel()->getAnmMtx(1), 1, this);
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    PARTICLE_MS_MPK_FIRE_C, mMActor->getModel()->getAnmMtx(1), 3, this);
-	}
+	TTobiPuku::calcRootMatrix();
+
+	// The flame only burns while the puku is airborne on the Fly nerve.
+	if (mSpine->getCurrentNerve() != &TNerveTobiPukuFly::theNerve())
+		return;
+
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_MOEKURI_FLAME, &mPosition, 0,
+	                                nullptr, 0, 4);
+
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1D1, getMActor()->getModel()->getAnmMtx(1), 1, this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1D2, getMActor()->getModel()->getAnmMtx(1), 1, this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x1F8, getMActor()->getModel()->getAnmMtx(1), 3, this);
 }
 
 void TMoePuku::hitWater()
 {
-
-	
-	
 	TTobiPuku::hitWater();
 
-	MtxPtr mtx = mMActor->getModel()->getAnmMtx(1);
-	unk1A0.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	// The flame trails the head joint rather than the actor origin.
+	MtxPtr mtx = getMActor()->getModel()->getAnmMtx(1);
+	mFlamePos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 
-	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
-	        PARTICLE_MS_MOE_FIRE_OFF, &mPosition, 0, nullptr))
-		emitter->setGlobalScale(JGeometry::TVec3<f32>(2.0f, 2.0f, 2.0f));
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
+	    0x8B, &mPosition, 0, nullptr);
+	if (emitter) {
+		JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+		emitter->setGlobalScale(scale);
+	}
 
-	SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_TO_COOL, &mPosition, 0,
-	                                nullptr, 0, 4);
+	// The burning pukupuku hitting water reuses the wanwan sizzle.
+	SMSGetMSound()->startSoundActor(MSD_SE_BS_WANWAN_TO_COOL, &mPosition);
 }
 
-bool TMoePuku::isPichiEffect()
-{
-	if (isBckAnm(8))
-		return true;
-	return false;
-}
+bool TMoePuku::isPichiEffect() { return isBckAnm(PUKU_ANM_PICHI) ? true : false; }
 
-bool TMoePuku::isJumpBck()
-{
-	if (isBckAnm(6))
-		return true;
-	return false;
-}
+bool TMoePuku::isJumpBck() { return isBckAnm(PUKU_ANM_JUMP) ? true : false; }
 
-bool TMoePuku::isDeadBck()
-{
-	if (isBckAnm(1))
-		return true;
-	return false;
-}
+BOOL TMoePuku::isDeadBck() { return isBckAnm(PUKU_ANM_DEAD) ? TRUE : FALSE; }
 
-bool TMoePuku::isAttackBck()
-{
-	if (isBckAnm(0))
-		return true;
-	return false;
-}
+bool TMoePuku::isAttackBck() { return isBckAnm(PUKU_ANM_ATTACK) ? true : false; }
 
 bool TMoePuku::isFallEndLandBck()
 {
-	if (isBckAnm(5))
-		return true;
-	return false;
+	return isBckAnm(PUKU_ANM_FALL_END_LAND) ? true : false;
 }
 
 bool TMoePuku::isJumpStartBck()
 {
-	if (isBckAnm(7))
-		return true;
-	return false;
+	return isBckAnm(PUKU_ANM_JUMP_START) ? true : false;
 }
 
-void TMoePuku::setJumpAnm() { setBckAnm(6); }
+void TMoePuku::setJumpAnm() { setBckAnm(PUKU_ANM_JUMP); }
 
-void TMoePuku::setSwimAnm() { setBckAnm(9); }
+void TMoePuku::setSwimAnm() { setBckAnm(PUKU_ANM_SWIM); }
 
-void TMoePuku::setAttackAnm() { setBckAnm(0); }
+void TMoePuku::setAttackAnm() { setBckAnm(PUKU_ANM_ATTACK); }
 
-void TMoePuku::setPichiAnm() { setBckAnm(8); }
+void TMoePuku::setPichiAnm() { setBckAnm(PUKU_ANM_PICHI); }
 
-void TMoePuku::setFallAnm() { setBckAnm(4); }
+void TMoePuku::setFallAnm() { setBckAnm(PUKU_ANM_FALL); }
 
-void TMoePuku::setDownAirAnm() { setBckAnm(2); }
+void TMoePuku::setDownAirAnm() { setBckAnm(PUKU_ANM_DOWN_AIR); }
 
-void TMoePuku::setDownLandAnm() { setBckAnm(3); }
+void TMoePuku::setDownLandAnm() { setBckAnm(PUKU_ANM_DOWN_LAND); }
 
-void TMoePuku::setDeadAnm() { setBckAnm(1); }
+void TMoePuku::setDeadAnm() { setBckAnm(PUKU_ANM_DEAD); }
 
-void TMoePuku::setFallEndLandAnm() { setBckAnm(5); }
+void TMoePuku::setFallEndLandAnm() { setBckAnm(PUKU_ANM_FALL_END_LAND); }
 
 void TMoePuku::setJumpStartAnm()
 {
-	if (isBckAnm(7))
-		setBckAnm(7);
+	if (isBckAnm(PUKU_ANM_JUMP_START))
+		setBckAnm(PUKU_ANM_JUMP_START);
 }
 
 void TMoePuku::generateEffectColumWater()
 {
-
-	
-	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
-	TEffectColumWater* eff
+	TEffectColumWater* enemy
 	    = (TEffectColumWater*)gpConductor->makeOneEnemyAppear(
 	        mPosition, "エフェクト水柱マネージャー", 0);
-	if (eff)
-		eff->generate(mPosition, mScaling);
 
-	if (mSpine->getCurrentNerve() != &TNerveTobiPukuGenerate::theNerve()) {
+	if (enemy)
+		enemy->generate(getPosition(), mScaling);
+
+	if (mSpine->getCurrentNerve() != &TNerveTobiPukuGenerate::theNerve())
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_MOEPUKU_TOWATER, &mPosition,
 		                                0, nullptr, 0, 4);
-	} else {
+	else
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_PAKKUN_SHOOT_IMI, &mPosition,
 		                                0, nullptr, 0, 4);
-	}
 
-	JPABaseEmitter* emitter = gpMarioParticleManager->emit(
-	    PARTICLE_MS_M_TOBIKOMI_C, &mPosition, 2, nullptr);
+	// The flame gets doused: a steam puff scaled to the body.
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(0x1D4, &mPosition, 2, nullptr);
 	if (emitter)
-		emitter->setGlobalScale(mScaling);
+		emitter->setGlobalScale(getScaling());
 }
-
-static const char* moepuku_bastable[] = {
-	0,
-	0,
-	"/scene/moepuku/bas/moepuku_down_air.bas",
-	"/scene/moepuku/bas/moepuku_down_land.bas",
-	0,
-	"/scene/moepuku/bas/moepuku_fall_end_land.bas",
-	0,
-	0,
-	"/scene/moepuku/bas/moepuku_pitipiti.bas",
-	0,
-	0,
-};
 
 const char** TMoePuku::getBasNameTable() const { return moepuku_bastable; }
 
+// Binding level over spine->getBody(), worth +4 of low region and landing
+// TNerveTobiPukuAttack::execute exactly (ladder 341).
+static inline TTobiPuku* TobiPukuBody(TSpineBase<TLiveActor>* spine)
+{
+	TTobiPuku* body = (TTobiPuku*)spine->getBody();
+	return body;
+}
+
+// TODO: incorrect size. Map records 0x1ac (428 bytes).
+// TODO: 86.9% of 428 bytes. The structure and call order are right; what
+// differs is how the two MsGetRotFromZaxis results are stored. The original
+// keeps its returned vector in a stack temporary and copies a single float to
+// mRotation, where this assigns the whole vector.
+// 2026-09-22 (99.9%, frame exact, every slot 4 low): the TobiPukuBody binder
+// and by-value f32 levels on the launch-velocity add, the unk1B0 compare,
+// either rotation result, are all +8 (frame +8); getVelocity() for the copy
+// and the raw mVelocity argument likewise.
 DEFINE_NERVE(TNerveTobiPukuGenerate, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->onLiveFlag(LIVE_FLAG_UNK10);
-		self->mPosition.y -= 300.0f;
-		JGeometry::TVec3<f32> velocity = self->mVelocity;
-		self->mRotation.x              = MsGetRotFromZaxis(velocity).x;
-		self->setJumpAnm();
+		puku->onLiveFlag(LIVE_FLAG_UNK10);
+		puku->mPosition.y -= 300.0f;
+		puku->mRotation.x
+		    = MsGetRotFromZaxis(JGeometry::TVec3<f32>(puku->mVelocity)).x;
+		puku->setJumpAnm();
 	}
 
-	self->mPosition.y += self->unk1D0.y;
-	if (self->mPosition.y > self->unk1B0) {
-		self->unk198    = 0;
-		self->unk194    = 1;
-		self->mVelocity = self->unk1D0;
-		self->unk1B4    = MsGetRotFromZaxis(self->unk1D0).x;
-		self->generateEffectColumWater();
-		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		self->offLiveFlag(LIVE_FLAG_UNK10);
+	puku->mPosition.y += puku->mLaunchVelocity.y;
+
+	if (puku->getPosition().y > puku->unk1B0) {
+		puku->mBoundCount = 0;
+		puku->unk194      = 1;
+		puku->mVelocity   = puku->mLaunchVelocity;
+		puku->mLaunchAngle = MsGetRotFromZaxis(puku->mLaunchVelocity).x;
+		puku->generateEffectColumWater();
+		puku->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		puku->offLiveFlag(LIVE_FLAG_UNK10);
 		spine->pushAfterCurrent(&TNerveTobiPukuFly::theNerve());
-		return true;
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
+// Setter level around a scalar member assignment, worth +4 of low region in
+// TNerveTobiPukuFly::execute (ladder 341).
+static inline void TobiPukuSetFlyVelocityY(TTobiPuku* p, f32 y)
+{
+	p->mFlyVelocityY = y;
+}
+
+// TODO: incorrect size. Map records 0x194 (404 bytes).
 DEFINE_NERVE(TNerveTobiPukuFly, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setJumpStartAnm();
-		self->offLiveFlag(LIVE_FLAG_UNK10);
+		puku->setJumpStartAnm();
+		puku->offLiveFlag(LIVE_FLAG_UNK10);
 	}
 
-	if (self->checkCurAnmEnd(0) && self->isJumpStartBck())
-		self->setJumpAnm();
+	if (puku->checkCurAnmEnd(0) && puku->isJumpStartBck())
+		puku->setJumpAnm();
 
-	if (!self->isAirborne()) {
+	if (!puku->isAirborne()) {
 		spine->pushAfterCurrent(&TNerveTobiPukuLand::theNerve());
-		return true;
+		return TRUE;
 	}
 
-	JGeometry::TVec3<f32> velocity  = self->mVelocity;
-	self->unk1E4                    = velocity.y;
-	JGeometry::TVec3<f32> velocity2 = self->mVelocity;
-	self->mRotation.x               = MsGetRotFromZaxis(velocity2).x;
-	return false;
+	JGeometry::TVec3<f32> vel(puku->getVelocity());
+	TobiPukuSetFlyVelocityY(puku, vel.y);
+
+	puku->mRotation.x
+	    = MsGetRotFromZaxis(JGeometry::TVec3<f32>(puku->mVelocity)).x;
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0x198 (408 bytes).
 DEFINE_NERVE(TNerveTobiPukuAttack, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = TobiPukuBody(spine);
+
 	if (spine->getTime() == 0)
-		self->setAttackAnm();
+		puku->setAttackAnm();
 
-	if (self->isAirborne()) {
-		if (self->getCurAnmFrameNo(0) >= 6.0f) {
-			self->unk194                   = 0;
-			JGeometry::TVec3<f32> velocity = self->mVelocity;
-			JGeometry::TVec3<f32> newVelocity;
-			newVelocity.x   = 0.0f;
-			newVelocity.y   = velocity.y;
-			newVelocity.z   = 0.0f;
-			self->mVelocity = newVelocity;
-			self->mPosition.y += 2.0f;
-			self->onLiveFlag(LIVE_FLAG_AIRBORNE);
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x50 against 0x48). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+	if (puku->isAirborne()) {
+		if (puku->getCurAnmFrameNo(0) >= 6.0f) {
+			puku->unk194 = 0;
+			JGeometry::TVec3<f32> vel(puku->mVelocity);
+			JGeometry::TVec3<f32> stop(0.0f, vel.y, 0.0f);
+			puku->mVelocity = stop;
+			puku->mPosition.y += 2.0f;
+			puku->onLiveFlag(LIVE_FLAG_AIRBORNE);
 		}
 
-		if (self->checkCurAnmEnd(0)) {
+		if (puku->checkCurAnmEnd(0)) {
 			spine->pushAfterCurrent(&TNerveTobiPukuFall::theNerve());
-			return true;
+			return TRUE;
 		}
-		return false;
+	} else {
+		return TRUE;
 	}
-	return true;
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0x250 (592 bytes).
 DEFINE_NERVE(TNerveTobiPukuHitWater, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = TobiPukuBody(spine);
+
 	if (spine->getTime() == 0) {
-		if (self->isAirborne()) {
-			if (self->mPosition.y - self->mGroundHeight > 50.0f) {
-				self->setAttackAnm();
-				self->hitWater();
+		if (puku->isAirborne()) {
+			if (puku->mPosition.y - puku->mGroundHeight > 50.0f) {
+				puku->setAttackAnm();
+				puku->hitWater();
 			}
-		} else if (self->unk1AE) {
-			self->setPichiAnm();
+		} else if (puku->unk1AE != 0) {
+			puku->setPichiAnm();
 		}
 	}
 
-	if (!self->isAirborne()) {
-		JGeometry::TVec3<f32> dir;
-		dir.set(self->mPosition.x - gpMarioPos->x, 0.0f,
-		        self->mPosition.z - gpMarioPos->z);
-		if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-			dir.x += 1.0f;
-		MsVECNormalize(&dir, &dir);
-		dir.y = 5.0f;
-		dir.x *= 5.0f;
-		dir.z *= 5.0f;
-		self->mVelocity = dir;
-		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		self->mPosition.y += 5.0f;
+	if (!puku->isAirborne()) {
+		JGeometry::TVec3<f32> away(puku->mPosition.x - SMS_GetMarioPos().x,
+		                           0.0f,
+		                           puku->mPosition.z - SMS_GetMarioPos().z);
+		if (away.x == 0.0f && away.y == 0.0f && away.z == 0.0f)
+			away.x += 1.0f;
+
+		MsVECNormalize(away, away);
+		away.y = 5.0f;
+		away.x *= 5.0f;
+		away.z *= 5.0f;
+		puku->mVelocity = away;
+		puku->onLiveFlag(LIVE_FLAG_AIRBORNE);
+		puku->mPosition.y += 5.0f;
 	}
 
-	if (self->checkCurAnmEnd(0) && self->isAttackBck()) {
-		spine->pushAfterCurrent(&TNerveTobiPukuFall::theNerve());
-		return true;
+	if (puku->checkCurAnmEnd(0)) {
+		if (puku->isAttackBck())
+			spine->pushAfterCurrent(&TNerveTobiPukuFall::theNerve());
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0x1e4 (484 bytes).
+// TODO: 98.3%. The only difference is how the water-type test is grouped:
+// TBGCheckData::isWaterSurface compiles to == 0x100, == 0x101, 0x102..0x105,
+// == 0x4104, while the original groups 0x101..0x105 into one range. Same set of
+// types, so the original's source lists them in a different order. Fixing it
+// means editing the shared predicate in Map/MapData.hpp, which other matched
+// callers depend on.
 DEFINE_NERVE(TNerveTobiPukuFall, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->mRotation.x = 0.0f;
-		self->setFallAnm();
+		puku->mRotation.x = 0.0f;
+		puku->setFallAnm();
 	}
 
-	if (!self->isAirborne()) {
-		if (self->getGroundPlane()->isWaterSurface()) {
+	if (!puku->isAirborne()) {
+		if (puku->getGroundPlane()->isWaterSurface()) {
 			spine->pushAfterCurrent(&TNerveTobiPukuDie::theNerve());
-			self->generateEffectColumWater();
-			self->onLiveFlag(LIVE_FLAG_UNK20000);
+			puku->generateEffectColumWater();
+			puku->onLiveFlag(LIVE_FLAG_UNK20000);
 		} else {
 			spine->pushAfterCurrent(&TNerveTobiPukuDie::theNerve());
-			self->onLiveFlag(LIVE_FLAG_UNK20000);
+			puku->onLiveFlag(LIVE_FLAG_UNK20000);
 		}
-		return true;
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0x118 (280 bytes).
 DEFINE_NERVE(TNerveTobiPukuPitiPiti, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
-	if (spine->getTime() == 0)
-		self->setPichiAnm();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
 
-	if (self->checkCurAnmEnd(0)) {
-		TTobiPukuSaveLoadParams* params
-		    = (TTobiPukuSaveLoadParams*)self->getSaveParams();
-		if (spine->getTime() > params->mSLLifeTimer.get()) {
-			self->unk1AD = 0;
-			spine->pushAfterCurrent(&TNerveTobiPukuDie::theNerve());
-			return true;
-		}
+	if (spine->getTime() == 0)
+		puku->setPichiAnm();
+
+	if (puku->checkCurAnmEnd(0)
+	    && spine->getTime() > puku->getSaveParam2()->mSLLifeTimer.get()) {
+		puku->unk1AD = 0;
+		spine->pushAfterCurrent(&TNerveTobiPukuDie::theNerve());
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0x1fc (508 bytes).
 DEFINE_NERVE(TNerveTobiPukuDie, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = TobiPukuBody(spine);
+
 	if (spine->getTime() == 0) {
-		if (self->isAirborne()) {
-			self->onHitFlag(HIT_FLAG_NO_COLLISION);
-			JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
-			JGeometry::TVec3<f32> velocity = self->mVelocity;
-			zero.y                         = velocity.y;
-			self->mVelocity                = zero;
-			self->setDownAirAnm();
-		} else if (self->unk1AD) {
-			self->onHitFlag(HIT_FLAG_NO_COLLISION);
-			self->setDownLandAnm();
+		if (puku->isAirborne()) {
+			puku->mHitFlags |= HIT_FLAG_NO_COLLISION;
+			JGeometry::TVec3<f32> stop(0.0f, 0.0f, 0.0f);
+			JGeometry::TVec3<f32> vel(puku->mVelocity);
+			stop.y          = vel.y;
+			puku->mVelocity = stop;
+			puku->setDownAirAnm();
+		} else if (puku->unk1AD != 0) {
+			puku->mHitFlags |= HIT_FLAG_NO_COLLISION;
+			puku->setDownLandAnm();
 		} else {
-			self->onLiveFlag(LIVE_FLAG_UNK20000);
-			self->setDeadAnm();
+			puku->onLiveFlag(LIVE_FLAG_UNK20000);
+			puku->setDeadAnm();
 		}
 	}
 
-	if (self->checkCurAnmEnd(0)) {
-		self->onLiveFlag(LIVE_FLAG_DEAD);
-		self->onLiveFlag(LIVE_FLAG_UNK8);
-		self->offLiveFlag(LIVE_FLAG_HIDDEN);
-		self->offLiveFlag(LIVE_FLAG_UNK10000);
-		self->mHolder = nullptr;
-		self->stopAnmSound();
+	if (puku->checkCurAnmEnd(0)) {
+		puku->onLiveFlag(LIVE_FLAG_DEAD);
+		puku->onLiveFlag(LIVE_FLAG_UNK8);
+		puku->offLiveFlag(LIVE_FLAG_HIDDEN);
+		puku->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+		puku->mHolder = nullptr;
+		puku->stopAnmSound();
 		spine->reset();
 		spine->setNext(&TNerveSmallEnemyDie::theNerve());
 		spine->pushAfterCurrent(spine->getDefault());
-		self->onHitFlag(HIT_FLAG_NO_COLLISION);
-		self->genRandomItem();
-		return true;
+		puku->mHitFlags |= HIT_FLAG_NO_COLLISION;
+		puku->genRandomItem();
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
 DEFINE_NERVE(TNerveTobiPukuLand, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() < 2) {
-		if (self->getGroundPlane()->isWaterSurface()) {
-			self->mPosition.y -= 10.0f;
-			self->onLiveFlag(LIVE_FLAG_UNK10);
-			self->generateEffectColumWater();
+		if (puku->getGroundPlane()->isWaterSurface()) {
+			f32 y             = puku->getPosition().y;
+			puku->mPosition.y = y - 10.0f;
+			puku->onLiveFlag(LIVE_FLAG_UNK10);
+			puku->generateEffectColumWater();
 			if (TTobiPuku::mReturnLaunchSw) {
-				self->unk1E4 *= 0.8f;
-				self->unk1E8 = (180.0f - self->mRotation.x)
-				               / fabsf(600.0f / self->unk1E4);
+				puku->mFlyVelocityY *= 0.8f;
+				puku->mReturnPitchStep
+				    = (180.0f - puku->getRotation().x)
+				      / fabsf(600.0f / puku->mFlyVelocityY);
 			}
 		} else {
 			if (TTobiPuku::mBoundSw) {
-				if (self->canBound()) {
+				if (puku->canBound()) {
 					spine->pushAfterCurrent(&TNerveTobiPukuBound::theNerve());
-					return true;
+					return TRUE;
 				}
 			}
 
-			self->unk1B8[0] = self->mPosition;
-			self->setFallEndLandAnm();
-			self->mRotation.x = 0.0f;
+			puku->mLand[0] = puku->getPosition();
+			puku->setFallEndLandAnm();
+			puku->mRotation.x = 0.0f;
 		}
-	} else if (self->isFallEndLandBck()) {
-		if (spine->getTime() == 1) {
-			self->unk1B8[1].set(self->mPosition.x - self->unk1B8[0].x,
-			                    self->mPosition.y - self->unk1B8[0].y,
-			                    self->mPosition.z - self->unk1B8[0].z);
+	} else if (puku->isFallEndLandBck()) {
+		if (spine->getTime() == 1)
+			puku->mLand[1].set(puku->mPosition.x - puku->mLand[0].x,
+			                   puku->mPosition.y - puku->mLand[0].y,
+			                   puku->mPosition.z - puku->mLand[0].z);
+
+		s32 time = spine->getTime();
+		if (time < 20) {
+			f32 t          = 0.05f * (f32)time;
+			puku->mPosition = puku->mLand[0];
+			puku->mPosition.x += puku->mLand[1].x * t;
+			puku->mPosition.y += puku->mLand[1].y * t;
+			puku->mPosition.z += puku->mLand[1].z * t;
 		}
 
-		if (spine->getTime() < 20) {
-			f32 rate        = 0.05f * (f32)spine->getTime();
-			self->mPosition = self->unk1B8[0];
-			self->mPosition.x += self->unk1B8[1].x * rate;
-			self->mPosition.y += self->unk1B8[1].y * rate;
-			self->mPosition.z += self->unk1B8[1].z * rate;
-		}
-
-		if (self->checkCurAnmEnd(0)) {
+		if (puku->checkCurAnmEnd(0)) {
 			spine->pushAfterCurrent(&TNerveTobiPukuPitiPiti::theNerve());
-			return true;
+			return TRUE;
 		}
 	} else if (TTobiPuku::mReturnLaunchSw) {
-		f32 dy                         = self->unk1E0 - self->mPosition.y;
-		JGeometry::TVec3<f32> velocity = self->unk1D0;
-		velocity.y                     = self->unk1D0.y *= 0.5f;
-		velocity.z                     = self->unk1D0.z *= 0.5f;
-		// The rate below is overwritten by unk1E4 before it is read;
-		// the object keeps both stores.
-		velocity.y = self->unk1E4 * (600.0f - dy) / 600.0f;
-		self->mRotation.x
-		    = MsClamp(self->mRotation.x + self->unk1E8, 0.0f, 180.0f);
-		f32 cos = MsCos(self->mRotation.x);
-		velocity.x *= cos;
-		velocity.z *= cos;
-		velocity.y = self->unk1E4;
-		self->mPosition.x += velocity.x;
-		self->mPosition.y += velocity.y;
-		self->mPosition.z += velocity.z;
-		if (fabsf(dy) > 120.0f)
-			self->unk1EC = MsClamp(self->unk1EC + 3.0f, 0.0f, 180.0f);
-		if (fabsf(dy) > 600.0f) {
+		f32 drop = puku->mSwimBaseY - puku->mPosition.y;
+		JGeometry::TVec3<f32> vel(puku->mLaunchVelocity);
+		// TODO: retail halves the launch velocity's y into vel.x; read
+		// literally off the asm (an original x/y slip, most likely).
+		vel.x = puku->mLaunchVelocity.y *= 0.5f;
+		vel.z = puku->mLaunchVelocity.z *= 0.5f;
+		vel.y = puku->mFlyVelocityY * (600.0f - drop) / 600.0f;
+
+		f32 pitch = puku->mRotation.x + puku->mReturnPitchStep;
+		if (pitch > 180.0f)
+			pitch = 180.0f;
+		else if (pitch < 0.0f)
+			pitch = 0.0f;
+		puku->mRotation.x = pitch;
+
+		f32 cosPitch = JMASCos(DEG2SHORTANGLE(puku->mRotation.x));
+		vel.x *= cosPitch;
+		vel.z *= cosPitch;
+		vel.y = puku->mFlyVelocityY;
+		puku->mPosition += vel;
+
+		f32 absDrop = fabsf(drop);
+		if (absDrop > 120.0f) {
+			f32 spread = 3.0f + puku->unk1EC;
+			if (spread > 180.0f)
+				spread = 180.0f;
+			else if (spread < 0.0f)
+				spread = 0.0f;
+			puku->unk1EC = spread;
+		}
+
+		if (fabsf(drop) > 600.0f) {
 			spine->pushAfterCurrent(&TNerveTobiPukuReturnLaunch::theNerve());
-			return true;
+			return TRUE;
 		}
 	} else {
-		self->mPosition.y -= 12.0f;
-		if (self->isJumpBck() && self->mRotation.x < TTobiPuku::mLandAngle)
-			self->mRotation.x += 1.2f;
+		f32 y             = puku->mPosition.y;
+		puku->mPosition.y = y - 12.0f;
+
+		if (puku->isJumpBck()) {
+			if (puku->mRotation.x < TTobiPuku::mLandAngle)
+				puku->mRotation.x += 1.2f;
+		}
+
 		if (spine->getTime() > 100) {
-			self->onLiveFlag(LIVE_FLAG_DEAD);
-			return true;
+			puku->onLiveFlag(LIVE_FLAG_DEAD);
+			return TRUE;
 		}
 	}
-	return false;
+
+	return FALSE;
 }
 
+// The bounce start, one inline level below TNerveTobiPukuBound::execute: its
+// velocity vector is the extra TVec3 of low region retail's frame has. Parked
+// TU-local; retail's level is presumably a TTobiPuku inline.
+static inline void TobiPukuStartBound(TTobiPuku* puku)
+{
+	puku->unk1AE = 1;
+	int count    = puku->mBoundCount;
+	if (count < puku->unk19C->mSLBoundNum.get()) {
+		puku->mBoundCount = count + 1;
+
+		f32 damp = puku->unk19C->mSLBoundVal.get();
+		JGeometry::TVec3<f32> vel(puku->mLaunchVelocity);
+		vel.x *= damp;
+		vel.z *= damp;
+		vel.y = (TTobiPuku::mBoundVelocityY * damp
+		         * (puku->unk1B0 - puku->mGroundHeight))
+		        / 30.0f;
+
+		puku->mLaunchVelocity = vel;
+		puku->mVelocity       = vel;
+		puku->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
+}
+
+// The tail reads the body through getVelocity() and getPosition().
 DEFINE_NERVE(TNerveTobiPukuBound, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
-	// TODO: this block is almost certainly an inlined TTobiPuku::bound()
-	// (same code, and bound() compiles to exactly the 0xC8 bytes of the map),
-	// but calling bound() here puts the frame 12 bytes further off than
-	// spelling it out, so the call is not used yet.
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->unk1AE = 1;
-		if (self->unk198 < self->unk19C->mSLBoundNum.get()) {
-			self->unk198++;
-			f32 boundVal                   = self->unk19C->mSLBoundVal.get();
-			JGeometry::TVec3<f32> velocity = self->unk1D0;
-			velocity.x *= boundVal;
-			velocity.z *= boundVal;
-			velocity.y = TTobiPuku::mBoundVelocityY * boundVal
-			             * (self->unk1B0 - self->mGroundHeight) / 30.0f;
-			self->unk1D0    = velocity;
-			self->mVelocity = velocity;
-			self->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		}
+		TobiPukuStartBound(puku);
 	}
 
-	JGeometry::TVec3<f32> velocity2 = self->mVelocity;
-	if (velocity2.y > 0.0f)
-		self->unk1B0 = self->mPosition.y;
+	JGeometry::TVec3<f32> vel(puku->getVelocity());
+	if (vel.y > 0.0f)
+		puku->unk1B0 = puku->getPosition().y;
 
-	if (!self->isAirborne()) {
+	if (!puku->isAirborne()) {
 		spine->pushAfterCurrent(&TNerveTobiPukuLand::theNerve());
-		return true;
+		return TRUE;
 	}
-	return false;
+	return FALSE;
 }
 
 DEFINE_NERVE(TNerveTobiPukuPrepareFly, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		f32 angle    = MsWrap(self->unk1B4, 0.0f, 360.0f);
-		self->unk1F0 = (angle - self->mRotation.x) / 60.0f;
+		f32 angle = puku->mLaunchAngle;
+		while (angle >= 360.0f)
+			angle -= 360.0f;
+		while (angle < 0.0f)
+			angle += 360.0f;
+		puku->mRotStep = (angle - puku->mRotation.x) / 60.0f;
 	}
 
-	self->mPosition.x
-	    += 0.016666668f * (self->unk1DC->mPosition.x - self->mPosition.x);
-	self->mPosition.y
-	    += 0.016666668f * (self->unk1DC->mPosition.y - self->mPosition.y);
-	self->mPosition.z
-	    += 0.016666668f * (self->unk1DC->mPosition.z - self->mPosition.z);
+	// `+=` on the member puts the component in f1 and the 1/60 literal in
+	// f2 (a named copy of the component swaps them); the one getPosition()
+	// read is the reference temporary that sizes the frame at 0x40.
+	puku->mPosition.x += (1.0f / 60.0f)
+	                     * (puku->mLaunchPad->getPosition().x - puku->mPosition.x);
+	puku->mPosition.y
+	    += (1.0f / 60.0f) * (puku->mLaunchPad->mPosition.y - puku->mPosition.y);
+	puku->mPosition.z
+	    += (1.0f / 60.0f) * (puku->mLaunchPad->mPosition.z - puku->mPosition.z);
 
-	self->unk1EC = MsClamp(self->unk1EC - 3.0f, 0.0f, 180.0f);
+	f32 spread = puku->unk1EC - 3.0f;
+	if (spread > 180.0f)
+		spread = 180.0f;
+	else if (spread < 0.0f)
+		spread = 0.0f;
+	puku->unk1EC = spread;
 
-	self->mRotation.x += self->unk1F0;
+	puku->mRotation.x += puku->mRotStep;
 
-	if ((f32)spine->getTime() == 50.0f)
-		self->setJumpStartAnm();
+	if (spine->getTime() == 50.0f)
+		puku->setJumpStartAnm();
 
-	if ((f32)spine->getTime() > 60.0f) {
-		self->unk1DC->forceLaunch(self);
-		self->reset();
+	if (spine->getTime() > 60.0f) {
+		puku->mLaunchPad->forceLaunch(puku);
+		puku->reset();
 	}
-	return false;
+	return FALSE;
 }
 
+// TODO: frame 0x70 exact; the named padPos reference is retail's word above
+// dir (c-t6), so dir sits at retail's 0x58. The inline temporaries below it
+// are still placed differently (retail has 5 more words between the first
+// two and 6 fewer below them).
 DEFINE_NERVE(TNerveTobiPukuReturnLaunch, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setGoalPath(TPathNode(self->unk1DC->mPosition));
-		self->setSwimAnm();
-		self->unk1E0 = self->mPosition.y;
+		const JGeometry::TVec3<f32>& padPos = puku->mLaunchPad->getPosition();
+		puku->setGoalPath(padPos);
+		puku->setSwimAnm();
+		puku->mSwimBaseY = puku->mPosition.y;
 	}
 
-	self->swimEffect();
-	if (self->isReachedToGoalXZ()) {
+	puku->swimEffect();
+
+	if (puku->isReachedToGoalXZ()) {
 		spine->pushAfterCurrent(&TNerveTobiPukuPrepareFly::theNerve());
-		return true;
+		return TRUE;
 	}
 
-	JGeometry::TVec3<f32> diff = self->unk1DC->mPosition;
-	diff.sub(self->mPosition);
-	JGeometry::TVec3<f32> dir = diff;
+	// Copy-initialising from `a - b` is what reaches the map's out-of-line
+	// TVec3::sub: the copy constructor is one inline level and the
+	// difference nested in its argument two more.
+	JGeometry::TVec3<f32> dir = puku->mLaunchPad->mPosition - puku->mPosition;
 	dir.y                     = 0.0f;
-	MsVECNormalize(&dir, &dir);
-	self->unk1D0.x *= 0.99f;
-	self->unk1D0.z *= 0.99f;
-	self->mPosition.x += dir.x * self->mMarchSpeed - self->unk1D0.x;
-	self->mPosition.z += dir.z * self->mMarchSpeed - self->unk1D0.z;
-	self->unk1EC = MsClamp(self->unk1EC + 1.0f, 0.0f, 180.0f);
-	return false;
+	MsVECNormalize(dir, dir);
+
+	f32 speed = puku->mMarchSpeed;
+	puku->mLaunchVelocity.x *= 0.99f;
+	puku->mLaunchVelocity.z *= 0.99f;
+	puku->mPosition.x += dir.x * speed - puku->mLaunchVelocity.x;
+	puku->mPosition.z += dir.z * speed - puku->mLaunchVelocity.z;
+
+	f32 spread = 1.0f + puku->unk1EC;
+	if (spread > 180.0f)
+		spread = 180.0f;
+	else if (spread < 0.0f)
+		spread = 0.0f;
+	puku->unk1EC = spread;
+
+	return FALSE;
 }
 
+// TODO: incorrect size. Map records 0xb4 (180 bytes).
 DEFINE_NERVE(TNerveTobiPukuSwimWander, TLiveActor)
 {
-	TTobiPuku* self = (TTobiPuku*)spine->getBody();
+	TTobiPuku* puku = (TTobiPuku*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->unk1E0 = self->mPosition.y;
-		self->setSwimAnm();
-		self->initialGraphNode();
-		self->onLiveFlag(LIVE_FLAG_UNK10);
+		puku->mSwimBaseY = puku->mPosition.y;
+		puku->setSwimAnm();
+		puku->initialGraphNode();
+		puku->mLiveFlag |= LIVE_FLAG_UNK10;
 	}
 
-	if (self->isReachedToGoalXZ())
-		self->goToRandomNextGraphNode();
+	if (puku->isReachedToGoalXZ())
+		puku->goToRandomNextGraphNode();
 
-	self->walkBehavior(0, 1.5f);
-	return false;
+	puku->walkBehavior(0, 1.5f);
+	return FALSE;
 }

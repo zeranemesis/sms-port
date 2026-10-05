@@ -274,6 +274,9 @@ void GXSetTevSwapModeTable(GXTevSwapSel table, GXTevColorChan red,
 	gx->bpSent = 0;
 }
 
+// UNUSED, and empty at its 0x4 map size.
+void GXSetTevClampMode(void) { }
+
 void GXSetAlphaCompare(GXCompare comp0, u8 ref0, GXAlphaOp op, GXCompare comp1,
                        u8 ref1)
 {

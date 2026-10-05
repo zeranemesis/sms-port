@@ -9,19 +9,18 @@
 #include <System/MarioGamePad.hpp>
 #include <M3DUtil/M3UModelMario.hpp>
 #include <Map/Map.hpp>
+#include <System/StageUtil.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-bool SMS_isMultiPlayerMap();
 
 // TODO: stuff from other rogue includes
 static JGeometry::TVec3<f32> cDeformedTerrainCenter(0.0f, 5000.0f, 0.0f);
 static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
 static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
-const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-const char cDirtyTexName[]  = "H_ma_rak_dummy";
+#include <Player/MarioDirtyStrings.hpp>
 
 TMario::TMario()
     : TTakeActor("HitActor")
@@ -132,14 +131,14 @@ TMario::TMario()
 	unkF6                = 0;
 	mLightID             = 0;
 	mAnimationId         = 0xc3;
-	unkFC                = 0;
-	unkFE                = 0;
-	unk100               = 0;
+	unkFC[0]             = 0;
+	unkFC[1]             = 0;
+	unkFC[2]             = 0;
 	unk104               = 0.0f;
 	unk108               = nullptr;
 	mFlag                = 0;
 	mPrevFlag            = 0;
-	mHealth              = mDeParams.mHpMax.get();
+	mHealth              = mDeParams.mHPMax.get();
 	unk122               = 0;
 	unk124               = 0;
 	mHotTimer            = 0;
@@ -218,8 +217,8 @@ TMario::TMario()
 	mHandModels[1][0] = nullptr;
 	mHandModels[1][1] = nullptr;
 
-	mJointIdChnChest = 0;
 	mJointIdChest    = 0;
+	mJointIdChnChest = 0;
 	mJointIdArmR1    = 0;
 	mJointIdArmL1    = 0;
 	mJointIdHandR    = 0;
@@ -340,11 +339,8 @@ void TMario::load(JSUMemoryInputStream& stream)
 
 void TMario::loadAfter()
 {
-
-	
-	
 	if (checkFlag(MARIO_FLAG_HAS_FLUDD))
-		mWaterGun->initInLoadAfter();
+		getFludd()->initInLoadAfter();
 
 	if (mYoshi != nullptr)
 		mYoshi->initInLoadAfter();
@@ -356,10 +352,10 @@ void TMario::loadAfter()
 
 	if (isMario())
 		SMSGetMSound()->setPlayerInfo(&mPosition, &mPrevPosition,
-		                              mModel->getModel()->getAnmMtx(1), true);
+		                              getM3UModel()->getModel()->getAnmMtx(1), true);
 	else
 		SMSGetMSound()->setPlayerInfo(&mPosition, &mPrevPosition,
-		                              mModel->getModel()->getAnmMtx(1), false);
+		                              getM3UModel()->getModel()->getAnmMtx(1), false);
 
 	finalDrawInitialize();
 	initMirrorModel();
@@ -367,7 +363,7 @@ void TMario::loadAfter()
 
 void TMario::initValues()
 {
-	mHealth     = mDeParams.mHpMax.get();
+	mHealth     = mDeParams.mHPMax.get();
 	mDirty      = 0.0f;
 	mOilBrake   = 1.0f;
 	mDirtyTimer = 0;
@@ -416,11 +412,7 @@ void TMario::initValues()
 	unk468 = 0.0f;
 	unk46C = 0.0f;
 
-#ifdef VERSION_GMSP01
 	mAnmSound = new MAnmSoundMario(SMSGetMSound());
-#else
-	mAnmSound = new MAnmSound(SMSGetMSound());
-#endif
 	mAnmSound->initAnmSound(nullptr, 1, 0.0f);
 
 	unk4EC          = 0;
@@ -434,13 +426,13 @@ void TMario::initValues()
 	             mDeParams.mAttackHeight.get(), mDeParams.mDamageRadius.get(),
 	             mDeParams.mDamageHeight.get());
 
-	unk390 = new TMBindShadowBody(this, mModel->getModel(), 1.0f);
+	unk390 = new TMBindShadowBody(this, getM3UModel()->getModel(), 1.0f);
 
 	unk92  = 0x11;
 	unkA2  = 0xAD;
 	unkC6  = 0x22;
 	unkD6  = 0x33;
-	unk102 = 0xAD;
+	unkFC[3] = 0xAD;
 	unk12A = 0x44;
 	unk13E = 0x55;
 	unk37C = 0x99;
@@ -462,11 +454,14 @@ void TMario::resetHistory()
 	unk53B = 0;
 }
 
+// UNUSED in the retail executable; the map records a four-byte body.
+void TMario::stageSetting() { }
+
 void TMario::setGamePad(TMarioGamePad* pad) { mGamePad = pad; }
 
 TMario::TDeParams::TDeParams()
     : TParams("/Mario/Mario.prm")
-    , mHpMax(this, 8, JDrama::TNameRef::calcKeyCode("mHPMax"), "mHPMax")
+    , PARAM_INIT(mHPMax, 8)
     , PARAM_INIT(mRunningMax, 45.0f)
     , PARAM_INIT(mDashMax, 60.0f)
     , PARAM_INIT(mDashAcc, 0.5f)

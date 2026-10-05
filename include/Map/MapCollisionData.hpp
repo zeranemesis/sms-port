@@ -14,8 +14,12 @@ public:
 
 	virtual void setPreNode(TBGCheckList*) { }
 
-	// fabricated
-	TBGCheckList* getNext() { return mNext; }
+	// fabricated; binder-shaped: MapMakeList's list walkers need its word
+	TBGCheckList* getNext()
+	{
+		TBGCheckList* next = mNext;
+		return next;
+	}
 	const TBGCheckList* getNext() const { return mNext; }
 	void setNext(TBGCheckList* v) { mNext = v; }
 
@@ -35,7 +39,11 @@ public:
 	}
 
 	// fabricated
-	TBGCheckListWarp* getPreNode() { return unkC; }
+	TBGCheckListWarp* getPreNode()
+	{
+		TBGCheckListWarp* preNode = unkC;
+		return preNode;
+	}
 
 public:
 	/* 0xC */ TBGCheckListWarp* unkC;
@@ -48,6 +56,7 @@ public:
 	TBGCheckListRoot() { }
 
 	// fabricated
+	const TBGCheckList* getGroundList() const { return unk0[0].getNext(); }
 	const TBGCheckList* getWallList() const { return unk0[2].getNext(); }
 	const TBGCheckList* getRoofList() const { return unk0[1].getNext(); }
 
@@ -151,6 +160,7 @@ public:
 	static int checkWallList(const TBGCheckList*, TBGWallCheckRecord*);
 
 	void init(JSUMemoryInputStream&);
+	void initAllCheckDataAndList();
 	void initMoveCollision();
 	void initGrid(TBGCheckListRoot*);
 
@@ -183,7 +193,31 @@ public:
 
 	TBGCheckData* getCheckDataPoolTop() { return &unk28[unk34]; }
 
+	// fabricated. removeCheckListData's sentinel store goes through this
+	// setter: retail computes `&unk42[start]` into r3, which only an inlined
+	// member's address arithmetic does (raw, the address lands in r5).
+	// Measured there: the matching *reader* is the raw `unk42[start]`. A
+	// `getEntryStart(int) const` for the two reads is +8 of frame and fixes
+	// nothing, and using both is worse (99.8%), so only the write wants the
+	// level.
+	void setEntryStart(int id, u16 v) { unk42[id] = v; }
+
+	// TODO: rejected here, trial table for MapMakeList's two open frames.
+	// `getWarpNode(i)` (= `&unk30[i]`) is a legal-looking indexed fork but
+	// neither function lands: `updateCheckListNode` (0x48 vs 0x60) saturates
+	// at +8 over all 32 subsets of its five sites, and the three sites that
+	// would buy +16 rotate every callee-saved register (98.0%, 26 diffs);
+	// `removeCheckListData` (0x48 vs 0x70) reaches 0x58 at best, with or
+	// without unk40 and unk42 forks (64 combinations searched). Both frames
+	// need ~24 bytes from something else.  (Found in research c-r30: the
+	// binder-shaped TBGCheckList::getNext() and TBGCheckListWarp::getPreNode()
+	// close both.)
+	// TBGCheckListWarp* getWarpNode(int i) { return &unk30[i]; }
+
 public:
+	// fabricated: header round 20 accessor candidates
+	f32 getGridExtentX() const { return mGridExtentX; }
+
 	/* 0x0 */ f32 mGridExtentX;
 	/* 0x4 */ f32 mGridExtentY;
 	/* 0x8 */ int unk8;

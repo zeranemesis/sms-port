@@ -18,8 +18,7 @@
 static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
 static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
 
-const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-const char cDirtyTexName[]  = "H_ma_rak_dummy";
+#include <Player/MarioDirtyStrings.hpp>
 
 static const char* MtxCalcTypeName[] = {
 	"MActorMtxCalcType_Basic クラシックスケールＯＮ",
@@ -40,15 +39,29 @@ static const s32 cParticleIDs[] = {
 	MAP_POLLUTION_MS_M_TOKEOS,
 };
 
+// Keep the flag pointer as a function-scope local: its lifetime gives the
+// compiler the retail callee-saved allocation across both loading branches.
 void TMario::initParticle()
 {
-	for (int i = 0; i < 3; ++i) {
-		const char* fileName = cParticleFileNames[i];
+	const char* fileName;
+	bool* particleFlag;
+	int i;
+	for (i = 0; i < 3; ++i) {
+		fileName = cParticleFileNames[i];
 		if (JKRFileLoader::getGlbResource(fileName)) {
-			if (i < 1)
-				SMS_LoadParticle(fileName, cParticleIDs[i]);
-			else
-				SMS_LoadParticle(fileName, cParticleIDs[i]);
+			if (i < 1) {
+				particleFlag = &gParticleFlagLoaded[(u16)cParticleIDs[i]];
+				if (!*particleFlag) {
+					gpResourceManager->load(fileName, cParticleIDs[i]);
+					*particleFlag = true;
+				}
+			} else {
+				particleFlag = &gParticleFlagLoaded[(u16)cParticleIDs[i]];
+				if (!*particleFlag) {
+					gpResourceManager->load(fileName, cParticleIDs[i]);
+					*particleFlag = true;
+				}
+			}
 		}
 	}
 }
@@ -94,27 +107,45 @@ void TMario::emitSmoke(s16 rot)
 		    PARTICLE_MS_MARIWALK1_A, &mPosition, 0, rot, 0, 0, nullptr);
 }
 
-#pragma dont_inline on
+// The named model binder is the statement that puts this body over the
+// depth-2 budget: emitSweatSometimes() reaches it through the inlined
+// emitSweatSometimes(s16) and calls it, while the UNUSED overload (depth 1)
+// expands it.
 void TMario::emitSweat(s16 rot)
 {
 	if (!checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)
 	    && !checkFlag(MARIO_FLAG_IN_ANY_WATER) && !isUnderWater()) {
-		MtxPtr mtx = mModel->getModel()->getAnmMtx(mJointIdHead);
 		JGeometry::TVec3<f32> pos;
-		pos.x = mtx[0][3];
-		pos.y = mtx[1][3];
-		pos.z = mtx[2][3];
+		J3DModel* model = getM3UModel()->getModel();
+		MtxPtr mtx      = model->getAnmMtx(mJointIdHead);
+		pos.x           = mtx[0][3];
+		pos.y           = mtx[1][3];
+		pos.z           = mtx[2][3];
 		gpMarioParticleManager->emitWithRotate(PARTICLE_MS_ASE, &pos, 0, rot, 0,
 		                                       0, nullptr);
 	}
 }
-#pragma dont_inline off
 
-void TMario::emitSweatSometimes()
+void TMario::emitSweatSometimes() { emitSweatSometimes(mFaceAngle.y); }
+
+// UNUSED (0xe4): emitSweat (0xd4) expanded at depth 1 plus a four
+// instruction guard.
+void TMario::emitSweatSometimes(s16 rot)
 {
-	s16 angle = mFaceAngle.y;
-	if (!(gpMarDirector->mMoveTickCount & 0xF))
-		emitSweat(angle);
+	if (!(gpMarDirector->unk58 & 0xF))
+		emitSweat(rot);
+}
+
+// UNUSED (0x64). Dead code: nothing in the tree names it, so only the size
+// constrains the body. Two bound emitters plus nothing else is 0x58
+// (emitRotateShootEffect's shape), so one statement is missing.
+// TODO: incorrect size -- the recovery particle ids are unrecoverable.
+void TMario::emitRecover()
+{
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_A,
+	                                            &mCenterPos, 1, this);
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_B,
+	                                            &mCenterPos, 1, this);
 }
 
 void TMario::emitGetEffect()
@@ -126,15 +157,27 @@ void TMario::emitGetEffect()
 
 void TMario::emitGetWaterEffect()
 {
-	const JGeometry::TVec3<f32>* position = &unk160;
-	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_B, position,
-	                                            0, nullptr);
+	JGeometry::TVec3<f32>* pos = &unk160;
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ITEMGET1_B, pos, 0,
+	                                            nullptr);
 }
 
 void TMario::emitGetCoinEffect(JGeometry::TVec3<f32>* pos)
 {
 	gpMarioParticleManager->emit(PARTICLE_MS_COINGET_A, pos, 0, nullptr);
 	gpMarioParticleManager->emit(PARTICLE_MS_COINGET_B, pos, 0, nullptr);
+}
+
+// UNUSED (0x70) -- exactly the size of strongTouchDownEffect below, which is
+// the evidence for the same two-emitter shape. @fabricated: the particle ids
+// are a guess, so only the shape and the size are claimed.
+void TMario::strongTouchDownEffectDisp()
+{
+	gpMarioParticleManager->emitWithRotate(PARTICLE_MS_JUMP_ED_A, &mPosition, 0,
+	                                       mFaceAngle.y, 0, 0, nullptr);
+	s16 angle = mFaceAngle.y;
+	gpMarioParticleManager->emitWithRotate(PARTICLE_MS_JUMP_ED_B, &mPosition, 0,
+	                                       angle, 0, 0, nullptr);
 }
 
 void TMario::strongTouchDownEffect()
@@ -164,16 +207,28 @@ void TMario::rippleEffect()
 		SMS_EmitRipplePool(unk220, this);
 	} else {
 		SMS_EmitRippleSea(unk220, this);
-		if ((checkStatusType(MARIO_STATUS_FLAG_SWIMMING))
-		    && mForwardVel > mParticleParams.mWaveEmitSpeed.get()) {
-			mWaterWakeAlpha = 0xFF;
+		if ((checkStatusType(MARIO_STATUS_FLAG_SWIMMING))) {
+			f32 waveEmitSpeed = mParticleParams.mWaveEmitSpeed.get();
+			if (mForwardVel > waveEmitSpeed)
+				mWaterWakeAlpha = 0xFF;
 		}
 	}
 }
 
+// UNUSED (0x28). The natural pairing with smallRippleEffect() below is kept
+// here on the naming evidence, but it compiles to 0x24: retail's body has one
+// instruction more. `SMS_EmitRipplePool(unk220, this)` -- rippleEffect()'s
+// shallow-water branch -- is the size-exact alternative (two operand setup
+// instructions instead of one), with no naming evidence behind it.
+// TODO: incorrect size (4 bytes short).
+void TMario::rippleEffectSmall()
+{
+	smallRippleEffect(&mWaterRipplePos);
+}
+
 void TMario::inOutWaterEffect(f32 waterY)
 {
-	JGeometry::TVec3<f32> pos = mPosition;
+	JGeometry::TVec3<f32> pos = getPosition();
 	pos.y                     = mFloorPosition.z;
 
 	if (checkFlag(MARIO_FLAG_IN_SHALLOW_WATER)
@@ -220,13 +275,12 @@ struct TBubbleCallBack
 
 void TBubbleCallBack::execute(JPABaseEmitter*, JPABaseParticle* particle)
 {
-	if (!gpMarioOriginal->checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
+	if (!SMSGetMarioOriginal()->checkFlag(MARIO_FLAG_HELMET_FLW_CAMERA)) {
 		JGeometry::TVec3<f32> pos;
 		particle->getCurrentPosition(pos);
 		if (pos.y > gpMarioOriginal->mFloorPosition.z) {
 			particle->unk10 |= 2;
-			if (gpMarioOriginal->mParticleParams.mBubbleToRipple.get()
-			    != 0.0f) {
+			if (gpMarioOriginal->mParticleParams.mBubbleToRipple.get()) {
 				gpMarioParticleManager->emit(PARTICLE_MS_M_AWAHAMON, &pos, 0,
 				                             nullptr);
 			}
@@ -291,6 +345,13 @@ void TMario::swimmingBubbleEffect()
 	}
 }
 
+// UNUSED (0x24) -- exactly a three-instruction body around the tiny-ripple
+// emitter, which is what runningRippleEffect() below ends with.
+void TMario::smallRippleEffect(JGeometry::TVec3<f32>* pos)
+{
+	SMS_EmitRippleTiny(pos);
+}
+
 void TMario::runningRippleEffect()
 {
 	if (mForwardVel > 30.0f) {
@@ -325,10 +386,7 @@ void TMario::treeSlipEffect()
 
 void TMario::frontSlipEffect()
 {
-
-	
-	
-	if (mGroundPlane->isWetGround()
+	if (getGroundPlane()->isWetGround()
 	    || (mStatus == MARIO_STATUS_CATCH && mStatusState == 1)) {
 		gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_M_WATSLIDE_A,
 		                                            getCenterAnmMtx(), 3, this);
@@ -353,6 +411,9 @@ void TMario::frontSlipEffect()
 	}
 }
 
+// Fabricated name; see surfingEffect.
+static inline MtxPtr SurfingMtx(TMario* mario) { return mario->unk1F0; }
+
 void TMario::surfingEffect()
 {
 	f32 scale = 1.0f;
@@ -368,21 +429,26 @@ void TMario::surfingEffect()
 	if (spMax < mForwardVel)
 		scale = sMax;
 
-	JGeometry::TVec3<f32> scaleVec(scale, scale, scale);
+	// A constructed or `set`/`setAll` vector pays 16 bytes of dead low
+	// region; the chained member assignment is scalarised for free. The
+	// three `unk1F0` matrices go through a TU-local level (SurfingMtx), which
+	// is what makes retail compute the matrix before `this`.
+	JGeometry::TVec3<f32> scaleVec;
+	scaleVec.x = scaleVec.y = scaleVec.z = scale;
 	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
 	    PARTICLE_MS_GESOSURF_A, (MtxPtr)getRootAnmMtx(), 3, this);
 	if (emitter != nullptr)
 		emitter->setGlobalScale(scaleVec);
 	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	    PARTICLE_MS_GESOSURF_B, unk1F0, 1, this);
+	    PARTICLE_MS_GESOSURF_B, SurfingMtx(this), 1, this);
 	if (emitter != nullptr)
 		emitter->setGlobalScale(scaleVec);
 	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	    PARTICLE_MS_GESOSURF_D, unk1F0, 1, this);
+	    PARTICLE_MS_GESOSURF_D, SurfingMtx(this), 1, this);
 	if (emitter != nullptr)
 		emitter->setGlobalScale(scaleVec);
 	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	    PARTICLE_MS_GESOSURF_C, unk1F0, 1, this);
+	    PARTICLE_MS_GESOSURF_C, SurfingMtx(this), 1, this);
 	if (emitter != nullptr)
 		emitter->setGlobalScale(scaleVec);
 }
@@ -395,22 +461,55 @@ struct TWarpInCallBack
 void TWarpInCallBack::execute(JPABaseEmitter* emitter,
                               JPABaseParticle* particle)
 {
+	// f31/f30/f29/f28/f27 are five named scalar locals: the callee-saved FPRs
+	// go out f31-down in declaration order, which is what fixes `timer` first
+	// and `factor` last, and `factor += 1.0f` as its own statement is what
+	// keeps the product out of an `fmadds` and adds into factor's register.
+	// TODO: 73.9%, frame 0xc8 vs 0x110. Every instruction of the head and the
+	// tail matches; the residue is one 12-byte temporary too many per scale
+	// step. Retail runs six slots -- scale target, temporary, scale target,
+	// temporary, scale target, temporary -- i.e. `operator*`'s by-value
+	// parameter and its return temporary per step, with the return temporary
+	// copied into the next parameter. The three named `v` locals give us nine
+	// slots (parameter, return temporary, named local), and the pure chain
+	// `*vel * tmp * timer * factor` gives four, because MWCC then builds each
+	// inner result directly in the next parameter slot. Nothing in between was
+	// found: not a TU-local `mulVec(const TVec3&, f32)` copying into a local
+	// (39.1%, NRVO drops a copy), not `f(TVec3, f32)` by value, not `*=` on
+	// fresh copies (one copy per step).
+	// Header round 25 measured the two spellings that do give six slots: a
+	// `const TVec3&` return on the by-value `friend`, and a member
+	// `const TVec3& operator*(f32) const`. Either takes this function to
+	// 92.47% with the frame exact, but both are tree-wide losses that drop
+	// four weak out-of-line copies to MISSING -- see the trial table at
+	// `operator*` in JGVec3.hpp. The member form with the *by-value* return
+	// (the shape batch 149 proposed) is inert here: MWCC 1.2.5 does no NRVO,
+	// so the return temporary survives and the slot count stays nine.
+	// The remaining 12 bytes are therefore a return-type question in the
+	// shared header, not a local one.
+	// c-m6: assigning the middle product into a declared `v2` (instead of
+	// initialising it) is 80.2 -> 86.3 (the last one alone 84.2; two or three
+	// assigned steps 73.9-80.1). Retail copies param -> return temp -> next
+	// param at each step; we still skip that pair on step 1 and add one on 2.
 	JGeometry::TVec3<f32>* vel = (JGeometry::TVec3<f32>*)emitter->getUserWork();
 
 	f32 timer = (f32)gpMarioOriginal->mStatusTimer;
+	f32 velX  = particle->unk14.x;
+	f32 velY  = particle->unk14.y;
+	f32 velZ  = particle->unk14.z;
 
-	f32 factor = (((intptr_t)particle >> 2) & 0x3F) / 16.0f;
+	f32 factor = ((((int)particle >> 2) & 0x3F) / 16.0f);
 	factor += 1.0f;
-	f32 x = particle->unk14.x;
-	f32 y = particle->unk14.y;
-	f32 z = particle->unk14.z;
-	JGeometry::TVec3<f32> scaled = *vel * gpMarioOriginal->unk468;
-	JGeometry::TVec3<f32> timed = scaled * timer;
-	JGeometry::TVec3<f32> v = timed * factor;
-	x += v.x;
-	y += v.y;
-	z += v.z;
-	particle->unk14.set(x, y, z);
+
+	JGeometry::TVec3<f32> v1 = *vel * gpMarioOriginal->unk468;
+	JGeometry::TVec3<f32> v2;
+	v2 = v1 * timer;
+	JGeometry::TVec3<f32> v3 = v2 * factor;
+
+	velX += v3.x;
+	velY += v3.y;
+	velZ += v3.z;
+	particle->unk14.set(velX, velY, velZ);
 }
 
 TWarpInCallBack warpInCallBack;
@@ -425,9 +524,6 @@ static const s32 warpInEffectIDs[] = {
 
 void TMario::warpInEffect()
 {
-
-	
-	
 	for (int i = 0; i < 10; i++) {
 		u16 boneIdx;
 		switch (i) {
@@ -464,7 +560,7 @@ void TMario::warpInEffect()
 			break;
 		}
 
-		MtxPtr mtx = mModel->getModel()->getAnmMtx(boneIdx);
+		MtxPtr mtx = getM3UModel()->getModel()->getAnmMtx(boneIdx);
 
 		s32 id = warpInEffectIDs[i];
 		BOOL b = TRUE;
@@ -476,7 +572,8 @@ void TMario::warpInEffect()
 			    = gpMarioParticleManager->emitAndBindToMtx(id, mtx, 0, this);
 			if (emitter != nullptr) {
 				emitter->setParticleCallBackPtr(&warpInCallBack);
-				emitter->setUserWork((uintptr_t)&mWarpInDir);
+				uintptr_t work = (uintptr_t)&mWarpInDir;
+				emitter->setUserWork(work);
 			}
 		}
 	}
@@ -485,10 +582,10 @@ void TMario::warpInEffect()
 	                                         getCenterAnmMtx(), 0, nullptr);
 	gpMarioParticleManager->emitAndBindToMtx(
 	    0x1D6,
-	    ((TModelGate*)mHolder)
+	    ((TModelGate*)getHolder())
 	        ->unk78->getModel()
-	        ->getAnmMtx(((TModelGate*)mHolder)->unk72),
-	    2, mHolder);
+	        ->getAnmMtx(((TModelGate*)getHolder())->unk72),
+	    2, getHolder());
 }
 
 void TMario::warpInLight()
@@ -497,11 +594,30 @@ void TMario::warpInLight()
 	                                            &mCenterPos, 0, this);
 }
 
+// Binding level worth +8 of low region, landing TMario::warpOutEffect's
+// frame at 0x120 (batch 124).
+static inline bool MarioParticleCheckFlagL0(const TMario* p, u32 i)
+{
+	bool flag = p->checkFlag(i);
+	return flag;
+}
+
+static inline bool MarioParticleCheckFlag(const TMario* p, u32 i)
+{
+	bool flag = MarioParticleCheckFlagL0(p, i);
+	return flag;
+}
+
+// TODO: 8 bytes of low region short, every instruction exact (retail 0x120,
+// ours 0x118; the double-conversion temporary sits at the top of the local
+// area in both). Routing the twelve `mModel->getModel()->getAnmMtx()` receivers
+// through getM3UModel() is worth +8 per *pair* of sites, so two or three of the
+// twelve land the frame exactly and all twelve overshoot by 0x28 -- an
+// arbitrary subset of identical sites, so it is not committed. Also measured
+// and inert: getPosition() at either &mPosition argument (it also costs
+// instructions), getM3UModel() at the first site alone.
 void TMario::warpOutEffect(int kind, f32 rotDeg)
 {
-
-	
-	
 	switch (kind) {
 	case 0:
 		gpMarioParticleManager->emitWithRotate(
@@ -544,7 +660,7 @@ void TMario::warpOutEffect(int kind, f32 rotDeg)
 		gpMarioParticleManager->emitAndBindToMtxPtr(
 		    PARTICLE_MS_MARIOAP_LFOOT,
 		    mModel->getModel()->getAnmMtx(mJointIdFootL), 0, this);
-		if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+		if (MarioParticleCheckFlag(this, MARIO_FLAG_HAS_FLUDD)) {
 			gpMarioParticleManager->emitAndBindToMtxPtr(
 			    PARTICLE_MS_MARIOAP_WATGUN,
 			    mModel->getModel()->getAnmMtx(mJointIdCenter), 0, this);
@@ -594,14 +710,21 @@ void TMario::emitRotateShootEffect()
 	                                            &mCenterPos, 1, this);
 }
 
+// UNUSED, size-exact at 0x50: it stores the footprint position and emits the
+// print, which is the head of emitFootPrintWithEffect() below spelled out at
+// its one call site (a pasted UNUSED helper). Rejected: the run/speed/printId
+// guard block as well, which compiles to 0x84.
+void TMario::setFootPrint(const JGeometry::TVec3<f32>& pos, int printId)
+{
+	mFootprintPos.set(pos);
+	gpMarioParticleManager->emit(printId, &mFootprintPos, 0, nullptr);
+}
+
 void TMario::emitFootPrintWithEffect(int effectId, int printId)
 {
-
-	
-	
 	int foot   = 2;
 	MtxPtr mtx = nullptr;
-	if (mStatus == MARIO_STATUS_RUN) {
+	if (getStatus() == MARIO_STATUS_RUN) {
 		if (onYoshi()) {
 			if (mYoshi->getFrameCtrl()->checkPass(47.0f)) {
 				mtx  = mYoshi->getMtxPtrFootL();
@@ -623,7 +746,7 @@ void TMario::emitFootPrintWithEffect(int effectId, int printId)
 		}
 	}
 
-	if (mStatus == MARIO_STATUS_WAIT && onYoshi()) {
+	if (getStatus() == MARIO_STATUS_WAIT && onYoshi()) {
 		if (mYoshi->getFrameCtrl()->checkPass(20.0f)
 		    || mYoshi->getFrameCtrl()->checkPass(71.0f)
 		    || mYoshi->getFrameCtrl()->checkPass(134.0f)) {
@@ -646,7 +769,7 @@ void TMario::emitFootPrintWithEffect(int effectId, int printId)
 		// wtf is this bs?
 		u32 b2 = printId > 0;
 		u32 b  = mForwardVel > 20.0f;
-		if (mStatus == MARIO_STATUS_RUN && b && b2)
+		if (getStatus() == MARIO_STATUS_RUN && b && b2)
 			gpMarioParticleManager->emit(printId, &mFootprintPos, 0, nullptr);
 
 		if (effectId > 0) {
@@ -655,6 +778,15 @@ void TMario::emitFootPrintWithEffect(int effectId, int printId)
 			                                         nullptr);
 		}
 	}
+}
+
+// UNUSED (0x24). One instruction shorter than emitDirtyFootPrint() below, so
+// the argument is passed straight through in r4 and only r5 gets an `li`: the
+// parameter is the *effect* id, not the print id (that spelling needs an extra
+// `mr` and lands on 0x28).
+void TMario::emitFootPrint(int effectId)
+{
+	emitFootPrintWithEffect(effectId, 0);
 }
 
 void TMario::emitDirtyFootPrint()
@@ -681,6 +813,20 @@ void TMario::meltInWaterEffect()
 				emitter->setGlobalScale(scale);
 			}
 		}
+	}
+}
+
+// UNUSED (0x84) -- the water-gun half of rocketEffectStart() below, which
+// spells it out at its one call site.
+void TMario::rocketEffectNozzle()
+{
+	if (mWaterGun != nullptr) {
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_M_ROCKET_A, &mWaterGun->getEmitPos0(), 0, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_M_ROCKET_B, &mWaterGun->getEmitPos0(), 0, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_M_ROCKET_B2, &mWaterGun->getEmitPos0(), 0, this);
 	}
 }
 
@@ -720,7 +866,7 @@ void TMario::elecEndEffect()
 void TMario::kickRoofEffect()
 {
 	if (getMotionFrameCtrl().checkPass(8.0f)) {
-		MtxPtr mtx      = mModel->getModel()->getAnmMtx(mJointIdChnFootR);
+		MtxPtr mtx      = getM3UModel()->getModel()->getAnmMtx(mJointIdChnFootR);
 		mFootprintPos.x = mtx[0][3];
 		mFootprintPos.y = mtx[1][3];
 		mFootprintPos.z = mtx[2][3];
@@ -746,10 +892,7 @@ void TMario::sleepingEffectKill()
 
 void TMario::toroccoEffect()
 {
-
-	
-	
-	f32 dist = JGeometry::TVec3<f32>(mPosition - mToroccoPos).length();
+	f32 dist = JGeometry::TVec3<f32>(getPosition() - mToroccoPos).length();
 
 	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
 	    PARTICLE_MS_TORO_WIND, mTorocco->getModel()->getAnmMtx(0), 1, this);

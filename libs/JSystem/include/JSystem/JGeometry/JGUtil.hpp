@@ -30,6 +30,16 @@ template <> struct TUtil<f32> {
 	static f32 PI() { return 3.14159265358979323846f; }
 	static f32 halfPI() { return 1.5707963267948966f; }
 
+	// Emitted weak (0x5c) from koopajr.cpp and Koopa.cpp, with the same
+	// body as std::fmodf.
+	static f32 mod(f32 value, f32 modulus)
+	{
+		if (fabsf(modulus) > fabsf(value))
+			return value;
+		u64 quotient = (u64)(value / modulus);
+		return value - modulus * (f32)(s64)quotient;
+	}
+
 	// from SMG
 	static bool epsilonEquals(f32 param_1, f32 param_2, f32 eps)
 	{

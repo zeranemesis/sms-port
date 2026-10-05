@@ -45,20 +45,29 @@ inline f32 distToMario(const JGeometry::TVec3<f32>& v)
 	return JGeometry::TUtil<f32>::sqrt(l);
 }
 
+// Sum level: gives the radius sum retail's f1 = mario + damage operand order
+// (and +8 of pool) in waitingToAppear's plain branch.
+static inline f32 MOGSum(f32 a, f32 b) { return a + b; }
+
+// The comparisons test the distance against the radii (retail's
+// `fcmpo dist, sum; ble`): the object appears once Mario is outside them.
+// The 0x4000005a branch names its 100-unit margin: a named damage radius
+// there swaps the `mario + damage` fadds operands, and reading
+// getDamageRadius() in the sum without the margin local is 8 short.
 void TMapObjGeneral::waitingToAppear()
 {
 	if (isStateTimerEngaged())
 		return;
 
 	if (isActorType(0x4000005a)) {
-		f32 damageRadius = getDamageRadius();
-		if (distToMario(mInitialPosition)
-		    > SMS_GetMarioDamageRadius() + damageRadius + 100.0f)
+		f32 margin = 100.0f;
+		if (distToMario(getInitialPosition())
+		    > SMS_GetMarioDamageRadius() + getDamageRadius() + margin)
 			appear();
 	} else {
 		f32 damageRadius = getDamageRadius();
-		if (distToMario(mInitialPosition)
-		    > SMS_GetMarioDamageRadius() + damageRadius)
+		if (distToMario(getInitialPosition())
+		    > MOGSum(SMS_GetMarioDamageRadius(), damageRadius))
 			appear();
 	}
 }
@@ -90,46 +99,59 @@ void TMapObjGeneral::sink()
 
 void TMapObjGeneral::put()
 {
-
-	
-	
 	mHolder                    = nullptr;
 	mHolder                    = nullptr;
 	s32 preservedTimeTilAppear = getStateTimer();
 	makeObjAppeared();
 	mStateTimer = preservedTimeTilAppear;
-	mPosition.x = JMASSin(*gpMarioAngleY)
+	mPosition.x = JMASSin(SMS_GetMarioAngleY())
 	                  * (getDamageRadius() + SMS_GetMarioDamageRadius() + 10.0f)
 	              + SMS_GetMarioPos().x;
 	mPosition.y = SMS_GetMarioPos().y;
-	mPosition.z = JMASCos(*gpMarioAngleY)
+	mPosition.z = JMASCos(SMS_GetMarioAngleY())
 	                  * (getDamageRadius() + SMS_GetMarioDamageRadius() + 10.0f)
 	              + SMS_GetMarioPos().z;
 	offLiveFlag(LIVE_FLAG_UNK10);
-	mGroundHeight = gpMap->checkGround(mPosition, &mGroundPlane);
+	mGroundHeight = SMSGetMap()->checkGround(mPosition, &mGroundPlane);
 }
 
+// TODO: 99.5%, frame exact. The accessors (Mario position, angles, one
+// speed, getMapObjData, getVelocity) give retail's unshared sin/cos shifts
+// and its 0x90 frame; the named throw power gives retail's r5/r6. Left:
+// f1/f4/f5 on y/z/rate. Inert: component stores in either order, named
+// x/y/z locals (with or without the power), a named rate, both speed
+// accessors, rate operand order.
+// c-k7 (debugger, regalloc.py --move 36:b37 replays retail exactly): set()'s
+// z binding (@1479) must be coloured before its y binding (@1478); then z
+// takes f1, y f4 and the IRO rate temp f5. Bindings are created x, y, z, so y
+// needs no binding (it then becomes a named web, coloured after the rate:
+// y f5, rate f4) or an IRO split temp created before the rate's. Inert or
+// worse: a named y before/after power (raw, getMapObjData() or the
+// TMapObjGeneralGetPhysicalData level), a named TMapObjPhysicalData*;
+// c-k15: `mMapObjData->getPhysicalData()` at the three reads -0x18,
+// `getMapObjData()->getPhysicalData()` -0x20.
 void TMapObjGeneral::thrown()
 {
-	mPosition.set(gpMarioPos->x, gpMarioPos->y, gpMarioPos->z);
-	mRotation.set(*gpMarioAngleX, *gpMarioAngleY, *gpMarioAngleZ);
+	mPosition.set(SMS_GetMarioPos().x, SMS_GetMarioPos().y, SMS_GetMarioPos().z);
+	mRotation.set(SMS_GetMarioAngleX(), SMS_GetMarioAngleY(), SMS_GetMarioAngleZ());
 
-	mGroundHeight = gpMap->checkGround(mPosition, &mGroundPlane);
+	mGroundHeight = SMSGetMapBound()->checkGround(mPosition, &mGroundPlane);
 	unk138        = 0;
 	mHolder       = nullptr;
 
-	mVelocity.set(*gpMarioThrowPower
-	                      * (JMASSin((s32)*gpMarioAngleY)
-	                         * mMapObjData->mPhysical->unk4->unk2C)
-	                  + (mNormalThrowSpeedRate * *gpMarioSpeedX),
-	              mMapObjData->mPhysical->unk4->unk30,
-	              *gpMarioThrowPower
-	                      * (JMASCos((s32)*gpMarioAngleY)
-	                         * mMapObjData->mPhysical->unk4->unk2C)
+	f32 power = *gpMarioThrowPower;
+	mVelocity.set(JMASSin(SMS_GetMarioAngleY())
+	                      * getMapObjData()->mPhysical->unk4->unk2C
+	                      * power
+	                  + (mNormalThrowSpeedRate * SMS_GetMarioSpeedX()),
+	              getMapObjData()->mPhysical->unk4->unk30,
+	              JMASCos(SMS_GetMarioAngleY())
+	                      * getMapObjData()->mPhysical->unk4->unk2C
+	                      * power
 	                  + (mNormalThrowSpeedRate * *gpMarioSpeedZ));
 
 	offLiveFlag(LIVE_FLAG_UNK10);
-	JGeometry::TVec3<f32> vel = mVelocity;
+	JGeometry::TVec3<f32> vel = getVelocity();
 	mPosition.add(vel);
 	onLiveFlag(LIVE_FLAG_AIRBORNE);
 	removeMapCollision();
@@ -153,11 +175,20 @@ void TMapObjGeneral::touchingPlayer()
 
 void TMapObjGeneral::holding()
 {
+	mPosition     = getHolder()->mPosition;
+	mGroundHeight = gpMap->checkGround(getPosition(), &mGroundPlane);
+}
 
-	
-	
-	mPosition     = mHolder->mPosition;
-	mGroundHeight = gpMap->checkGround(mPosition, &mGroundPlane);
+static inline const TMapObjSinkData* TMapObjGeneralGetSink(TMapObjGeneral* p)
+{
+	TMapObjData* data           = p->mMapObjData;
+	const TMapObjSinkData* sink = data->mSink;
+	return sink;
+}
+
+static inline TTakeActor* TMapObjGeneralGetHeldObject(TMapObjGeneral* p)
+{
+	return p->mHeldObject;
 }
 
 void TMapObjGeneral::recovering()
@@ -166,18 +197,19 @@ void TMapObjGeneral::recovering()
 	if (hasModelOrAnimData(6)) {
 		J3DModel* model = getModel();
 		MtxPtr mat      = model->getAnmMtx(0);
-		f32 fVar1       = mat[3][1] - unk144;
+		f32 fVar1       = mat[1][3] - unk144;
 		mDamageHeight += fVar1;
 		calcEntryRadius();
 		if (mHeldObject)
 			mHeldObject->mPosition.y += fVar1;
-		unk144 = mat[3][1];
+		unk144 = mat[1][3];
 		if (!animIsFinished())
 			return;
 	} else if (mPosition.y < unk144) {
-		mPosition.y += mMapObjData->mSink->unk4;
-		if (mHeldObject)
-			mHeldObject->mPosition.y += mMapObjData->mSink->unk4;
+		mPosition.y += TMapObjGeneralGetSink(this)->unk4;
+		if (TMapObjGeneralGetHeldObject(this))
+			TMapObjGeneralGetHeldObject(this)->mPosition.y
+			    += TMapObjGeneralGetSink(this)->unk4;
 		return;
 	}
 
@@ -186,9 +218,6 @@ void TMapObjGeneral::recovering()
 
 void TMapObjGeneral::sinking()
 {
-
-	
-	
 	mPosition.y -= mMapObjData->mSink->unk0;
 
 	for (int i = 0; i < getColNum(); ++i) {
@@ -199,7 +228,7 @@ void TMapObjGeneral::sinking()
 	}
 
 	if (mPosition.y + mMapObjData->mHit->unkC[2].unk4 < unk144) {
-		if (mPosition.x != mInitialPosition.x
+		if (mPosition.x != getInitialPosition().x
 		    || mPosition.z != mInitialPosition.z) {
 			makeObjDefault();
 			makeObjAppeared();
@@ -220,6 +249,13 @@ void TMapObjGeneral::breaking()
 	}
 }
 
+static inline const JGeometry::TVec3<f32>&
+TMapObjGeneralGetInitialScaling(TMapObjGeneral* p)
+{
+	const JGeometry::TVec3<f32>& scaling = p->mInitialScaling;
+	return scaling;
+}
+
 void TMapObjGeneral::appearing()
 {
 	// TODO: uuuuuuuh...
@@ -233,10 +269,10 @@ void TMapObjGeneral::appearing()
 		mScaling.x += mNormalAppearingScaleUp;
 		mScaling.y += mNormalAppearingScaleUp;
 		mScaling.z += mNormalAppearingScaleUp;
-		if (mScaling.x < getInitialScaling().x)
+		if (mScaling.x < mInitialScaling.x)
 			return;
 
-		mScaling.set(getInitialScaling());
+		mScaling.set(TMapObjGeneralGetInitialScaling(this));
 	}
 
 uuuh:
@@ -293,10 +329,15 @@ void TMapObjGeneral::touchPlayer(THitActor* player)
 	}
 }
 
+// TODO: every instruction matches; the frame is 0x28 short (0x28 vs 0x50):
+// retail's two conversion temporaries sit at 0x38/0x40 over 0x30 of dead low
+// region. The named table pointer (setObjHitData's spelling) gives the radius
+// retail's f5. Inert: named radius/size/divisor/coordinates.
 void TMapObjGeneral::recover()
 {
-	gpPollution->clean(mPosition.x, unk144, mPosition.z,
-	                   (u16)(mMapObjData->mHit->unkC[2].unk0 / 6.0f));
+	const TMapObjHitDataTable* table = &mMapObjData->mHit->unkC[2];
+	SMSGetPollution()->clean(mPosition.x, unk144, mPosition.z,
+	                         (u16)(table->unk0 / 6.0f));
 
 	setUpMapCollision(1);
 	startAnim(6);
@@ -323,13 +364,24 @@ void TMapObjGeneral::hold(TTakeActor* actor)
 	mState  = STATE_HOLDING;
 }
 
+// Binding level worth +8 of low region, landing
+// TMapObjGeneral::ensureTakeSituation's frame at 0x20 (batch 124).
+static inline bool MapObjGeneralIsStateL0(TMapObjGeneral* p, u32 i)
+{
+	bool state = p->isState(i);
+	return state;
+}
+
+static inline bool MapObjGeneralIsState(TMapObjGeneral* p, u32 i)
+{
+	bool state = MapObjGeneralIsStateL0(p, i);
+	return state;
+}
+
 void TMapObjGeneral::ensureTakeSituation()
 {
-
-	
-	
 	TMapObjBase::ensureTakeSituation();
-	if (isState(STATE_HOLDING) && mHolder == nullptr) {
+	if (MapObjGeneralIsState(this, STATE_HOLDING) && mHolder == nullptr) {
 		mState = STATE_NORMAL;
 		offLiveFlag(LIVE_FLAG_UNK10);
 	}
@@ -347,11 +399,16 @@ void TMapObjGeneral::kill()
 	breaking();
 }
 
+// Binding level worth +8 of low region, landing TMapObjGeneral::appear's
+// frame at 0x28 (batch 121).
+static inline u32 MapObjGeneralGetLivingTime(const TMapObjGeneral* p)
+{
+	u32 livingTime = p->getLivingTime();
+	return livingTime;
+}
+
 void TMapObjGeneral::appear()
 {
-
-	
-	
 	makeObjAppeared();
 	startAnim(1);
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK800000)) {
@@ -367,7 +424,7 @@ void TMapObjGeneral::appear()
 
 	appearing();
 	if (checkMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING))
-		mStateTimer = getLivingTime();
+		mStateTimer = MapObjGeneralGetLivingTime(this);
 
 	mState = STATE_APPEARING;
 }
@@ -416,14 +473,14 @@ void TMapObjGeneral::touchWall(JGeometry::TVec3<f32>* param_1,
 
 void TMapObjGeneral::checkWallCollision(JGeometry::TVec3<f32>* param_1)
 {
-	param_1->y += mMapObjData->mPhysical->unk4->unk1C;
+	param_1->y += mMapObjData->getPhysical()->unk4->unk1C;
 
 	TBGWallCheckRecord check(*param_1, mBodyRadius, 4,
 	                         mMapObjData->mPhysical->mWallCheckFlags);
 
 	bool touched = gpMap->isTouchedWallsAndMoveXZ(&check);
 
-	param_1->y -= mMapObjData->mPhysical->unk4->unk1C;
+	param_1->y -= mMapObjData->getPhysical()->unk4->unk1C;
 
 	if (touched) {
 		unk138 = check.mResultWalls[0];
@@ -448,19 +505,16 @@ void TMapObjGeneral::checkRoofCollision(JGeometry::TVec3<f32>* param_1)
 
 void TMapObjGeneral::touchGround(JGeometry::TVec3<f32>* param_1)
 {
-
-	
-	
-	if (mMapObjData->mPhysical ? true : false) {
-		mVelocity.x *= mMapObjData->mPhysical->unk4->unk10;
-		mVelocity.z *= mMapObjData->mPhysical->unk4->unk10;
+	if (mMapObjData->getPhysical() ? true : false) {
+		mVelocity.x *= mMapObjData->getPhysicalData()->unk10;
+		mVelocity.z *= mMapObjData->getPhysicalData()->unk10;
 	}
 
 	if ((mMapObjData->mPhysical ? true : false)
 	    && abs(JGeometry::TVec3<f32>(mVelocity).y)
-	           > mMapObjData->mPhysical->unk4->unkC) {
+	           > mMapObjData->getPhysicalData()->unkC) {
 		param_1->y -= JGeometry::TVec3<f32>(mVelocity).y;
-		mVelocity.y *= -mMapObjData->mPhysical->unk4->unk4;
+		mVelocity.y *= -mMapObjData->getPhysicalData()->unk4;
 		if (isCoin(this)) {
 			SMSGetMSound()->startSoundActorWithInfo(
 			    MSD_SE_SY_COIN_BOUND, &mPosition, nullptr,
@@ -489,9 +543,6 @@ void TMapObjGeneral::checkGroundCollision(JGeometry::TVec3<f32>* param_1)
 
 void TMapObjGeneral::calcVelocity()
 {
-
-	
-	
 	if (checkLiveFlag2(LIVE_FLAG_AIRBORNE)) {
 		f32 dVar5 = getGravityY();
 		mVelocity.y -= dVar5;
@@ -501,21 +552,25 @@ void TMapObjGeneral::calcVelocity()
 
 	const TMapObjPhysicalInfo* piVar4 = mMapObjData->mPhysical;
 	if (piVar4 ? (u8)1 : (u8)0) {
-		mVelocity.x *= mMapObjData->mPhysical->unk4->unk18;
-		mVelocity.z *= mMapObjData->mPhysical->unk4->unk18;
+		mVelocity.x *= mMapObjData->getPhysicalData()->unk18;
+		mVelocity.z *= mMapObjData->getPhysicalData()->unk18;
 
 		mVelocity.x = MsClamp<f32>(mVelocity.x, -mBodyRadius, mBodyRadius);
 		mVelocity.z = MsClamp<f32>(mVelocity.z, -mBodyRadius, mBodyRadius);
 
 		if (mGroundPlane->mNormal.y == 1.0f) {
-			if (abs(mVelocity.x) < mMapObjData->mPhysical->unk4->unkC)
+			if (abs(mVelocity.x) < mMapObjData->getPhysicalData()->unkC)
 				mVelocity.x = 0.0f;
-			if (abs(mVelocity.z) < mMapObjData->mPhysical->unk4->unkC)
+			if (abs(mVelocity.z) < mMapObjData->getPhysicalData()->unkC)
 				mVelocity.z = 0.0f;
 		}
 	}
 }
 
+// TODO: 99.9%, frame exact; retail's inline-object block (the roof test's
+// velocity copy and the three rest-test copies) sits 0xc lower, as if one
+// more TVec3 temporary were expanded before them. Inert: `vec` copy-
+// initialised, `+=` for add, getVelocity() in the sum.
 void TMapObjGeneral::bind()
 {
 	if (checkLiveFlag(LIVE_FLAG_UNK10))
@@ -527,7 +582,8 @@ void TMapObjGeneral::bind()
 	}
 
 	calcVelocity();
-	JGeometry::TVec3<f32> vec = getPosition();
+	JGeometry::TVec3<f32> vec;
+	vec = getPosition();
 	vec.add(mLinearVelocity);
 	vec.add(mVelocity);
 	checkGroundCollision(&vec);
@@ -535,8 +591,7 @@ void TMapObjGeneral::bind()
 		checkWallCollision(&vec);
 
 	if (checkMapObjFlag(MAP_OBJ_FLAG_ENABLE_ROOF_COLLISION)) {
-		JGeometry::TVec3<f32> vel = mVelocity;
-		if (vel.y > 0.0f)
+		if (JGeometry::TVec3<f32>(mVelocity).y > 0.0f)
 			checkRoofCollision(&vec);
 	}
 
@@ -546,30 +601,36 @@ void TMapObjGeneral::bind()
 	}
 
 	if (!checkLiveFlag2(LIVE_FLAG_AIRBORNE)) {
-		JGeometry::TVec3<f32> vel     = mVelocity;
-		JGeometry::TVec3<f32> velCopy = vel;
-		if (velCopy.x == 0.0f) {
-			JGeometry::TVec3<f32> velCopy2 = vel;
-			if (velCopy2.y == 0.0f) {
-				JGeometry::TVec3<f32> velCopy3 = vel;
-				if (velCopy3.z == 0.0f) {
-					onLiveFlag(LIVE_FLAG_UNK10);
-				}
-			}
-		}
+		if (JGeometry::TVec3<f32>(getVelocity()).x == 0.0f
+		    && JGeometry::TVec3<f32>(getVelocity()).y == 0.0f
+		    && JGeometry::TVec3<f32>(getVelocity()).z == 0.0f)
+			onLiveFlag(LIVE_FLAG_UNK10);
 	}
 
-	mLinearVelocity = vec - mLinearVelocity;
+	mLinearVelocity = vec - mPosition;
+}
+
+// Binding level worth +8 of low region, landing TMapObjGeneral::control's
+// frame at 0x20 (batch 124).
+static inline bool
+MapObjGeneralCheckMapObjFlagL0(const TMapObjGeneral* p, u32 i)
+{
+	bool mapObjFlag = p->checkMapObjFlag(i);
+	return mapObjFlag;
+}
+
+static inline bool MapObjGeneralCheckMapObjFlag(const TMapObjGeneral* p, u32 i)
+{
+	bool mapObjFlag = MapObjGeneralCheckMapObjFlagL0(p, i);
+	return mapObjFlag;
 }
 
 void TMapObjGeneral::control()
 {
-
-	
-	
 	TMapObjBase::control();
-	if (checkMapObjFlag(MAP_OBJ_FLAG_CAN_SINK) && isState(STATE_NORMAL)
-	    && !isAirborne() && isPollutedGround(mPosition))
+	if (MapObjGeneralCheckMapObjFlag(this, MAP_OBJ_FLAG_CAN_SINK)
+	    && isState(STATE_NORMAL) && !isAirborne()
+	    && isPollutedGround(mPosition))
 		sink();
 
 	work();
@@ -583,27 +644,32 @@ void TMapObjGeneral::calcRootMatrix()
 		if (mMapObjData->mHold) {
 			TMapObjHoldData* hold = mMapObjData->mHold;
 
-			MtxPtr src = getTakingMtx();
+			MtxPtr src = mHolder->getTakingMtx();
 			MTXCopy(src, hold->unkC->getBaseTRMtx());
 			hold->unkC->calc();
 
 			MtxPtr src2 = hold->unk10;
 			MTXCopy(src2, model->getBaseTRMtx());
-			mPosition.set(src2[3][0], src2[3][1], src2[3][2]);
+			mPosition.set(src2[0][3], src2[1][3], src2[2][3]);
 		} else {
-			MtxPtr src = getTakingMtx();
+			MtxPtr src = mHolder->getTakingMtx();
 			MTXCopy(src, checkMapObjFlag(MAP_OBJ_FLAG_UNK100)
 			                 ? model->getAnmMtx(0)
 			                 : model->getBaseTRMtx());
-			mPosition.set(src[3][0], src[3][1], src[3][2]);
+			mPosition.set(src[0][3], src[1][3], src[2][3]);
 		}
 	} else {
-		JGeometry::TVec3<f32> pos(mPosition.x, mPosition.y - mYOffset,
-		                          mPosition.z);
-		MsMtxSetXYZRPH(model->getBaseTRMtx(), pos.x, pos.y, pos.z, mRotation.x,
+		MsMtxSetXYZRPH(model->getBaseTRMtx(), mPosition.x,
+		               mPosition.y - mYOffset, mPosition.z, mRotation.x,
 		               mRotation.y, mRotation.z);
 	}
 	model->setBaseScale(mScaling);
+}
+
+// Fork over the static flush interval (+8 of pool in perform).
+static inline int MapObjGeneralFlushInterval()
+{
+	return TMapObjGeneral::mNormalFlushInterval;
 }
 
 void TMapObjGeneral::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -612,9 +678,12 @@ void TMapObjGeneral::perform(u32 cue, JDrama::TGraphics* graphics)
 		if (isState(STATE_WAITING_TO_APPEAR))
 			waitingToAppear();
 	} else {
-		if (checkMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING) && isStateTimerEngaged()
+		// The explicit upcast stops MWCC reusing the timer load from the
+		// engaged test, as retail reloads it.
+		if (checkMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING)
+		    && ((TMapObjBase*)this)->isStateTimerEngaged()
 		    && getStateTimer() < getFlushTime()
-		    && ((getStateTimer() / mNormalFlushInterval) & 1) != 0) {
+		    && ((getStateTimer() / MapObjGeneralFlushInterval()) & 1) != 0) {
 			return;
 		}
 	}
@@ -622,6 +691,17 @@ void TMapObjGeneral::perform(u32 cue, JDrama::TGraphics* graphics)
 	TMapObjBase::perform(cue, graphics);
 }
 
+static inline const JGeometry::TVec3<f32>& MapObjGeneralVelocity(TMapObjGeneral* self)
+{
+	const JGeometry::TVec3<f32>& r = self->getVelocity();
+	return r;
+}
+
+// The two actor-type tests read the sender's type (retail's `lwz 0x4c` off
+// the sender register), not this object's.
+// TODO: frame 0x10 short (0x48 vs 0x58); getVelocity() is +8 of it. Inert:
+// the base result unnamed or BOOL, getMapObjData(); a TTakeActor binder
+// costs 1% of match.
 BOOL TMapObjGeneral::receiveMessage(THitActor* sender, u32 message)
 {
 	int ret = TMapObjBase::receiveMessage(sender, message);
@@ -629,7 +709,7 @@ BOOL TMapObjGeneral::receiveMessage(THitActor* sender, u32 message)
 		return true;
 
 	if (message == HIT_MESSAGE_TAKE && checkMapObjFlag(MAP_OBJ_FLAG_UNK100000)
-	    && JGeometry::TVec3<f32>(mVelocity).isZero()
+	    && JGeometry::TVec3<f32>(MapObjGeneralVelocity(this)).isZero()
 	    && (isState(STATE_APPEARING) || isState(STATE_NORMAL)
 	        || isState(STATE_TOUCHING_PLAYER)
 	        || isState(STATE_TOUCHING_WATER))) {
@@ -637,7 +717,7 @@ BOOL TMapObjGeneral::receiveMessage(THitActor* sender, u32 message)
 		return true;
 	}
 
-	if (message == HIT_MESSAGE_TAKE && isActorType(0x10000025)
+	if (message == HIT_MESSAGE_TAKE && sender->isActorType(0x10000025)
 	    && (isState(STATE_APPEARING) || isState(STATE_NORMAL))) {
 		hold((TTakeActor*)sender);
 		return 1;
@@ -660,7 +740,8 @@ BOOL TMapObjGeneral::receiveMessage(THitActor* sender, u32 message)
 		return true;
 	}
 
-	if (isActorType(0x80000001)
+	bool fromMario = sender->isActorType(0x80000001);
+	if (fromMario
 	    && (message == HIT_MESSAGE_TRAMPLE
 	        || message == HIT_MESSAGE_HIP_DROP)) {
 		receiveMessageFromPlayer();

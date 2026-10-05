@@ -1,556 +1,488 @@
 #include <Enemy/BossHanachan.hpp>
-#include <Enemy/BossHanachanChangeSaveParams.hpp>
-#include <M3DUtil/SDLModel.hpp>
-#include <Strategic/Binder.hpp>
-#include <Enemy/Conductor.hpp>
+#include <Enemy/BossHanachanSub.hpp>
 #include <Enemy/Graph.hpp>
-#include <Enemy/PathNode.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Strategic/Spine.hpp>
+#include <Strategic/Binder.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/Strategy.hpp>
+#include <MoveBG/MapObjManager.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <M3DUtil/SDLModel.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/TexUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RumbleMgr.hpp>
+#include <Player/MarioAccess.hpp>
 #include <Camera/CameraShake.hpp>
 #include <Camera/cameralib.hpp>
-#include <GC2D/GCConsole2.hpp>
-#include <JSystem/JMath.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAttach.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <JSystem/JUtility/JUTNameTab.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <M3DUtil/MActor.hpp>
-#include <Map/Map.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <Map/MapData.hpp>
-#include <MarioUtil/MapUtil.hpp>
-#include <MarioUtil/MathUtil.hpp>
-#include <MarioUtil/TexUtil.hpp>
-#include <MarioUtil/RumbleMgr.hpp>
-#include <MoveBG/ItemManager.hpp>
-#include <MoveBG/MapObjManager.hpp>
-#include <NPC/NpcInbetween.hpp>
-#include <Player/MarioAccess.hpp>
-#include <Player/ModelWaterManager.hpp>
-#include <Strategic/ObjManager.hpp>
-#include <Strategic/ObjModel.hpp>
-#include <Strategic/Spine.hpp>
-#include <Strategic/Strategy.hpp>
 #include <System/MarDirector.hpp>
 #include <System/TargetArrow.hpp>
-#include <dolphin/mtx.h>
+#include <GC2D/GCConsole2.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <NPC/NpcInbetween.hpp>
+#include <MarioUtil/MapUtil.hpp>
+#include <JSystem/JDrama/JDRGraphics.hpp>
 #include <math.h>
 
-// rogue include: the original TU opens .rodata with the dummy string pair
-// from System/DummyStrings.hpp (which this pulls in) followed by the four
-// MActorMtxCalcType names; without both, every string offset in this object
-// is shifted.
-#include <M3DUtil/InfectiousStrings.hpp>
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template statics,
-// which is what marioEU.dol registers from __sinit_<TU>_cpp (see the same
-// block in src/Enemy/BossHanachanNerve.cpp).
-#include <MSound/MSSetSound.hpp>
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <MSound/MSModBgm.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and this unit's own strings (c-r35).
+#include <Map/MapCollisionEntry.hpp>
 
-// fabricated: the original .rodata prologue ends with twelve zero bytes and
-// then three 1.0f values, whose statics have not been identified yet. They
-// have to be here or every string offset in the object is shifted.
-static const JGeometry::TVec3<f32> sUnknownZeroVec(0.0f, 0.0f, 0.0f);
-static const JGeometry::TVec3<f32> sUnknownOneVec(1.0f, 1.0f, 1.0f);
-
-// The five model/texture names live in .sdata in the original: they are read
-// with a plain `lwz <sym>@sda21`, so they are pointers, not literals.
 const char* cSandPillarModelName = "sunabashira.bmd";
-const char* cHitPoint1_RailName   = "bosshanachan1";
-const char* cHitPoint2_RailName   = "bosshanachan2";
-const char* cSandTextureName      = "suna";
-const char* cDummyTextureName     = "M_dummy";
-
-// TODO: an 11 byte Japanese string ("...group") sits in the original .rodata
-// between the two part-name strings and the common .prm name but nothing in
-// this TU references it, so it is not reproduced here.
-
-// NOTE: every function below is in REVERSE map order because this TU is
-// built with -inline deferred, which emits the bodies in reverse source
-// order. See tools/validate-symbol-order.py -u mario/Enemy/BossHanachanMain.
-
-// ---------------------------------------------------------------------------
-// TBossHanachanManager
-// ---------------------------------------------------------------------------
+const char* cHitPoint1_RailName = "bosshanachan2";
+const char* cHitPoint2_RailName = "bosshanachan1";
+const char* cSandTextureName = "suna";
+const char* cDummyTextureName = "M_dummy";
 
 TBossHanachanManager::TBossHanachanManager(const char* name)
     : TEnemyManager(name)
 {
+	static const char* sCommonSaveFileName = "/enemy/bosshanachanCommon.prm";
 	static const char* sChangeSaveFileName[] = {
 		"/enemy/bosshanachan0.prm",
 		"/enemy/bosshanachan1.prm",
 		"/enemy/bosshanachan2.prm",
 	};
-	static const char* sCommonSaveFileName = "/enemy/bosshanachanCommon.prm";
-
-	mCommonSaveParams = new TBossHanachanCommonSaveParams(sCommonSaveFileName);
-	for (int i = 0; i < 3; i++)
-		mChangeSaveParams[i] = new TBossHanachanChangeSaveParams(
-		    sChangeSaveFileName[i]);
+	mCommonParams = new TBossHanachanCommonSaveParams(sCommonSaveFileName);
+	for (int i = 0; i < 3; ++i)
+		mChangeParams[i] = new TBossHanachanChangeSaveParams(sChangeSaveFileName[i]);
 }
 
 void TBossHanachanManager::createModelData()
 {
-	// TODO: only the middle entry carries a model name in the original; the
-	// other three .name pointers are left null.
 	static TModelDataLoadEntry entry[] = {
-		{ nullptr, 0x10300000, nullptr },
-		{ cSandPillarModelName, 0x10100000, nullptr },
-		{ nullptr, 0x10010000, nullptr },
-		{ nullptr, 0, nullptr },
+		{ "hanabody_model.bmd", 0x10300000, 0 },
+		{ "hanahead_model.bmd", 0x10100000, 0 },
+		{ cSandPillarModelName, 0x10010000, 0 },
+		{ nullptr, 0, 0 },
 	};
 	createModelDataArray(entry);
 }
 
+// Binding level worth +16 of low region, landing
+// TBossHanachanManager::loadAfter's frame at 0x40 (batch 124).
+static inline J3DTexture* BossHanachanMainGetTexture(const J3DMaterialTable* p)
+{
+	J3DTexture* texture = p->getTexture();
+	return texture;
+}
+
 void TBossHanachanManager::loadAfter()
 {
-	// TODO: gpMapObjManager->unkC0 is a J3DMaterialTable*; the original walks
-	// its +0x14 field (passed straight to JUTNameTab::getIndex) and its +0xC
-	// field (dereferenced once more at +4) to reach the ResTIMG. None of
-	// those fields is named in the SDK headers, so raw offsets are used.
-	// TODO: the index is scaled by `<< 16 << 5` (MWCC fuses the pair into one
-	// clrlslwi); that stride is not yet explained.
-	u8* table = (u8*)gpMapObjManager->unkC0;
-	s32 index = ((JUTNameTab*)(table + 0x14))->getIndex(cSandTextureName);
-	ResTIMG* texture
-	    = (ResTIMG*)(*(u32*)(*(u32*)(table + 0xC) + 4) + (index << 21));
-
-	for (int i = 0; i < 2; i++) {
+	J3DMaterialTable* materials = gpMapObjManager->unkC0;
+	ResTIMG* sand = BossHanachanMainGetTexture(materials)->getResTIMG(
+	    materials->getTextureName()->getIndex(cSandTextureName));
+	for (int i = 0; i < 2; ++i)
 		SMS_ChangeTextureAll(getModelDataKeeper()->getNthData(i)->getModelData(),
-		                     cDummyTextureName, *texture);
-	}
+		                     cDummyTextureName, *sand);
 }
 
 void TBossHanachanManager::clipEnemies(JDrama::TGraphics* graphics)
 {
-	clipActorsAux(graphics, mCommonSaveParams->mSLViewClipFar.get(),
-	              mCommonSaveParams->mSLViewClipRadius.get());
+	clipActorsAux(graphics, mCommonParams->mSLViewClipFar.get(),
+	              mCommonParams->mSLViewClipRadius.get());
 }
 
-BOOL TBossHanachanManager::hasMapCollision() const { return true; }
-
-// ---------------------------------------------------------------------------
-// TBossHanachan
-// ---------------------------------------------------------------------------
+BOOL TBossHanachanManager::hasMapCollision() const { return TRUE; }
 
 TBossHanachan::TBossHanachan(const char* name)
     : TSpineEnemy(name)
+    , mWeakBodyIndex(0)
+    , unk178(nullptr)
+    , mCollisionPosition(0.0f, 0.0f, 0.0f)
+    , mPreviousLinearVelocity(0.0f, 0.0f, 0.0f)
+    , unk194(0.0f)
+    , unk198(0.0f)
+    , mSandPillarActor(nullptr)
+    , mSandPillarPosition(0.0f, 0.0f, 0.0f)
+    , mDeathSoundPosition(0.0f, 0.0f, 0.0f)
+    , unk1B8(-1)
+    , mCommonParams(nullptr)
+    , mChangeParams(nullptr)
 {
-	mWeakBodyIndex    = 0;
-	mSphereLink       = nullptr;
-	unk17C.set(0.0f, 0.0f, 0.0f);
-	unk188.set(0.0f, 0.0f, 0.0f);
-	unk194            = 0.0f;
-	unk198            = 0.0f;
-	mSandPillar       = nullptr;
-	unk1A0.set(0.0f, 0.0f, 0.0f);
-	unk1AC.set(0.0f, 0.0f, 0.0f);
-	unk1B8            = -1;
-	mCommonSaveParams = nullptr;
-	mChangeSaveParams = nullptr;
 	setRandomWeakBodyIndex();
 }
 
-// TODO: J3DModel keeps its base matrix in the protected member unk20 and
-// has no accessor for it; the original hands that address straight to
-// CLBCalcRotateZXYTranslateMatrix. A real accessor belongs in the SDK header,
-// which is off limits here.
-static inline MtxPtr BHSModelMtx(J3DModel* model)
-{
-	return (MtxPtr)((u8*)model + 0x20);
-}
-
-static void CalcRevisionPosByRotateZ(const JGeometry::TVec3<f32>& rotation,
-                                     f32 radius, Vec* out);
-
-// TODO: this reproduces MWCC's signed-int -> f64 conversion idiom verbatim
-// (the value is xored with 0x8000, i.e. the *high* halfword, combined with
-// 0x43300000 in the high word and the 2^52 + 2^31 bias is then removed). The
-// same trick appears in src/MoveBG/MapObjMare.cpp and src/Animal/BeeHive.cpp.
-// TODO: it is spelled out inline rather than in a helper because the original
-// emits no out-of-line copy of a converter here; a static helper would be
-// inlined but still needs the right schedule.
 void TBossHanachan::setRandomWeakBodyIndex()
 {
-	f64 biased;
-	*((u32*)&biased + 1) = 0x43300000;
-	*(u32*)&biased       = (u32)(rand() ^ 0x80000000);
-
-	mWeakBodyIndex
-	    = (int)(8.0f * (1.0f / 32768.0f * (f32)(biased - 4503601774854144.0)));
+	f32 rand       = MsRandF();
+	mWeakBodyIndex = 8.0f * rand;
 }
 
+// Frame 0x188 exact: accessor reads in the inlined execHeadCalcAnim_ and
+// execBodyCalcAnim_ plus the three getPosition()/getRotation() part copies.
+// TODO: the sphere-link and CalcAnim temporaries still sit 0x10-0x4c low
+// (0x140/0x100/0xc4/0xd0 against 0x150/0x11c/0x110/0xe0). The last loop's
+// `int i;` is declared ahead of `group`, which numbers `group` below it and
+// gives retail's r29/r28.
 void TBossHanachan::init(TLiveManager* manager)
 {
 	mManager = manager;
 	manager->manageActor(this);
-
 	mMActorKeeper = new TMActorKeeper(manager, 10);
-	mSandPillar   = mMActorKeeper->createMActor(cSandPillarModelName, 0);
-
-	mCommonSaveParams = (TBossHanachanCommonSaveParams*)manager;
-	mChangeSaveParams = (TBossHanachanChangeSaveParams*)manager;
-	// TODO: the two params pointers are read out of TLiveManager at 0x54 and
-	// 0x58; TLiveManager has not been given named accessors for them yet.
-
-	mBodyScale         = 1.0f;
-	mHeadHeight        = mCommonSaveParams->mSLViewClipRadius.get();
-	mBodyRadius        = mHeadHeight;
-	mScaledBodyRadius  = 500.0f;
-	mMarchSpeed        = 0.0f;
-	mGravity           = 2.0f;
-	mHitPoints         = 0;
-	mAngularVelocity.set(0.0f, 0.0f, 0.0f);
-	mLiveFlag |= 0x1008;
-
+	mSandPillarActor = mMActorKeeper->createMActor(cSandPillarModelName, 0);
+	mCommonParams = ((TBossHanachanManager*)manager)->mCommonParams;
+	mChangeParams = ((TBossHanachanManager*)manager)->mChangeParams[0];
+	mBodyScale = 1.0f;
+	mBodyRadius = 350.0f;
+	mWallRadius = mBodyRadius;
+	mHeadHeight = 500.0f;
+	mMarchSpeed = 0.0f;
+	mGravity = 2.0f;
+	mHitPoints = 3;
+	mScaledBodyRadius = 0.0f;
+	onLiveFlag(LIVE_FLAG_UNK1000 | LIVE_FLAG_UNK8);
 	mSpine->initWith(&TNerveBossHanachanGraphWander::theNerve());
-
-	getTracer()->mPrevIdx = -1;
+	unk124->reset();
 	goToShortestNextGraphNode();
-
-	initHitActor(0x80000014, 0x80000014, 0, 0.0f, 0.0f, 0.0f, 0.0f);
-	mLiveFlag |= 1;
-
-	for (int i = 0; i < 8; i++) {
-		// The original hands the constructors a pointer into the middle of
-		// these two literals; only the tail is used as the part name.
-		mBody[i] = new TBossHanachanPartsBody(this, "ボスハナチャンの体" + 12);
-		mBody[i]->mBodyIndex = i;
+	initHitActor(0x08000014, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	for (int i = 0; i < 8; ++i) {
+		mBodies[i] = new TBossHanachanPartsBody(this, "ボスハナチャンの体");
+		mBodies[i]->unk114 = i;
 	}
-	mHead = new TBossHanachanPartsHead(this, "ボスハナチャンの頭" + 12);
-
-	// TODO: 0x74 is mMActor; the head's MActor is handed to the body.
+	mHead = new TBossHanachanPartsHead(this, "ボスハナチャンの頭");
 	mMActor = mHead->mMActor;
-
-	unk17C = mPosition;
-	s16 angle = (s16)(mRotation.y * (65536.0f / 360.0f));
-	f32 headLen = mCommonSaveParams->mSLHeadLength.get();
-	JGeometry::TVec3<f32> headPos;
-	headPos.x = unk17C.x - JMASSin(angle) * headLen;
-	headPos.y = unk17C.y;
-	headPos.z = unk17C.z - JMASCos(angle) * headLen;
-
-	mSphereLink = new TSphereLink(8, headPos, 0.2f, -2.0f, -3.5f, headLen,
-	                              mCommonSaveParams->mSLHeadPlusYByRotateZ
-	                                  .get(),
-	                              mRotation.y);
-
-	mHead->mPosition        = mPosition;
-	mHead->mRotation        = mRotation;
-	mHead->mAngularVelocity = mAngularVelocity;
-	mHead->mVelocity        = mVelocity;
-	mHead->mGroundPlane     = mGroundPlane;
-
-	// Each iteration swaps the body's two 12-byte vectors (three word copies
-	// each way) and then overwrites the first one with the sphere point.
-	for (int i = 0; i < 8; i += 2) {
-		TBossHanachanPartsBody* b0 = mBody[i];
-		TBossHanachanPartsBody* b1 = mBody[i + 1];
-		b0->mPosition = mSphereLink->mPoints[i].unkC;
-		b0->unk130    = b0->unk124;
-		b0->unk124    = b0->mPosition;
-		b0->mRotation = mRotation;
-		b1->mPosition = mSphereLink->mPoints[i + 1].unkC;
-		b1->unk130    = b1->unk124;
-		b1->unk124    = b1->mPosition;
-		b1->mRotation = mRotation;
+	mCollisionPosition = mPosition;
+	JGeometry::TVec3<f32> bodyPosition;
+	bodyPosition = mCollisionPosition;
+	s16 angle = DEG2SHORTANGLE(mRotation.y);
+	const f32& headLength = mCommonParams->mSLHeadLength.get();
+	f32 sine = JMASSin(angle);
+	bodyPosition.x -= sine * headLength;
+	f32 cosine = JMASCos(angle);
+	bodyPosition.z -= cosine * headLength;
+	unk178 = new TSphereLink(8,
+	    JGeometry::TVec3<f32>(bodyPosition.x, bodyPosition.y, bodyPosition.z),
+	    mCommonParams->mSLBodyLength.get(), mCommonParams->mSLBodyAttackRadius.get(),
+	    0.2f, -2.0f, -3.5f, mRotation.y);
+	mHead->mPosition = getPosition();
+	mHead->mRotation = getRotation();
+	mHead->mGroundPlane = mGroundPlane;
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = mBodies[i];
+		body->mPosition = unk178->mPoints[i].mPosition;
+		body->mPreviousPosition = body->mPosition;
+		body->mOlderPosition = body->mPreviousPosition;
+		body->mRotation = getRotation();
 	}
-
-	setHeadAndBodyAnm(BH_ANM_KIND_UNK0, BH_STOP_MOTION_BLEND_OFF);
-
-	JGeometry::TVec3<f32> headRevision;
-	CalcRevisionPosByRotateZ(mRotation, headLen, &headRevision);
-	CLBCalcRotateZXYTranslateMatrix(
-	    BHSModelMtx(mHead->mMActor->getModel()), mRotation, headRevision);
-	mHead->mMActor->calc();
-
-	for (int i = 0; i < 8; i++) {
-		TBossHanachanPartsBody* b = mBody[i];
-		JGeometry::TVec3<f32> bodyRevision;
-		CalcRevisionPosByRotateZ(b->mRotation,
-		                         mCommonSaveParams->mSLBodyLength.get(),
-		                         &bodyRevision);
-		CLBCalcRotateZXYTranslateMatrix(
-		    BHSModelMtx(b->mMActor->getModel()), b->mRotation, bodyRevision);
-		PSMTXCopy(BHSModelMtx(b->mMActor->getModel()),
-		          BHSModelMtx(b->mMActor->getModel()));
-		b->mMActor->calc();
-	}
-
-	// TODO: the name handed to searchF() is the common .prm path in the
-	// original binary; that looks wrong, so the real joint-group name is
-	// still open.
-	TIdxGroupObj* group = static_cast<TIdxGroupObj*>(
-	    (JDrama::TViewObj*)JDrama::TNameRefGen::getInstance()
-	        ->getRootNameRef()
-	        ->searchF(JDrama::TNameRef::calcKeyCode(
-	                      "/enemy/bosshanachanCommon.prm"),
-	                  "/enemy/bosshanachanCommon.prm"));
+	setHeadAndBodyAnm(BOSS_HANACHAN_ANM_UNK0, BOSS_HANACHAN_STOP_MOTION_BLEND_OFF);
+	execHeadCalcAnim_();
+	execBodyCalcAnim_();
+	int i;
+	TIdxGroupObj* group = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
 	mHead->initMapCollisionAndHitActor_(group);
-	for (int i = 0; i < 8; i++) {
-		mBody[i]->initMapCollisionAndHitActor_(group);
-		mBody[i]->initFootHitActor_(group);
+	for (i = 0; i < 8; ++i) {
+		mBodies[i]->initMapCollisionAndHitActor_(group);
+		mBodies[i]->initFootHitActor_(group);
 	}
 }
 
-// Converts a raw s16 angle (the 0..65535 fixed-point form CLBRoundf returns)
-// The original derives the launch angle from the boss's velocity direction
-// (unk188/unk194/unk198, refreshed by moveObject()) and the throw strength
-// from mMarchSpeed, then clamps it to the param range before handing both to
-// SMS_ThrowMario. Every float literal below was read out of the ROM's
-// .sdata2 at the addresses objdiff reports as @3153..@4699.
-// The pragma is load-bearing: with the empty body below MWCC expands
-// throwMario_() into perform() and deletes the three real call sites the
-// original has there.
-#pragma dont_inline on
-void TBossHanachan::throwMario_(THitActor* hitActor)
+// TODO: frame exact; the `*gpMarioPos - actor->mPosition` temporary sits at
+// 0x8c where retail has 0x68, and CLBAbs's positive arm copies into r0 (retail
+// keeps r3) with the 1 - k*|d| FPRs renumbered. Inert: a named or s16 abs,
+// the one-statement ratio, `ratio -=`, and product order; also an int
+// `if (d < 0) d = -d;`, an explicit s16 ternary and CLBAbs<int>((s16)(a - b)).
+void TBossHanachan::throwMario_(THitActor* actor)
 {
-	// Vector from the hit actor's owner to Mario.
-	JGeometry::TVec3<f32> v = *gpMarioPos - hitActor->mPosition;
-
-	f32 power;
-	if (v.x * v.x + v.y * v.y + v.z * v.z <= 3.814697266e-06f) {
-		// Mario is right on top of the hit actor: throw him straight up with
-		// the full march-speed derived power.
-		v.set(0.0f, 1.0f, 0.0f);
-		power = mMarchSpeed * mChangeSaveParams->mSLThrowTotalPower.get();
+	JGeometry::TVec3<f32> direction = *gpMarioPos - actor->mPosition;
+	f32 speed;
+	if (direction.isZero()) {
+		direction.set(0.0f, 1.0f, 0.0f);
+		speed = mMarchSpeed * getChangeParams()->mSLThrowTotalPower.get();
 	} else {
-		// Otherwise aim along the boss's velocity direction. `ang` is the
-		// boss's own heading and `ang2` the heading from the hit actor to
-		// Mario; their difference decides how hard Mario is pushed sideways.
-		f32 h;
-		if (unk188.z == 0.0f) {
-			h = (unk188.x >= 0.0f) ? 90.0f : -90.0f;
-		} else if (unk188.z >= 0.0f) {
-			h = (360.0f / 65536.0f) * (f32)matan(unk188.z, unk188.x);
-		} else {
-			h = 180.0f - (360.0f / 65536.0f) * (f32)matan(-unk188.z, unk188.x);
-		}
-		s16 ang = CLBRoundf<s16>(182.04445f * h);
-
-		f32 h2;
-		if (v.z == 0.0f) {
-			h2 = (v.x >= 0.0f) ? 90.0f : -90.0f;
-		} else if (v.z >= 0.0f) {
-			h2 = (360.0f / 65536.0f) * (f32)matan(v.z, v.x);
-		} else {
-			h2 = 180.0f - (360.0f / 65536.0f) * (f32)matan(-v.z, v.x);
-		}
-		s16 ang2 = CLBRoundf<s16>(182.04445f * h2);
-
-		s16 diff = (s16)(ang2 - ang);
-		if (diff < 0)
-			diff = -diff;
-
-		// Same signed-int -> f64 bias trick as in setRandomWeakBodyIndex(), spelled
-		// out inline because the original emits no out-of-line converter for
-		// it in this TU.
-		f64 biased;
-		*((u32*)&biased + 1) = 0x43300000;
-		*(u32*)&biased       = (u32)(diff ^ 0x8000);
-
-		f32 deg = 3.051757812e-05f * (f32)(biased - 4503601774854144.0);
-		f32 k   = 1.0f - deg;
-		f32 s   = mChangeSaveParams->mSLThrowMoveDirPower.get();
-
-		// The original stores unk188 into the scratch vector first and then
-		// scales x/z by `k` and all three by `s`, in that order.
-		JGeometry::TVec3<f32> d(unk188.x, unk188.y, unk188.z);
-		d.x *= k;
-		d.z *= k;
-		d.x *= s;
-		d.y *= s;
-		d.z *= s;
-		v += d;
-
-		v.y = mChangeSaveParams->mSLThrowVecY.get();
-
-		power = mMarchSpeed * mChangeSaveParams->mSLThrowTotalPower.get();
+		s16 moveAngle = CLBDegToShortAngle(MsGetRotFromZaxisY(mPreviousLinearVelocity));
+		s16 marioAngle = CLBDegToShortAngle(MsGetRotFromZaxisY(direction));
+		s16 angleDifference = moveAngle - marioAngle;
+		f32 ratio = (1.0f / 32768.0f) * CLBAbs<int>(angleDifference);
+		ratio = 1.0f - ratio;
+		speed = ratio * (mMarchSpeed * getChangeParams()->mSLThrowTotalPower.get());
+		JGeometry::TVec3<f32> movement = mPreviousLinearVelocity;
+		movement.scale(ratio * getChangeParams()->mSLThrowMoveDirPower.get());
+		direction += movement;
+		direction.y = getChangeParams()->mSLThrowVecY.get();
 	}
-
-	// Clamp the power into the param's throw-speed range.
-	power = MsMin(MsMax(power, mChangeSaveParams->mSLThrowSpeedMin.get()),
-	              mChangeSaveParams->mSLThrowSpeedMax.get());
-
+	speed = MsClamp(speed, getChangeParams()->mSLThrowSpeedMin.get(),
+	                 getChangeParams()->mSLThrowSpeedMax.get());
 	SMS_SendMessageToMario(mHead, 0xE);
-	SMS_SendMessageToMario(mHead, 0x7);
-	SMS_ThrowMario(v, power);
-	mHead->mHitActor->onWaterHitCounter();
+	SMS_SendMessageToMario(mHead, 7);
+	SMS_ThrowMario(direction, speed);
+	mHead->unk100->onWaterHitCounter();
 }
-#pragma dont_inline off
 
-// MsWrap<f32> is the header template in MarioUtil/MathUtil.hpp; the original
-// emitted a local out-of-line copy of it in this TU (0x48 bytes) because
-// perform() calls it out of line four times. Nothing calls it here yet, so the
-// copy is not emitted -- it will appear as soon as perform() is reconstructed.
-
-// Rotates the X/Z components of `param_3` by `param_2` (degrees) * ...
-// The literal zero components come from the two vector temporaries: MWCC
-// folds a hand written `0.0f * sn` away but keeps these.
-// All four call sites (two in init, two in perform) are real `bl`s in the
-// original, so this one is not inlined there either.
-#pragma dont_inline on
-static void CalcRevisionPosByRotateZ(const JGeometry::TVec3<f32>& param_1,
-                                     f32 param_2, Vec* param_3)
+static void CalcRevisionPosByRotateZ(const JGeometry::TVec3<f32>& rotation,
+                                    f32 heightScale, Vec* position)
 {
-	f32 z = param_1.z;
-
-	param_3->y += param_2 * fabsf(z);
-	if (fabsf(z) > 90.0f) {
-		f32 rev = 7.0f * (fabsf(z) - 90.0f);
-		if (param_1.z > 0.0f)
-			rev = -rev;
-
-		s32 trigAngle = CLBRoundf<s16>(182.04445f * param_1.y);
-		u32 trigIndex = (u16)trigAngle >> jmaSinShift;
-
-		// The literal zero components come from the two vector temporaries:
-		// MWCC folds a hand written `0.0f * sn` away but keeps these.
-		JGeometry::TVec3<f32> d(jmaCosTable[trigIndex], 0.0f,
-		                         jmaSinTable[trigIndex]);
-		JGeometry::TVec3<f32> e(rev, 0.0f, 0.0f);
-
-		param_3->x += e.x * d.x + e.y * d.z;
-		param_3->z += -e.x * d.z + e.y * d.x;
+	f32 roll = fabsf(rotation.z);
+	position->y += heightScale * roll;
+	if (roll > 90.0f) {
+		JGeometry::TVec3<f32> offset(7.0f * (roll - 90.0f), 0.0f, 0.0f);
+		if (rotation.z > 0.0f)
+			offset.x = -offset.x;
+		s16 angle = CLBDegToShortAngle(rotation.y);
+		f32 cosine = JMASCos(angle);
+		f32 sine = JMASSin(angle);
+		// The rotated offset is never written back: retail stores only
+		// into position, so both components are plain locals.
+		// TODO: 4 marks left, all volatile-FPR numbering (retail puts the
+		// rotated x in f3 and position->x in f2; declaration order and the
+		// `+=` spelling are both inert; so are swapped product order,
+		// inline JMASCos/JMASSin calls and a rotated TVec3 local; also
+		// sine declared first and `pos = x + pos` / unnamed sums).
+		f32 x = offset.x * cosine + offset.z * sine;
+		f32 z = -offset.x * sine + offset.z * cosine;
+		position->x += x;
+		position->z += z;
 	}
 }
-#pragma dont_inline off
 
-// UNUSED in the original (0x118 and 0x170 bytes); both bodies are called from
-// perform() and have not been reconstructed yet. execHeadCalcAnim_ is defined
-// first because -inline deferred emits the bodies in reverse source order.
-void TBossHanachan::execHeadCalcAnim_() { }
-void TBossHanachan::execBodyCalcAnim_() { }
+void TBossHanachan::execHeadCalcAnim_()
+{
+	JGeometry::TVec3<f32> position = getPosition();
+	CalcRevisionPosByRotateZ(mRotation, mCommonParams->mSLHeadPlusYByRotateZ.get(),
+	                        &position);
+	CLBCalcRotateZXYTranslateMatrix(getHead()->getMActor()->getModel()->getBaseTRMtx(),
+	                               mRotation, position);
+	getHead()->getMActor()->calc();
+}
+
+void TBossHanachan::execBodyCalcAnim_()
+{
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = mBodies[i];
+		// Declared first: perform inlines this, and retail has the position
+		// above the matrix (callee locals are created last-declared first).
+		Mtx transform;
+		JGeometry::TVec3<f32> position = body->getPosition();
+		CalcRevisionPosByRotateZ(body->mRotation,
+		    mCommonParams->mSLBodyPlusYByRotateZ.get(), &position);
+		CLBCalcRotateZXYTranslateMatrix(transform, body->mRotation, position);
+		body->getMActor()->getModel()->setBaseTRMtx(transform);
+		body->getMActor()->calc();
+	}
+}
 
 void TBossHanachan::kill() { }
 
+// The named scale loads the sphere link's factor before mRotation.z, as
+// retail does.
+// TODO: every instruction matches; the three vector temporaries at the end
+// sit at 0x68/0x5c/0x50 (retail 0x48/0x2c/0x3c) and `displacement` at 0x74
+// (retail 0x5c, with 0x18 unused above it).
 void TBossHanachan::bind()
 {
-	// TODO: bit 27 of mLiveFlag has no LIVE_FLAG_* name (the GMSP01 values in
-	// include/Strategic/LiveActor.hpp are shifted one bit left relative to
-	// this bit, which is why it cannot be spelled with an existing name). It
-	// is the boss's own "dead / already bound" guard, tested before anything
-	// else, so it is left as a raw mask rather than faking a flag constant.
-	if (mLiveFlag & 0x04000000)
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
 		return;
-
-	if (mBinder != nullptr) {
+	if (mBinder) {
 		mBinder->bind(this);
 		return;
 	}
-
-	JGeometry::TVec3<f32> v = mPosition;
-	v.x += mLinearVelocity.x;
-	v.y += mLinearVelocity.y;
-	v.z += mLinearVelocity.z;
-	v.x += mVelocity.x;
-	v.y += mVelocity.y;
-	v.z += mVelocity.z;
-
+	JGeometry::TVec3<f32> nextPosition = getPosition();
+	nextPosition += mLinearVelocity;
+	nextPosition += mVelocity;
 	mVelocity.y -= getGravityY();
-
 	if (mVelocity.y < mVelocityMinY)
 		mVelocity.y = mVelocityMinY;
-
-	unk17C = v;
-	f32 revX, revZ;
-	BHSCalcRevisionDistXZByRotateZ(mRotation.y, mRotation.z,
-	                               mSphereLink->unk14, &revX, &revZ);
-	unk17C.x += revX;
-	unk17C.z += revZ;
-
-	mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
-	    unk17C.x, unk17C.y + mHeadHeight, unk17C.z, &mGroundPlane);
+	mCollisionPosition.set(nextPosition);
+	f32 offsetX, offsetZ;
+	f32 scale = unk178->mRotationMoveScale;
+	BHSCalcRevisionDistXZByRotateZ(mRotation.y, mRotation.z, scale, &offsetX, &offsetZ);
+	mCollisionPosition.x += offsetX;
+	mCollisionPosition.z += offsetZ;
+	JGeometry::TVec3<f32> beforeCollision = mCollisionPosition;
+	mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(mCollisionPosition.x,
+	    mCollisionPosition.y + mHeadHeight, mCollisionPosition.z, &mGroundPlane);
 	mGroundHeight += 1.0f;
-
-	if (unk17C.y <= 0.05f + mGroundHeight) {
-		if (mGroundPlane != nullptr && mGroundPlane->isIllegalData()) {
-			// Landed: clear bits 23..25 of mLiveFlag, stop the fall and snap
-			// the link position's Y onto the ground height.
-			// TODO: 0x03800000 has no LIVE_FLAG_* name in GMSP01.
-			mLiveFlag &= ~0x03800000;
-			mVelocity.zero();
-			unk17C.y = mGroundHeight;
+	if (mCollisionPosition.y <= 0.05f + getGroundHeight()) {
+		if (mGroundPlane && (mGroundPlane->isIllegalData() == true ? false : true)) {
+			offLiveFlag(LIVE_FLAG_AIRBORNE);
+			mVelocity.set(0.0f, 0.0f, 0.0f);
+			mCollisionPosition.y = getGroundHeight();
 		}
 	} else {
 		onLiveFlag(LIVE_FLAG_AIRBORNE);
 	}
-
-	gpMap->isTouchedOneWallAndMoveXZ(&unk17C.x, unk17C.y + mHeadHeight,
-	                                 &unk17C.z, mBodyRadius);
-
-	// The original makes three out-of-line TVec3 operator- calls here, of which
-	// the first one's result is discarded:
-	//   1. a local copy of unk17C minus unk17C itself (dead)
-	//   2. v - mPosition
-	//   3. v + (2), stored into mLinearVelocity
-	JGeometry::TVec3<f32> scratch = unk17C;
-	scratch                         = scratch - unk17C;
-	mLinearVelocity                 = v + (v - mPosition);
+	gpMap->isTouchedOneWallAndMoveXZ(&mCollisionPosition.x,
+	    mCollisionPosition.y + mHeadHeight, &mCollisionPosition.z, mBodyRadius);
+	JGeometry::TVec3<f32> correction = mCollisionPosition - beforeCollision;
+	JGeometry::TVec3<f32> displacement;
+	displacement = nextPosition - mPosition;
+	mLinearVelocity = displacement + correction;
 }
 
 void TBossHanachan::moveObject()
 {
 	updateSquareToMario();
-	unk188.set(mLinearVelocity);
+	mPreviousLinearVelocity.x = mLinearVelocity.x;
+	mPreviousLinearVelocity.y = mLinearVelocity.y;
+	mPreviousLinearVelocity.z = mLinearVelocity.z;
 	TLiveActor::moveObject();
-
-	const TNerveBase<TLiveActor>* cur = mSpine->getLatestNerve();
-	if (cur != &TNerveBossHanachanGetUp::theNerve())
-		CLBChaseDecrease(&mRotation.z, mBody[0]->mRotation.z, 0.04f, 0.0f);
-
-	mHead->mPosition    = mPosition;
-	mHead->mRotation    = mRotation;
+	if (mSpine->getLatestNerve() != &TNerveBossHanachanGetUp::theNerve())
+		CLBChaseDecrease(&mRotation.z, mBodies[0]->mRotation.z, 0.04f, 0.0f);
+	mHead->mPosition = mPosition;
+	mHead->mRotation = mRotation;
 	mHead->mGroundPlane = mGroundPlane;
 }
 
-// Returns the X/Z rotation, in degrees, of the direction vector `v` in the
-// X/Z plane. Same shape as the MsGetRot* helpers in MarioUtil/MathUtil.hpp,
-// but the second test really is re-issued in the original (the compiler does
-// not fold it away), and the caller wraps the result with MsWrap<f32>.
-static f32 BHSDegFromXZ(const JGeometry::TVec3<f32>& v)
+// Wraps a yaw into [-180, 180). Retail calls MsWrap<f> out of line at all three
+// sand-slope sites while inlining MsGetRotFromZaxisY beside them, so the wrap is
+// one inline level deeper than the vector yaw. The angle is taken by reference
+// because retail loads mRotation.y straight into f1 for the third call.
+static inline f32 BossHanachanWrapDegree(const f32& angle)
 {
-	// TODO: the zero-multiplied terms of the 200-unit ground probe below come
-	// from two vector temporaries, not from a hand written 0.0f * sn.
-	if (0.0f == v.z) {
-		return (v.x >= 0.0f) ? 90.0f : -90.0f;
-	} else if (v.z >= 0.0f) {
-		return (360.0f / 65536.0f) * matan(v.z, v.x);
-	} else {
-		return 180.0f - (360.0f / 65536.0f) * matan(-v.z, v.x);
+	return MsWrap(angle, -180.0f, 180.0f);
+}
+
+static inline void BossHanachanUpdateCentrifugalForce(TBossHanachan* self)
+{
+	bool tumbling = false;
+	f32 force = 0.0f;
+	if (self->mSpine->getLatestNerve() == &TNerveBossHanachanTumble::theNerve()) {
+		tumbling = true;
+		force = self->getBodyMaxRotateZ();
+	}
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = self->mBodies[i];
+		if (!tumbling)
+			force = BHSCalcCentrifugalForce(body->mPosition, body->mPreviousPosition,
+			                               body->mOlderPosition, body->mRotation.y)
+			        * self->mChangeParams->mSLCentrifugalForce.get();
+		CLBChaseGeneralConstantSpecifySpeed(&body->unk144, force,
+		                                    self->mChangeParams->mSLCentrifugalSpeed.get());
+		body->unk144 = MsClamp(body->unk144, -179.0f, 179.0f);
 	}
 }
 
-// perform() inlines this at three sites (head, body, foot), so it is written
-// out by hand there rather than kept as a function.
+static inline void BossHanachanUpdateBodyRotateZ(TBossHanachan* self)
+{
+	f32 maxRoll = self->getBodyMaxRotateZ();
+	const TNerveBase<TLiveActor>* current = self->mSpine->getLatestNerve();
+	f32 length = self->mCommonParams->mSLBodyLength.get();
+	f32 inverseLengthSquared = 1.0f / (length * length);
+	f32 damping = self->mChangeParams->mSLWaveDecrease.get() * (1.0f / 120.0f);
+	f32 inverseDamping = 1.0f / (1.0f + damping);
+	f32 previousDamping = 1.0f - damping;
+	f32 velocity = self->mChangeParams->mSLWaveVelocity.get();
+	f32 waveScale = (1.0f / 120.0f) * ((1.0f / 120.0f)
+	                   * (velocity * velocity));
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = self->mBodies[i];
+		f32 angle = body->mRotation.z;
+		bool overturned = (-179.0f == angle || 179.0f == angle) ? true : false;
+		if (!overturned || angle != maxRoll) {
+			f32 previous = i == 0 ? self->mBodies[i + 1]->mPreviousRoll
+			                      : self->mBodies[i - 1]->mPreviousRoll;
+			f32 next = i == 7 ? self->mBodies[i - 1]->mPreviousRoll
+			                  : self->mBodies[i + 1]->mPreviousRoll;
+			f32 twiceRoll = 2.0f * body->mPreviousRoll;
+			f32 roll = twiceRoll * inverseDamping
+			           + inverseDamping
+			                 * (waveScale
+			                    * (inverseLengthSquared * (next + previous - twiceRoll)
+			                       + body->unk148))
+			           - inverseDamping * (body->mOlderRoll * previousDamping);
+			roll = MsClamp(roll, -179.0f, 179.0f);
+			CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, roll,
+			                                    self->mChangeParams->mSLRotateZLeanSpeed.get());
+			bool onSand = false;
+			if (current == &TNerveBossHanachanGraphWander::theNerve()) {
+				if (body->getSandActor_()) {
+					onSand = true;
+					if (body->unk120 != 0.0f) {
+						f32 speed = body->unk120 * self->mMarchSpeed
+						            * self->mChangeParams->mSLSandSlopeForce.get();
+						f32 target = 179.0f;
+						if (body->unk120 < 0.0f)
+							target = -179.0f;
+						CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, target, speed);
+					}
+				} else {
+					CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, body->unk120,
+					                                    self->mChangeParams->mSLRotateZRestorationSpeed.get());
+				}
+			} else if (current == &TNerveBossHanachanTumble::theNerve()) {
+				CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, self->unk194, self->unk198);
+			}
+			body->mRotation.z = MsClamp(body->mRotation.z, -179.0f, 179.0f);
+			if (current == &TNerveBossHanachanGraphWander::theNerve()
+			    && (self->mSpine->getTime() < self->mChangeParams->mSLNotFallDownFrames.get()
+			        || !onSand)) {
+				f32 limit = self->mChangeParams->mSLMaxRotateZNotSand.get();
+				if (body->mRotation.z < -limit)
+					CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, -limit, 15.0f);
+				else if (body->mRotation.z > limit)
+					CLBChaseGeneralConstantSpecifySpeed(&body->mRotation.z, limit, 15.0f);
+			}
+		}
+	}
+	f32 limit = self->mChangeParams->mSLDiffMaxRotateZ.get();
+	for (int i = 1; i < 8; ++i) {
+		const f32& previous = self->mBodies[i - 1]->mRotation.z;
+		f32& roll = self->mBodies[i]->mRotation.z;
+		if (fabs(previous - roll) > limit) {
+			if (roll < previous)
+				roll = previous - limit;
+			else
+				roll = previous + limit;
+		}
+	}
+}
 
+static inline void BossHanachanSaveHistory(TBossHanachan* self)
+{
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = self->mBodies[i];
+		body->mOlderPosition = body->mPreviousPosition;
+		body->mPreviousPosition = body->mPosition;
+		body->mOlderRoll = body->mPreviousRoll;
+		body->mPreviousRoll = body->mRotation.z;
+		body->unk148 = body->unk144;
+	}
+}
+
+// TODO: frame 0x400 against the ROM's 0x570. The ROM keeps the target-arrow
+// vector, the ground-check pointer and the sand delta in its high named block,
+// which points at more inline levels (the ROM inlines far more here); left over
+// are volatile-FPR orders in the head offset call, the side-vector ground probes,
+// the wave-roll constants and the tumble chase, plus &mRotation.z held in r22.
+// Slot order (inv.py): with offsetZ declared before offsetX, `ground` at the
+// top of the probe loop and execBodyCalcAnim_'s Mtx first, angle through
+// offsetX and the calc-anim block sit uniformly (0x114, 0x180) below retail;
+// still reversed are the target-arrow vector (retail's topmost object) and the
+// two by-value operator- temporaries (the open `a - b` class).
 void TBossHanachan::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_UNK200))
+	if (checkLiveFlag(0x201))
 		return;
-
-	// Demo / talk mode: the boss is not really there, it just drops a shine.
-	if (checkLiveFlag(LIVE_FLAG_UNK40000)) {
-		if (!(cue & 1))
-			return;
-		if (!(*(u16*)graphics & 2))
-			return;
-		if (gpMSound->gateCheck(0x6010)) {
-			MSoundSESystem::MSoundSE::startSoundActor(0x6010, &mPosition, 0,
-			                                          0, 0, 4);
+	if (checkLiveFlag(0x40000)) {
+		if ((cue & 1) && (graphics->unk0 & 2)) {
+			if (gpMSound->gateCheck(0x6010))
+				MSoundSESystem::MSoundSE::startSoundActor(0x6010, &mPosition,
+				                                        0, nullptr, 0, 4);
+			if (!gpMarDirector->isThing()
+			    && (checkLiveFlag(0x100000)
+			        || !gpMSound->unk98->modBgm(1, 1))) {
+				mLiveFlag |= 0x41;
+				gpItemManager->makeShineAppearWithDemo(
+				    "シャイン（ボス用）", "ボスシャインカメラ", mCollisionPosition.x,
+				    mCollisionPosition.y + mCommonParams->mSLShineAppearOffsetY.get(),
+				    mCollisionPosition.z);
+			}
 		}
-		if (gpMarDirector->isThing())
-			return;
-		if (!checkLiveFlag(LIVE_FLAG_UNK100000)
-		    && gpMSound->unk98->modBgm(1, 1)) {
-			return;
-		}
-		mLiveFlag |= LIVE_FLAG_DEAD | LIVE_FLAG_UNK40;
-		gpItemManager->makeShineAppearWithDemo(
-		    "シャイン（ボス用）", "ボスシャインカメラ",
-		    unk17C.x,
-		    unk17C.y
-		        + mCommonSaveParams->mSLShineAppearOffsetY.get(),
-		    unk17C.z);
 		return;
 	}
 
@@ -558,783 +490,501 @@ void TBossHanachan::perform(u32 cue, JDrama::TGraphics* graphics)
 		if (gpMarDirector->isThing()) {
 			mLinearVelocity.zero();
 			mAngularVelocity.zero();
-			// TODO: the original leaves the whole update here; a goto is the
-			// only spelling that reproduces the branch target.
-			if (!(*(u16*)graphics & 2))
-				goto moveMapCollision;
-			if (mSpine->getLatestNerve() == &TNerveBossHanachanDead::theNerve()) {
-				if (!checkLiveFlag(LIVE_FLAG_UNK100000)) {
-					onLiveFlag(LIVE_FLAG_UNK100000);
-					MSBgm::stopTrackBGM(1, 30);
-				}
+			if ((graphics->unk0 & 2)
+			    && mSpine->getLatestNerve() == &TNerveBossHanachanDead::theNerve()
+			    && !checkLiveFlag(0x100000)) {
+				mLiveFlag |= 0x100000;
+				MSBgm::stopTrackBGM(1, 30);
 			}
-			goto moveMapCollision;
-		}
-		// The hint balloon timer only runs while the boss is not tumbling.
-		if (!checkLiveFlag(LIVE_FLAG_UNK80000) && mHitPoints == 3
-		    && 0.0f != mMarchSpeed
-		    && mSpine->getLatestNerve() != &TNerveBossHanachanTumble::theNerve()) {
-			// TODO: 0x1C20 frames; gpMarDirector->mState has no accessor yet.
-			if (unk1B8 == -1 && gpMarDirector->mState == 4) {
-				unk1B8 = 7200;
-			} else if (unk1B8 > 0) {
-				unk1B8 -= 1;
-				if (unk1B8 == 0) {
+		} else {
+			if (!checkLiveFlag(0x80000) && mHitPoints == 3
+			    && mMarchSpeed != 0.0f
+			    && mSpine->getLatestNerve() != &TNerveBossHanachanTumble::theNerve()) {
+				if (unk1B8 == -1 && gpMarDirector->mState == 4) {
 					unk1B8 = 7200;
-					gpMarDirector->getConsole()->startAppearBalloon(6, true);
+				} else if (unk1B8 > 0) {
+					--unk1B8;
+					if (unk1B8 == 0) {
+						unk1B8 = 7200;
+						gpMarDirector->mConsole->startAppearBalloon(6, true);
+					}
 				}
 			}
-		}
-		{
 			moveObject();
-			const TNerveBase<TLiveActor>* currentNerve = mSpine->getLatestNerve();
-
-				for (int i = 0; i < 8; i++) {
-					TBossHanachanPartsBody* body = mBody[i];
-					const JGeometry::TVec3<f32>& previousPosition = body->unk124;
-					body->unk130 = previousPosition;
-					const JGeometry::TVec3<f32>& currentPosition = body->mPosition;
-					body->unk124 = currentPosition;
-					body->unk140 = body->unk13C;
-					body->unk13C = body->mRotation.z;
-					body->unk148 = body->unk144;
-				}
-
-				s16 bodyAngle
-				    = CLBRoundf<s16>(182.04445f * mBody[0]->mRotation.y);
-				CLBChaseAngleDecrease(
-				    &bodyAngle, CLBRoundf<s16>(182.04445f * mRotation.y), 20);
-				mBody[0]->mRotation.y
-				    = (360.0f / 65536.0f) * (f32)bodyAngle;
-
-				for (int i = 1; i < 8; i++) {
-					TSpherePoint& point = mSphereLink->mPoints[i - 1];
-					TBossHanachanPartsBody* body = mBody[i];
-					JGeometry::TVec3<f32> v
-					    = point.unkC - mSphereLink->mPoints[i].unkC;
-					body->mRotation.y
-					    = MsWrap<f32>(BHSDegFromXZ(v), 0.0f, 360.0f);
-				}
-
-				mSphereLink->unk18 = mBody[0]->mRotation.y;
-				for (int i = 0; i < 8; i++) {
-					mSphereLink->setDegreeZAndRevisionPosXZ(
-					    i, mBody[i]->mRotation.z);
-				}
-
-				f32 revX, revZ;
-				JGeometry::TVec3<f32> headPos = mPosition;
-				headPos.x -= JMASSin((s16)(mRotation.y
-				                          * (65536.0f / 360.0f)))
-				             * mCommonSaveParams->mSLHeadLength.get();
-				headPos.z -= JMASCos((s16)(mRotation.y
-				                          * (65536.0f / 360.0f)))
-				             * mCommonSaveParams->mSLHeadLength.get();
-				BHSCalcRevisionDistXZByRotateZ(mRotation.y, mRotation.z,
-				                               mSphereLink->unk14, &revX,
-				                               &revZ);
-				headPos.x += revX;
-				headPos.z += revZ;
-				mSphereLink->moveHead(headPos);
-
-				for (int i = 0; i < 8; i++) {
-					TBossHanachanPartsBody* body = mBody[i];
-					BHSCalcRevisionDistXZByRotateZ(body->mRotation.y,
-					                               body->mRotation.z,
-					                               mSphereLink->unk14, &revX,
-					                               &revZ);
-					body->mPosition = mSphereLink->mPoints[i].unkC;
-					body->mPosition.x -= revX;
-					body->mPosition.z -= revZ;
-				}
-
-				bool isTumble = false;
-				f32 centrifugal = 0.0f;
-				if (mSpine->getLatestNerve()
-				    == &TNerveBossHanachanTumble::theNerve()) {
-					isTumble = true;
-					centrifugal = getBodyMaxRotateZ();
-				}
-				for (int i = 0; i < 8; i++) {
-					TBossHanachanPartsBody* body = mBody[i];
-					if (!isTumble) {
-						centrifugal = BHSCalcCentrifugalForce(
-						    body->mPosition, body->unk124, body->unk130,
-						    body->mRotation.y)
-						    * mChangeSaveParams->mSLCentrifugalForce.get();
-					}
-					CLBChaseGeneralConstantSpecifySpeed<f32>(
-					    &body->unk144, centrifugal,
-					    mChangeSaveParams->mSLCentrifugalSpeed.get());
-					body->unk144
-					    = MsClamp(body->unk144, -179.0f, 179.0f);
-				}
-
-				if (currentNerve
-				    != &TNerveBossHanachanDown::theNerve()) {
-					// The original keeps these two in registers across the loop
-					// (f15 / f14); MWCC materialises the literals instead, so
-					// f14/f15 never appear in our prologue.
-					f32 sandUp   = 70.0f;
-					f32 sandDown = -70.0f;
-					for (int i = 0; i < 8; i++) {
-						TBossHanachanPartsBody* body = mBody[i];
-						f32 groundY = gpMap->checkGroundIgnoreWaterSurface(
-						    body->mPosition.x,
-						    body->mPosition.y + 500.0f,
-						    body->mPosition.z, &body->mGroundPlane);
-						TLiveActor* sandActor = body->getSandActor_();
-						if (sandActor != nullptr) {
-							JGeometry::TVec3<f32> d = sandActor->mPosition
-							                             - mPosition;
-							JGeometry::TVec3<f32> e = d;
-							if (d.x * d.x + d.z * d.z
-							    < CLBSquared<f32>(50.0f)) {
-								body->unk120 = 0.0f;
-								continue;
-							}
-							f32 angle = MsWrap<f32>(BHSDegFromXZ(e), -180.0f,
-							                        180.0f);
-							f32 rel = MsWrap<f32>(
-							    angle
-							        - MsWrap<f32>(mRotation.y, -180.0f, 180.0f),
-							    -180.0f, 180.0f);
-							f32 absRel = CLBAbs<f32>(rel);
-							if (absRel <= 15.0f || absRel >= 165.0f) {
-								body->unk120 = 0.0f;
-							} else {
-								f32 riseRatio = SMS_GetSandRiseUpRatio(sandActor);
-								if (rel > 15.0f)
-									body->unk120 = sandUp * riseRatio;
-								else
-									body->unk120 = sandDown * riseRatio;
-							}
+			const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+			BossHanachanSaveHistory(this);
+			s16 angle = CLBDegToShortAngle(mBodies[0]->mRotation.y);
+			CLBChaseAngleDecrease(&angle, CLBDegToShortAngle(mRotation.y),
+			                      20);
+			mBodies[0]->mRotation.y = (360.0f / 65536.0f) * angle;
+			for (int i = 1; i < 8; ++i) {
+				TBossHanachanPartsBody* body = mBodies[i];
+				JGeometry::TVec3<f32> axis = unk178->mPoints[i - 1].mPosition
+				                            - unk178->mPoints[i].mPosition;
+				body->mRotation.y
+				    = MsAngleWrap(MsGetRotFromZaxisY(axis));
+			}
+			unk178->mHeadDegreeY = mBodies[0]->mRotation.y;
+			for (int i = 0; i < 8; ++i)
+				unk178->setDegreeZAndRevisionPosXZ(i, mBodies[i]->mRotation.z);
+			JGeometry::TVec3<f32> headPosition = mPosition;
+			headPosition.x
+			    -= JMASin(mRotation.y) * mCommonParams->mSLHeadLength.get();
+			headPosition.z -= JMACos(mRotation.y) * mCommonParams->mSLHeadLength.get();
+			f32 offsetZ, offsetX;
+			BHSCalcRevisionDistXZByRotateZ(mRotation.y, mRotation.z,
+			                              unk178->mRotationMoveScale, &offsetX, &offsetZ);
+			headPosition.x += offsetX;
+			headPosition.z += offsetZ;
+			unk178->moveHead(headPosition);
+			for (int i = 0; i < 8; ++i) {
+				TBossHanachanPartsBody* body = mBodies[i];
+				BHSCalcRevisionDistXZByRotateZ(body->mRotation.y, body->mRotation.z,
+				                              unk178->mRotationMoveScale, &offsetX, &offsetZ);
+				body->mPosition = unk178->mPoints[i].mPosition;
+				body->mPosition.x -= offsetX;
+				body->mPosition.z -= offsetZ;
+			}
+			BossHanachanUpdateCentrifugalForce(this);
+			if (nerve != &TNerveBossHanachanDown::theNerve()) {
+				for (int i = 0; i < 8; ++i) {
+					TBossHanachanPartsBody* body = mBodies[i];
+					const TBGCheckData* ground;
+					f32 groundHeight = gpMap->checkGroundIgnoreWaterSurface(
+					    body->mPosition.x, 500.0f + body->mPosition.y,
+					    body->mPosition.z, &body->mGroundPlane);
+					const TLiveActor* sand = body->getSandActor_();
+					if (sand) {
+						JGeometry::TVec3<f32> delta;
+						delta = sand->mPosition - mPosition;
+						JGeometry::TVec3<f32> direction;
+						direction = delta;
+						// Retail fuses x*x into the sum (fmadds), which fp_contract only does
+						// for products of scalar locals.
+						f32 dx = direction.x;
+						f32 dz = direction.z;
+						if (dx * dx + dz * dz <= CLBSquared(50.0f)) {
+							body->unk120 = 0.0f;
 						} else {
-							s16 a = CLBRoundf<s16>(body->mRotation.y
-							              * (65536.0f / 360.0f));
-							f32 cosA = JMASCos(a);
-							f32 sinA = JMASSin(a);
-							JGeometry::TVec3<f32> probe(200.0f, 0.0f, 0.0f);
-							f32 offsetX = probe.x * cosA + probe.z * sinA;
-							f32 offsetZ = -probe.x * sinA + probe.z * cosA;
-							JGeometry::TVec3<f32> oppositeProbe(-offsetX, -probe.y,
-							                                      -offsetZ);
-							f32 centerY = probe.y + body->mPosition.y;
-							f32 oppositeY = oppositeProbe.y + body->mPosition.y;
-							f32 oppositeX = oppositeProbe.x + body->mPosition.x;
-							f32 oppositeZ = oppositeProbe.z + body->mPosition.z;
-							const TBGCheckData* check = nullptr;
-							f32 h1 = gpMap->checkGroundIgnoreWaterSurface(
-							    body->mPosition.x + offsetX, 500.0f + centerY,
-							    body->mPosition.z + offsetZ, &check);
-							f32 h2 = gpMap->checkGroundIgnoreWaterSurface(
-							    oppositeX, 500.0f + oppositeY, oppositeZ, &check);
-							f32 t1 = h1 - groundY;
-							f32 t2 = h2 - groundY;
-							if (fabsf(t1) < 0.001f && fabsf(t2) < 0.001f) {
+							f32 yaw = BossHanachanWrapDegree(MsGetRotFromZaxisY(direction));
+							f32 difference = BossHanachanWrapDegree(
+							    yaw - BossHanachanWrapDegree(mRotation.y));
+							f32 absolute = CLBAbs(difference);
+							if (absolute <= 15.0f || absolute >= 165.0f) {
 								body->unk120 = 0.0f;
-							} else if (fabsf(t1) > fabsf(t2)) {
-								body->unk120
-								    = (360.0f / 65536.0f) * matan(200.0f, t1);
 							} else {
-								body->unk120
-								    = -(360.0f / 65536.0f) * matan(200.0f, t2);
+								f32 rise = SMS_GetSandRiseUpRatio(sand);
+								if (difference > 15.0f)
+									body->unk120 = 70.0f * rise;
+								else
+									body->unk120 = -70.0f * rise;
 							}
 						}
+					} else {
+						JGeometry::TVec3<f32> side(200.0f, 0.0f, 0.0f);
+						s16 yaw = CLBDegToShortAngle(body->mRotation.y);
+						f32 cosine = JMASCos(yaw);
+						f32 sine = JMASSin(yaw);
+						f32 x = side.x * cosine + side.z * sine;
+						side.z = -side.x * sine + side.z * cosine;
+						side.x = x;
+						JGeometry::TVec3<f32> opposite(-side.x, -side.y, -side.z);
+						side += body->mPosition;
+						opposite += body->mPosition;
+						f32 left = gpMap->checkGroundIgnoreWaterSurface(
+						    side.x, 500.0f + side.y, side.z, &ground);
+						f32 right = gpMap->checkGroundIgnoreWaterSurface(
+						    opposite.x, 500.0f + opposite.y, opposite.z, &ground);
+						left -= groundHeight;
+						right -= groundHeight;
+						f64 absoluteLeft = fabs(left);
+						f64 absoluteRight = fabs(right);
+						if (absoluteLeft < 0.001f && absoluteRight < 0.001f)
+							body->unk120 = 0.0f;
+						else if (absoluteLeft > absoluteRight)
+							body->unk120 = (360.0f / 65536.0f) * matan(200.0f, left);
+						else
+							body->unk120 = -((360.0f / 65536.0f) * matan(200.0f, right));
 					}
 				}
-
-				if (currentNerve == &TNerveBossHanachanGetUp::theNerve()) {
+				if (nerve == &TNerveBossHanachanGetUp::theNerve()) {
 					mHead->calcRotateZWhenGetUp_();
 					mRotation.z = mHead->mRotation.z;
-					for (int i = 0; i < 8; i++)
-						mBody[i]->calcRotateZWhenGetUp_();
+					for (int i = 0; i < 8; ++i)
+						mBodies[i]->calcRotateZWhenGetUp_();
 				} else {
-					// wave / wander part
-					f32 maxZ = getBodyMaxRotateZ();
-					const TNerveBase<TLiveActor>* waveNerve = mSpine->getLatestNerve();
-					const f32 k = 1.0f / 120.0f;
-					f32 dec = mChangeSaveParams->mSLWaveDecrease.get() * k;
-					f32 inv
-					    = 1.0f
-					      / (1.0f
-					         + dec); // + dec
-					f32 minus = 1.0f - dec;
-					f32 invLen
-					    = 1.0f
-					      / (mCommonSaveParams->mSLBodyLength.get()
-					         * mCommonSaveParams->mSLBodyLength.get());
-					f32 waveV = mChangeSaveParams->mSLWaveVelocity.get();
-					f32 coef = k * (k * (waveV * waveV));
-
-					for (int i = 0; i < 8; i++) {
-						TBossHanachanPartsBody* body = mBody[i];
-						f32 rotZ = body->mRotation.z;
-						if (((rotZ == -179.0f || rotZ == 179.0f) ? true : false)
-						    && rotZ == maxZ)
-							continue;
-							f32 previous = (i == 0)
-							    ? mBody[1]->unk13C
-							    : mBody[i - 1]->unk13C;
-							f32 next = (i == 7)
-							    ? mBody[i - 1]->unk13C
-							    : mBody[i + 1]->unk13C;
-							f32 cur    = body->unk13C;
-							f32 two    = 2.0f * cur;
-							f32 sum    = next + previous - two;
-							f32 acc    = body->unk148 + invLen * sum;
-							acc        = coef * acc;
-							acc        = inv * acc;
-							f32 result = two * inv + acc - inv * (body->unk140
-							                                * minus);
-							f32 target = MsClamp(result, -179.0f, 179.0f);
-						CLBChaseGeneralConstantSpecifySpeed<f32>(
-						    &body->mRotation.z, target,
-						    mChangeSaveParams->mSLRotateZLeanSpeed.get());
-
-						bool onSand = false;
-						if (waveNerve
-						    == &TNerveBossHanachanGraphWander::theNerve()) {
-							TLiveActor* sandActor = body->getSandActor_();
-							if (sandActor != nullptr) {
-								onSand = true;
-								if (0.0f != body->unk120) {
-									f32 max = body->unk120 * mMarchSpeed
-									          * mChangeSaveParams
-									                ->mSLSandSlopeForce
-									                .get();
-									CLBChaseGeneralConstantSpecifySpeed<f32>(
-									    &body->mRotation.z,
-									    body->unk120 >= 0.0f ? 179.0f : -179.0f,
-									    max);
-								}
-							} else {
-								CLBChaseGeneralConstantSpecifySpeed<f32>(
-								    &body->mRotation.z, body->unk120,
-								    mChangeSaveParams
-								        ->mSLRotateZRestorationSpeed
-								        .get());
-							}
-						} else if (waveNerve
-						           == &TNerveBossHanachanTumble::theNerve()) {
-							CLBChaseGeneralConstantSpecifySpeed<f32>(
-							    &body->mRotation.z, unk194, unk198);
-						}
-						body->mRotation.z = MsClamp(body->mRotation.z, -179.0f,
-						                            179.0f);
-
-						if (waveNerve
-						    == &TNerveBossHanachanGraphWander::theNerve()) {
-							if (mSpine->getTime()
-							        < mChangeSaveParams
-							          ->mSLNotFallDownFrames
-							          .get()
-							    || !onSand) {
-								f32 lim = mChangeSaveParams
-								              ->mSLMaxRotateZNotSand
-								              .get();
-								f32 z = body->mRotation.z;
-								if (z < -lim) {
-									CLBChaseGeneralConstantSpecifySpeed<f32>(
-									    &body->mRotation.z, -lim, 15.0f);
-								} else if (z > lim) {
-									CLBChaseGeneralConstantSpecifySpeed<f32>(
-									    &body->mRotation.z, lim, 15.0f);
-								}
-							}
-						}
-					}
-
-					f32 diffMax
-					    = mChangeSaveParams->mSLDiffMaxRotateZ.get();
-					for (int i = 1; i < 8; i++) {
-						TBossHanachanPartsBody* a = mBody[i - 1];
-						TBossHanachanPartsBody* b = mBody[i];
-						f32 az = a->mRotation.z;
-						f32 bz = b->mRotation.z;
-						if (fabsf(bz - az) > diffMax) {
-							if (bz < az)
-								b->mRotation.z = az - diffMax;
-							else
-								b->mRotation.z = az + diffMax;
-						}
-					}
+					BossHanachanUpdateBodyRotateZ(this);
 				}
-
-				bool thrown = false;
-				{
-					TWaterHitActor* hit = mHead->mHitActor;
-					if (hit->mWaterHitCounter >= 1)
-						hit->mWaterHitCounter -= 1;
-					for (int i = 0; i < hit->mColCount; i++) {
-						if (hit->mCollisions[i]->mActorType == 0x80000001) {
+			}
+			bool thrown = false;
+			TWaterHitActor* hit = mHead->unk100;
+			if (hit->mWaterHitCounter >= 1)
+				--hit->mWaterHitCounter;
+			hit = mHead->unk100;
+			for (int j = 0; j < hit->getColNum(); ++j) {
+				if (hit->getCollision(j)->getActorType() == 0x80000001) {
+					throwMario_(hit);
+					thrown = true;
+					break;
+				}
+			}
+			for (int i = 0; i < 8; ++i) {
+				TBossHanachanPartsBody* body = mBodies[i];
+				TWaterHitActor* hit = body->unk100;
+				if (hit->mWaterHitCounter >= 1)
+					--hit->mWaterHitCounter;
+				if (!thrown) {
+					hit = body->unk100;
+					for (int j = 0; j < hit->getColNum(); ++j) {
+						if (hit->getCollision(j)->getActorType() == 0x80000001) {
 							throwMario_(hit);
 							thrown = true;
 							break;
 						}
 					}
 				}
-				for (int i = 0; i < 8; i++) {
-					{
-						TWaterHitActor* hit = mBody[i]->mHitActor;
-						if (hit->mWaterHitCounter >= 1)
-							hit->mWaterHitCounter -= 1;
-						if (!thrown) {
-							for (int j = 0; j < hit->mColCount; j++) {
-								if (hit->mCollisions[j]->mActorType
-								    == 0x80000001) {
-									throwMario_(hit);
-									thrown = true;
-									break;
-								}
+				for (int j = 0; j < 2; ++j) {
+					TFootHitActor* foot = body->mFeet[j];
+					if (foot->mWaterHitCounter >= 1)
+						--foot->mWaterHitCounter;
+					if (!thrown) {
+						for (int k = 0; k < foot->getColNum(); ++k) {
+							if (foot->getCollision(k)->getActorType() == 0x80000001) {
+								throwMario_(foot);
+								thrown = true;
+								break;
 							}
 						}
-					}
-					for (int j = 0; j < 2; j++) {
-						TWaterHitActor* hit = mBody[i]->mFootHitActor[j];
-						if (hit->mWaterHitCounter >= 1)
-							hit->mWaterHitCounter -= 1;
-						if (!thrown) {
-							for (int k = 0; k < hit->mColCount; k++) {
-								if (hit->mCollisions[k]->mActorType
-								    == 0x80000001) {
-									throwMario_(hit);
-									thrown = true;
-									break;
-								}
-							}
-						}
-					}
-				}
-
-				if (*(u16*)graphics & 2
-				    && currentNerve
-				           == &TNerveBossHanachanDead::theNerve()) {
-					if (gpMSound->gateCheck(0x6010)) {
-						MSoundSESystem::MSoundSE::startSoundActor(
-						    0x6010, &mPosition, 0, 0, 0, 4);
-					}
-					if (!checkLiveFlag(LIVE_FLAG_UNK100000)) {
-						gpMSound->unk98->modBgm(1, 1);
 					}
 				}
 			}
-	moveMapCollision:
+			if ((graphics->unk0 & 2) && nerve == &TNerveBossHanachanDead::theNerve()) {
+				if (gpMSound->gateCheck(0x6010))
+					MSoundSESystem::MSoundSE::startSoundActor(0x6010, &mPosition, 0, nullptr, 0, 4);
+				if (!checkLiveFlag(0x100000))
+					gpMSound->unk98->modBgm(1, 1);
+			}
+		}
 		mHead->moveMapCollision_();
-		for (int i = 0; i < 8; i++)
-			mBody[i]->moveMapCollision_();
+		for (int i = 0; i < 8; ++i)
+			mBodies[i]->moveMapCollision_();
 	}
-
 	if (cue & 2) {
 		gpTargetArrow->unk14 = 0;
-		if (!(gpMarDirector->isThing())) {
-			bool moving = false;
-			if (mSpine->getLatestNerve()
-			    == &TNerveBossHanachanGraphWander::theNerve()) {
-				if (mMarchSpeed > 0.001f)
-					moving = true;
-			}
-			MtxPtr mtx = mHead->mMapCollisionJointMtx;
-			JGeometry::TVec3<f32> headJoint(mtx[0][3], mtx[1][3], mtx[2][3]);
-			THitActor* headHit = mHead->mHitActor;
-			headHit->mPosition.set(
-			    headJoint.x,
-			    headJoint.y - mCommonSaveParams->mSLHeadHitOffsetY.get(),
-			    headJoint.z);
-			// TODO: 0x7FFFFFFF and 0x80000000 are unnamed hit flags. MWCC
-			// turns the test into `& ~1` no matter which spelling is used.
-			if (moving) {
-				if (!headHit->checkHitFlag(0x80000000u)) {
-					headHit->onHitFlag(0x80000000);
-					mHead->mMapCollision->remove();
+		if (!gpMarDirector->isThing()) {
+			bool walking = false;
+			if (mSpine->getLatestNerve() == &TNerveBossHanachanGraphWander::theNerve()
+			    && mMarchSpeed > 0.001f)
+				walking = true;
+			JGeometry::TVec3<f32> position(mHead->unk108[0][3],
+			                               mHead->unk108[1][3], mHead->unk108[2][3]);
+			mHead->unk100->mPosition.set(
+			    position.x, position.y - mCommonParams->mSLHeadHitOffsetY.get(),
+			    position.z);
+			if (walking) {
+				if (!((mHead->unk100->mHitFlags & 0x80000000) ? true : false)) {
+					mHead->unk100->onHitFlag(0x80000000);
+					mHead->unk104->remove();
 				}
 			} else {
-				if (headHit->checkHitFlag(0x80000000u)) {
-					headHit->offHitFlag(0x80000000u);
-					mHead->mMapCollision->setUpTrans(headJoint);
+				if ((mHead->unk100->mHitFlags & 0x80000000) ? true : false) {
+					mHead->unk100->offHitFlag(0x80000000);
+					mHead->unk104->setUpTrans(position);
 				}
 			}
-
-			f32 footOffY = mCommonSaveParams->mSLFootHitOffsetY.get();
-			f32 bodyOffY = mCommonSaveParams->mSLBodyHitOffsetY.get();
-			for (int i = 0; i < 8; i++) {
-				TBossHanachanPartsBody* body = mBody[i];
-				MtxPtr bmtx        = body->mMapCollisionJointMtx;
-				body->unk154.set(bmtx[0][3], bmtx[1][3], bmtx[2][3]);
-				THitActor* hit     = body->mHitActor;
-				hit->mPosition.set(
-				    body->unk154.x, body->unk154.y - bodyOffY,
-				    body->unk154.z);
-				if (moving) {
-					if (!hit->checkHitFlag(0x80000000u)) {
+			f32 bodyOffset = mCommonParams->mSLBodyHitOffsetY.get();
+			f32 footOffset = mCommonParams->mSLFootHitOffsetY.get();
+			for (int i = 0; i < 8; ++i) {
+				TBossHanachanPartsBody* body = mBodies[i];
+				TWaterHitActor* hit = body->unk100;
+				body->unk154.set(body->unk108[0][3], body->unk108[1][3],
+				                 body->unk108[2][3]);
+				hit->mPosition.set(body->unk154.x, body->unk154.y - bodyOffset,
+				                   body->unk154.z);
+				if (walking) {
+					if (!(hit->checkHitFlag(0x80000000) ? true : false)) {
 						hit->onHitFlag(0x80000000);
-						body->mMapCollision->remove();
+						body->unk104->remove();
 					}
 				} else {
-					if (hit->checkHitFlag(0x80000000u)) {
-						hit->offHitFlag(0x80000000u);
-						body->mMapCollision->setUpTrans(body->unk154);
+					if (hit->checkHitFlag(0x80000000) ? true : false) {
+						hit->offHitFlag(0x80000000);
+						body->unk104->setUpTrans(body->unk154);
 					}
 				}
-				if (moving) {
-					for (int j = 0; j < 2; j++) {
-						TFootHitActor* foot = body->mFootHitActor[j];
-						MtxPtr fmtx         = foot->unk6C;
-						foot->mPosition.set(fmtx[0][3], fmtx[1][3] - footOffY,
-						                   fmtx[2][3]);
+				if (walking) {
+					for (int j = 0; j < 2; ++j) {
+						TFootHitActor* foot = body->mFeet[j];
+						foot->mPosition.set(foot->mJointMtx[0][3],
+						                    foot->mJointMtx[1][3] - footOffset,
+						                    foot->mJointMtx[2][3]);
 						foot->onHitFlag(0x80000000);
 					}
 				} else {
-					for (int j = 0; j < 2; j++) {
-						TFootHitActor* foot = body->mFootHitActor[j];
-						MtxPtr fmtx         = foot->unk6C;
-						foot->mPosition.set(fmtx[0][3], fmtx[1][3] - footOffY,
-						                   fmtx[2][3]);
-						foot->offHitFlag(0x80000000u);
+					for (int j = 0; j < 2; ++j) {
+						TFootHitActor* foot = body->mFeet[j];
+						foot->mPosition.set(foot->mJointMtx[0][3],
+						                    foot->mJointMtx[1][3] - footOffset,
+						                    foot->mJointMtx[2][3]);
+						foot->offHitFlag(0x80000000);
 					}
 				}
 			}
 			emitParticle_();
 			emitCamShake_();
 		}
-	}
-
-	if (checkLiveFlag(LIVE_FLAG_UNK10000)) {
-		if (mSandPillar->curAnmEndsNext(0, nullptr)) {
-			mLiveFlag &= ~0x00070000;
+		if (checkLiveFlag(0x10000)
+		    && mSandPillarActor->curAnmEndsNext(0, nullptr))
+			mLiveFlag &= ~0x10000;
+		if (!gpMarDirector->isThing())
+			changeAnmRateAndFrameUpdate_();
+		mHead->mInbetween->execMotionBlend(mHead->getMActor());
+		for (int i = 0; i < 8; ++i) {
+			TBossHanachanPartsBody* body = mBodies[i];
+			body->mInbetween->execMotionBlend(body->getMActor());
 		}
 	}
-
-	if (!(gpMarDirector->isThing())) {
-		changeAnmRateAndFrameUpdate_();
-	}
-
-	// TODO: mNonstopMotionBlend carries a fabricated placeholder type in
-	// Enemy/BossHanachan.hpp (another agent owns that header); the real type
-	// is TNpcInbetween, which is what execMotionBlend() lives on.
-	((TNpcInbetween*)mHead->mNonstopMotionBlend)
-	    ->execMotionBlend(mHead->mMActor);
-	for (int i = 0; i < 8; i++) {
-		((TNpcInbetween*)mBody[i]->mNonstopMotionBlend)
-		    ->execMotionBlend(mBody[i]->mMActor);
-	}
-
 	if (cue & 2) {
-		JGeometry::TVec3<f32> headRevision = mPosition;
-		CalcRevisionPosByRotateZ(mRotation,
-		                         mCommonSaveParams->mSLHeadPlusYByRotateZ
-		                             .get(),
-		                         &headRevision);
-		CLBCalcRotateZXYTranslateMatrix(
-		    BHSModelMtx(mHead->mMActor->getModel()), mRotation, headRevision);
-		mHead->mMActor->calc();
-
-		for (int i = 0; i < 8; i++) {
-			TBossHanachanPartsBody* body = mBody[i];
-			JGeometry::TVec3<f32> bodyRevision = body->mPosition;
-			CalcRevisionPosByRotateZ(
-			    body->mRotation,
-			    mCommonSaveParams->mSLBodyPlusYByRotateZ.get(),
-			    &bodyRevision);
-			Mtx mtx;
-			CLBCalcRotateZXYTranslateMatrix(mtx, body->mRotation,
-			                                bodyRevision);
-			PSMTXCopy(mtx, BHSModelMtx(body->mMActor->getModel()));
-			body->mMActor->calc();
-		}
-
-		if (!(gpMarDirector->isThing())) {
-			if (mSpine->getLatestNerve()
-			        == &TNerveBossHanachanTumble::theNerve()
-			    || mSpine->getLatestNerve()
-			           == &TNerveBossHanachanDown::theNerve()) {
-				MtxPtr mtx = mBody[mWeakBodyIndex]->mMapCollisionJointMtx;
-				JGeometry::TVec3<f32> pos(mtx[0][3],
-				                         mtx[1][3] + 400.0f, mtx[2][3]);
-				gpTargetArrow->setPos(pos);
+		execHeadCalcAnim_();
+		execBodyCalcAnim_();
+		if (!gpMarDirector->isThing()) {
+			if (mSpine->getLatestNerve() == &TNerveBossHanachanTumble::theNerve()
+			    || mSpine->getLatestNerve() == &TNerveBossHanachanDown::theNerve()) {
+				MtxPtr matrix = mBodies[mWeakBodyIndex]->unk108;
+				JGeometry::TVec3<f32> position(matrix[0][3], 400.0f + matrix[1][3],
+				                               matrix[2][3]);
+				gpTargetArrow->setPos(position);
 				gpTargetArrow->unk14 = 1;
 			}
 		}
 	}
-
 	if (cue & 0x200) {
 		mHead->entryCircleShadow_();
 		mHead->setDamageFog_(graphics);
 		mHead->drawObject(graphics);
-		for (int i = 0; i < 8; i++) {
-			mBody[i]->entryCircleShadow_();
-			mBody[i]->setDamageFog_(graphics);
-			mBody[i]->drawObject(graphics);
+		for (int i = 0; i < 8; ++i) {
+			TBossHanachanPartsBody* body = mBodies[i];
+			body->entryCircleShadow_();
+			body->setDamageFog_(graphics);
+			body->drawObject(graphics);
 		}
 	}
-
 	if (cue & 4) {
-		mHead->mMActor->viewCalc();
-		for (int i = 0; i < 8; i++)
-			mBody[i]->mMActor->viewCalc();
+		mHead->getMActor()->viewCalc();
+		for (int i = 0; i < 8; ++i)
+			mBodies[i]->getMActor()->viewCalc();
 	}
-
-	if (checkLiveFlag(LIVE_FLAG_UNK10000))
-		mSandPillar->perform(cue, graphics);
+	if (checkLiveFlag(0x10000))
+		mSandPillarActor->perform(cue, graphics);
 }
 
 bool TBossHanachan::isTumbleCompletelyAllBody() const
 {
-	// The reference rotation is body 0's Z; every other body has to agree
-	// with it, and it has to be one of the two fully-tumbled angles.
-	f32 z    = mBody[0]->mRotation.z;
-	bool ret = true;
-
-	if (!((z == -179.0f || z == 179.0f) ? true : false)) {
-		ret = false;
+	bool result = true;
+	f32 angle = mBodies[0]->mRotation.z;
+	bool tumbled = (-179.0f == angle || 179.0f == angle) ? true : false;
+	if (!tumbled) {
+		result = false;
 	} else {
-		for (int i = 1; i < 8; i++) {
-			if (mBody[i]->mRotation.z != z) {
-				ret = false;
+		for (int i = 1; i < 8; ++i) {
+			if (mBodies[i]->mRotation.z != angle) {
+				result = false;
 				break;
 			}
 		}
 	}
-
-	return ret;
+	return result;
 }
 
 bool TBossHanachan::checkFallDecideAndSetup()
 {
-	for (int i = 0; i < 8; i++) {
-		TBossHanachanPartsBody* body = mBody[i];
-		if (CLBAbs<f32>(body->mRotation.z)
-		    > mChangeSaveParams->mSLFallDecideRotateZ.get()) {
+	bool result = false;
+	for (int i = 0; i < 8; ++i) {
+		TBossHanachanPartsBody* body = mBodies[i];
+		if (CLBAbs(body->mRotation.z) > mChangeParams->mSLFallDecideRotateZ.get()) {
 			emitOneTimeSandPillar_(body);
-			unk194 = (body->mRotation.z > 0.0f) ? 179.0f : -179.0f;
-			unk198 = mChangeSaveParams->mSLWaveFallDownSpeed.get()
-			    * CLBAbs<f32>(body->unk13C - body->mRotation.z);
-			if (unk198 < mChangeSaveParams->mSLFallDecideMinSpeed.get())
-				unk198 = mChangeSaveParams->mSLFallDecideMinSpeed.get();
-			return true;
+			if (body->mRotation.z > 0.0f)
+				unk194 = 179.0f;
+			else
+				unk194 = -179.0f;
+			unk198 = CLBAbs(body->mPreviousRoll - body->mRotation.z) * mChangeParams->mSLWaveFallDownSpeed.value;
+			f32 minimum = mChangeParams->mSLFallDecideMinSpeed.get();
+			if (unk198 < minimum)
+				unk198 = minimum;
+			result = true;
+			break;
 		}
 	}
-	return false;
+	return result;
 }
 
-	// perform() calls this with a real `bl` in the original, so keep it out of
-// line there.
-#pragma dont_inline on
 f32 TBossHanachan::getBodyMaxRotateZ() const
 {
-	// TODO: the original materialises the address of each mBody[] element
-	// (addi/lwz) instead of folding it into the member load, and evaluates
-	// fabsf(ret) before the member read. A pointer-induction loop and an
-	// index loop both compile to the folded form.
-	f32 ret = 0.0f;
-	for (int i = 0; i < 8; i++) {
-		TBossHanachanPartsBody* body = mBody[i];
-		if (fabsf(body->mRotation.z) > fabsf(ret))
-			ret = body->mRotation.z;
+	f32 result = 0.0f;
+	for (int i = 0; i < 8; ++i) {
+		if (fabs(mBodies[i]->mRotation.z) > fabs(result))
+			result = mBodies[i]->mRotation.z;
 	}
-	return ret;
+	return result;
 }
-#pragma dont_inline off
 
-// TODO: UNUSED in the original (0xC0 bytes) and only ever inlined; the body
-// is a guess, the map size is the only constraint.
+// The map emits JGeometry::TVec3<f32>::set<f32>(f32, f32, f32) as a local
+// instantiation for this TU and execWalk's inlined copy of isCanWalk reaches
+// it with a `bl`, so retail has one inline level between isCanWalk and the
+// unnamed vector's constructor: that puts `set` (three statements) at depth 4,
+// where the allowance is two: MathUtil.hpp's MsSquaredDistXZ, as in
+// NpcWalkTurn.
 bool TBossHanachan::isCanWalk() const
 {
-	if (mGroundPlane == nullptr)
-		return false;
-	if (mGroundActorYaw < 0.0f)
-		return false;
-	return getBodyMaxRotateZ() < 90.0f;
+	bool result = true;
+	JGeometry::TVec3<f32> target = unkF4.getPoint();
+	if (MsSquaredDistXZ(target, mPosition) < CLBSquared(10.0f))
+		result = false;
+	return result;
 }
 
-void TBossHanachan::execWalk(bool param_1)
+// Raw .value reads on the two chase calls land the frame at 0xb8 and load the
+// max speed before the accel as retail does.
+// TODO: every instruction matches; retail puts isCanWalk's target copy and the
+// squared temporary low (0x54/0x60) and execWalk's unnamed vector above its
+// named target. Inert: the squared-XZ helper here; a reference-bound
+// getPoint() in either body changes the code.
+// Model reading (frame-model rules 7, 8b): retail's goal-check vector above
+// its target means both are callee locals of one depth-1 expansion, and
+// isCanWalk's pair (vector over target, both lowest) is expanded one level
+// deeper than that. A goal-check static inline gets the first part; wrapping
+// `if (isCanWalk()) walkToCurPathNode(...)` stops isCanWalk inlining.
+void TBossHanachan::execWalk(bool accelerate)
 {
-	if (param_1)
-		CLBChaseGeneralConstantSpecifySpeed<f32>(
-		    &mMarchSpeed,
-		    mChangeSaveParams->mSLMaxMarchSpeed.get(),
-		    mChangeSaveParams->mSLMarchAccel.get());
+	if (accelerate)
+		CLBChaseGeneralConstantSpecifySpeed(&mMarchSpeed,
+		    mChangeParams->mSLMaxMarchSpeed.value, mChangeParams->mSLMarchAccel.value);
 	else
-		CLBChaseGeneralConstantSpecifySpeed<f32>(
-		    &mMarchSpeed, 0.0f, mChangeSaveParams->mSLMarchDecrease.get());
-
-	mTurnSpeed = mChangeSaveParams->mSLWalkTurnSpeed.get();
-
-	bool reached = true;
-
-	{
-		JGeometry::TVec3<f32> p = unkF4.getPoint();
-		JGeometry::TVec3<f32> d;
-		d.set(p.x - mPosition.x, 0.0f, p.z - mPosition.z);
-		f32 s = CLBSquared<f32>(d.x) + CLBSquared<f32>(d.y)
-		    + CLBSquared<f32>(d.z);
-		if (s < 10.0f)
-			reached = false;
-	}
-	if (reached)
+		CLBChaseGeneralConstantSpecifySpeed(&mMarchSpeed, 0.0f,
+		    mChangeParams->mSLMarchDecrease.value);
+	mTurnSpeed = mChangeParams->mSLWalkTurnSpeed.get();
+	if (isCanWalk())
 		walkToCurPathNode(mMarchSpeed, mTurnSpeed, 0.0f);
-
-	{
-		JGeometry::TVec3<f32> p = unkF4.getPoint();
-		JGeometry::TVec3<f32> d;
-		d.x = p.x - mPosition.x;
-		d.y = 0.0f;
-		d.z = p.z - mPosition.z;
-		f32 s = CLBSquared<f32>(d.x) + CLBSquared<f32>(d.y)
-		    + CLBSquared<f32>(d.z);
-		if (s < 100.0f) {
-			if (unk114.size() != 0)
-				unkF4 = unk114.pop();
-			else
-				goToDirLimitedNextGraphNode(90.0f);
-		}
+	JGeometry::TVec3<f32> target = unkF4.getPoint();
+	if (JGeometry::TVec3<f32>(target.x - mPosition.x, 0.0f,
+	                          target.z - mPosition.z).squared()
+	    < CLBSquared(100.0f)) {
+		if (!unk114.empty())
+			switchNextGoalPath();
+		else
+			goToDirLimitedNextGraphNode(90.0f);
 	}
 }
 
+// TODO: every instruction matches; `goal` and setGoalPath's node sit 0x10
+// low (0x50/0x40, retail 0x60/0x50). Inert or worse: an unnamed isZero()
+// test, an unnamed roll, a rotated TVec3, and unnamed angle/cos/sin; also
+// direction.add(side), add(direction, side), scaleAdd and side.set(). The
+// extra 0x10 above `goal` disappears only when `side` is dead entirely.
+// With the rotation in a static inline (angle/cos/sin become callee objects,
+// created below `goal`) goal and the node land on 0x60/0x50 and the frame is
+// 0xb0: the only surplus is `stopped`, whose byte retail does not have, yet
+// every unnamed isZero() test either drops the mfcr/extrwi. or adds two low
+// words (`== false`, `!= false`, `? :`).
 void TBossHanachan::execSlip()
 {
-	CLBChaseGeneralConstantSpecifySpeed<f32>(
-	    &mMarchSpeed, 0.0f, mChangeSaveParams->mSLWalkBckRateMin.get());
+	CLBChaseGeneralConstantSpecifySpeed(&mMarchSpeed, 0.0f,
+	    mChangeParams->mSLMarchDecrease.get());
 	mTurnSpeed = 0.1f;
-
-	JGeometry::TVec3<f32> add(0.0f, 0.0f, 0.0f);
 	if (mMarchSpeed > 0.001f) {
-		add = unk188;
+		JGeometry::TVec3<f32> direction = mPreviousLinearVelocity;
 		if (mMarchSpeed > 4.0f) {
-			// getBodyMaxRotateZ() is spelled out here because perform() has
-			// to call it out of line (see the pragma on its definition) and
-			// this call site is expanded in the original.
-			f32 maxZ = 0.0f;
-			// TODO: the original materialises the address of each mBody[]
-			// element (addi r3, r31, 0x150 / lwz r3, 0(r3)) instead of
-			// folding it into the member load. Neither an index loop nor a
-			// pointer-walk loop reproduces that under MWCC; see the same note
-			// on getBodyMaxRotateZ().
-			for (int j = 0; j < 8; j++) {
-				TBossHanachanPartsBody* b = mBody[j];
-				if (fabsf(b->mRotation.z) > fabsf(maxZ))
-					maxZ = b->mRotation.z;
-			}
-			f32 zero = 0.0f;
-			f32 sign = 1.0f;
-			if (maxZ > 0.0f) {
-				zero = -zero;
-				sign = -sign;
-			}
-			s16 angle = CLBRoundf<s16>(mRotation.y * (65536.0f / 360.0f));
-			f32 k     = 0.005f * mMarchSpeed;
-			// The two literals are loaded from separate jma tables by the
-			// original; here the compiler folds the pair into one table base.
-			f32 sn = JMASSin(angle);
-			f32 cs = JMASCos(angle);
-			add.x += (zero * sn + sign * cs) * k;
-			add.y += zero * k;
-			add.z += (zero * cs - sign * sn) * k;
+			f32 roll = getBodyMaxRotateZ();
+			JGeometry::TVec3<f32> side(1.0f, 0.0f, 0.0f);
+			if (roll > 0.0f)
+				side.negate();
+			s16 angle = CLBDegToShortAngle(mRotation.y);
+			f32 cosine = JMASCos(angle);
+			f32 sine = JMASSin(angle);
+			f32 x = side.x * cosine + side.z * sine;
+			side.z = -side.x * sine + side.z * cosine;
+			side.x = x;
+			side.scale(0.005f * mMarchSpeed);
+			direction += side;
 		}
+		bool stopped = direction.isZero();
+		if (!stopped) {
+			MsVECNormalize(&direction, &direction);
+			direction.scale(500.0f);
+			JGeometry::TVec3<f32> goal = mPosition;
+			goal += direction;
+			setGoalPath(goal);
+			walkToCurPathNode(mMarchSpeed, mTurnSpeed, 0.0f);
+		}
+		gpCameraShake->keepShake((EnumCamShakeMode)9, 1.0f);
+		if (SMS_IsMarioTouchGround4cm() && mSpine->getTime() < 120)
+			SMSRumbleMgr->start(0x16, (f32*)nullptr);
 	}
-
-	if (add.x * add.x + add.y * add.y + add.z * add.z
-	    >= JGeometry::TUtil<f32>::epsilon()) {
-		MsVECNormalize(&add, &add);
-		add *= 500.0f;
-		JGeometry::TVec3<f32> next = mPosition + add;
-		TPathNode node;
-		node.unk4 = next;
-		unkF4      = node;
-		unk104     = node;
-		unk114.clear();
-		walkToCurPathNode(mMarchSpeed, mTurnSpeed, 0.0f);
-	}
-
-	// TODO: 0x9 is missing from EnumCamShakeMode in Camera/CameraShake.hpp.
-	gpCameraShake->keepShake((EnumCamShakeMode)0x9, 1.0f);
-	if (SMS_IsMarioTouchGround4cm() && mSpine->getTime() < 120)
-		SMSRumbleMgr->start(0x16, 0, (Vec*)nullptr);
 }
 
 void TBossHanachan::goToInitialRecoverGraphNode()
 {
-	// No local for the tracer: the original re-reads unk124 at every use.
-	getTracer()->mPrevIdx = -1;
-	getTracer()->mCurrIdx = -1;
-
-	int index = getTracer()->getGraph()->findNearestVisibleIndex(
-	    mPosition, mRotation.y,
-	    mCommonSaveParams->mSLRecoverSearchDist.get(),
-	    mCommonSaveParams->mSLRecoverSearchDegree.get(), -1);
-	if (index < 0) {
+	unk124->reset();
+	unk124->reset2();
+	int node = unk124->getGraph()->findNearestVisibleIndex(mPosition, mRotation.y,
+	    mCommonParams->mSLRecoverSearchDist.get(),
+	    mCommonParams->mSLRecoverSearchDegree.get(), 0xffffffff);
+	if (node < 0) {
 		goToShortestNextGraphNode();
 		return;
 	}
-
-	getTracer()->setTo(index);
+	unk124->setTo(node);
 	setGoalPathFromGraph();
 	unk128 = 0;
 	unk12C = 0.0f;
 }
 
+// TODO: frame exact (the accessors and the two-argument sound calls are
+// retail's 0x28 of codeless frame); the dying loop still takes mHead's hit
+// actor into r4 where retail uses r3. A named loop body, a named head hit
+// actor, a function-scope `i` and `!=`/post-increment loop forms are inert.
 void TBossHanachan::execDamage()
 {
-	mSpine->reset();
-
+	getSpine()->reset();
 	if (mHitPoints != 0)
-		mHitPoints -= 1;
-
+		--mHitPoints;
 	if (mHitPoints == 0) {
-		// Dead: every hit actor on the head and all eight body segments is
-		// switched off before the dead nerve is queued.
-		mHead->mHitActor->onHitFlag(HIT_FLAG_NO_COLLISION);
-		for (int i = 0; i < 8; i++) {
-			mBody[i]->mHitActor->onHitFlag(HIT_FLAG_NO_COLLISION);
-			mBody[i]->mFootHitActor[0]->onHitFlag(HIT_FLAG_NO_COLLISION);
-			mBody[i]->mFootHitActor[1]->onHitFlag(HIT_FLAG_NO_COLLISION);
+		getHead()->unk100->onHitFlag(HIT_FLAG_NO_COLLISION);
+		for (int i = 0; i < 8; ++i) {
+			mBodies[i]->unk100->onHitFlag(HIT_FLAG_NO_COLLISION);
+			mBodies[i]->mFeet[0]->onHitFlag(HIT_FLAG_NO_COLLISION);
+			mBodies[i]->mFeet[1]->onHitFlag(HIT_FLAG_NO_COLLISION);
 		}
-
-		mSpine->setNext(&TNerveBossHanachanDead::theNerve());
+		getSpine()->setNext(&TNerveBossHanachanDead::theNerve());
 		setAnmTimerWhenDead();
-
-		unk1AC = *gpMarioPos;
-		if (gpMSound->gateCheck(0x28E6)) {
-			MSoundSESystem::MSoundSE::startSoundActor(0x28E6, &unk1AC, 0,
-			                                          0, 0, 4);
+		mDeathSoundPosition = SMS_GetMarioPos();
+		SMSGetMSound()->startSoundActor(0x28E6, &mDeathSoundPosition);
+	} else {
+		getSpine()->setNext(&TNerveBossHanachanDamage::theNerve());
+		setAnmTimerWhenDamage();
+		TBossHanachanManager* manager = (TBossHanachanManager*)mManager;
+		mChangeParams = manager->mChangeParams[3 - mHitPoints];
+		const char* railName = cHitPoint1_RailName;
+		switch (mHitPoints) {
+		case 1:
+			railName = cHitPoint1_RailName;
+			break;
+		case 2:
+			railName = cHitPoint2_RailName;
+			break;
 		}
-		return;
-	}
-
-	mSpine->setNext(&TNerveBossHanachanDamage::theNerve());
-	setAnmTimerWhenDamage();
-
-	mChangeSaveParams = static_cast<TBossHanachanManager*>(mManager)
-	                        ->mChangeSaveParams[mHitPoints - 3];
-
-	// The graph the tracer is reset onto depends on how many hit points are
-	// left; the ROM loads cHitPoint1_RailName up front and only switches to
-	// cHitPoint2_RailName for exactly two.
-	const char* railName;
-	switch (mHitPoints) {
-	case 2:
-		railName = cHitPoint2_RailName;
-		break;
-	default:
-		railName = cHitPoint1_RailName;
-		break;
-	}
-	// TODO: the web pointer at TGraphTracer+0 has no accessor name yet.
-	unk124->unk0 = (TGraphWeb*)gpConductor->getGraphByName(railName);
-
-	mLiveFlag |= 0x4000;
-
-	if (gpMSound->gateCheck(0x280F)) {
-		MSoundSESystem::MSoundSE::startSoundActor(
-		    0x280F, &mBody[mWeakBodyIndex]->unk154, 0, 0, 0, 4);
+		unk124->setGraph(gpConductor->getGraphByName(railName));
+		onLiveFlag(LIVE_FLAG_UNK20000);
+		const JGeometry::TVec3<f32>* soundPosition = &mBodies[mWeakBodyIndex]->unk154;
+		SMSGetMSound()->startSoundActor(0x280F, soundPosition);
 	}
 }
 
 void TBossHanachan::removeAllMapCollision()
 {
-	mHead->mMapCollision->remove();
-	for (int i = 0; i < 8; i++)
-		mBody[i]->mMapCollision->remove();
+	mHead->unk104->remove();
+	for (int i = 0; i < 8; ++i)
+		mBodies[i]->unk104->remove();
 }
 
-BOOL TBossHanachan::hasMapCollision() const { return true; }
+BOOL TBossHanachan::hasMapCollision() const { return TRUE; }

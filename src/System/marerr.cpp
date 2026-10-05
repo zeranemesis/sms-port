@@ -11,10 +11,8 @@ const u32 cDispExceptionCommand[6] = { 0x100, 0x200, 0x400, 0x800, 0x1, 0x0 };
 
 }
 
-#ifdef VERSION_GMSP01
-static const char sStrMapFile[] = "/marioEU.MAP";
-#else
-static const char sStrMapFile[] = "/mario.MAP";
+#if defined(VERSION_GMSE01)
+static const char sStrMapFile[] = "/marioUS.MAP";
 #endif
 
 static void MarErrException(u16, OSContext*, u32, u32)
@@ -35,7 +33,9 @@ void MarErrInit()
 	JUTConsoleManager::createManager(nullptr);
 	JUTException::create(print);
 	JUTException::createConsole(new u8[0x1400], 0x1400);
-#ifdef VERSION_GMSP01
+#if defined(VERSION_GMSE01)
+	JUTException::appendMapFile(const_cast<char*>(sStrMapFile));
+#elif defined(VERSION_GMSP01)
 	JUTException::appendMapFile("/marioEU.MAP");
 #else
 	JUTException::appendMapFile("/mario.MAP");

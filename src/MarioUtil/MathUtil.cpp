@@ -127,15 +127,56 @@ static u16 GetAtanTable(f32 param_1, f32 param_2)
 	if (param_1 == 0)
 		return atntable[0];
 
-	return atntable[(int)(param_2 * __fres(param_1) * 1024.0f + 0.5f)];
+	f32 inv = __fres(param_1);
+	return atntable[(int)(param_2 * inv * 1024.0f + 0.5f)];
 }
 
+// TODO: 99.4%, eighteen operand-only differences. The whole instruction stream
+// matches; the only difference is that retail ranks the negated param_2 into
+// f3 and the negated param_1 into f4, and we have them the other way round --
+// consistently, in every block, so the two negations are one virtual register
+// each and only their relative rank differs. Ruled out (all 99.4%): hoisted
+// `f32 absZ; f32 absX;` declarations in either order, scoped locals in either
+// branch, reassigning one parameter and naming the other, swapping
+// GetAtanTable's own parameter order, and (this batch) copying both parameters
+// into named locals used throughout the body, in either declaration order and
+// either as initialised declarations or split declaration-plus-assignment --
+// MWCC folds all four spellings straight back onto the parameters.
 s16 matan(f32 param_1, f32 param_2)
 {
 	u16 result;
 	// TODO: currently too lazy to figure out how exactly they use symmetries
 	// here and what exact result transforms are needed in various branches.
 	// Probably should be something nice and symmetric and not this.
+	//
+	// 99.9%, frame exact, every instruction identical: the residue is five
+	// volatile-FPR names in this first branch, where retail's negated
+	// `param_1` is f4 and ours is f3.  Closure batch 205 measured the knob:
+	// the two negations are *distinct* variables, and only here.  Naming the
+	// first one (`a` below) while the `param_2 < 0` arm keeps mutating its
+	// parameters in place takes the function 99.4 -> 99.9 and makes the whole
+	// second arm exact (retail's -param_2 = f3, -param_1 = f4).  Measured and
+	// rejected, all back at 99.4 / 18 markers: a local for the second arm's
+	// `param_1` (with or without one here), a local for `param_2`, and one
+	// function-scope `f32 a` shared by both arms -- a shared variable is what
+	// the original in-place spelling already is.  Inert at 99.9 / 5 markers:
+	// `const f32 a`, `0.0f - param_1`, and splitting the declaration from the
+	// assignment.  Swapping the outer test to `if (param_2 < 0.0f)` reorders
+	// the whole body and is 4.6%, so the polarity is load-bearing.  What is
+	// left is a free-register choice inside this arm alone: ours reuses f3
+	// (the second arm's -param_2 register), retail reuses f4 (its -param_1).
+	// 2026-09-22, inert or worse: `-param_1` unnamed at each use (99.9),
+	// quadrant helpers negating their value parameter in place, naming it,
+	// or taking it pre-negated (99.1-99.2), a by-value `-x` level (99.4).
+	// c-m25: GetAtanTable with a named `u16 ret` if/else (99.5-99.7, frame
+	// +0x10), `-GetAtanTable(...)` for `0x0000 -` (inert).
+	// c-k7 (debugger): `a` is the IRO temp @425, neighbours f0/f1/f2 only, so
+	// it takes f3; retail's f4 needs a neighbour in f3, and the only f3 web in
+	// the arm is the 1024.0f load in the `0x8000 -` block. The pre-regalloc
+	// scheduler always issues `fres` first (backend-08, both with the named
+	// `inv` and with `__fres` inline in the index), so that load never
+	// overlaps `a` and c-k1's lead does not hold. `__fres` inline moves the
+	// first quadrant (13 markers); `-param_1` at either call only is inert.
 	if (param_2 >= 0.0f) {
 		if (param_1 >= 0.0f) {
 			if (param_1 >= param_2)
@@ -143,11 +184,11 @@ s16 matan(f32 param_1, f32 param_2)
 			else
 				result = 0x4000 - GetAtanTable(param_2, param_1);
 		} else {
-			param_1 = -param_1;
-			if (param_1 < param_2)
-				result = 0x4000 + GetAtanTable(param_2, param_1);
+			f32 a = -param_1;
+			if (a < param_2)
+				result = 0x4000 + GetAtanTable(param_2, a);
 			else
-				result = 0x8000 - GetAtanTable(param_1, param_2);
+				result = 0x8000 - GetAtanTable(a, param_2);
 		}
 	} else {
 		param_2 = -param_2;
@@ -168,10 +209,47 @@ s16 matan(f32 param_1, f32 param_2)
 	return result;
 }
 
+// Converts a matan() short angle to degrees. Only the yaw's else arm goes
+// through it in retail: its `f32` parameter binds the s16 result, and that
+// binding (plus the result) are the three words MsGetRotFromZaxis's frame
+// holds below MsSqrtf's volatile; routing the other two sites through it
+// overshoots the frame. `angle = k * angle` keeps retail's operand order
+// (constant first) and puts the product in the constant's register.
+static inline f32 MsShortAngleToDegree(f32 angle)
+{
+	angle = (360.0f / 65536.0f) * angle;
+	return angle;
+}
+
+static inline void MsGetRotFromZaxisY2(const JGeometry::TVec3<f32>& axis,
+                                       f32* out)
+{
+	if (axis.z == 0.0f) {
+		if (axis.x > 0.0f) {
+			*out = 90.0f;
+			return;
+		} else {
+			*out = -90.0f;
+			return;
+		}
+	}
+
+	if (axis.z > 0.0f) {
+		*out = (360.0f / 65536.0f) * matan(axis.z, axis.x);
+	} else {
+		f32 theta = MsShortAngleToDegree(matan(-axis.z, axis.x));
+		*out      = 180.0f - theta;
+	}
+}
+
+// The pitch is spelled in this body (the `.sdata2` pair @1673 = 90.0f /
+// @1674 = -90.0f puts -90 on the y == 1 arm): through a void helper taking
+// `&result.x` MsSqrtf expanded one level deeper, after normalize()'s setLength
+// binding, which swapped two loads and an FPR. Spelled here, MsSqrtf's
+// volatile sits directly under `axis`, as in retail.
 JGeometry::TVec3<f32> MsGetRotFromZaxis(const JGeometry::TVec3<f32>& param_1)
 {
 	JGeometry::TVec3<f32> result;
-	// TODO: temporary validation hack — frame is 8 bytes short without it
 	result.zero();
 
 	JGeometry::TVec3<f32> axis = param_1;
@@ -182,42 +260,27 @@ JGeometry::TVec3<f32> MsGetRotFromZaxis(const JGeometry::TVec3<f32>& param_1)
 	} else if (axis.y == -1.0f) {
 		result.x = 90.0f;
 	} else {
-		// y must stay in a register across the volatile store inside MsSqrtf
-		// (target keeps it in f2 all the way to the matan call)
-		f32 y    = axis.y;
-		f32 tan  = matan(MsSqrtf(1.0f - y * y), y);
-		f32 phi  = tan * (360.0f / 65536.0f);
-
-		result.x = -phi;
+		result.x = -(matan(MsSqrtf(1.0f - axis.y * axis.y), axis.y)
+		             * (360.0f / 65536.0f));
 	}
-
-	if (axis.z == 0.0f) {
-		if (axis.x > 0.0f)
-			result.y = 90.0f;
-		else
-			result.y = -90.0f;
-	} else if (axis.z > 0.0f) {
-		f32 tan   = matan(axis.z, axis.x);
-		f32 theta = (360.0f / 65536.0f) * tan;
-		result.y  = theta;
-	} else {
-		f32 theta = matan(-axis.z, axis.x) * (360.0f / 65536.0f);
-		result.y  = 180.0f - theta;
-	}
+	MsGetRotFromZaxisY2(axis, &result.y);
 
 	return result;
 }
 
 void MsMtxSetRotRPH(MtxPtr param_1, f32 r, f32 p, f32 h)
 {
-	f32 sr = MsSin(r);
-	f32 sp = MsSin(p);
-	f32 sh = MsSin(h);
+	s16 ar = DEG2SHORTANGLE(r);
+	s16 ap = DEG2SHORTANGLE(p);
+	s16 ah = DEG2SHORTANGLE(h);
 
-	f32 cr = MsCos(r);
-	f32 cp = MsCos(p);
-	f32 ch = MsCos(h);
+	f32 sr = JMASSin(ar);
+	f32 sp = JMASSin(ap);
+	f32 sh = JMASSin(ah);
 
+	f32 cr = JMASCos(ar);
+	f32 cp = JMASCos(ap);
+	f32 ch = JMASCos(ah);
 
 	param_1[0][0] = ch * cp;
 	param_1[1][0] = sh * cp;
@@ -270,14 +333,17 @@ void MsMtxSetXYZRPH(MtxPtr param_1, f32 x, f32 y, f32 z, s16 r, s16 p, s16 h)
 void MsMtxSetTRS(MtxPtr param_1, f32 x, f32 y, f32 z, f32 r, f32 p, f32 h,
                  f32 sx, f32 sy, f32 sz)
 {
-	f32 sr = MsSin(r);
-	f32 sp = MsSin(p);
-	f32 sh = MsSin(h);
+	s16 ar = DEG2SHORTANGLE(r);
+	s16 ap = DEG2SHORTANGLE(p);
+	s16 ah = DEG2SHORTANGLE(h);
 
-	f32 cr = MsCos(r);
-	f32 cp = MsCos(p);
-	f32 ch = MsCos(h);
+	f32 sr = JMASSin(ar);
+	f32 sp = JMASSin(ap);
+	f32 sh = JMASSin(ah);
 
+	f32 cr = JMASCos(ar);
+	f32 cp = JMASCos(ap);
+	f32 ch = JMASCos(ah);
 
 	param_1[0][0] = (ch * cp) * sx;
 	param_1[1][0] = (sh * cp) * sx;
@@ -296,6 +362,11 @@ void MsMtxSetTRS(MtxPtr param_1, f32 x, f32 y, f32 z, f32 r, f32 p, f32 h,
 	param_1[2][3] = z;
 }
 
+// By-value level over the half cone angle: +4 of pool, lands `tmp` on
+// retail's 0x34 (a squared-distance level over `aware` or `length` lands it
+// too).
+static inline f32 MsSightHalfAngle(f32 angle) { return angle * 0.5f; }
+
 BOOL MsIsInSight(const JGeometry::TVec3<f32>& eye, f32 sight,
                  const JGeometry::TVec3<f32>& target, f32 length, f32 angle,
                  f32 aware)
@@ -303,12 +374,12 @@ BOOL MsIsInSight(const JGeometry::TVec3<f32>& eye, f32 sight,
 	JGeometry::TVec3<f32> tmp = target;
 	tmp -= eye;
 
-
 	if (tmp.squared() < aware * aware)
 		return true;
 
 	if (tmp.squared() < length * length
-	    && abs(MsAngleDiff(MsGetRotFromZaxisY(tmp), sight)) < angle * 0.5f) {
+	    && abs(MsAngleDiff(MsGetRotFromZaxisY(tmp), sight))
+	           < MsSightHalfAngle(angle)) {
 		return true;
 	}
 
@@ -389,7 +460,17 @@ void SMSCalcJumpVelocityXZ(const JGeometry::TVec3<f32>& param_1,
 	result->z = resZ;
 }
 
-asm f32 MsVECMag2(register Vec* v)
+// Whole-function Gekko assembly is only meaningful to MWCC; other compilers
+// get an ordinary function with the portable body in the #else.
+#ifdef __MWERKS__
+#define ASM asm
+#else
+#define ASM
+#endif
+
+// Despite the name this returns the length, not its square: the squared
+// length times its reciprocal square root, with zero mapped to zero.
+ASM f32 MsVECMag2(register Vec* v)
 {
 #ifdef __MWERKS__ // clang-format off
   psq_l   f3, Vec.x(v), 0, qr0
@@ -403,10 +484,15 @@ asm f32 MsVECMag2(register Vec* v)
   fneg    f1, f2
   fsel    f0, f1, f2, f0
   fmuls   f1, f2, f0
+#else
+	f32 mag2  = v->x * v->x + v->z * v->z + v->y * v->y;
+	f32 rsqrt = -mag2 >= 0.0f ? mag2 : 1.0f / std::sqrt(mag2);
+	return mag2 * rsqrt;
 #endif // clang-format on
 }
 
-asm void MsVECNormalize(register Vec* v1, register Vec* v2)
+// v2 = v1 / |v1|, with no guard against a zero vector.
+ASM void MsVECNormalize(register Vec* v1, register Vec* v2)
 {
 #ifdef __MWERKS__ // clang-format off
   psq_l   f6, Vec.x(v1), 0, qr0
@@ -423,5 +509,11 @@ asm void MsVECNormalize(register Vec* v1, register Vec* v2)
   psq_st f6, Vec.x(v2), 0, qr0
   fmuls  f4, f4, f0
   stfs   f4, Vec.z(v2)
+#else
+	f32 rsqrt
+	    = 1.0f / std::sqrt(v1->x * v1->x + v1->z * v1->z + v1->y * v1->y);
+	v2->x = v1->x * rsqrt;
+	v2->y = v1->y * rsqrt;
+	v2->z = v1->z * rsqrt;
 #endif // clang-format on
 }

@@ -42,10 +42,7 @@ void TMario::checkPumping()
 
 BOOL TMario::checkPumpEnable()
 {
-
-	
-	
-	if ((mWaterGun != nullptr) && checkFlag(MARIO_FLAG_HAS_FLUDD)
+	if ((getFludd() != nullptr) && checkFlag(MARIO_FLAG_HAS_FLUDD)
 	    && gMarioAnimeData[mAnimationId].isPumpOK() && !onYoshi()
 	    && (!isSinking()
 	        || !((mSinkTimer / (float)mGraffitoParams.mSinkTime.get()
@@ -54,9 +51,10 @@ BOOL TMario::checkPumpEnable()
 	    && mUpperState != UPPER_STATE_UNK3
 	    && mUpperState != UPPER_STATE_HOLDING_OBJECT
 	    && (mStatus != MARIO_STATUS_ROCKET_LANDING
-	        || !mWaterGun->checkCurrentNozzleRocketType(TWaterGun::Rocket))
-	    && (!mWaterGun->checkCurrentNozzleKind(TWaterGun::Rocket)
-	        || !mWaterGun->checkCurrentNozzleTriggerSprayState(
+	        || !getFludd()->checkCurrentNozzleRocketType(
+	            TWaterGun::Rocket))
+	    && (!getFludd()->checkCurrentNozzleKind(TWaterGun::Rocket)
+	        || !getFludd()->checkCurrentNozzleTriggerSprayState(
 	            TNozzleTrigger::DEAD))
 	    && !mWaterGun->isSwitchingToSprayNozzle()
 	    && !mWaterGun->isSwitchingToSecondaryNozzle()
@@ -74,41 +72,41 @@ void TMario::stateMachineUpper()
 	switch (mUpperState) {
 	case UPPER_STATE_PUMPING:
 		if (!checkPumpEnable()) {
-			mModel->unkC[1].setFrame(0.0f);
+			mModel->getFrameCtrl(1).setFrame(0.0f);
 			mUpperState = UPPER_STATE_IDLE;
 		}
 		if (unk108->mAnalogR == 0.0f) {
 			mUpperState   = UPPER_STATE_HOLDING_PUMP;
 			mPumpCooldown = mUpperBodyParams.mPumpWaitTime.get();
 		}
-		if (!checkFlag(MARIO_FLAG_IN_ANY_WATER) && mWaterGun != nullptr) {
-			if (mWaterGun->isEmitting())
-				emitSweatSometimes();
+		if (!checkFlag(MARIO_FLAG_IN_ANY_WATER) && mWaterGun != nullptr
+		    && mWaterGun->isEmitting()) {
+			emitSweatSometimes();
 		}
 		break;
 
 	case UPPER_STATE_HOLDING_PUMP:
 		if (!checkPumpEnable()) {
-			mModel->unkC[1].setFrame(0.0f);
+			mModel->getFrameCtrl(1).setFrame(0.0f);
 			mUpperState = UPPER_STATE_IDLE;
 		}
 		if (mPumpCooldown != 0) {
 			mPumpCooldown -= 1;
 		} else {
-			mModel->unkC[1].setFrame(0.0f);
+			mModel->getFrameCtrl(1).setFrame(0.0f);
 			mUpperState = UPPER_STATE_IDLE;
 		}
 		checkPumping();
 		break;
 
 	case UPPER_STATE_HOLDING_OBJECT:
-		if (mStatus == MARIO_STATUS_PUTTING)
+		if (getStatus() == MARIO_STATUS_PUTTING)
 			mUpperState = UPPER_STATE_IDLE;
 
 		if (mHeldObject == nullptr)
 			mUpperState = UPPER_STATE_IDLE;
 
-		if (mStatus == MARIO_STATUS_RUN && mForwardVel > 20.0f)
+		if (getStatus() == MARIO_STATUS_RUN && mForwardVel > 20.0f)
 			emitSweatSometimes();
 		break;
 

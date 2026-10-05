@@ -25,13 +25,13 @@ TBGPolDrop::TBGPolDrop(const char* name)
 
 void TBGPolDrop::move()
 {
-	if (!unk58)
+	if (!getUnk58())
 		return;
 
 	JGeometry::TVec3<f32> local_14 = mPosition;
-	local_14 += unk44;
+	local_14 += getVelocity();
 
-	if (unk58 == 1) {
+	if (getUnk58() == 1) {
 		unk44.y -= 0.2f;
 		const TBGCheckData* checkData;
 		f32 dVar3 = gpMap->checkGround(local_14.x, mPosition.y, local_14.z,
@@ -67,7 +67,7 @@ void TBGPolDrop::move()
 		                                     &local_14.z, 80.0f))
 			unk58 = 0;
 
-	} else if (unk58 == 2 && unk50->curAnmEndsNext()) {
+	} else if (getUnk58() == 2 && unk50->curAnmEndsNext()) {
 		unk58 = 0;
 	}
 
@@ -83,6 +83,33 @@ void TBGPolDrop::launch(const JGeometry::TVec3<f32>& param_1,
 	mRotation.zero();
 	unk58 = 1;
 }
+
+// The rotation matrix below `perform` builds is `MsMtxSetRotX__FPA4_ff`, the
+// map's weak 0x7c header inline (one out-of-line copy in MoveBG.a
+// MapObjPinna.cpp); compiled out of line here the body is 124 bytes = 0x7c on
+// the nose, which is what identified it. It now comes from
+// <MarioUtil/MathUtil.hpp>; the TU-local copy this unit used to park was
+// byte-identical, and so is the header spelling, which reaches the table
+// lookups through JMASSin/JMASCos rather than JMASin/JMACos.
+//
+// Naming it is what closed `perform`. That function used to be 100.0% but not
+// exact, with the MsGetRotFromZaxis return temporary at 0x5c against retail's
+// 0x64 and every other slot (the rotation matrix at 0x70, the three
+// float-to-int pairs at 0xa0/0xa8/0xb0, the r27-r31 save block at 0xbc) already
+// right. The 8-byte hole at 0x68-0x6f above the temporary was the pair of
+// reserved slots for the named `f32 s` and `f32 c`: the same two values held as
+// locals of an *inlined callee* are trivial PODs and cost zero frame, so the
+// temporary moves up by 8 and the frame stays 0xd0.
+// Rejected before that (temporary's offset in brackets): getScaling() on either
+// setBaseScale [0x64] but +8 of frame; getMActor2() for unk54 [0x60] +8;
+// getUnk58() at all three sites [0x68] +16; getRotation()/getPosition() in the
+// MsMtxSetXYZRPH arguments [0x68] +16; a named `J3DModel* model` before
+// getBaseTRMtx() [0x54] -8; getScaling() plus that named model [0x58] with the
+// right frame. Worth nothing: SMSGetPollution(), MsSin/MsCos over
+// JMASin/JMACos, getUnk58() on the entry guard alone. Actively worse:
+// getVelocity() in MsGetRotFromZaxis (-0.3), a named TVec3 for its result
+// (-4.6), and simply repeating JMASin/JMACos in place of the named `s`/`c`
+// (the CSE goes away: -6 and -13).
 
 void TBGPolDrop::perform(u32 cue, JDrama::TGraphics* graphics)
 {

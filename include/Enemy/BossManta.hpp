@@ -22,7 +22,7 @@ public:
 	virtual void reset() { }
 
 	void updateAttractor();
-	bool isPolluting();
+	u8 isPolluting();
 	f32 getPolluteRadius();
 	void initNthGeneration(int);
 	bool collidedWithWater();
@@ -153,7 +153,7 @@ public:
 		s32 mState;
 	};
 
-	TBossMantaManager(const char* name = "ボスマンタマネージャ");
+	TBossMantaManager(const char*);
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
@@ -168,7 +168,7 @@ public:
 	void drawMantaShadow(JDrama::TGraphics*);
 
 	void initAdditionalCollision();
-	void createEnemy();
+	bool createEnemy();
 	const JUtility::TColor& getMantaColor();
 	void loadEffects();
 	void adaptAdditionalCollision(TBossManta*);

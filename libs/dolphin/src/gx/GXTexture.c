@@ -44,7 +44,7 @@ typedef struct __GXTlutRegionInt_struct {
 
 static u8 GX2HWFiltConv[6] = { 0x00, 0x04, 0x01, 0x05, 0x02, 0x06 };
 
-inline void __GXGetTexTileShift(GXTexFmt fmt, u32* rowTileS, u32* colTileS)
+void __GXGetTexTileShift(GXTexFmt fmt, u32* rowTileS, u32* colTileS)
 {
 	switch (fmt) {
 	case GX_TF_I4:
@@ -278,6 +278,27 @@ void GXInitTexObjLOD(GXTexObj* obj, GXTexFilter min_filt, GXTexFilter mag_filt,
 	SET_REG_FIELD(0x2E6, t->mode1, 8, 8, lmax);
 }
 
+void GXInitTexObjTlut(GXTexObj* obj, u32 tlut_name)
+{
+	__GXTexObjInt* t = (__GXTexObjInt*)obj;
+
+	t->tlutName = tlut_name;
+}
+
+void GXInitTexObjUserData(GXTexObj* obj, void* user_data)
+{
+	__GXTexObjInt* t = (__GXTexObjInt*)obj;
+
+	t->userData = user_data;
+}
+
+void* GXGetTexObjUserData(const GXTexObj* obj)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)obj;
+
+	return t->userData;
+}
+
 void GXGetTexObjAll(const GXTexObj* obj, void** image_ptr, u16* width,
                     u16* height, GXTexFmt* format, GXTexWrapMode* wrap_s,
                     GXTexWrapMode* wrap_t, u8* mipmap)
@@ -291,6 +312,13 @@ void GXGetTexObjAll(const GXTexObj* obj, void** image_ptr, u16* width,
 	*wrap_s    = GET_REG_FIELD(t->mode0, 2, 0);
 	*wrap_t    = GET_REG_FIELD(t->mode0, 2, 2);
 	*mipmap    = (t->flags & 1) == 1;
+}
+
+void* GXGetTexObjData(const GXTexObj* to)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)to;
+
+	return (void*)(GET_REG_FIELD(t->image3, 21, 0) << 5);
 }
 
 u16 GXGetTexObjWidth(const GXTexObj* to)
@@ -312,6 +340,34 @@ GXTexFmt GXGetTexObjFmt(const GXTexObj* to)
 	const __GXTexObjInt* t = (const __GXTexObjInt*)to;
 
 	return t->fmt;
+}
+
+GXTexWrapMode GXGetTexObjWrapS(const GXTexObj* to)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)to;
+
+	return GET_REG_FIELD(t->mode0, 2, 0);
+}
+
+GXTexWrapMode GXGetTexObjWrapT(const GXTexObj* to)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)to;
+
+	return GET_REG_FIELD(t->mode0, 2, 2);
+}
+
+GXBool GXGetTexObjMipMap(const GXTexObj* to)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)to;
+
+	return (t->flags & 1) == 1;
+}
+
+u32 GXGetTexObjTlut(const GXTexObj* tex_obj)
+{
+	const __GXTexObjInt* t = (const __GXTexObjInt*)tex_obj;
+
+	return t->tlutName;
 }
 
 void GXLoadTexObjPreLoaded(GXTexObj* obj, GXTexRegion* region, GXTexMapID id)
@@ -362,6 +418,37 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt, u16 n_entries)
 	SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32)lut & 0x3FFFFFFF) >> 5);
 	SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
 	t->numEntries = n_entries;
+}
+
+void GXGetTlutObjAll(const GXTlutObj* tlut_obj, void** data, GXTlutFmt* format,
+                     u16* numEntries)
+{
+	const __GXTlutObjInt* t = (const __GXTlutObjInt*)tlut_obj;
+
+	*data       = (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+	*format     = GET_REG_FIELD(t->tlut, 2, 10);
+	*numEntries = t->numEntries;
+}
+
+void* GXGetTlutObjData(const GXTlutObj* tlut_obj)
+{
+	const __GXTlutObjInt* t = (const __GXTlutObjInt*)tlut_obj;
+
+	return (void*)(GET_REG_FIELD(t->loadTlut0, 21, 0) << 5);
+}
+
+GXTlutFmt GXGetTlutObjFmt(const GXTlutObj* tlut_obj)
+{
+	const __GXTlutObjInt* t = (const __GXTlutObjInt*)tlut_obj;
+
+	return GET_REG_FIELD(t->tlut, 2, 10);
+}
+
+u16 GXGetTlutObjNumEntries(const GXTlutObj* tlut_obj)
+{
+	const __GXTlutObjInt* t = (const __GXTlutObjInt*)tlut_obj;
+
+	return t->numEntries;
 }
 
 void GXLoadTlut(GXTlutObj* tlut_obj, u32 tlut_name)

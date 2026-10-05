@@ -14,7 +14,9 @@ namespace {
 	static bool mVisible = true;
 }; // namespace
 
-inline u32 flush_subroutine()
+void create() { }
+
+u32 flush_subroutine()
 {
 	if (sMessageLife == 0) {
 		return 0;

@@ -1,76 +1,111 @@
 #ifndef MOVE_BG_MAP_OBJ_FLAG_HPP
 #define MOVE_BG_MAP_OBJ_FLAG_HPP
 
-#include <JSystem/JDrama/JDRViewObj.hpp>
 #include <Strategic/HitActor.hpp>
+#include <JSystem/JDrama/JDRViewObj.hpp>
+#include <JSystem/JGeometry/JGMatrix34.hpp>
+#include <JSystem/JGeometry/JGVec3.hpp>
 
-struct ResTIMG;
+class ResTIMG;
 
+/// A cloth flag drawn as a hand-built triangle-strip mesh. The manager owns
+/// the texture and drives every instance, so this class has no perform() of
+/// its own: update() and draw() are called from TMapObjFlagManager::perform.
 class TMapObjFlag : public THitActor {
 public:
-	TMapObjFlag(const char*);
-	virtual ~TMapObjFlag() { }
+	TMapObjFlag(const char* name = "旗");
 
-	void load(JSUMemoryInputStream&);
-	void init(const char*);
+	virtual ~TMapObjFlag() { }
+	virtual void load(JSUMemoryInputStream&);
 	virtual void updateVertex();
+
+	void init(const char*);
+	void update();
 	void draw();
 
-	// TODO: never called from anywhere in the retail binary; the linker map
-	// lists it as UNUSED (0x114 bytes), so its body is not recoverable.
-	void update();
-
+	/// Degrees the wave phase advances per frame; set per map by the manager.
 	static f32 mFlutterSpeed;
 
 public:
-	/* 0x68 */ f32 unk68;
-	/* 0x6C */ f32 unk6C;
-	/* 0x70 */ u32 unk70;
-	/* 0x74 */ u32 unk74;
-	/* 0x78 */ JGeometry::TVec3<f32>** unk78;
-	/* 0x7C */ f32 unk7C;
-	/* 0x80 */ f32 unk80;
-	/* 0x84 */ f32 unk84;
-	/* 0x88 */ f32 unk88;
-	/* 0x8C */ Mtx mMtx;
-	/* 0xBC */ u32 unkBC;
+	/// Cloth extent along local Z (100 units per unit of scaling.z).
+	/* 0x68 */ f32 mLength;
+	/// Cloth extent along local Y (100 units per unit of scaling.y).
+	/* 0x6C */ f32 mHeight;
+	/// Vertex columns along Z.
+	/* 0x70 */ int mNumZ;
+	/// Vertex rows along Y.
+	/* 0x74 */ int mNumY;
+	/// mNumY rows of mNumZ vertices; only x is animated.
+	/* 0x78 */ JGeometry::TVec3<f32>** mVertices;
+	/// Degrees of wave phase per column.
+	/* 0x7C */ f32 mWavePhaseZ;
+	/// Degrees of wave phase per row.
+	/* 0x80 */ f32 mWavePhaseY;
+	/// Wave depth at the free edge, in units.
+	/* 0x84 */ f32 mWaveAmplitude;
+	/// Current wave phase in degrees, 0 to 360.
+	/* 0x88 */ f32 mWaveAngle;
+	/* 0x8C */ JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > mMtx;
+	/// Row/column stride, i.e. how many vertices to skip when animating.
+	/* 0xBC */ int mSkip;
 };
 
-// TODO: the linker map also lists TMapObjFlagLower / TMapObjFlagSail with
-// their own updateVertex() and destructors, all of them UNUSED. Nothing in the
-// emitted code references them, so no reconstruction is possible.
+/// Dead in retail: only updateVertex, the destructor and the vtable were
+/// compiled, and the map records no constructor, so nothing ever made one.
+class TMapObjFlagLower : public TMapObjFlag {
+public:
+	virtual ~TMapObjFlagLower() { }
+	virtual void updateVertex();
+};
+
+/// Dead in retail, like TMapObjFlagLower.
+class TMapObjFlagSail : public TMapObjFlag {
+public:
+	virtual ~TMapObjFlagSail() { }
+	virtual void updateVertex();
+};
+
+/// Buckets every flag in the scene by its texture name so that each texture
+/// is loaded once and all the flags sharing it are drawn back to back.
 class TMapObjFlagManager : public JDrama::TViewObj {
 public:
-	class TMapObjFlagInfo {
-	public:
+	enum {
+		/// One bucket per known flag texture.
+		FLAG_KIND_NUM = 15,
+		/// Flags per bucket.
+		FLAG_NUM_MAX = 20,
+	};
+
+	struct TMapObjFlagInfo {
 		TMapObjFlagInfo()
-		    : unk0(0)
-		    , unk54(0)
 		{
+			mNum  = 0;
+			mTimg = nullptr;
 		}
 
-	public:
-		/* 0x00 */ int unk0;
-		/* 0x04 */ TMapObjFlag* unk4[20];
-		/* 0x54 */ ResTIMG* unk54;
+		/* 0x00 */ int mNum;
+		/* 0x04 */ TMapObjFlag* mFlags[FLAG_NUM_MAX];
+		/* 0x54 */ const ResTIMG* mTimg;
 	};
 
 	TMapObjFlagManager(const char* name = "旗管理");
-	virtual ~TMapObjFlagManager();
 
+	virtual ~TMapObjFlagManager() { }
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
-	void initDraw();
-	void registerObj(TMapObjFlag*, const char*);
-
-	// TODO: UNUSED in the map (0x80 bytes). It is the body that every branch
-	// of registerObj() repeats; reconstructing it out of line is only
-	// worthwhile if MWCC refuses to inline it everywhere.
 	void loadFlag(TMapObjFlagInfo*, TMapObjFlag*, const char*);
+	void registerObj(TMapObjFlag*, const char*);
+	void initDraw();
+
+	// TODO: both are UNUSED 4-byte .sdata objects, so they were initialised
+	// to something non-zero that the map cannot tell us. The names suggest
+	// the two LOD switch distances the flags never ended up using.
+	static f32 mDistNearMiddle;
+	static f32 mDistMiddleFar;
 
 public:
-	/* 0x10 */ TMapObjFlagInfo unk10[15];
+	/* 0x10 */ TMapObjFlagInfo mInfos[FLAG_KIND_NUM];
 };
 
 extern TMapObjFlagManager* gpMapObjFlagManager;

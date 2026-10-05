@@ -1,3 +1,8 @@
+// The 12-byte zero object retail's .rodata opens with is @1490,
+// dummyMactorStringValue1's string; LightUtil is one of the three TUs that
+// carry it without SMS_NO_MEMORY_MESSAGE.
+#include <System/DummyMactorString.hpp>
+
 #include <MarioUtil/LightUtil.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/ReinitGX.hpp>
@@ -8,9 +13,6 @@
 #include <Player/MarioAccess.hpp>
 #include <stdio.h>
 #include <string.h>
-
-// TODO: figure out headers & PCH
-static const char dummy1[] = "\0\0\0\0\0\0\0\0\0\0\0";
 
 JDrama::TAmbAry* TLightCommon::mAmbAry;
 JDrama::TLightAry* TLightCommon::mLightAry;
@@ -35,20 +37,29 @@ TLightCommon::TLightCommon(const char* name)
 	mShininess = 50.0f;
 }
 
+// TODO: 97.8%, frame exact since cc37 (the ambient reads go through the raw
+// mAmbColors array; getAmb() is fabricated and costs 0x10 of pool). Left:
+// retail round-trips the FIRST ambient colour through a 4-byte temporary at
+// 0x18(r1) (`stw; lwz; stw 0x29(r30)`), the second stores straight. Tried
+// (cc37): `.get()`, a named GXColor/TColor local, a by-value setter, a
+// by-value GXColor fork, `(GXColor)` cast -- no round trip; an explicit
+// `JUtility::TColor(...)` conversion (bare or inside a TU-local helper)
+// reproduces the round trip instruction-exact but its temporary is a class
+// object that lands at the top of the named block (0x78-0x8c), never at 0x18.
 void TLightCommon::loadAfter()
 {
-	mAmbAry = static_cast<JDrama::TAmbAry*>(
-	    JDrama::TNameRefGen::search("Ambient Group"));
-	mLightAry = static_cast<JDrama::TLightAry*>(
-	    JDrama::TNameRefGen::search("Light Group"));
+	mAmbAry    = (JDrama::TAmbAry*)JDrama::TNameRefGen::search2(
+	    "Ambient Group");
+	mLightAry  = (JDrama::TLightAry*)JDrama::TNameRefGen::search2(
+	    "Light Group");
 	mLightPos  = &mLightAry->getLight(0)->mPosition;
 	mShininess = 50.0f;
 	for (int i = 0; i < 4; ++i) {
-		unk31[i] = mLightAry->getLight(mLightIndex + i)->getColor();
-		unk44[i] = mLightAry->getLight(mLightIndex + i)->mPosition;
+		unk31[i] = mLightAry->getLight(i + mLightIndex)->getColor();
+		unk44[i] = mLightAry->getLight(i + mLightIndex)->mPosition;
 	}
-	unk29[0] = mAmbAry->getAmb(mAmbIndex)->getColor();
-	unk29[1] = mAmbAry->getAmb(mAmbIndex + 1)->getColor();
+	unk29[0] = mAmbAry->mAmbColors[mAmbIndex].getColor();
+	unk29[1] = mAmbAry->mAmbColors[mAmbIndex + 1].getColor();
 }
 
 GXColor TLightCommon::getLightColor(int index) const
@@ -104,10 +115,9 @@ void TLightCommon::setLight(const JDrama::TGraphics* gfx, int index)
 
 	gpLightManager->setEffectLight(gfx, &light);
 
-	Vec spos;
-	MTXMultVec(gfx->getViewMtx(), getLightPosition(lightIndex), &spos);
-	VECNormalize(&spos, &spos);
-	GXInitSpecularDir(&light, -spos.x, -spos.y, -spos.z);
+	MTXMultVec(gfx->getViewMtx(), getLightPosition(lightIndex), &pos);
+	VECNormalize(&pos, &pos);
+	GXInitSpecularDir(&light, -pos.x, -pos.y, -pos.z);
 	GXInitLightColor(&light, getLightColor(lightIndex));
 	GXInitLightShininess(&light, mShininess);
 	GXLoadLightObjImm(&light, GX_LIGHT2);
@@ -115,6 +125,14 @@ void TLightCommon::setLight(const JDrama::TGraphics* gfx, int index)
 	GXSetChanAmbColor(GX_COLOR0A0, getAmbColor(index));
 }
 
+// TODO: 99.9%, frame 0x10 short (0x70 vs 0x80), instruction-exact: retail
+// has 12 bytes between the getLightColor out-parameter (0x14) and `light`
+// (0x24, ours 0x18). A dead `Vec pos;` declared after `light` lands it 100%
+// (diagnostic only, cc37), so retail very likely declared an unused Vec here;
+// not committed as it is a dead local. Binders over getLightPosition (+8 each)
+// land the frame but sit below the colour temporary (colour 0x20); forks and
+// binders on the setLight tail, the graphics parameter or the three loads are
+// inert or break the code.
 void TLightCommon::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_DRAW_INIT) {
@@ -161,10 +179,9 @@ void TLightMario::setLight(const JDrama::TGraphics* gfx, int index)
 
 	gpLightManager->setEffectLight(gfx, &light);
 
-	Vec spos;
-	MTXMultVec(gfx->getViewMtx(), getLightPosition(lightIndex), &spos);
-	VECNormalize(&spos, &spos);
-	GXInitSpecularDir(&light, -spos.x, -spos.y, -spos.z);
+	MTXMultVec(gfx->getViewMtx(), getLightPosition(lightIndex), &pos);
+	VECNormalize(&pos, &pos);
+	GXInitSpecularDir(&light, -pos.x, -pos.y, -pos.z);
 	GXInitLightColor(&light, getLightColor(lightIndex));
 	GXInitLightShininess(&light, mShininess);
 	GXLoadLightObjImm(&light, GX_LIGHT2);
@@ -187,7 +204,6 @@ GXColor TLightMario::getAmbColor(int index) const
 	return color;
 }
 
-#pragma dont_inline on
 TLightDrawBuffer::TLightDrawBuffer(int param_1, u32 param_2, const char* name)
     : JDrama::TViewObj(name)
     , mLight(nullptr)
@@ -195,16 +211,13 @@ TLightDrawBuffer::TLightDrawBuffer(int param_1, u32 param_2, const char* name)
     , mXluDrawBufferObject(nullptr)
     , unk80(param_1)
 {
-
-	
-	
 	snprintf(unk1C, 0x32, "%s%s", name, "opa");
-	mOpaDrawBufferObject = new JDrama::TDrawBufObj(3, param_2, unk1C);
+	JDrama::TDrawBufObj* opa = new JDrama::TDrawBufObj(3, param_2, unk1C);
+	mOpaDrawBufferObject     = opa;
 
 	snprintf(unk4E, 0x32, "%s%s", name, "xlu");
 	mXluDrawBufferObject = new JDrama::TDrawBufObj(4, param_2, unk4E);
 }
-#pragma dont_inline reset
 
 void TLightDrawBuffer::perform(u32 cue, JDrama::TGraphics* graphics)
 {
@@ -281,39 +294,83 @@ void TLightWithDBSet::resetLightDrawBuffer()
 	unk18 = nullptr;
 }
 
-void TLightWithDBSet::getOpaDrawBuffer(int) { }
+// UNUSED in the map at 0x28/0x28/0x20. All three are exactly four
+// instructions longer than the bare indexed read, and that shared prefix is
+// the `index > unk1C` clamp changeLightDrawBuffer spells out for itself.
+// Nothing in the retail image reaches them (changeLightDrawBuffer duplicates
+// their bodies), so they cannot be makeDrawBuffer's frame lever: the clamp
+// would add four instructions per site there.
+J3DDrawBuffer* TLightWithDBSet::getOpaDrawBuffer(int index)
+{
+	if (index > unk1C)
+		index = 0;
+	return unk10[index]->getOpaDbo()->getDrawBuffer();
+}
 
-void TLightWithDBSet::getXluDrawBuffer(int) { }
+J3DDrawBuffer* TLightWithDBSet::getXluDrawBuffer(int index)
+{
+	if (index > unk1C)
+		index = 0;
+	return unk10[index]->getXluDbo()->getDrawBuffer();
+}
 
-void TLightWithDBSet::getLightDrawBuffer(int) { }
+TLightDrawBuffer* TLightWithDBSet::getLightDrawBuffer(int index)
+{
+	if (index > unk1C)
+		index = 0;
+	return unk10[index];
+}
 
 int TLightWithDBSet::getLightIndex(const char* name)
 {
-	for (int i = 0; i < TLightCommon::mLightAry->getLightNum(); ++i)
-		if (strcmp(name, TLightCommon::mLightAry->getLight(i)->getName()) == 0)
+	for (int i = 0; i < TLightCommon::mLightAry->getLightNum(); ++i) {
+		JDrama::TLightAry* lightAry = TLightCommon::mLightAry;
+		JDrama::TIdxLight* light    = lightAry->getLight(i);
+		const char* lightName    = light->getName();
+		if (strcmp(name, lightName) == 0)
 			return i;
+	}
 	return -1;
 }
 
 int TLightWithDBSet::getAmbIndex(const char* name)
 {
-	for (int i = 0; i < TLightCommon::mAmbAry->getAmbNum(); ++i)
-		if (strcmp(name, TLightCommon::mAmbAry->getAmb(i)->getName()) == 0)
+	for (int i = 0; i < TLightCommon::mAmbAry->getAmbNum(); ++i) {
+		JDrama::TAmbAry* ambAry = TLightCommon::mAmbAry;
+		JDrama::TAmbColor* amb  = ambAry->getAmb(i);
+		const char* ambName    = amb->getName();
+		if (strcmp(name, ambName) == 0)
 			return i;
+	}
 	return -1;
+}
+
+// The 32 bytes of low region the four makeDrawBuffer bodies were short come
+// from the two UNUSED carriers they expand: naming the array and the light in
+// getLightIndex/getAmbIndex is +8 per expansion and a third chain step a
+// further +8 (24 in all). The last 8 closes with an mLight fork at loadAfter:
+// bare `return buffer->mLight` is +8 in the getName bodies (Player/Object);
+// the named-local form is +8 in the className bodies (MapObject/Indirect) and
+// +0x10 in Player/Object.
+static inline TLightCommon* LightWithDBSetLight(TLightDrawBuffer* buffer)
+{
+	TLightCommon* light = buffer->mLight;
+	return light;
+}
+
+static inline TLightCommon* LightWithDBSetLightBare(TLightDrawBuffer* buffer)
+{
+	return buffer->mLight;
 }
 
 void TPlayerLightWithDBSet::makeDrawBuffer()
 {
-
-	
-	
 	static const char lightName[] = "太陽（プレイヤー）";
 	static const char ambName[]   = "太陽アンビエント（プレイヤー）";
 
 	int lightIndex = getLightIndex(lightName);
 	int ambIndex   = getAmbIndex(ambName);
-	unk10          = new TLightDrawBuffer*[unk1C];
+	unk10 = new TLightDrawBuffer*[unk1C];
 	for (int i = 0; i < unk1C; ++i) {
 		unk10[i] = new TLightDrawBuffer(
 		    i, 0x80, TLightCommon::mAmbAry->getAmb(ambIndex + i)->getName());
@@ -321,7 +378,7 @@ void TPlayerLightWithDBSet::makeDrawBuffer()
 		unk10[i]->setLight(light);
 		unk10[i]->mLight->mAmbIndex   = ambIndex;
 		unk10[i]->mLight->mLightIndex = lightIndex;
-		unk10[i]->mLight->loadAfter();
+		LightWithDBSetLightBare(unk10[i])->loadAfter();
 	}
 }
 
@@ -332,7 +389,7 @@ void TObjectLightWithDBSet::makeDrawBuffer()
 
 	int lightIndex = getLightIndex(lightName);
 	int ambIndex   = getAmbIndex(ambName);
-	unk10          = new TLightDrawBuffer*[unk1C];
+	unk10 = new TLightDrawBuffer*[unk1C];
 	for (int i = 0; i < unk1C; ++i) {
 		unk10[i] = new TLightDrawBuffer(
 		    i, 0x100, TLightCommon::mAmbAry->getAmb(ambIndex + i)->getName());
@@ -340,7 +397,7 @@ void TObjectLightWithDBSet::makeDrawBuffer()
 		unk10[i]->setLight(light);
 		unk10[i]->mLight->mAmbIndex   = ambIndex;
 		unk10[i]->mLight->mLightIndex = lightIndex;
-		unk10[i]->mLight->loadAfter();
+		LightWithDBSetLightBare(unk10[i])->loadAfter();
 	}
 }
 
@@ -360,7 +417,7 @@ void TMapObjectLightWithDBSet::makeDrawBuffer()
 		unk10[i]->setLight(light);
 		unk10[i]->mLight->mAmbIndex   = ambIndex;
 		unk10[i]->mLight->mLightIndex = lightIndex;
-		unk10[i]->mLight->loadAfter();
+		LightWithDBSetLight(unk10[i])->loadAfter();
 	}
 }
 
@@ -380,7 +437,7 @@ void TIndirectLightWithDBSet::makeDrawBuffer()
 		unk10[i]->setLight(light);
 		unk10[i]->mLight->mAmbIndex   = ambIndex;
 		unk10[i]->mLight->mLightIndex = lightIndex;
-		unk10[i]->mLight->loadAfter();
+		LightWithDBSetLight(unk10[i])->loadAfter();
 	}
 }
 
@@ -435,8 +492,8 @@ TLightWithDBSetManager::TLightWithDBSetManager(const char* name)
 
 void TLightWithDBSetManager::loadAfter()
 {
-	JDrama::TLightAry* group = static_cast<JDrama::TLightAry*>(
-	    JDrama::TNameRefGen::search("Light Group"));
+	JDrama::TLightAry* group
+	    = (JDrama::TLightAry*)JDrama::TNameRefGen::search2("Light Group");
 	mEffectLightColor = group->getLight(0)->getColor();
 	mEffectLightPos   = group->getLight(0)->mPosition;
 }
@@ -490,15 +547,16 @@ Vec* TLightWithDBSetManager::getLightPos() const
 void TLightWithDBSetManager::setEffectLight(const JDrama::TGraphics* gfx,
                                             GXLightObj* light)
 {
-	if (unk54 && unk55) {
-		Vec epos;
-		MTXMultVec(gfx->getViewMtx(), mEffectLightPos, &epos);
-		GXInitLightPos(light, epos.x, epos.y, epos.z);
-		GXInitLightColor(light, getEffectLightColor());
-		GXInitLightAttnA(light, 1.0f, 0.0f, 0.0f);
-		GXInitLightDistAttn(light, 1000.0f, 0.5f, GX_DA_STEEP);
-		GXLoadLightObjImm(light, GX_LIGHT1);
-	}
+	if (!unk54 || !unk55)
+		return;
+
+	Vec epos;
+	MTXMultVec(gfx->getViewMtx(), &mEffectLightPos, &epos);
+	GXInitLightPos(light, epos.x, epos.y, epos.z);
+	GXInitLightColor(light, getEffectLightColor());
+	GXInitLightAttnA(light, 1.0f, 0.0f, 0.0f);
+	GXInitLightDistAttn(light, 1000.0f, 0.5f, GX_DA_STEEP);
+	GXLoadLightObjImm(light, GX_LIGHT1);
 }
 
 GXColor TLightWithDBSetManager::getEffectLightColor() const

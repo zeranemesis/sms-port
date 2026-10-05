@@ -1,8 +1,6 @@
 #ifndef MSOUND_SOUND_EFFECTS_HPP
 #define MSOUND_SOUND_EFFECTS_HPP
 
-#include <version.h>
-
 // Exact order and names were pulled from mSound.asn
 enum MSoundSEId {
 	MSD_SE_PO_WATER_HI          = 0x0000,
@@ -600,6 +598,10 @@ enum MSoundSEId {
 	MSD_SE_SY_SHINE_CURSOR      = 0x4856,
 	MSD_SE_SY_DONCHO_OPEN       = 0x4857,
 	MSD_SE_SY_PANELPUZZLE_OPEN  = 0x4058,
+	// fabricated name: TGCConsole2::countShine gate-checks and starts this
+	// once per frame while the blue-coin total ticks down toward its target,
+	// so it is the counter's tick.
+	MSD_SE_SY_BLUECOIN_COUNT    = 0x405C,
 	MSD_SE_MA_INTO_DOKAN        = 0x4859,
 	MSD_SE_EV_GLOBAL_SEA_L      = 0x5000,
 	MSD_SE_EV_GLOBAL_SEA_R      = 0x5001,
@@ -1484,22 +1486,37 @@ enum MSoundSEId {
 	MSD_SE_NPC_VA_MONTW_DANCE1  = 0x891D,
 	MSD_SE_NPC_VA_MONTW_DANCE2  = 0x891E,
 	MSD_SE_NPC_VA_MONTW_RUNNING = 0x891F,
-	MSD_SE_BS_UNG_VACUUM        = 0x8120,
-	MSD_SE_BS_UNG_ROLL          = VERSION_SELECT(GMSJ01(0x8921), GMSP01(0x2981)),
+	// The eel (ウナギ) group does not live at index 0x120 of category 8 like
+	// the rest of this run: retail passes category-2 indices 0x180..0x18D for
+	// it (read off the gateCheck/startSoundActor pairs in bosseel.cpp and the
+	// "ウナギ回転" JALSystem::append in MSoundSE.cpp). Twelve of the fourteen
+	// ids below are observed directly; BITE (0x2983) and THROW_UP (0x2984)
+	// are never passed from code and are placed by interpolation. The
+	// per-sound 0x800 bit independently confirms the name order: VACUUM is
+	// the one entry without it in both numberings.
+	// UP keeps category 8 / index 0x122 because that is literally what
+	// TNerveBossEelAppear::execute builds (lis r29,1; subi r4,r29,0x76de).
+	// With UP and VOICE_NORMAL excluded, the remaining fourteen names fill
+	// 0x180..0x18D exactly, so either the group was renumbered and the appear
+	// nerve kept a stale id, or UP really was left behind in category 8.
+	// VOICE_NORMAL has no observed id at all and keeps its old value.
+	MSD_SE_BS_UNG_VACUUM        = 0x2180,
+	MSD_SE_BS_UNG_ROLL          = 0x2981,
 	MSD_SE_BS_UNG_UP            = 0x8922,
-	MSD_SE_BS_UNG_DOWN          = VERSION_SELECT(GMSJ01(0x8923), GMSP01(0x2982)),
-	MSD_SE_BS_UNG_BITE          = 0x8924,
-	MSD_SE_BS_UNG_THROW_UP      = 0x8925,
-	MSD_SE_BS_UNG_TEAR_TREMBLE  = VERSION_SELECT(GMSJ01(0x8926), GMSP01(0x2985)),
-	MSD_SE_BS_UNG_TEAR_CLASH    = VERSION_SELECT(GMSJ01(0x8927), GMSP01(0x2986)),
-	MSD_SE_BS_UNG_TEATH_COMEOFF = VERSION_SELECT(GMSJ01(0x8928), GMSP01(0x2987)),
-	MSD_SE_BS_UNG_TEATH_FLASH   = VERSION_SELECT(GMSJ01(0x8929), GMSP01(0x2988)),
-	MSD_SE_BS_UNG_VOICE_M_CRY   = VERSION_SELECT(GMSJ01(0x892A), GMSP01(0x2989)),
-	MSD_SE_BS_UNG_VOICE_W_CRY   = VERSION_SELECT(GMSJ01(0x892B), GMSP01(0x298A)),
-	MSD_SE_BS_UNG_VOICE_M_JOY   = VERSION_SELECT(GMSJ01(0x892C), GMSP01(0x298B)),
-	MSD_SE_BS_UNG_VOICE_W_JOY   = VERSION_SELECT(GMSJ01(0x892D), GMSP01(0x298C)),
+	MSD_SE_BS_UNG_DOWN          = 0x2982,
+	MSD_SE_BS_UNG_BITE          = 0x2983,
+	MSD_SE_BS_UNG_THROW_UP      = 0x2984,
+	MSD_SE_BS_UNG_TEAR_TREMBLE  = 0x2985,
+	MSD_SE_BS_UNG_TEAR_CLASH    = 0x2986,
+	MSD_SE_BS_UNG_TEATH_COMEOFF = 0x2987,
+	MSD_SE_BS_UNG_TEATH_FLASH   = 0x2988,
+	MSD_SE_BS_UNG_VOICE_M_CRY   = 0x2989,
+	MSD_SE_BS_UNG_VOICE_W_CRY   = 0x298A,
+	MSD_SE_BS_UNG_VOICE_M_JOY   = 0x298B,
+	MSD_SE_BS_UNG_VOICE_W_JOY   = 0x298C,
+	// TODO: no call site; the 0x800 bit says it is not 0x298D (VOICE_LAST is).
 	MSD_SE_BS_UNG_VOICE_NORMAL  = 0x812E,
-	MSD_SE_BS_UNG_VOICE_LAST    = VERSION_SELECT(GMSJ01(0x892F), GMSP01(0x298D)),
+	MSD_SE_BS_UNG_VOICE_LAST    = 0x298D,
 	MSD_SE_BS_MKP_BREAK         = 0x8930,
 	MSD_SE_BS_MKP_MOVEMENT      = 0x8931,
 	MSD_SE_BS_MKP_BOUND         = 0x8932,

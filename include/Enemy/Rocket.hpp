@@ -1,18 +1,25 @@
-#ifndef ROCKET_H
-#define ROCKET_H
+#ifndef ENEMY_ROCKET_HPP
+#define ENEMY_ROCKET_HPP
 
-#include <Enemy/EnemyManager.hpp>
-#include <Enemy/Enemy.hpp>
 #include <Enemy/SmallEnemy.hpp>
-#include <Strategic/Strategy.hpp>
-#include <Map/MapData.hpp>
+#include <Strategic/Nerve.hpp>
 
 class TWaterEmitInfo;
 
+// The pet-bottle rocket nozzle pickup. Nearly a sibling of TPopo: it shares
+// the nozzle-possession protocol (mIsNozzleFree / releaseNozzle /
+// possessedNozzle / checkTrigger / flyBehavior) and the same three .prm
+// parameter names.
+//
+// Names and defaults are the ones PARAM_INIT stringified into .rodata; the
+// defaults are what the constructor inlined into TRocketManager::load stores.
 class TRocketSaveLoadParams : public TSmallEnemyParams {
 public:
-	// UNUSED, fully inlined into TRocketManager::load
-	TRocketSaveLoadParams(const char* path);
+	TRocketSaveLoadParams(const char* prm);
+
+	f32 getSLReleaseSpeed() const { return mSLReleaseSpeed.get(); }
+	f32 getSLFlyGravity() const { return mSLFlyGravity.get(); }
+	s32 getSLFlyLimitTime() const { return mSLFlyLimitTime.get(); }
 
 	/* 0x2D4 */ TParamRT<f32> mSLReleaseSpeed;
 	/* 0x2E8 */ TParamRT<f32> mSLFlyGravity;
@@ -22,8 +29,8 @@ public:
 class TRocket : public TSmallEnemy {
 public:
 	TRocket(const char* name = "ロケット");
-	virtual ~TRocket() { }
 
+	virtual ~TRocket() { }
 	virtual void load(JSUMemoryInputStream&);
 	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();
@@ -43,39 +50,45 @@ public:
 	void releaseNozzle();
 	void possessedNozzle();
 
+	// fabricated
+	TRocketSaveLoadParams* getSaveParams() const { return mSaveParams; }
+
 	static f32 mTestAng_x;
 	static f32 mTestAng_y;
 	static f32 mTestAng_z;
 	static f32 mNozzleOffsetZ;
 	static f32 mColOffsetY;
 
-public:
-	/* 0x194 */ JGeometry::TVec3<f32> mInitPos;
-	/* 0x1A0 */ bool mIsPossessed; // held by Mario's nozzle
-	/* 0x1A1 */ bool mHasInitPos;
-	/* 0x1A4 */ TRocketSaveLoadParams* mParams;
+	/* 0x194 */ JGeometry::TVec3<f32> mInitialPos;
+	/* 0x1A0 */ u8 mIsPossessed;
+	/* 0x1A1 */ u8 mIsLoaded;
+	/* 0x1A4 */ TRocketSaveLoadParams* mSaveParams;
 };
 
 class TRocketManager : public TSmallEnemyManager {
 public:
 	TRocketManager(const char* name);
 
+	virtual ~TRocketManager() { }
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
-	virtual void perform(u32, JDrama::TGraphics*);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void createModelData();
 	virtual TSpineEnemy* createEnemyInstance();
 	virtual void clipEnemies(JDrama::TGraphics*) { }
 	virtual void initSetEnemies();
 
-public:
-	/* 0x60 */ bool mCanPossess; // no rocket is currently in the nozzle
-	/* 0x64 */ u32 unk64;
-	/* 0x68 */ TWaterEmitInfo* mExpWaterEmitInfo;
+	/* 0x60 */ u8 mIsNozzleFree;
+	// Initialised to null and never touched again; the popo manager has a
+	// fly-water info in the same slot.
+	/* 0x64 */ TWaterEmitInfo* mFlyWater;
+	/* 0x68 */ TWaterEmitInfo* mExplosionWater;
 };
 
-DECLARE_NERVE(TNerveRocketWait, TLiveActor);
-DECLARE_NERVE(TNerveRocketFly, TLiveActor);
-DECLARE_NERVE(TNerveRocketPossessedNozzle, TLiveActor);
+class TLiveActor;
+
+DECLARE_NERVE(TNerveRocketFly, TLiveActor)
+DECLARE_NERVE(TNerveRocketPossessedNozzle, TLiveActor)
+DECLARE_NERVE(TNerveRocketWait, TLiveActor)
 
 #endif

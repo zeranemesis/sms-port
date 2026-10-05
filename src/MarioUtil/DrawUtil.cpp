@@ -35,6 +35,10 @@ void TSilhouette::load(JSUMemoryInputStream& stream)
 	gpSilhouetteManager = this;
 }
 
+// TODO: 99.7%. In the unk38 determinant retail loads m[2][1] before m[1][0]
+// (f2/f1) where ours loads m[1][0] first (f4). Tried: operand swaps in either
+// product, named numerator/denominator in both orders, a determinant level,
+// negating the swapped difference.
 void TSilhouette::loadAfter()
 {
 	// TODO: ewwww floats
@@ -86,7 +90,8 @@ void TSilhouette::loadAfter()
 
 void TSilhouette::setting(MtxPtr param_1)
 {
-	GXSetChanAmbColor(GX_COLOR0A0, (GXColor) { unk12.r, unk12.g, unk12.b, 0 });
+	GXColor amb = (GXColor) { unk12.r, unk12.g, unk12.b, 0 };
+	GXSetChanAmbColor(GX_COLOR0A0, amb);
 	GXLightObj GStack_54;
 	Vec local_60;
 	Vec local_6C = SMS_GetMarioPos();
@@ -109,6 +114,22 @@ void TSilhouette::setting(MtxPtr param_1)
 	GXSetZMode(GX_TRUE, GX_GEQUAL, GX_FALSE);
 }
 
+// Binding level worth +8 of low region, landing TSilhouette::perform's frame
+// at 0x188 (batch 121).
+static inline int DrawUtilGetJointModelNum(const TPollutionManager* p)
+{
+	int jointModelNum = p->getJointModelNum();
+	return jointModelNum;
+}
+
+// Binding level worth +8 of low region, landing TSilhouette::perform's frame
+// at 0x188 (batch 121).
+static inline u8 DrawUtilGetUnk1CAlpha(TSunMgr* p)
+{
+	u8 unk1CAlpha = p->unk18.a;
+	return unk1CAlpha;
+}
+
 void TSilhouette::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if ((cue & CUE_MOVE) != 0) {
@@ -128,27 +149,28 @@ void TSilhouette::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 	if ((cue & CUE_DRAW_INIT) != 0) {
 		GXColor color = unk12;
-		color.a       = gpSunMgr->getUnk1CAlpha();
+		color.a       = DrawUtilGetUnk1CAlpha(gpSunMgr);
 		GXSetChanMatColor(GX_COLOR0A0, color);
 		setting(graphics->getViewMtx());
 	}
-	if (((cue & CUE_SET_PROJECTION) != 0) && gpPollution->getJointModelNum()) {
+	if (((cue & CUE_SET_PROJECTION) != 0)
+	    && DrawUtilGetJointModelNum(gpPollution)) {
+		Mtx afStack_50;
 		Mtx afStack_80;
 		C_MTXLightFrustum(afStack_80, -1.0f, 1.0f, -1.0f, 1.0f, 10.0f, 0.5f,
 		                  0.5f, 0.5f, 0.5f);
 		Mtx afStack_b0;
-		MTXRotRad(afStack_b0, 0x58, 1.5707964f);
-		Mtx afStack_50;
-		MTXConcat(afStack_80, afStack_b0, afStack_50);
+		PSMTXRotRad(afStack_b0, 0x58, 1.5707964f);
+		PSMTXConcat(afStack_80, afStack_b0, afStack_50);
 		Mtx afStack_e0;
-		MTXScale(afStack_e0, unk3C, unk3C, unk3C);
+		PSMTXScale(afStack_e0, unk3C, unk3C, unk3C);
 		Mtx afStack_110;
-		MTXTrans(afStack_110, -gpMarioPos->x, 0.0f, -gpMarioPos->z);
+		PSMTXTrans(afStack_110, -gpMarioPos->x, 0.0f, -gpMarioPos->z);
 		Mtx afStack_140;
-		MTXTrans(afStack_140, 1.75f, 1.75f, 0.0f);
-		MTXConcat(afStack_e0, afStack_110, afStack_e0);
-		MTXConcat(afStack_50, afStack_e0, afStack_50);
-		MTXConcat(afStack_140, afStack_50, afStack_50);
+		PSMTXTrans(afStack_140, 0.5f, 0.5f, 0.0f);
+		PSMTXConcat(afStack_e0, afStack_110, afStack_e0);
+		PSMTXConcat(afStack_50, afStack_e0, afStack_50);
+		PSMTXConcat(afStack_140, afStack_50, afStack_50);
 		GXLoadTexMtxImm(afStack_50, 0x1e, GX_MTX3x4);
 		GXSetNumTexGens(2);
 		GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, 0x3c, 0,
@@ -185,7 +207,30 @@ void TSilhouette::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
-void TSilhouette::calcSilhouetteBorder() { }
+// UNUSED (0x134): TLightWithDBSetManager::calcLightBorder (LightUtil.cpp) is
+// the same three-point attenuation fit at the same size; loadAfter carries its
+// copy over the distances in unk24.
+void TSilhouette::calcSilhouetteBorder()
+{
+	f32 a[3] = { 0.9f, 0.5f, 0.05f };
+	f32 b[3];
+	b[0] = unk24[0];
+	b[1] = unk24[1];
+	b[2] = unk24[2];
+
+	f32 P[2];
+	f32 Q[2];
+	f32 R[2];
+	for (int i = 0; i < 2; ++i) {
+		P[i] = a[i + 1] * (a[i] * (b[i] * b[i] - b[i + 1] * b[i + 1]));
+		Q[i] = a[i + 1] * (a[i] * (b[i] - b[i + 1]));
+		R[i] = a[i + 1] - a[i];
+	}
+
+	unk38 = (R[0] * Q[1] - R[1] * Q[0]) / (P[0] * Q[1] - P[1] * Q[0]);
+	unk34 = (R[0] - P[0] * unk38) / Q[0];
+	unk30 = a[0] - (unk38 * (b[0] * b[0]) + b[0] * unk34);
+}
 
 void TTrembleModelEffect::init(J3DModel* model)
 {
@@ -214,8 +259,8 @@ void TTrembleModelEffect::init(J3DModel* model)
 	}
 
 	if (found == 1) {
-		unk4  = unk0->getModelData()->getVertexData().getVtxPosArray();
-		u32 n = unk0->getModelData()->getVertexData().getVtxNum();
+		unk4  = unk0->getModelData()->getVtxPosArray();
+		u32 n = unk0->getModelData()->getVtxNum();
 		unk9  = 0;
 		switch (unk8 & 2) {
 		case 0: {
@@ -225,7 +270,7 @@ void TTrembleModelEffect::init(J3DModel* model)
 			unk20     = new JGeometry::TVec3<s16>[n];
 			unk24     = 0;
 			unk26     = 0;
-			void* src = model->getModelData()->getVertexData().getVtxPosArray();
+			void* src = model->getModelData()->getVtxPosArray();
 			for (u32 i = 0; i < n; ++i) {
 				unk14[i]    = ((JGeometry::TVec3<s16>*)src)[i];
 				unk18[0][i] = ((JGeometry::TVec3<s16>*)src)[i];
@@ -241,7 +286,7 @@ void TTrembleModelEffect::init(J3DModel* model)
 			unk34     = new JGeometry::TVec3<f32>[n];
 			unk38     = 0.0f;
 			unk3C     = 0.0f;
-			void* src = model->getModelData()->getVertexData().getVtxPosArray();
+			void* src = model->getModelData()->getVtxPosArray();
 			for (u32 i = 0; i < n; ++i) {
 				unk28[i]    = ((JGeometry::TVec3<f32>*)src)[i];
 				unk2C[0][i] = ((JGeometry::TVec3<f32>*)src)[i];
@@ -263,7 +308,7 @@ void TTrembleModelEffect::tremble(f32 magnitude, f32 spring, f32 damping,
 		unk26                      = (s16)(spring * unkC);
 		unk24                      = (s16)(damping * unkC);
 		JGeometry::TVec3<s16>* src = (JGeometry::TVec3<s16>*)unk4;
-		for (u32 i = 0; i < unk0->getModelData()->getVertexData().getVtxNum();
+		for (u32 i = 0; i < unk0->getModelData()->getVtxNum();
 		     ++i) {
 			unk20[i].x  = (s16)(unkC * (magnitude * (2.0f * MsRandF() - 1.0f)));
 			unk20[i].y  = (s16)(unkC * (magnitude * (2.0f * MsRandF() - 1.0f)));
@@ -294,6 +339,16 @@ void TTrembleModelEffect::tremble(f32 magnitude, f32 spring, f32 damping,
 	unk8 &= ~4;
 }
 
+// TODO: 94.0%. Retail copies each `a + b` result into a low pool temporary
+// (0x1c / 0x10) and then into the named `t` (0xb0 / 0xa4), storing unk14[i]
+// / unk28[i] from the temporary; ours constructs `t` straight from
+// operator+'s by-value parameter. Tried: `t` declared then assigned,
+// direct-init, an explicit TVec3 temporary, a by-value copy level
+// (restores the double copy in the f32 arm, 95.3%, frame +0x18), by-value
+// add levels, and chained assignments (`unk14[i] = t = a + b`, `t = unk14[i]
+// = a + b`, `unk18[0][i] = unk14[i] = t`, no `t` at all): 78.6-93.6%. The
+// shape is a by-value `operator+` result copied into `t` without elision,
+// i.e. the header operator's return type, which is settled tree-wide.
 void TTrembleModelEffect::clash(f32 magnitude)
 {
 	tremble(magnitude, 0.0f, 0.0f, 0);
@@ -337,7 +392,7 @@ void TTrembleModelEffect::movement()
 	switch (unk8 & 2) {
 	case 0: {
 		JGeometry::TVec3<s16>* src = (JGeometry::TVec3<s16>*)unk4;
-		for (u32 i = 0; i < unk0->getModelData()->getVertexData().getVtxNum();
+		for (u32 i = 0; i < unk0->getModelData()->getVtxNum();
 		     ++i) {
 			JGeometry::TVec3<s16> diff = src[i] - unk14[i];
 			unk20[i].x += (s16)((diff.x * unk26) >> unkA);
@@ -350,7 +405,7 @@ void TTrembleModelEffect::movement()
 			unk18[unk9][i] = unk14[i];
 		}
 		DCFlushRange(unk18[unk9],
-		             unk0->getModelData()->getVertexData().getVtxNum() * 6);
+		             unk0->getModelData()->getVtxNum() * 6);
 		unk0->getVertexBuffer()->setVtxPosArrayPointer(0, unk18[unk9]);
 		for (int j = 0; j < unk0->getModelData()->getShapeNum(); ++j)
 			unk0->getShapePacket(0)->setVtxPos(unk18[unk9]);
@@ -358,7 +413,7 @@ void TTrembleModelEffect::movement()
 	}
 	case 2: {
 		JGeometry::TVec3<f32>* src = (JGeometry::TVec3<f32>*)unk4;
-		for (u32 i = 0; i < unk0->getModelData()->getVertexData().getVtxNum();
+		for (u32 i = 0; i < unk0->getModelData()->getVtxNum();
 		     ++i) {
 			JGeometry::TVec3<f32> diff = src[i] - unk28[i];
 			unk34[i].x += diff.x * unk3C;
@@ -371,7 +426,7 @@ void TTrembleModelEffect::movement()
 			unk2C[unk9][i] = unk28[i];
 		}
 		DCFlushRange(unk2C[unk9],
-		             unk0->getModelData()->getVertexData().getVtxNum() * 12);
+		             unk0->getModelData()->getVtxNum() * 12);
 		unk0->getVertexBuffer()->setVtxPosArrayPointer(0, unk2C[unk9]);
 		for (int j = 0; j < unk0->getModelData()->getShapeNum(); ++j)
 			unk0->getShapePacket(0)->setVtxPos(unk2C[unk9]);
@@ -382,12 +437,20 @@ void TTrembleModelEffect::movement()
 	unk9 = 1 - unk9;
 }
 
+// +8 of pool at its one expansion, the rung that pays back half the -0x10 of
+// reading mVertexData raw at reset()'s setVtxPosArray site.
+static inline J3DModelData* DrawUtilGetModelData(J3DModel* p)
+{
+	J3DModelData* modelData = p->getModelData();
+	return modelData;
+}
+
 void TTrembleModelEffect::reset()
 {
 	switch (unk8 & 2) {
 	case 0: {
 		JGeometry::TVec3<s16>* src = (JGeometry::TVec3<s16>*)unk4;
-		for (u32 i = 0; i < unk0->getModelData()->getVertexData().getVtxNum();
+		for (u32 i = 0; i < unk0->getModelData()->getVtxNum();
 		     i++) {
 			unk20[i].set(0, 0, 0);
 			unk14[i]    = src[i];
@@ -398,7 +461,7 @@ void TTrembleModelEffect::reset()
 	}
 	case 2: {
 		JGeometry::TVec3<f32>* src = (JGeometry::TVec3<f32>*)unk4;
-		for (u32 i = 0; i < unk0->getModelData()->getVertexData().getVtxNum();
+		for (u32 i = 0; i < unk0->getModelData()->getVtxNum();
 		     i++) {
 			unk34[i].set(0.0f, 0.0f, 0.0f);
 			unk28[i]    = src[i];
@@ -411,10 +474,32 @@ void TTrembleModelEffect::reset()
 
 	unk8 &= ~1;
 	GXInvalidateVtxCache();
-	unk0->getModelData()->getVertexData().setVtxPosArray(unk4);
+	DrawUtilGetModelData(unk0)->mVertexData.setVtxPosArray(unk4);
 	unk0->getVertexBuffer()->setVtxPosArrayPointer(0, unk4);
 	unk0->getVertexBuffer()->setVtxPosArrayPointer(1, unk4);
 	unk0->getVertexBuffer()->setCurrentVtxPos(unk4);
+}
+
+// Binder rungs and SMSGetCamera() (+8) carry this body's accessor pool below
+// the local_80 Vec.
+static inline J3DMaterial* DrawUtilGetMaterial(J3DModelData* md, u16 i)
+{
+	J3DMaterial* mat = md->getMaterialNodePointer(i);
+	return mat;
+}
+
+static inline J3DPEBlock* DrawUtilGetPEBlock(J3DMaterial* mat)
+{
+	J3DPEBlock* peBlock = mat->getPEBlock();
+	return peBlock;
+}
+
+// The peak's delta computed into the parameter in place; the helper level is
+// +8 of pool, repaid by reading the fog through getFog() directly.
+static inline f32 DrawUtilPeakDelta(f32 peak, f32 base)
+{
+	peak -= base;
+	return peak;
 }
 
 void SMS_AddDamageFogEffect(J3DModelData* param_1,
@@ -424,32 +509,42 @@ void SMS_AddDamageFogEffect(J3DModelData* param_1,
 	Vec local_80;
 	MTXMultVec(param_3->getViewMtx(), param_2, &local_80);
 
+	// MWCC constant-folds `(-400.0f - startBase) * s` to one 300.0f and
+	// loses two of the target's four literals; it does not propagate a
+	// constant into a compound assignment, so the peaks stay their own
+	// .sdata2 entries (@3041 -700, @3042 500, @3043 -400, @3044 800).
 	f32 startBase = -700.0f;
 	f32 endBase   = 500.0f;
-	f32 s         = JMASSin((s16)(gpMarDirector->mMoveTickCount * 0x888));
-	f32 startOsc  = (-400.0f - startBase) * s;
-	f32 endOsc    = (800.0f - endBase) * s;
+	f32 s         = JMASSin((s16)(gpMarDirector->unk58 * 0x888));
+	f32 endOsc    = DrawUtilPeakDelta(800.0f, endBase);
+	f32 startOsc  = DrawUtilPeakDelta(-400.0f, startBase);
+	startOsc *= s;
+	endOsc *= s;
+
+	// TODO: 98.6%. The peak subtraction as an inlined helper's in-place
+	// parameter keeps the peaks anonymous in volatile FPRs (retail's shape),
+	// but ours colours start/end the other way round in both pairs (bases
+	// f30/f31 vs retail f31/f30, peaks f0/f1 vs f1/f0, products f28/f29) and
+	// the loop's `fadds` takes the product first. Declaration order of the
+	// bases, the osc locals, and parenthesising the sums are all inert.
 
 	for (u16 i = 0; i < param_1->getMaterialNum(); i++) {
 		J3DFog* fog
-		    = param_1->getMaterialNodePointer(i)->getPEBlock()->getFog();
+		    = DrawUtilGetPEBlock(DrawUtilGetMaterial(param_1, i))->getFog();
 		fog->mStartZ = -local_80.z + startBase + startOsc;
 		fog->mEndZ   = -local_80.z + endBase + endOsc;
-		fog->mNearZ  = gpCamera->getNear();
-		fog->mFarZ   = gpCamera->getFar();
+		fog->mNearZ  = SMSGetCamera()->getNear();
+		fog->mFarZ   = SMSGetCamera()->getFar();
 	}
 }
 
 void SMS_ResetDamageFogEffect(J3DModelData* param_1)
 {
-
-	
-	
 	for (u16 i = 0; i < param_1->getMaterialNum(); i++) {
 		J3DFog* fog
 		    = param_1->getMaterialNodePointer(i)->getPEBlock()->getFog();
-		fog->mNearZ  = gpCamera->getNear();
-		fog->mFarZ   = gpCamera->getFar();
+		fog->mNearZ  = SMSGetCamera()->getNear();
+		fog->mFarZ   = SMSGetCamera()->getFar();
 		fog->mEndZ   = fog->mFarZ;
 		fog->mStartZ = fog->mEndZ - 1.0f;
 	}
@@ -503,13 +598,19 @@ struct Plane {
 
 Plane sViewPlane[6];
 
+// TODO: 99.6%. Declared left, right, top, bottom, farRight takes retail's
+// f8; the other products colour differently: retail holds far/near in f9
+// (reused by farBottom), -near in f0 and farTop in f5.
+// Tried: a named ratio (also `ratio /= near`, `ratio *= bottom` in place,
+// farBottom as the ratio), ratio-first products, scale levels (+0x30 frame),
+// named -near/-far locals.
 static void SetViewFrustumClipCheck(f32 top, f32 bottom, f32 left, f32 right,
                                     f32 near, f32 far)
 {
-	f32 farTop    = top * (far / near);
-	f32 farBottom = bottom * (far / near);
 	f32 farLeft   = left * (far / near);
 	f32 farRight  = right * (far / near);
+	f32 farTop    = top * (far / near);
+	f32 farBottom = bottom * (far / near);
 
 	Vec corner[8];
 
@@ -635,6 +736,13 @@ BOOL ViewFrustumClipCheck(JDrama::TGraphics* gfx, Vec* position, f32 radius)
 
 void ViewFrustumRectClipCheck(JDrama::TGraphics*, Vec*, f32, f32) { }
 
+// One consumed 4-byte inline level (research 312): it lands sizeTable at
+// 0x34 and the frame at 0x48.
+static inline int DrawUtilVtxSize(const int* table, const GXVtxDescList* desc)
+{
+	return table[desc->type];
+}
+
 int SMS_CountPolygonNumInShape(J3DShape* shape)
 {
 	int sizeTable[4] = {
@@ -648,7 +756,7 @@ int SMS_CountPolygonNumInShape(J3DShape* shape)
 	int vtxSize = 0;
 	for (GXVtxDescList* desc = shape->getVtxDesc(); desc->attr != GX_VA_NULL;
 	     desc++) {
-		vtxSize += sizeTable[desc->type];
+		vtxSize += DrawUtilVtxSize(sizeTable, desc);
 	}
 
 	for (u16 i = 0; i < shape->getMtxGroupNum(); i++) {
@@ -788,12 +896,9 @@ void SMS_DrawHorzCircle(const JGeometry::TVec3<f32>&, f32, int, const GXColor&)
 
 void SMS_CalcMatAnmAndMakeDL(J3DModel* param_1, u16 param_2)
 {
-
-	
-	
 	J3DMaterial* mat = param_1->getModelData()->getMaterialNodePointer(param_2);
 
-	param_1->getModelData()
+	DrawUtilGetModelData(param_1)
 	    ->getMaterialNodePointer(param_2)
 	    ->getMaterialAnm()
 	    ->calc(mat);
@@ -801,8 +906,27 @@ void SMS_CalcMatAnmAndMakeDL(J3DModel* param_1, u16 param_2)
 	mat->makeDisplayList();
 }
 
-void SMS_CopyMaterialToSort(J3DMaterial*, J3DModel*, u16) { }
+// The body is SMS_UnifyMaterial's loop body and compiles to the map's 0x88.
+// TODO: calling it from SMS_UnifyMaterial (unifier read through modelData)
+// is code-identical but 8 bytes long in frame (0x60 vs 0x58) with the same
+// r27/r28 swap, a fuzzy regression, so the loop is still spelled out there.
+void SMS_CopyMaterialToSort(J3DMaterial* src, J3DModel* model, u16 index)
+{
+	J3DMaterial* mat = model->getModelData()->getMaterialNodePointer(index);
+	u32 materialID   = src->getMaterialID();
+	mat->setMaterialID(materialID);
+	model->getMatPacket(index)->setMaterialID(materialID);
+	mat->setTexNo(0, src->getTevBlock()->getTexNo(0));
+}
 
+// TODO: 99.3%, frame exact. Retail keeps `unifier` in r27 and the loop's
+// `mat` in r28; ours swaps them. Tried: `mat` declared at function scope
+// (before and after modelData), unifier first, unifier through modelData,
+// materialID unnamed, the tex number named.
+// TODO: 99.3%, frame exact. Retail keeps `unifier` in r27 and `mat` in r28;
+// ours swaps them. Inert or worse: `mat` declared at the top or before the
+// loop, `unifier` declared first or read through `modelData`, a named texNo,
+// unnamed materialID, setTexNo through the TEV block.
 void SMS_UnifyMaterial(J3DModel* param_1)
 {
 	J3DModelData* modelData = param_1->getModelData();

@@ -6,6 +6,47 @@
 #include "stddef.h"
 #include "string.h"
 
+/* TODO: 179 of 182 instructions and the 0x48 frame match; the residue is a
+   straight swap of two callee-saved registers over 13 operands. Retail keeps
+   `done` in r28 and `replyBuffer` in r29, we use r29 and r28. Everything else
+   -- the r21 error, r24 exit, r31 length, the stack homes of `buffer`/
+   `bufferId` at 0x10/0x14 (they are address-taken by TRKGetFreeBuffer) -- is
+   identical, so this is purely how the allocator ranks the loop-long `done`
+   against the reply-only `replyBuffer`.
+   Declaration order is a lever but no order fixes it, and batch 145 exhausted
+   it: all 120 orders of the five register-held locals (`done`, `exit`,
+   `error`, `replyBuffer`, `length`; the other five declarations are
+   address-taken and stack-homed) were built, and the order below is the unique
+   minimum at 12 differing operands -- every other order gives 19, 20, 23, 27
+   or 28. Do not re-sweep it. Declaration order only ranks function-scope
+   locals against each other, which is why it reorders this pair but never
+   reaches retail's ranking (docs/catalog/frame-gaps.md, "batch 145").
+   Codegen-neutral: dropping the `(TRKBuffer*)` cast on TRKGetBuffer's `void*`,
+   `done = done + length`, a named `remain` for `*count - done`, and extra
+   parentheses in the `while`. Worse: reordering the `while` conditions (19) and
+   writing the length clamp as a ternary (26).
+   Unit round 2026-09-23: `int done` is identical; `replyBuffer` (or all
+   four reply locals) scoped to the `need_reply` block is worse (27/39). */
+/* Lib pass 2026-09-23: a `u8 replyIOResult` read without the cast is
+   identical; the error/replyBufferId/.../exit declaration order is worse (41). */
+/* Register model (c-g4, dumped with GC/1.1p1 and this unit's flags): done and
+   replyBuffer both have degree >= K and are pushed by the blocked rule, lowest
+   cost/degree first: done 91/28 = 3.25, replyBuffer 88/28 = 3.14, so done is
+   coloured first (r29). Retail needs replyBuffer's ratio higher; declaration
+   order cannot reach that (replyBuffer first, or done after it: 27 markers). */
+/* c-k3 debugger reading: the spill cost is 2 x uses + defs, loop-weighted
+   (8 in the loop): done 91, replyBuffer 88. Both have 28 remaining
+   neighbours when blocked, 16 of them coalesced call-result copies. One more
+   such copy live with done but not replyBuffer (between `done = 0` and the
+   loop, or after it) gives 91/29 < 88/28 and retail's colouring. Inert:
+   `done = error = 0`, a `for` init, reordered inits, `exit == FALSE`,
+   `&data[done]`. */
+/* c-k27 neighbour lists (GC/1.1p1 dump): replyBuffer alone neighbours the
+   precheck's `*count` load and the `*io_result` zero (it is upward-exposed,
+   so live from entry), done alone the coalesced TRKGetBuffer copy. The 12
+   initialiser orders with `done = 0` ahead of the zero store score 12-14:
+   scheduling hoists the zero store anyway. Melee's public decomp (same
+   body, `(0, TRKRequestSend(...))`) is inert here too. */
 DSError TRKSuppAccessFile(u32 file_handle, u8* data, size_t* count,
                           DSIOResult* io_result, BOOL need_reply, BOOL read)
 {

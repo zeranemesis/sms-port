@@ -41,19 +41,16 @@ public:
 
 void SDLModelData::entrySameMat(J3DMaterial* material, SDLDrawBufToken* token)
 {
-
-	
-	
 	SDLModel* head = token->mHead;
 	while (head != nullptr) {
-		if (head->mSdlFlags & SDLModel::FLAG_UNK1)
+		if (head->checkSdlFlag(SDLModel::FLAG_UNK1))
 			break;
 		head = head->mNextSameMat;
 	}
 
 	if (head != nullptr) {
 		j3dSys.setModel(head);
-		j3dSys.setTexture(unk0->getTexture());
+		j3dSys.setTexture(getModelData()->getTexture());
 
 		J3DMatPacket* matPacket = head->getMatPacket(material->getIndex());
 		matPacket->drawClear();
@@ -66,7 +63,7 @@ void SDLModelData::entrySameMat(J3DMaterial* material, SDLDrawBufToken* token)
 
 		SDLModel* model = head->mNextSameMat;
 		while (model != nullptr) {
-			if (model->mSdlFlags & SDLModel::FLAG_UNK1) {
+			if (model->checkSdlFlag(SDLModel::FLAG_UNK1)) {
 				J3DShapePacket* shapePacket2
 				    = model->getShapePacket(material->getShape()->getIndex());
 				shapePacket2->drawClear();
@@ -113,7 +110,7 @@ SDLModelData::SDLModelData(J3DModelData* model)
 void SDLModelData::registerSDLModel(SDLModel* model)
 {
 	typedef JGadget::TList<SDLDrawBufToken*>::iterator I;
-	for (I it = mDbTokenList.begin(), e = mDbTokenList.end(); it != e; it++) {
+	for (I it = mDbTokenList.begin(), e = mDbTokenList.end(); it != e; ++it) {
 		if ((*it)->checkDrawBufs()) {
 			(*it)->push(model);
 			return;
@@ -135,11 +132,11 @@ void SDLModelData::entrySDLModels()
 
 	typedef JGadget::TList<SDLDrawBufToken*>::iterator I;
 	for (I it = mDbTokenList.begin(), e = mDbTokenList.end(); it != e; it++) {
-		recursiveEntry(unk0->getRootNode(), *it);
+		recursiveEntry(getModelData()->getRootNode(), *it);
 
 		SDLModel* model = (*it)->mHead;
 		while (model != nullptr) {
-			model->mSdlFlags &= ~SDLModel::FLAG_UNK1;
+			model->offSdlFlag(SDLModel::FLAG_UNK1);
 			model = model->mNextSameMat;
 		}
 
@@ -313,10 +310,39 @@ void SDLModel::entryModelDataSDL(SDLModelData* model_data, u32 flags,
 	mVertexBuffer = new J3DVertexBuffer(&md->getVertexData());
 }
 
+// Binding level over the flag test; SDLModel::entry uses it at the second
+// test only (batch 124, re-priced in cc42).
+static inline u32 SDLModelCheckSdlFlag(const SDLModel* p, u32 i)
+{
+	u32 sdlFlag = p->checkSdlFlag(i);
+	return sdlFlag;
+}
+
+// Direct-return fork and binding level over the `mSdlModelData` read. With
+// the flag binder at the second test, the fork-in-binder at the `unk18` read
+// and the plain binder at the `registerSDLModel` call place the inlined
+// registerSDLModel()'s iterator pool exactly at retail's slots (cc42).
+static inline SDLModelData* SDLModelGetDataFork(const SDLModel* p)
+{
+	return p->mSdlModelData;
+}
+
+static inline SDLModelData* SDLModelGetData(const SDLModel* p)
+{
+	SDLModelData* data = p->mSdlModelData;
+	return data;
+}
+
+static inline SDLModelData* SDLModelGetDataOuter(const SDLModel* p)
+{
+	SDLModelData* data = SDLModelGetDataFork(p);
+	return data;
+}
+
 void SDLModel::entry()
 {
-	if (!checkSdlFlag(FLAG_UNK8) || !checkSdlFlag(FLAG_UNK2) || !mSdlModelData
-	    || (mSdlModelData->unk18 & 0x1)) {
+	if (!checkSdlFlag(FLAG_UNK8) || !SDLModelCheckSdlFlag(this, FLAG_UNK2)
+	    || !mSdlModelData || (SDLModelGetDataOuter(this)->unk18 & 0x1)) {
 		offSdlFlag(FLAG_UNK1);
 		J3DModel::entry();
 		return;
@@ -325,17 +351,14 @@ void SDLModel::entry()
 	onSdlFlag(FLAG_UNK1);
 	mNextSameMat = nullptr;
 
-	mSdlModelData->registerSDLModel(this);
+	SDLModelGetData(this)->registerSDLModel(this);
 }
 
 void SDLModel::viewCalcSimple()
 {
-
-	
-	
 	swapDrawMtx();
 	MtxPtr mA = gpCamera->getUnk1EC();
-	for (int i = 0; i < mModelData->getDrawMtxNum(); ++i)
+	for (int i = 0; i < getModelData()->getDrawMtxNum(); ++i)
 		MTXConcat(mA, mNodeMatrices[i], getDrawMtx(i));
-	DCStoreRange(getDrawMtxPtr(), mModelData->getDrawMtxNum() * sizeof(Mtx));
+	DCStoreRange(getDrawMtxPtr(), getModelData()->getDrawMtxNum() * sizeof(Mtx));
 }

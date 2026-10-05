@@ -31,8 +31,8 @@ inline bool SMS_CheckMarioFlag(u32 flag)
 
 bool SMS_IsMarioRoofing();
 bool SMS_IsMarioFencing();
-void SMS_GetMarioSpeedY(THitActor*);
-void SMS_IsMarioTouchGround4cm(THitActor*);
+f32 SMS_GetMarioSpeedY(THitActor*);
+bool SMS_IsMarioTouchGround4cm(THitActor*);
 u32 SMS_GetMarioStatus(THitActor*);
 const TBGCheckData* SMS_GetMarioRfPlane();
 const TBGCheckData* SMS_GetMarioWlPlane();
@@ -57,6 +57,11 @@ void SMS_GetMarioJumpIntoWaterModelData();
 TWaterGun* SMS_GetMarioWaterGun();
 
 f32 SMS_GetMarioGravity();
+
+// Fabricated name, after the SMS_GetMario* family: reading the throw power
+// through an inline level makes it an optimiser temporary instead of a named
+// web, which is what the thrown nerves in bombhei, tamaNoko and mameGesso need.
+inline f32 SMS_GetMarioThrowPower() { return *gpMarioThrowPower; }
 f32 SMS_GetMarioGrLevel();
 f32 SMS_GetMarioDamageRadius();
 s16 SMS_GetMarioHPMax();
@@ -74,6 +79,7 @@ bool SMS_IsMarioStatusTypeSwimming();
 bool SMS_IsMarioStatusTypeJumping();
 bool SMS_IsMarioStatusWaiting();
 
+TLiveActor* SMS_GetMarioLiveActor();
 THitActor* SMS_GetMarioHitActor();
 bool SMS_AskJumpIntoWaterEffectExist();
 TYoshi* SMS_GetYoshi();
@@ -92,17 +98,15 @@ inline f32 SMS_GetMarioSpeedX() { return *gpMarioSpeedX; }
 inline f32 SMS_GetMarioSpeedY() { return *gpMarioSpeedY; }
 inline f32 SMS_GetMarioSpeedZ() { return *gpMarioSpeedZ; }
 
+// `-=` is load-bearing: TBombHei::genEventCoin calls TVec3::sub out of line
+// through it, and RumbleChannelMgr::update (one level shallower, calling
+// `.length()` on the result itself) still inlines sub.
 inline JGeometry::TVec3<f32>
 SMS_DistanceFromMarioVec(const JGeometry::TVec3<f32>& pos)
 {
 	JGeometry::TVec3<f32> marioPos = SMS_GetMarioPos();
-	marioPos.sub(pos);
+	marioPos -= pos;
 	return marioPos;
-}
-
-inline f32 SMS_DistanceFromMario(const JGeometry::TVec3<f32>& pos)
-{
-	return SMS_DistanceFromMarioVec(pos).length();
 }
 
 // fabricated

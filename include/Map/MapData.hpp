@@ -6,43 +6,10 @@
 class TLiveActor;
 class JSUMemoryInputStream;
 
-/**
- * @brief Bit layout of TBGCheckData::mFlags (u16 at offset 0x4).
- *
- * Decoding the tests. MWCC lowers `mFlags & (1 << k)` on a u16 member to
- * `lhz rX, 0x4(rN)` + `rlwinm. rX, rX, 0, 31-k, 31-k`; the mask field is
- * counted from the MSB, so the *value* tested is 1 << (31 - MB). Measured on
- * this compiler (probe functions built against this very header):
- *
- *     value tested   instruction
- *     0x04           rlwinm. r0, r0, 0, 29, 29
- *     0x08           rlwinm. r0, r0, 0, 28, 28
- *     0x10           rlwinm. r0, r0, 0, 27, 27
- *     0x20           rlwinm. r0, r0, 0, 26, 26
- *     0x40           rlwinm. r0, r0, 0, 25, 25
- *
- * `checkFlag(0x20)` is therefore `rlwinm ...,26,26` - *not* 27,27. Several trees
- * in this repo used to spell the bosswanwan/chuuhana test as "0x20" after
- * misreading the 27 in `rlwinm ...,27,27` as a bit number; it is really 0x10.
- *
- * Known bits:
- *  - 0x04 - untested/unset in the ROM.
- *  - 0x08 - X-facing wall flag. Set by getPlaneType() when
- *           |mNormal.x| >= 0.707 (`ori r0, r0, 0x8` at 0x8019B98C) and tested
- *           by the inlined someUnknownInline at 0x80185244. Keep it a literal
- *           at the call site: `checkFlag(0x8)` already emits the right rlwinm.
- *  - 0x10 - illegal/sentinel plane (BG_CHECK_FLAG_ILLEGAL). Only ever set on
- *           TMapCollisionData::mIllegalCheckData (`ori r0, r0, 0x10` at
- *           0x80185914) and tested by isIllegalData().
- *
- * Bits 0x20 and above: an exhaustive scan of mario.dol found **no** site that
- * tests 0x20 of a u16 at offset 0x4, and **no** site that ever sets it. The
- * only writes to mFlags in the whole ROM are the constructor (zero), the
- * getPlaneType() `ori 0x8` / `rlwinm 29,27` pair, and the `ori 0x10` above.
- * Bit 0x20 is therefore left unnamed on purpose - do not invent a name for it.
- */
+// fabricated
 enum BGCheckFlagBits {
-	BG_CHECK_FLAG_ILLEGAL = 0x10,
+	BG_CHECK_FLAG_X_FACING = 0x8,
+	BG_CHECK_FLAG_ILLEGAL  = 0x10,
 };
 
 // fabricated
@@ -87,7 +54,13 @@ enum BGTypeBits {
 
 	BG_TYPE_OOB = 0x600,
 
-	BG_TYPE_SAND = 0x701,
+	// fabricated name: the only reader is TMapObjWave::updateHeightAndAlpha,
+	// which forces the wave height and alpha to their maxima when the floor
+	// under Mario (water surfaces ignored) is this type, i.e. open sea bottom.
+	// The alternative reading is that 0x700 is plain sand and 0x701 the
+	// special one, but nothing in the binary tests 0x700 for sand behaviour.
+	BG_TYPE_SEA_FLOOR = 0x700,
+	BG_TYPE_SAND      = 0x701,
 
 	BG_TYPE_DEATH_PLANE                              = 0x800,
 	BG_TYPE_EVERYTHING_BUT_MAP_OBJECTS_PHASE_THROUGH = 0x801,
@@ -155,9 +128,15 @@ public:
 	TBGCheckData();
 
 	const JGeometry::TVec3<f32>& getNormal() const { return mNormal; }
+	// The two-return form, not a ternary: the out-of-line copy in
+	// BossHanachanSub.o is `beq; li 1; blr; li 0; blr`, seven instructions =
+	// the map's 0x1c, and that shape is what refuses to inline on the right
+	// of a short-circuit operator (TSphereLink::execMapCollision_).
 	bool isIllegalData() const
 	{
-		return mFlags & BG_CHECK_FLAG_ILLEGAL ? true : false;
+		if (mFlags & BG_CHECK_FLAG_ILLEGAL)
+			return true;
+		return false;
 	}
 	f32 getActiveJumpPower() const;
 	u32 getPlaneType();
@@ -198,27 +177,49 @@ public:
 			return true;
 		return false;
 	}
-	// Same set as isWaterSurface(), but spelled as one equality, one u16 range
-	// test and one equality. TPakkunSeed::rebirth needs exactly that shape
-	// (`cmplwi r3, 0x100 / beq` then `subi r0, r3, 0x101 / clrlwi r0, r0, 16
-	// / cmplwi r0, 4 / ble` then `cmplwi r3, 0x4104`); every other call site
-	// needs the seven-equality form above, so both spellings have to exist.
-	bool isWaterSurfaceRanged() const
-	{
-		if (mBGType == BG_TYPE_WATER
-		    || (u16)(mBGType - BG_TYPE_DAMAGING_WATER)
-		           <= (u16)(BG_TYPE_INDOOR_POOL - BG_TYPE_DAMAGING_WATER)
-		    || mBGType == BG_TYPE_SHADED_POOL)
-			return true;
-		return false;
-	}
 
 	// fabricated
 	bool checkFlag(u32 flag) const { return mFlags & flag ? true : false; }
 
+	// TODO (header round 19): the level count is now measured. Retail's one
+	// `bl isIllegalData` site needs isIllegalData to sit at inline depth 3
+	// *inside* TSphereLink::execMapCollision_ -- i.e. two intermediate levels
+	// between them, not one. Probed with nested file-static forwarders in
+	// BossHanachanSub.cpp: one level changes nothing; two levels give the
+	// `bl`, emit isIllegalData weak at exactly the map's 0x1c and take
+	// TSphereLink::moveHead 85.7 -> 91.8 while execMapCollision_'s own
+	// out-of-line copy stays at the map's 0xbc (it still expands the callee at
+	// depth 3); three levels overshoot (the out-of-line copy drops to 0xb4).
+	// So `isLegal()` forwarding to `isIllegalData()` is only one of the two
+	// levels and cannot work alone -- that is why batch 102's trial failed.
+	// The second level is still unidentified; the map has no TBGCheckData
+	// legality symbol at all, so it is a fully inlined in-class body or a
+	// free helper. A plausible shape is a "pointer is non-null and legal"
+	// helper wrapping `ground != nullptr && ground->isLegal()`, but there is
+	// no evidence for it yet, so nothing is committed.
+	//
+	// TODO: rejected (batch 102). Retail's one `bl isIllegalData` site
+	// (TSphereLink::execMapCollision_, inlined twice in moveHead) compares
+	// the callee's *returned byte* against 1 (`clrlwi; cmplwi 1; bne; li 0;
+	// b; li 1`), which is this wrapper's shape with isIllegalData out of
+	// line -- so isLegal() forwarding to isIllegalData() rather than
+	// checkFlag() is the better-evidenced spelling. It does not reproduce
+	// the refusal (isIllegalData still inlines at depth 2) and it costs
+	// TMario::checkGroundPlane its exact match (100 -> 93.0), plus checkWet,
+	// checkCurrentPlane, TBaseNPC::bind, both CPolarSubCamera wall/roof
+	// checks. Retry only with the level that actually flips the callee.
 	bool isLegal() const
 	{
-		return isIllegalData() == 1 ? false : true;
+		return checkFlag(BG_CHECK_FLAG_ILLEGAL) == 1 ? false : true;
+	}
+
+	// fabricated, see BG_TYPE_SEA_FLOOR
+	bool isSeaFloor() const
+	{
+		if (mBGType == BG_TYPE_SEA_FLOOR)
+			return true;
+		else
+			return false;
 	}
 
 	bool isSand() const
@@ -306,6 +307,18 @@ public:
 	bool isUnk300() const
 	{
 		if (mBGType == BG_TYPE_UNK300)
+			return true;
+		else
+			return false;
+	}
+
+	// fabricated: named after the isXThrough family. TResetFruit's
+	// checkGroundCollision tests exactly this pair and materialises a bool,
+	// which is what an inlined predicate produces.
+	bool isMapObjThrough() const
+	{
+		if (mBGType == BG_TYPE_EVERYTHING_BUT_MAP_OBJECTS_PHASE_THROUGH
+		    || mBGType == BG_TYPE_MAP_CHANGE_PHASE_THROUGH)
 			return true;
 		else
 			return false;
@@ -512,5 +525,31 @@ public:
 	/* 0x40 */ f32 mPlaneDistance;       // distance from plane to origin
 	/* 0x44 */ const TLiveActor* mActor; // who we are attached to
 };
+
+// fabricated. The one inline level that flips TBGCheckData::isWaterSurface()
+// out of line: it is a weak header inline (emitted in BeeHive.o, 0x34) that
+// nine TUs compile an out-of-line duplicate of, so those sites sit one level
+// below their function. Spelling `data->isWaterSurface()` at such a site
+// expands the 13-instruction body instead. The real name is unrecoverable --
+// an inline that expands everywhere leaves no map symbol.
+//
+// Retail's twelve `bl isWaterSurface` sites, against ours (`objdump` on our
+// object vs the dtk asm): BeeHive 3/2 (our extra is in the TU-local
+// SMS_IsMarioInWater, which retail expands), ShadowUtil 2/2, smallEnemy 2/2,
+// gesso 1/1, MapCheck 1/1, enemyAttachment 1/1, fireWanwan 2/1 (our extra is
+// in `doAttack`), Amenbo 1/0 (retail's weak duplicate has no surviving call,
+// so its refusal was dead-stripped), Yoshi 0/2.
+//
+// Only enemyAttachment's `generatePolluteModel` uses the level today. Rejected
+// (reverted): routing TYoshi::movement's two sites through it, separately and
+// together (93.5% -> 91.3 / 91.8 / 89.6, frame unmoved at 0x188 vs 0x240).
+// That function is 184 bytes of frame and 134 diffs away, so its refusals
+// cannot be isolated until the body is closer; the second site is a plain
+// depth-1 `if`, which means retail's whole `isHatched()` block is one inlined
+// level down rather than a level on the predicate.
+inline bool SMS_IsWaterSurface(const TBGCheckData* data)
+{
+	return data->isWaterSurface();
+}
 
 #endif

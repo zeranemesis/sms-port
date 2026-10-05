@@ -31,13 +31,16 @@ namespace Kernel {
 		return ptr;
 	}
 
-	u32 getSysDramRemain() { return 0; }
+	// The UNUSED accessors read the heap or the variable their names give;
+	// each lands at its map size (getSysAramSize's 0x10 is the heap's mSize
+	// rather than the 0x8 audioAramSize read).
+	u32 getSysDramRemain() { return JASDram->getFreeSize(); }
 
-	void setSysDramSize(u32 size) { }
+	void setSysDramSize(u32 size) { audioDramSize = size; }
 
-	u32 getSysDramSize() { return 0; }
+	u32 getSysDramSize() { return JASDram->getHeapSize(); }
 
-	void* getSysDramTop() { return 0; }
+	void* getSysDramTop() { return JASDram->getStartAddr(); }
 
 	static Kernel::TSolidHeap audioAramHeap;
 
@@ -58,9 +61,9 @@ namespace Kernel {
 		                   size - (audioAramTop + 0xC000));
 	}
 
-	void setSysAramSize(u32 size) { }
+	void setSysAramSize(u32 size) { audioAramSize = size; }
 
-	void* allocFromSysAram(u32 size) { return 0; }
+	void* allocFromSysAram(u32 size) { return audioAramHeap.alloc(size); }
 
 	void* allocFromSysAramFull(u32* size)
 	{
@@ -70,13 +73,13 @@ namespace Kernel {
 		return buf;
 	}
 
-	void freeToSysAramLast() { }
+	void freeToSysAramLast() { audioAramHeap.freeLast(); }
 
-	u32 getSysAramRemain() { return 0; }
+	u32 getSysAramRemain() { return audioAramHeap.getRemain(); }
 
-	u32 getSysAramSize() { return 0; }
+	u32 getSysAramSize() { return audioAramHeap.mSize; }
 
-	void* getSysAramTop() { return 0; }
+	void* getSysAramTop() { return (void*)audioAramTop; }
 
 } // namespace Kernel
 } // namespace JASystem

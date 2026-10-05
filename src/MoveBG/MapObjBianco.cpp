@@ -1,99 +1,113 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <MoveBG/MapObjBianco.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <MoveBG/MapObjManager.hpp>
+#include <MoveBG/MapObjMessenger.hpp>
+#include <System/Particles.hpp>
+#include <Camera/cameralib.hpp>
 #include <Camera/CubeManagerBase.hpp>
-#include <Camera/CubeMapTool.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <JSystem/JGeometry.hpp>
-#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
 #include <M3DUtil/MActor.hpp>
-#include <MSound/MSound.hpp>
 #include <Map/Map.hpp>
-#include <Map/MapCollisionData.hpp>
-#include <Map/MapCollisionEntry.hpp>
-#include <Map/MapCollisionManager.hpp>
 #include <Map/MapData.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
-#include <MoveBG/ItemManager.hpp>
-#include <MoveBG/MapObjManager.hpp>
-#include <MoveBG/MapObjMessenger.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
 #include <Player/MarioAccess.hpp>
-#include <Player/Watergun.hpp>
-#include <System/Application.hpp>
-#include <math.h>
+#include <Player/WaterGun.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/JMath.hpp>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and this unit's own strings (c-r35).
+#include <Map/MapCollisionData.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-// NOTE: this unit is -inline deferred, so functions below are defined in the
-// reverse of their retail address order.
-
+/// Distance from the big windmill's hub to each of its four blocks.
 static f32 sRadius = 2380.0f;
-static f32 sSubZ   = 150.0f;
-static f32 sSpeed  = 0.05f;
+/// How far in front of the bridge the blocks ride.
+static f32 sSubZ = 150.0f;
+/// Degrees per frame the big windmill turns.
+static f32 sSpeed = 0.05f;
+/// Phase offset shared by the big windmill's blocks; never written.
 static f32 sAngleAdd;
 
-f32 TMapObjRootPakkun::mTremblePower = 15.0f;
-f32 TMapObjRootPakkun::mTrembleAccel = 0.95f;
-f32 TMapObjRootPakkun::mTrembleBrake = 0.98f;
-int TMapObjRootPakkun::mTrembleTime  = 360;
+/// Fabricated: the two rotation matrices this file fills by hand. No helper
+/// survives in the map, so it was not a real out-of-line function; this shape
+/// is what MWCC emits at every call site.
+static void setMtxRotZ(MtxPtr mtx, f32 degrees)
+{
+	f32 sin   = JMASSin((s16)(182.04445f * degrees));
+	f32 cos   = JMASCos((s16)(182.04445f * degrees));
+	mtx[0][0] = cos;
+	mtx[0][1] = -sin;
+	mtx[0][2] = 0.0f;
+	mtx[0][3] = 0.0f;
+	mtx[1][0] = sin;
+	mtx[1][1] = cos;
+	mtx[1][2] = 0.0f;
+	mtx[1][3] = 0.0f;
+	mtx[2][0] = 0.0f;
+	mtx[2][1] = 0.0f;
+	mtx[2][2] = 1.0f;
+	mtx[2][3] = 0.0f;
+}
 
-// TODO: values unknown, these are UNUSED in the retail map
-f32 TBiancoWatermill::mRotAccel;
-f32 TBiancoWatermill::mEnemyRotAccel;
-f32 TBiancoWatermill::mRotSpeedDownRate;
-f32 TBiancoWatermill::mRotSpeedMax;
-f32 TBiancoWatermill::mRotSpeedMin;
+static void setMtxRotY(MtxPtr mtx, f32 degrees)
+{
+	f32 sin   = JMASSin((s16)(182.04445f * degrees));
+	f32 cos   = JMASCos((s16)(182.04445f * degrees));
+	mtx[0][0] = cos;
+	mtx[0][1] = 0.0f;
+	mtx[0][2] = sin;
+	mtx[0][3] = 0.0f;
+	mtx[1][0] = 0.0f;
+	mtx[1][1] = 1.0f;
+	mtx[1][2] = 0.0f;
+	mtx[1][3] = 0.0f;
+	mtx[2][0] = -sin;
+	mtx[2][1] = 0.0f;
+	mtx[2][2] = cos;
+	mtx[2][3] = 0.0f;
+}
 
-f32 TBiancoWatermillVertical::mRotAccel         = 0.15f;
-f32 TBiancoWatermillVertical::mRotSpeedDownRate = 0.005f;
-f32 TBiancoWatermillVertical::mRotSpeedMax      = 3.0f;
-f32 TBiancoWatermillVertical::mBridgeRotRate    = 0.03f;
-
-f32 TBiancoMiniWindmill::mRotWaterAccel = 0.01f;
-f32 TBiancoMiniWindmill::mFriction      = 0.01f;
-f32 TBiancoMiniWindmill::mRotSpeedMax   = 10.0f;
-
-static f32 sMessengerPosZ = 200.0f;
-static f32 sMessengerPosY = 6400.0f;
-
-f32 TLeafBoatRotten::mAlphaDownSpeed       = 0.5f;
-f32 TLeafBoatRotten::mCollisionRemoveAlpha = 100.0f;
-// TODO: values unknown, these are UNUSED in the retail map
-int TLeafBoatRotten::mBoatFlushTime;
-int TLeafBoatRotten::mBoatFlushInterval;
-GXColorS10 TLeafBoatRotten::mRottenColor = { 100, 100, 180, 255 };
-
-// TBigWindmill ---------------------------------------------------------------
-
+// `rad` and `offset` are declared ahead of `angle`, which numbers `angle`
+// below them: it reaches the first colouring sweep at full degree and is
+// coloured first (f31) above the three hoisted loop literals.
 void TBigWindmill::control()
 {
 	TMapObjBase::control();
+
 	mRotation.z -= sSpeed;
 	mRotation.z = MsWrap(mRotation.z, 0.0f, 360.0f);
 	setRootMtxRotZ();
-	gpMSound->startSoundActorWithInfo(0x3047, &mPosition, nullptr,
-	                                  fabsf(sSpeed), 0, 0, &unk148, 0, 4);
 
+	gpMSound->startSoundActorWithInfo(MSD_SE_OBJ_BI_WINDMILLTOWER, &mPosition,
+	                                  nullptr, fabsf(sSpeed), 0, 0,
+	                                  &mSoundHandle, 0, 4);
+
+	f32 rad;
+	f32 offset;
 	f32 angle = mRotation.z + sAngleAdd;
 	for (int i = 0; i < 4; ++i) {
-		MtxPtr mtx = unk138[i]->getModel()->getAnmMtx(0);
-		f32 rad    = 0.017453294f * angle;
-		mtx[0][3]  = sRadius * cosf(rad) + mPosition.x;
-		mtx[1][3]  = sRadius * sinf(rad) + mPosition.y - mYOffset;
-		mtx[2][3]  = mPosition.z - sSubZ;
-		unk138[i]->mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+		MtxPtr mtx = mBlocks[i]->getModel()->getAnmMtx(0);
+		rad        = 0.017453294f * angle;
+		mtx[0][3]  = sRadius * cosf(rad) + getPosition().x;
+		offset = mYOffset;
+		mtx[1][3]  = sRadius * sinf(rad) + getPosition().y - offset;
 		angle += 90.0f;
+		mtx[2][3] = getPosition().z - sSubZ;
+		mBlocks[i]->mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		if (angle > 360.0f)
 			angle -= 360.0f;
 	}
@@ -102,23 +116,40 @@ void TBigWindmill::control()
 void TBigWindmill::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
+
 	for (int i = 0; i < 4; ++i) {
-		unk138[i] = TMapObjBaseManager::newAndRegisterObj("bigWindmillBlock");
-		unk138[i]->initMapObj();
-		unk138[i]->getModel()->calc();
+		mBlocks[i] = TMapObjBaseManager::newAndRegisterObj(
+		    "bigWindmillBlock", JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f),
+		    JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f),
+		    JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+		mBlocks[i]->appear();
+		mBlocks[i]->getModel()->calc();
 	}
 }
 
-// TMapObjRootPakkun ----------------------------------------------------------
+f32 TMapObjRootPakkun::mTremblePower = 15.0f;
+f32 TMapObjRootPakkun::mTrembleAccel = 0.95f;
+f32 TMapObjRootPakkun::mTrembleBrake = 0.98f;
+int TMapObjRootPakkun::mTrembleTime  = 360;
+
+// Binding level worth +8 of low region, landing
+// TMapObjRootPakkun::drawObject's frame at 0x28 (batch 121).
+static inline bool MapObjBiancoIsStateTimerEngaged(TMapObjRootPakkun* p)
+{
+	bool stateTimerEngaged = p->isStateTimerEngaged();
+	return stateTimerEngaged;
+}
 
 void TMapObjRootPakkun::drawObject(JDrama::TGraphics* graphics)
 {
 	TLiveActor::drawObject(graphics);
+
+	// Only worth animating while Mario is on this side of the valley.
 	if (fabsf(gpMarioPos->z - mPosition.z) < 10000.0f) {
-		unk138->movement();
-		if (!isStateTimerEngaged()) {
-			unk138->tremble(mTremblePower, mTrembleAccel, mTrembleBrake,
-			                mTrembleTime);
+		mTrembleEffect->movement();
+		if (!MapObjBiancoIsStateTimerEngaged(this)) {
+			mTrembleEffect->tremble(mTremblePower, mTrembleAccel,
+			                        mTrembleBrake, mTrembleTime);
 			mStateTimer = mTrembleTime;
 		}
 	}
@@ -127,52 +158,75 @@ void TMapObjRootPakkun::drawObject(JDrama::TGraphics* graphics)
 void TMapObjRootPakkun::initMapObj()
 {
 	TMapObjBase::initMapObj();
-	unk138 = new TTrembleModelEffect;
-	unk138->init(mMActor->getModel());
-	unk138->tremble(100.0f, 1.0f, 1.0f, 12000);
+
+	mTrembleEffect = new TTrembleModelEffect();
+	mTrembleEffect->init(getMActor()->getModel());
+	mTrembleEffect->tremble(100.0f, 1.0f, 1.0f, 12000);
 }
 
-// TBiancoWatermill -----------------------------------------------------------
+// TODO: the five statics below are UNUSED in the map, so their values are not
+// recoverable; TBiancoWatermill's own code never reads them. The numbers
+// mirror the surviving TBiancoWatermillVertical pair.
+f32 TBiancoWatermill::mRotAccel         = 0.15f;
+f32 TBiancoWatermill::mEnemyRotAccel    = 0.15f;
+f32 TBiancoWatermill::mRotSpeedDownRate = 0.005f;
+f32 TBiancoWatermill::mRotSpeedMax      = 3.0f;
+f32 TBiancoWatermill::mRotSpeedMin      = 0.3f;
 
-void TBiancoWatermill::turnByEnemy(THitActor*, const TBGCheckData*) { }
-
-// TODO: body is unknown
-void TBiancoWatermill::turn(const JGeometry::TVec3<f32>&, const TBGCheckData*,
-                            f32)
+void TBiancoWatermill::turnByEnemy(THitActor* enemy, const TBGCheckData* plane)
 {
 }
 
-u32 TBiancoWatermill::touchWater(THitActor*) { return 0; }
+/**
+ * @brief Spin the wheel from a water or enemy hit.
+ *
+ * @details UNUSED in the map (0xd8) and dead: touchWater returns 0 before it
+ * could be reached, and turnByEnemy is empty. The body is not recoverable.
+ */
+void TBiancoWatermill::turn(const JGeometry::TVec3<f32>& point,
+                            const TBGCheckData* plane, f32 accel)
+{
+}
+
+u32 TBiancoWatermill::touchWater(THitActor* water) { return 0; }
+
+static inline MSound* BiancoWatermillGetMSound() { return gpMSound; }
 
 void TBiancoWatermill::control()
 {
-	mRotation.z -= unk138;
-	SMSGetMSound()->startSoundActorWithInfo(0x3043, &mPosition, nullptr,
-	                                  fabsf(unk138), 0, 0, &unk13C, 0, 4);
+	mRotation.z -= mRotSpeed;
+	BiancoWatermillGetMSound()->startSoundActorWithInfo(
+	    MSD_SE_OBJ_BI_BIGMILL, &mPosition, nullptr, fabsf(mRotSpeed), 0, 0,
+	    &mSoundHandle, 0, 4);
 }
 
 void TBiancoWatermill::initMapObj()
 {
 	TMapObjBase::initMapObj();
-	if (strcmp(unkF4, "BiaWatermill01") == 0)
+
+	if (strcmp(unkF4, "BiaWatermill01") == 0) {
 		mBodyRadius = 1200.0f;
-	else if (strcmp(unkF4, "BiaWatermill00") == 0)
+	} else if (strcmp(unkF4, "BiaWatermill00") == 0) {
 		mBodyRadius = 1200.0f;
+	}
 }
 
 TBiancoWatermill::TBiancoWatermill(const char* name)
     : TMapObjBase(name)
-    , unk138(0.3f)
-    , unk13C(nullptr)
+    , mRotSpeed(0.3f)
+    , mSoundHandle(nullptr)
 {
 }
 
-// TBiancoWatermillVertical ---------------------------------------------------
+f32 TBiancoWatermillVertical::mRotAccel         = 0.15f;
+f32 TBiancoWatermillVertical::mRotSpeedDownRate = 0.005f;
+f32 TBiancoWatermillVertical::mRotSpeedMax      = 3.0f;
+f32 TBiancoWatermillVertical::mBridgeRotRate    = 0.03f;
 
 u32 TBiancoWatermillVertical::touchWater(THitActor* water)
 {
-	if (!getWaterPlane(water)) {
-		unk144 = 1;
+	if (getWaterPlane(water) == nullptr) {
+		mNeedGroundUpdate = true;
 		return 0;
 	}
 
@@ -182,372 +236,503 @@ u32 TBiancoWatermillVertical::touchWater(THitActor* water)
 	const JGeometry::TVec3<f32>& pos   = getWaterPos(water);
 	const JGeometry::TVec3<f32>& speed = getWaterSpeed(water);
 
-	JGeometry::TVec3<f32> dir(speed.x, 0.0f, speed.z);
-	if (dir.x != 0.0f || dir.z != 0.0f)
-		MsVECNormalize(&dir, &dir);
+	JGeometry::TVec3<f32> flow(speed.x, 0.0f, speed.z);
+	if (flow.x != 0.0f || flow.z != 0.0f)
+		MsVECNormalize(&flow, &flow);
 
-	JGeometry::TVec3<f32> vertical;
-	getVerticalVecToTargetXZ(pos.x, pos.z, &vertical);
-	MsVECNormalize(&vertical, &vertical);
+	JGeometry::TVec3<f32> tangent;
+	getVerticalVecToTargetXZ(pos.x, pos.z, &tangent);
+	MsVECNormalize(&tangent, &tangent);
 
-	f32 rate = (mBodyRadius - getDistanceXZ(pos)) / mBodyRadius;
-	if (dir.dot(vertical) > 0.0f) {
-		if (unk138 < mRotSpeedMax)
-			unk138 += mRotAccel * rate;
+	// Hits near the rim turn the wheel harder than hits near the axle.
+	f32 radius = mBodyRadius;
+	f32 rate   = (radius - getDistanceXZ(pos)) / radius;
+
+	if (flow.dot(tangent) > 0.0f) {
+		if (mRotSpeed < mRotSpeedMax)
+			mRotSpeed += mRotAccel * rate;
 	} else {
-		if (unk138 > -mRotSpeedMax)
-			unk138 -= mRotAccel * rate;
+		if (mRotSpeed > -mRotSpeedMax)
+			mRotSpeed -= mRotAccel * rate;
 	}
+
 	return 1;
 }
 
 void TBiancoWatermillVertical::setGroundCollision()
 {
-	if (unk144 || mColCount != 0) {
-		MtxPtr mtx = getModel()->getAnmMtx(0);
-		if (mMapCollisionManager->unk8)
-			mMapCollisionManager->unk8->moveMtx(mtx);
-		unk144 = 0;
+	if (mNeedGroundUpdate || mColCount != 0) {
+		J3DModel* model = getModel();
+		MtxPtr mtx = model->getAnmMtx(0);
+		TMapCollisionManager* manager = getMapCollisionManager();
+		if (manager->getUnk8() != nullptr)
+			manager->getUnk8()->moveMtx(mtx);
+		mNeedGroundUpdate = false;
 	}
 }
 
 void TBiancoWatermillVertical::control()
 {
-	if (unk138 != unk13C) {
-		if (unk138 > unk13C) {
-			unk138 -= mRotSpeedDownRate;
-			if (unk138 < unk13C)
-				unk138 = unk13C;
+	if (mRotSpeed != mRotSpeedTarget) {
+		if (mRotSpeed > mRotSpeedTarget) {
+			mRotSpeed -= mRotSpeedDownRate;
+			if (mRotSpeed < mRotSpeedTarget)
+				mRotSpeed = mRotSpeedTarget;
 		} else {
-			unk138 += mRotSpeedDownRate;
-			if (unk138 > unk13C)
-				unk138 = unk13C;
+			mRotSpeed += mRotSpeedDownRate;
+			if (mRotSpeed > mRotSpeedTarget)
+				mRotSpeed = mRotSpeedTarget;
 		}
 	}
 
-	mRotation.y += unk138;
+	mRotation.y += mRotSpeed;
 	mRotation.y = MsWrap(mRotation.y, 0.0f, 360.0f);
 
-	f32 bridgeSpeed = unk138 * mBridgeRotRate;
-	unk140->mRotation.y += bridgeSpeed;
-	unk140->mRotation.y = MsWrap(unk140->mRotation.y, 0.0f, 360.0f);
+	f32 bridgeSpeed = mRotSpeed * mBridgeRotRate;
+	mBridge->mRotation.y += bridgeSpeed;
+	mBridge->mRotation.y = MsWrap(mBridge->mRotation.y, 0.0f, 360.0f);
 
-	gpMSound->startSoundActorWithInfo(0x3040, &mPosition, nullptr,
-	                                  fabsf(unk138), 0, 0, &unk148, 0, 4);
-	gpMSound->startSoundActorWithInfo(0x3042, &unk140->mPosition, nullptr,
-	                                  fabsf(bridgeSpeed), 0, 0, &unk14C, 0, 4);
+	gpMSound->startSoundActorWithInfo(MSD_SE_OBJ_BI_STEPMILL_WIND, &mPosition,
+	                                  nullptr, fabsf(mRotSpeed), 0, 0,
+	                                  &mSoundHandle, 0, 4);
+	gpMSound->startSoundActorWithInfo(
+	    MSD_SE_OBJ_BI_STEPMILL_MOVE, &mBridge->getPosition(), nullptr,
+	    fabsf(bridgeSpeed), 0, 0, &mBridgeSoundHandle, 0, 4);
 }
 
 void TBiancoWatermillVertical::loadAfter()
 {
 	TMapObjBase::loadAfter();
+
 	if (strcmp(getName(), "BiaWatermillVertical 0") == 0)
-		unk140 = (TMapObjBase*)JDrama::TNameRefGen::search("BiaTurnBridge 0");
+		mBridge = JDrama::TNameRefGen::search<TMapObjBase>("BiaTurnBridge 0");
 	else
-		unk140 = (TMapObjBase*)JDrama::TNameRefGen::search("BiaTurnBridge 1");
+		mBridge = JDrama::TNameRefGen::search<TMapObjBase>("BiaTurnBridge 1");
+
 	mBodyRadius = 1000.0f;
 }
 
 void TBiancoWatermillVertical::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
-	stream.read(&unk13C, 4);
-	unk13C /= 1000.0f;
-	unk138 = unk13C;
+
+	stream.read(&mRotSpeedTarget, 4);
+	mRotSpeedTarget /= 1000.0f;
+	mRotSpeed = mRotSpeedTarget;
 }
 
+// TODO: the frame is 0x10 short and every instruction matches. A ctor-only
+// body has no binder-eligible call site; body assignments instead of
+// mem-initialisers are inert.
 TBiancoWatermillVertical::TBiancoWatermillVertical(const char* name)
     : TMapObjBase(name)
-    , unk138(0.0f)
-    , unk13C(0.0f)
-    , unk140(nullptr)
-    , unk144(0)
-    , unk148(nullptr)
-    , unk14C(nullptr)
+    , mRotSpeed(0.0f)
+    , mRotSpeedTarget(0.0f)
+    , mBridge(nullptr)
+    , mNeedGroundUpdate(false)
+    , mSoundHandle(nullptr)
+    , mBridgeSoundHandle(nullptr)
 {
 }
 
-// TBiancoMiniWindmill --------------------------------------------------------
+f32 TBiancoMiniWindmill::mRotWaterAccel = 0.01f;
+f32 TBiancoMiniWindmill::mFriction      = 0.01f;
+f32 TBiancoMiniWindmill::mRotSpeedMax   = 10.0f;
 
+/// How far in front of the windmill its sound/hit messenger sits.
+static f32 sMessengerPosZ = 200.0f;
+/// How far above it.
+static f32 sMessengerPosY = 6400.0f;
+
+/// Fabricated: the binder retail's frame shows at this unit's anm-matrix reads.
+static inline J3DModel* BiancoMiniWindmillModel(TBiancoMiniWindmill* p)
+{
+	return p->getModel();
+}
+
+static inline MtxPtr BiancoMiniWindmillAnmMtx(TBiancoMiniWindmill* p, int idx)
+{
+	J3DModel* model = BiancoMiniWindmillModel(p);
+	return model->getAnmMtx(idx);
+}
+
+/// Fabricated: the forks retail's frame shows at the tuning reads.
+static inline f32 BiancoMiniWindmillRotWaterAccel()
+{
+	return TBiancoMiniWindmill::mRotWaterAccel;
+}
+static inline f32 BiancoMiniWindmillRotSpeedMax()
+{
+	return TBiancoMiniWindmill::mRotSpeedMax;
+}
+
+/// Fabricated: the binder retail's frame shows at the messenger reads.
+static inline const JGeometry::TVec3<f32>& BiancoMiniWindmillMessengerPos(
+    TBiancoMiniWindmill* p)
+{
+	TMapObjMessenger* messenger = p->mMessenger;
+	return messenger->mPosition;
+}
+
+// Throws the hidden object out from 550 above the messenger.
+static inline void appearObjAboveMessenger(TBiancoMiniWindmill* self)
+{
+	JGeometry::TVec3<f32> point(self->mPosition.x,
+	                            550.0f
+	                                + BiancoMiniWindmillMessengerPos(self).y,
+	                            self->mPosition.z);
+	self->mAppearSpeed = 0.0f;
+	self->appearObjFromPoint(point);
+}
+
+// The reward throw is an inline level of its own: retail's frame holds
+// `point` in that level's block, above the caller's named locals.
 u32 TBiancoMiniWindmill::touchWater(THitActor* water)
 {
 	const JGeometry::TVec3<f32>& pos = getWaterPos(water);
 	if (pos.y < mPosition.y + sMessengerPosY - 300.0f)
 		return 1;
 
+	// Only water hitting the front of the blades turns them.
 	const JGeometry::TVec3<f32>& speed = getWaterSpeed(water);
-	MtxPtr mtx                         = getModel()->getAnmMtx(0);
-	if (speed.x * mtx[0][2] + speed.y * mtx[1][2] + speed.z * mtx[2][2]
+	MtxPtr mtx                         = BiancoMiniWindmillAnmMtx(this, 0);
+	if (speed.z * mtx[2][2] + (speed.x * mtx[0][2] + speed.y * mtx[1][2])
 	    > 0.0f)
 		return 0;
 
-	unk154 += mRotWaterAccel;
-	if (unk154 > mRotSpeedMax) {
-		unk154 = mRotSpeedMax;
-		JGeometry::TVec3<f32> point(
-		    mPosition.x, 550.0f + unk15C->mPosition.y, mPosition.z);
-		mAppearSpeed = 0.0f;
-		appearObjFromPoint(point);
+	f32 accel = BiancoMiniWindmillRotWaterAccel();
+	mRotSpeed += accel;
+	if (mRotSpeed > BiancoMiniWindmillRotSpeedMax()) {
+		mRotSpeed = BiancoMiniWindmillRotSpeedMax();
+		appearObjAboveMessenger(this);
 	}
+
 	return 1;
 }
 
+// The identity is TMatrix34::identity()'s store order; the rotation is
+// written through a named row pointer, which keeps the literal and sin-table
+// loads interleaved into the identity stores as retail has them.
 void TBiancoMiniWindmill::calc()
 {
-	TMtx34f rot;
-	rot.identity();
-	MtxPtr mtx = rot;
-	MsMtxSetRotZ(mtx, unk150);
-	MTXConcat(getModel()->getAnmMtx(0), mtx, mtx);
-	MtxPtr base = getModel()->getAnmMtx(1);
-	mtx[0][3]   = base[0][3];
-	mtx[1][3]   = base[1][3];
-	mtx[2][3]   = base[2][3];
-	MTXCopy(mtx, getModel()->getAnmMtx(1));
+	TMtx34f spin;
+	spin.identity();
+	MtxPtr spinPtr = spin;
+	f32 sin    = JMASSin((s16)(182.04445f * mAngle));
+	f32 cos    = JMASCos((s16)(182.04445f * mAngle));
 
-	if (gpMSound->getDistPowFromCamera(unk15C->mPosition) < 36000000.0f)
-		gpMSound->startSoundActorWithInfo(0x3045, &unk15C->mPosition,
-		                                  nullptr, fabsf(unk154), 0, 0,
-		                                  &unk160, 0, 4);
+	spinPtr[0][0] = cos;
+	spinPtr[0][1] = -sin;
+	spinPtr[0][2] = 0.0f;
+	spinPtr[0][3] = 0.0f;
+	spinPtr[1][0] = sin;
+	spinPtr[1][1] = cos;
+	spinPtr[1][2] = 0.0f;
+	spinPtr[1][3] = 0.0f;
+	spinPtr[2][0] = 0.0f;
+	spinPtr[2][1] = 0.0f;
+	spinPtr[2][2] = 1.0f;
+	spinPtr[2][3] = 0.0f;
+	MTXConcat(BiancoMiniWindmillModel(this)->getAnmMtx(0), spinPtr, spinPtr);
+
+	MtxPtr blades = BiancoMiniWindmillModel(this)->getAnmMtx(1);
+	spinPtr[0][3]    = blades[0][3];
+	spinPtr[1][3]    = blades[1][3];
+	spinPtr[2][3]    = blades[2][3];
+	MTXCopy(spinPtr, getModel()->getAnmMtx(1));
+
+	if (gpMSound->getDistPowFromCamera(mMessenger->mPosition) < 36000000.0f)
+		gpMSound->startSoundActorWithInfo(
+		    MSD_SE_OBJ_BI_COINMILL, &mMessenger->mPosition, nullptr,
+		    fabsf(mRotSpeed), 0, 0, &mSoundHandle, 0, 4);
 }
 
 void TBiancoMiniWindmill::control()
 {
-	if (unk154 > unk158)
-		unk154 -= mFriction;
+	if (mRotSpeed > mIdleRotSpeed)
+		mRotSpeed -= mFriction;
 	else
-		unk154 = unk158;
-	unk150 += unk154;
-	unk150 = MsWrap(unk150, 0.0f, 360.0f);
+		mRotSpeed = mIdleRotSpeed;
+
+	mAngle += mRotSpeed;
+	mAngle = MsWrap(mAngle, 0.0f, 360.0f);
 }
 
 void TBiancoMiniWindmill::initMapObj()
 {
 	TMapObjBase::initMapObj();
+
 	mAppearSpeed = 0.0f;
-	unk15C = new TMapObjMessenger("地形オブジェメッセンジャー");
-	unk15C->initHitActor(0, 1, 0, 0.0f, 0.0f, 300.0f, 500.0f);
-	unk15C->mPosition.x = sMessengerPosZ * MsSin(mRotation.y) + mPosition.x;
-	unk15C->mPosition.y = mPosition.y + sMessengerPosY;
-	unk15C->mPosition.z = sMessengerPosZ * MsCos(mRotation.y) + mPosition.z;
+	mMessenger   = new TMapObjMessenger("地形オブジェメッセンジャー");
+	mMessenger->initHitActor(0, 1, 0, 0.0f, 0.0f, 300.0f, 500.0f);
+	mMessenger->mPosition.x
+	    = sMessengerPosZ * JMASSin((s16)(182.04445f * getRotation().y))
+	    + mPosition.x;
+	mMessenger->mPosition.y = mPosition.y + sMessengerPosY;
+	mMessenger->mPosition.z
+	    = sMessengerPosZ * JMASCos((s16)(182.04445f * mRotation.y))
+	    + mPosition.z;
 }
 
 TBiancoMiniWindmill::TBiancoMiniWindmill(const char* name)
     : THideObjBase(name)
+    , mAngle(360.0f * MsRandF())
+    , mRotSpeed(0.0f)
+    , mIdleRotSpeed(1.0f + MsRandF())
+    , mMessenger(nullptr)
+    , mSoundHandle(nullptr)
 {
-	unk150 = 360.0f * MsRandF();
-	unk154 = 0.0f;
-	unk158 = 1.0f + MsRandF();
-	unk15C = nullptr;
-	unk160 = nullptr;
 }
 
-// TLeafBoat ------------------------------------------------------------------
-
-void TLeafBoat::touchActor(THitActor* actor)
+// TODO: `into` first lands `toOther` at 0x40; `vel`/`vel2` stay 4 high
+// (0x34/0x28 vs 0x30/0x24). A second function-scope f32 grows the frame.
+void TLeafBoat::touchActor(THitActor* other)
 {
-	if (actor->isActorType(0x80000001))
+	if (other->isActorType(0x80000001))
 		return;
 
-	JGeometry::TVec3<f32> dir(actor->mPosition.x - mPosition.x, 0.0f,
-	                          actor->mPosition.z - mPosition.z);
-	if (dir.dot(JGeometry::TVec3<f32>(mVelocity)) < 0.0f)
+	f32 into;
+	JGeometry::TVec3<f32> toOther(other->mPosition.x - mPosition.x, 0.0f,
+	                              other->mPosition.z - mPosition.z);
+	const JGeometry::TVec3<f32>& velocity = getVelocity();
+	JGeometry::TVec3<f32> vel(velocity);
+	if (toOther.dot(vel) < 0.0f)
 		return;
 
-	if (dir.x != 0.0f || dir.z != 0.0f)
-		MsVECNormalize(&dir, &dir);
+	if (toOther.x != 0.0f || toOther.z != 0.0f)
+		MsVECNormalize(&toOther, &toOther);
 
-	f32 dot = dir.dot(JGeometry::TVec3<f32>(mVelocity));
-	if (actor->checkActorType(0x10000000)) {
-		mVelocity.x -= (1.0f + unk138) * (dir.x * dot);
-		mVelocity.z -= (1.0f + unk138) * (dir.z * dot);
+	JGeometry::TVec3<f32> vel2(getVelocity());
+	into = toOther.dot(vel2);
+	if (other->checkActorType(ACTOR_TYPE_ENEMY)) {
+		mVelocity.x -= (1.0f + mEnemyBounce) * (toOther.x * into);
+		mVelocity.z -= (1.0f + mEnemyBounce) * (toOther.z * into);
 	} else {
-		mVelocity.x -= (1.0f + unk13C) * (dir.x * dot);
-		mVelocity.z -= (1.0f + unk13C) * (dir.z * dot);
+		mVelocity.x -= (1.0f + mActorBounce) * (toOther.x * into);
+		mVelocity.z -= (1.0f + mActorBounce) * (toOther.z * into);
 	}
 }
 
-// TODO: the ROM keeps this out-of-line in bind(), find out why instead of
-// forcing it
-#pragma dont_inline on
+// TODO: 99.3%: frame 0x70 vs 0x78 (the two velocity copies sit 4
+// low). The TVec3::dot reads through getNormal() restore retail's post-dot
+// reloads of the normal, and the unnamed velocity temporary its second
+// wall register.
+// Inert or worse (cc48): the raw normal or plane distance at single sites,
+// a declare-then-assign reflected copy, re-reading mResultWalls[i];
+// c-mbg: no `num` local, a non-const wall, raw mVelocity at either copy (-8).
+// regalloc: the mResultWalls[i] CSE web takes r8 because the dot line's
+// getNormal() pointer temp holds r7; raw mNormal at any site is worse.
 void TLeafBoat::touchWall(JGeometry::TVec3<f32>* pos,
                           TBGWallCheckRecord* record)
 {
-	int wallNum = record->mResultWallsNum;
-	for (int i = 0; i < wallNum; ++i) {
+	int num = record->mResultWallsNum;
+	for (int i = 0; i < num; ++i) {
 		const TBGCheckData* wall = record->mResultWalls[i];
-		if (JGeometry::TVec3<f32>(mVelocity).dot(wall->getNormal()) < 0.0f) {
-			f32 dist = pos->dot(wall->getNormal()) + wall->mPlaneDistance;
+
+		if (JGeometry::TVec3<f32>(getVelocity()).dot(wall->getNormal()) < 0.0f) {
+			f32 dist = pos->dot(wall->getNormal()) + wall->getPlaneDistance();
 			pos->x += (mBodyRadius - dist) * wall->getNormal().x;
 			pos->z += (mBodyRadius - dist) * wall->getNormal().z;
-			JGeometry::TVec3<f32> velocity(mVelocity);
-			calcReflectingVelocity(wall, 1.0f, &velocity);
-			mVelocity.x = velocity.x * unk140;
-			mVelocity.z = velocity.z * unk140;
-			break;
+
+			JGeometry::TVec3<f32> reflected(getVelocity());
+			calcReflectingVelocity(wall, 1.0f, &reflected);
+			mVelocity.x = reflected.x * mWallBounce;
+			mVelocity.z = reflected.z * mWallBounce;
+			return;
 		}
 	}
 }
-#pragma dont_inline off
 
+// TODO: frame is retail's 0xe8; `next` is 4 low and the getVelocity()
+// copies sit 0x44 high. marioY/deckY still swap f4/f5. The sub() call's
+// swapped r3/r4 setup is the known-open `a = b - c` allocation order.
 void TLeafBoat::bind()
 {
-	JGeometry::TVec3<f32> pos(mPosition);
-	pos.x += JGeometry::TVec3<f32>(mVelocity).x;
-	pos.z += JGeometry::TVec3<f32>(mVelocity).z;
+	JGeometry::TVec3<f32> next(getPosition());
+
+	JGeometry::TVec3<f32> velX(getVelocity());
+	next.x += velX.x;
+	JGeometry::TVec3<f32> velZ(getVelocity());
+	next.z += velZ.z;
 
 	const TBGCheckData* ground;
-	if (gpMap->checkGroundIgnoreWaterSurface(pos.x, mPosition.y - mYOffset,
-	                                         pos.z, &ground)
+	if (gpMap->checkGroundIgnoreWaterSurface(next.x, mPosition.y - mYOffset,
+	                                         next.z, &ground)
 	    > mPosition.y - mYOffset - 50.0f) {
-		JGeometry::TVec3<f32> velocity(mVelocity);
-		calcReflectingVelocity(ground, 1.0f, &velocity);
+		JGeometry::TVec3<f32> vel(getVelocity());
+		calcReflectingVelocity(ground, 1.0f, &vel);
 		mVelocity.x *= -1.0f;
 		mVelocity.z *= -1.0f;
-		pos = mPosition;
+		next = getPosition();
 	}
 
-	JGeometry::TVec3<f32> center(pos.x, pos.y - mYOffset, pos.z);
-	TBGWallCheckRecord record(center, mBodyRadius, 4, 2);
+	JGeometry::TVec3<f32> probe;
+	probe.x = next.x;
+	probe.y = next.y - mYOffset;
+	probe.z = next.z;
+	TBGWallCheckRecord record(probe, mBodyRadius, 4,
+	                          TBGWallCheckRecord::DONT_MOVE_XZ);
 	if (gpMap->isTouchedWallsAndMoveXZ(&record))
-		touchWall(&pos, &record);
+		touchWall(&next, &record);
 
-	// TODO: the ROM calls TVec3<f32>::sub out-of-line here (it is never
-	// inlined anywhere in the game), our JGeometry header inlines it.
-	JGeometry::TVec3<f32> delta(pos);
-	delta.sub(mPosition);
-	mLinearVelocity = delta;
+	// `a = b - c` is the shape that reaches the map's out-of-line
+	// JGeometry::TVec3<f32>::sub: operator= is one inline level and the
+	// difference nested in its argument two more.
+	mLinearVelocity = next - getPosition();
 
-	f32 marioY = gpMarioPos->y;
-	f32 y      = mPosition.y - mYOffset;
-	f32 dx     = gpMarioPos->x - mPosition.x;
-	f32 dz     = gpMarioPos->z - mPosition.z;
-	if (marioY <= y && y - 100.0f < marioY
-	    && dx * dx + dz * dz < mBodyRadius * mBodyRadius)
-		SMS_SendMessageToMario(this, 0xE);
+	// Standing on the deck counts as an attack so the boat can carry Mario.
+	f32 marioY = SMS_GetMarioPos().y;
+	f32 deckY  = getPosition().y - mYOffset;
+	f32 dx     = SMS_GetMarioPos().x - getPosition().x;
+	f32 radius = mBodyRadius;
+	f32 dz     = SMS_GetMarioPos().z - getPosition().z;
+	if (marioY <= deckY && deckY - 100.0f < marioY
+	    && dx * dx + dz * dz < radius * radius)
+		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
+}
+
+/// Fabricated: binder over the out-of-line water-gun fetch.
+static inline TWaterGun* LeafBoatGetWaterGun()
+{
+	TWaterGun* gun = SMS_GetMarioWaterGun();
+	return gun;
 }
 
 void TLeafBoat::control()
 {
 	TMapObjBase::control();
-	// Every one of the 16 stack references of this function sits exactly 0x30
-	// above ours (frame 0xa0 against 0x70) and the instruction stream is
-	// otherwise identical, so the target simply reserves 48 unused bytes.
-	
-	
+
 	if (marioHipAttack())
-		mVelocity.y -= unk154;
+		mVelocity.y -= mHipAttackPower;
 
 	if (marioIsOn()) {
-		mVelocity.y -= unk150;
-		// signed: the target tests mIsEmitWater with `cmpwi r0, 0`, while
-		// `u8 > 0` gives mwcc an unsigned `cmplwi r0, 0`.
-		if ((s32)SMS_GetMarioWaterGun()->mIsEmitWater > 0) {
-			MtxPtr mtx = SMS_GetMarioWaterGun()->getEmitMtx(0);
-			mVelocity.x -= mtx[0][0] * unk144;
-			mVelocity.z -= mtx[2][0] * unk144;
+		mVelocity.y -= mRiderWeight;
+		if (LeafBoatGetWaterGun()->isEmitWater() > 0) {
+			MtxPtr emitMtx = SMS_GetMarioWaterGun()->getEmitMtx(0);
+			mVelocity.x -= emitMtx[0][0] * mWaterPushRate;
+			mVelocity.z -= emitMtx[2][0] * mWaterPushRate;
 		}
 	}
 
-	int cube = gpCubeStream->getInCubeNo(mPosition);
-	if (cube != -1) {
-		TCubeStreamInfo& info = (TCubeStreamInfo&)(*gpCubeStream->unk14)[cube];
-		Mtx mtx;
-		MsMtxSetXYZRPH(mtx, 0.0f, 0.0f, 0.0f, info.unk18.x, info.unk18.y,
-		               info.unk18.z);
-		f32 speed = 0.0001f * info.unk40;
-		mVelocity.x += mtx[0][2] * speed;
-		mVelocity.z += mtx[2][2] * speed;
+	// The stream cubes carry a flow direction that drags the boat along.
+	int cubeNo = gpCubeStream->getInCubeNo((Vec&)mPosition);
+	if (cubeNo != -1) {
+		TCubeStreamInfo* info
+		    = (TCubeStreamInfo*)gpCubeStream->unk14->getChildren()[cubeNo];
+		Mtx flow;
+		MsMtxSetXYZRPH(flow, 0.0f, 0.0f, 0.0f, info->getUnk18().x,
+		               info->getUnk18().y, info->getUnk18().z);
+		f32 power = 0.0001f * info->unk40;
+		mVelocity.x += flow[0][2] * power;
+		mVelocity.z += flow[2][2] * power;
 	}
 
 	mPosition.y += mVelocity.y;
-	mVelocity.y += unk158 * (mInitialPosition.y - (mPosition.y - mYOffset));
-	mVelocity.y *= unk15C;
-	mVelocity.x *= unk148;
-	mVelocity.z *= unk148;
+	mVelocity.y
+	    += mSpringRate * (mInitialPosition.y - (mPosition.y - mYOffset));
+	mVelocity.y *= mVerticalDecay;
+	mVelocity.x *= mFriction;
+	mVelocity.z *= mFriction;
 }
 
 void TLeafBoat::calc()
 {
-	if (unk144 == 0.0f)
-		return;
-
-	if (unk160 > 8) {
-		if (fabsf(mVelocity.x) + fabsf(mVelocity.z) > 0.1f) {
-			unk164.set(mPosition.x, mPosition.y - mYOffset, mPosition.z);
-			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
-			emitAndBindScale(0x1E8, 3, &unk164, scale);
-			emitAndBindScale(0x107, 1, &unk164, scale);
+	if (mWaterPushRate != 0.0f) {
+		if (mEffectTimer > 8) {
+			if (fabsf(mVelocity.x) + fabsf(mVelocity.z) > 0.1f) {
+				mEffectPos.set(mPosition.x, getPosition().y - mYOffset,
+				               getPosition().z);
+				JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+				emitAndBindScale(PARTICLE_MS_M_HAMON_B, 3, &mEffectPos, scale);
+				emitAndBindScale(PARTICLE_MS_M_HAMON_A, 1, &mEffectPos, scale);
+			}
+			mEffectTimer = 0;
+		} else {
+			mEffectTimer++;
 		}
-		unk160 = 0;
-	} else {
-		++unk160;
 	}
 }
 
 void TLeafBoat::initMapObj()
 {
 	TMapObjBase::initMapObj();
-	unk138 = 1.0f;
-	unk13C = 0.5f;
-	unk140 = 0.5f;
-	unk148 = 0.998f;
+
+	mEnemyBounce = 1.0f;
+	mActorBounce = 0.5f;
+	mWallBounce  = 0.5f;
+	mFriction    = 0.998f;
 }
 
 TLeafBoat::TLeafBoat(const char* name)
     : TMapObjBase(name)
-    , unk138(0.0f)
-    , unk13C(0.0f)
-    , unk140(0.0f)
-    , unk144(0.03f)
-    , unk148(0.0f)
+    , mEnemyBounce(0.0f)
+    , mActorBounce(0.0f)
+    , mWallBounce(0.0f)
+    , mWaterPushRate(0.03f)
+    , mFriction(0.0f)
     , unk14C(1.2f)
-    , unk150(0.03f)
-    , unk154(2.0f)
-    , unk158(0.005f)
-    , unk15C(0.98f)
-    , unk160(0)
+    , mRiderWeight(0.03f)
+    , mHipAttackPower(2.0f)
+    , mSpringRate(0.005f)
+    , mVerticalDecay(0.98f)
+    , mEffectTimer(0)
 {
-	unk164.zero();
+	mEffectPos.zero();
 }
 
-// TLeafBoatRotten ------------------------------------------------------------
+f32 TLeafBoatRotten::mAlphaDownSpeed       = 0.5f;
+f32 TLeafBoatRotten::mCollisionRemoveAlpha = 100.0f;
+// TODO: both UNUSED in the map, so the values are not recoverable.
+int TLeafBoatRotten::mBoatFlushTime     = 60;
+int TLeafBoatRotten::mBoatFlushInterval = 10;
+GXColorS10 TLeafBoatRotten::mRottenColor = { 100, 100, 180, 255 };
 
 void TLeafBoatRotten::control()
 {
 	TLeafBoat::control();
-	if (marioIsOn() && isState(1)) {
-		mStateTimer = unk170;
-		mState      = 2;
+
+	if (marioIsOn()) {
+		if (isState(1)) {
+			mStateTimer = mRottenTime;
+			mState      = 2;
+		}
 	}
 
 	switch (mState) {
+	case 1:
+		break;
+
 	case 2: {
-		f32 rate   = (f32)mStateTimer / (f32)unk170;
-		unk178.r = (u8)((255 - mRottenColor.r) * rate + mRottenColor.r);
-		unk178.g = (u8)((255 - mRottenColor.g) * rate + mRottenColor.g);
-		unk178.b = (u8)((255 - mRottenColor.b) * rate + mRottenColor.b);
+		// Fade from white to the rotten tint over the remaining lifetime.
+		f32 rate = (f32)getStateTimer() / (f32)mRottenTime;
+		mColor.r = (u8)(s32)((f32)(255 - mRottenColor.r) * rate
+		                     + (f32)mRottenColor.r);
+		mColor.g = (u8)(s32)((f32)(255 - mRottenColor.g) * rate
+		                     + (f32)mRottenColor.g);
+		mColor.b = (u8)(s32)((f32)(255 - mRottenColor.b) * rate
+		                     + (f32)mRottenColor.b);
 		if (!isStateTimerEngaged()) {
-			unk174 = 255.0f;
+			mAlpha = 255.0f;
 			mState = 3;
 		}
 		break;
 	}
+
 	case 3:
-		unk174 -= mAlphaDownSpeed;
-		unk178.a = (u8)unk174;
-		if (unk174 < mCollisionRemoveAlpha) {
-			if (mMapCollisionManager->unk8->isSetUp())
+		mAlpha -= mAlphaDownSpeed;
+		mColor.a = (u8)(s32)mAlpha;
+		if (mAlpha < mCollisionRemoveAlpha) {
+			if (getMapCollisionManager()->getUnk8()->isSetUp())
 				removeMapCollision();
 		}
-		if (unk174 <= 0.0f) {
+		if (mAlpha <= 0.0f) {
 			mScaling.set(1.0f, 1.0f, 1.0f);
 			makeObjDefault();
-			appear();
-			unk178.r = 255;
-			unk178.g = 255;
-			unk178.b = 255;
-			unk178.a = 255;
+			makeObjAppeared();
+			mColor.r = 255;
+			mColor.g = 255;
+			mColor.b = 255;
+			mColor.a = 255;
 			mState   = 1;
 		}
 		break;
@@ -562,94 +747,118 @@ void TLeafBoatRotten::perform(u32 cue, JDrama::TGraphics* graphics)
 void TLeafBoatRotten::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
-	stream.read(&unk170, 4);
-	unk170 *= 10;
-	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &unk178);
+
+	stream.read(&mRottenTime, 4);
+	mRottenTime *= 10;
+	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &mColor);
 }
 
 TLeafBoatRotten::TLeafBoatRotten(const char* name)
     : TLeafBoat(name)
-    , unk170(0)
+    , mRottenTime(0)
 {
-	unk178.r = 255;
-	unk178.g = 255;
-	unk178.b = 255;
-	unk178.a = 255;
+	mColor.r = 255;
+	mColor.g = 255;
+	mColor.b = 255;
+	mColor.a = 255;
 }
 
-// TLampSeesaw ----------------------------------------------------------------
-
-void TLampSeesaw::touchPlayer(THitActor*)
+void TLampSeesaw::touchPlayer(THitActor* player)
 {
 	if (marioIsOn())
-		mPartner->pushDown(-unk140);
+		mPartner->pushDown(-mPushSpeed);
+}
+
+/// Fabricated: the level retail's frame shows around this assignment.
+static inline void LampSeesawSetLowerLimit(TLampSeesaw* p, f32 y)
+{
+	p->mLowerLimitY = y;
 }
 
 void TLampSeesaw::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
-	f32 depth;
-	stream.read(&depth, 4);
-	unk13C = mInitialPosition.y - depth;
-	stream.read(&unk140, 4);
-	unk140 *= 0.0001f;
+
+	f32 drop;
+	stream.read(&drop, 4);
+	LampSeesawSetLowerLimit(this, mInitialPosition.y - drop);
+	stream.read(&mPushSpeed, 4);
+	mPushSpeed *= 0.0001f;
 }
 
 TLampSeesaw::TLampSeesaw(const char* name)
     : TMapObjBase(name)
     , mPartner(nullptr)
-    , unk140(0.01f)
+    , mPushSpeed(0.01f)
 {
 }
 
-// TLampSeesawMain ------------------------------------------------------------
-
-void TLampSeesawMain::pushDown(f32 amount)
+void TLampSeesawMain::pushDown(f32 speed)
 {
 	mState = 2;
-	unk144 -= amount;
+	mSpeed -= speed;
 }
 
-// TODO: size not verified
+/**
+ * @brief Advance the seesaw by one frame of mSpeed.
+ *
+ * @details UNUSED in the map (0x90); control() inlines it in both of its
+ * cases.
+ */
+// TODO: in control()'s two expansions nextY lands in f2 (retail f1) and the
+// frame is 0x28 vs 0x48. Reading mSpeed unnamed fixed the load order
+// (cc48); an unnamed nextY with += or =, nextY += mSpeed and the partner's
+// getPosition() are inert or worse.
 void TLampSeesawMain::move()
 {
-	f32 next = mPosition.y + unk144;
-	if (next < unk13C || mPartner->mPosition.y - unk144 < mPartner->unk13C) {
-		if (fabsf(unk144) < unk150)
-			unk144 = 0.0f;
+	f32 nextY = mPosition.y + mSpeed;
+	if (nextY < mLowerLimitY
+	    || mPartner->mPosition.y - mSpeed < mPartner->mLowerLimitY) {
+		if (fabsf(mSpeed) < mMinSpeed)
+			mSpeed = 0.0f;
 		else
-			unk144 *= -unk14C;
+			mSpeed *= -mReboundRate;
 	} else {
-		mPosition.y = next;
-		mPartner->mPosition.y -= unk144;
+		mPosition.y = nextY;
+		mPartner->mPosition.y -= mSpeed;
 	}
-	unk144 *= unk148;
+
+	mSpeed *= mSpeedDecay;
 }
 
-void TLampSeesawMain::touchPlayer(THitActor*)
+void TLampSeesawMain::touchPlayer(THitActor* player)
 {
 	if (marioIsOn())
-		pushDown(unk140);
+		pushDown(mPushSpeed);
 }
 
 void TLampSeesawMain::control()
 {
 	TMapObjBase::control();
+
 	switch (mState) {
+	case 1:
+		break;
+
 	case 2:
 		move();
-		if (fabsf(unk144) < unk150)
+		if (fabsf(mSpeed) < mMinSpeed)
 			mState = 3;
 		break;
+
 	case 3:
-		if (unk144 < 0.0f)
-			unk144 = -unk150;
+		// Creep back to the rest height at the minimum speed.
+		if (mSpeed < 0.0f)
+			mSpeed = -mMinSpeed;
 		else
-			unk144 = unk150;
+			mSpeed = mMinSpeed;
+
 		move();
-		if (fabsf(unk144) <= unk150
-		    && fabsf(mInitialPosition.y - mPosition.y) < unk150) {
-			unk144 = 0.0f;
+
+		f32 minSpeed = mMinSpeed;
+		if (fabsf(mSpeed) <= minSpeed
+		    && fabsf(mInitialPosition.y - mPosition.y) < minSpeed) {
+			mSpeed = 0.0f;
 			mState = 1;
 		}
 		break;
@@ -658,230 +867,309 @@ void TLampSeesawMain::control()
 
 void TLampSeesawMain::loadAfter()
 {
-	char name[64];
-	int len          = strlen("ランプシーソーＡ");
-	const char* self = getName();
-	char c0          = self[len];
-	char c1          = self[len + 1];
-	char c2          = self[len + 2];
-	char c3          = self[len + 3];
-	snprintf(name, 0x40, "ランプシーソーＢ００");
-	name[len]     = c0;
-	name[len + 1] = c1;
-	name[len + 2] = c2;
-	name[len + 3] = c3;
-	mPartner = (TLampSeesaw*)JDrama::TNameRefGen::search(name);
+	// The partner is named after this object with the "（主）" suffix replaced;
+	// the four bytes after the shared prefix are copied across verbatim.
+	//
+	// TODO: the frame is 8 short. Every stack slot is retail's (buffer 0x28)
+	// with the raw member read at three of the five name reads; retail holds
+	// twelve bytes above the array where prefix alone gives four, so it has
+	// two more four-byte named scalars there. No honest declaration lands
+	// them: buffer declared first/last, the u8s as ints, a named
+	// `const char*` for the name (costs five instructions) and a TU-local
+	// fork around search<T>() are all inert or worse.
+	int prefix = strlen("ランプシーソーＡ");
+	char buffer[64];
+	u8 c0 = mName[prefix];
+	u8 c1 = mName[prefix + 1];
+	u8 c2 = mName[prefix + 2];
+	u8 c3 = getName()[prefix + 3];
+	snprintf(buffer, sizeof(buffer), "ランプシーソーＢ００", getName());
+	buffer[prefix]     = c0;
+	buffer[prefix + 1] = c1;
+	buffer[prefix + 2] = c2;
+	buffer[prefix + 3] = c3;
+
+	mPartner = JDrama::TNameRefGen::search<TLampSeesawMain>(buffer);
 	mPartner->mPartner = this;
 }
 
 TLampSeesawMain::TLampSeesawMain(const char* name)
     : TLampSeesaw(name)
-    , unk144(0.0f)
-    , unk148(0.998f)
-    , unk14C(0.8f)
-    , unk150(0.5f)
+    , mSpeed(0.0f)
+    , mSpeedDecay(0.998f)
+    , mReboundRate(0.8f)
+    , mMinSpeed(0.5f)
 {
 }
 
-// TBiancoBell ----------------------------------------------------------------
+/**
+ * @brief Stop the bell's swing animation.
+ *
+ * @details UNUSED in the map (0x30) and never called from this TU.
+ */
+void TBiancoBell::stopToRing()
+{
+	getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setRate(0.0f);
+}
 
-// TODO: body is a guess, size not verified
-void TBiancoBell::stopToRing() { mMActor->getFrameCtrl(0)->setRate(0.0f); }
-
+/**
+ * @brief Ring this bell with its own assigned animation.
+ *
+ * @details UNUSED in the map (0x12c); TBellWatermill::control inlines it once
+ * per bell.
+ */
 void TBiancoBell::ring()
 {
-	if (getMActor()->getFrameCtrl(0)->getFrame() == 0.0f
-	    || getMActor()->getFrameCtrl(0)->getFrame()
-	               + getMActor()->getFrameCtrl(0)->getRate()
-	           >= getMActor()->getFrameCtrl(0)->getEnd() - 1.0f) {
-		startAnim(mRingAnm);
-		getMActor()->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
-		if (mRingSound)
-			gpMSound->startSoundActor(0x89B8, &mPosition, 0, nullptr, 0, 4);
+	if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() == 0.0f
+	    || getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	            + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getRate()
+	        >= (f32)getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getEnd()
+	            - 1.0f) {
+		startAnim(mAnmIndex);
+		f32 rate = SMSGetAnmFrameRate();
+		getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setRate(rate);
+		if (mRingsAloud)
+			gpMSound->startSoundActor(MSD_SE_OBJ_BI_BELL, &mPosition, 0,
+			                          nullptr, 0, 4);
 	}
+}
+
+/**
+ * @brief Ring this bell on its own, with the shared single-bell animation.
+ *
+ * @details UNUSED in the map (0x120); touchPlayer and touchWater inline it.
+ */
+/// Fabricated: the binder retail's frame shows at the bell's frame-control
+/// reads.
+static inline J3DFrameCtrl* BiancoBellFrameCtrl(TBiancoBell* p)
+{
+	MActor* actor = p->getMActor();
+	return actor->getFrameCtrl(ANM_TYPE_BCK);
 }
 
 void TBiancoBell::ringSingle()
 {
-	if (getMActor()->getFrameCtrl(0)->getFrame() == 0.0f
-	    || getMActor()->getFrameCtrl(0)->getFrame()
-	               + getMActor()->getFrameCtrl(0)->getRate()
-	           >= getMActor()->getFrameCtrl(0)->getEnd() - 1.0f) {
+	if (BiancoBellFrameCtrl(this)->getFrame() == 0.0f
+	    || getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	            + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getRate()
+	        >= (f32)getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getEnd()
+	            - 1.0f) {
 		startAnim(4);
-		getMActor()->getFrameCtrl(0)->setRate(SMSGetAnmFrameRate());
-		gpMSound->startSoundActor(0x89B8, &mPosition, 0, nullptr, 0, 4);
+		f32 rate = SMSGetAnmFrameRate();
+		BiancoBellFrameCtrl(this)->setRate(rate);
+		gpMSound->startSoundActor(MSD_SE_OBJ_BI_BELL, &mPosition, 0, nullptr,
+		                          0, 4);
 	}
 }
 
-u32 TBiancoBell::touchWater(THitActor*)
+u32 TBiancoBell::touchWater(THitActor* water)
 {
 	ringSingle();
 	return 1;
 }
 
-void TBiancoBell::touchPlayer(THitActor*) { ringSingle(); }
+void TBiancoBell::touchPlayer(THitActor* player) { ringSingle(); }
 
 void TBiancoBell::initMapObj()
 {
 	TMapObjBase::initMapObj();
+
 	if (strcmp(getName(), "BiaBell 0") == 0) {
-		mRingAnm   = 1;
-		mRingSound = 0;
+		mAnmIndex   = 1;
+		mRingsAloud = false;
 	} else if (strcmp(getName(), "BiaBell 1") == 0) {
-		mRingAnm   = 2;
-		mRingSound = 1;
+		mAnmIndex   = 2;
+		mRingsAloud = true;
 	} else {
-		mRingAnm   = 3;
-		mRingSound = 0;
+		mAnmIndex   = 3;
+		mRingsAloud = false;
 	}
 }
 
 TBiancoBell::TBiancoBell(const char* name)
     : TMapObjBase(name)
-    , mRingAnm(0)
-    , mRingSound(0)
+    , mAnmIndex(0)
+    , mRingsAloud(false)
 {
 }
 
-// TBellWatermill -------------------------------------------------------------
-
-u32 TBellWatermill::touchWater(THitActor*)
+u32 TBellWatermill::touchWater(THitActor* water)
 {
-	unk190 = 1;
-	if (fabsf(unk158) > unk16C) {
-		unk178 += unk180;
+	mSprayedThisFrame = true;
+
+	if (fabsf(unk158) > mRotSpeedMax) {
+		mRiseSpeed += mRiseAccel;
 		unk158 += unk15C;
 	} else {
-		unk158 += unk15C;
+		unk158 = unk158 + unk15C;
 	}
+
 	if (unk158 > unk164)
 		unk158 = unk164;
+
 	return 1;
 }
 
+// TODO: 96.6%: retail's frame is 0x60 larger (spin at 0x130, yaw at 0x100;
+// ours 0xd0/0xa0) and retail reloads jmaSinShift/jmaSinTable/jmaCosTable in
+// every setMtxRotZ/Y expansion where ours loads them once, as if the stores
+// went through a pointer MWCC could not resolve to the stack. MsClamp for
+// the spin speed removed the clamp's extra fmr (cc48); the if/else-if and
+// a named max are worse. Retail also holds &spin in a register (r4 before
+// the first rotation, r28 before the translation stores). Inert (bb15): the
+// MathUtil MsMtxSetRotZ/Y helpers, setAnmMtx/setModelMtx for the copy, a
+// pointer to the whole matrix; only an MtxPtr alias over the tail (97.0%)
+// moved it, and that is an alias, not source.
 void TBellWatermill::control()
 {
 	TMapObjBase::control();
-	if (unk158 == 0.0f && unk178 == 0.0f && unk170 == 0.0f)
-		return;
 
-	unk154 += MsClamp(unk158, -unk16C, unk16C);
-	unk154 = MsWrap(unk154, 0.0f, 360.0f);
+	if (unk158 != 0.0f || mRiseSpeed != 0.0f || mHeight != 0.0f) {
+		f32 speed = MsClamp(unk158, -mRotSpeedMax, mRotSpeedMax);
+		unk154 += speed;
+		unk154 = MsWrap(unk154, 0.0f, 360.0f);
 
-	gpMSound->startSoundActorWithInfo(0x3044, &mPosition, nullptr,
-	                                  fabsf(unk158), 0, 0, &unk1A4, 0, 4);
+		gpMSound->startSoundActorWithInfo(MSD_SE_OBJ_BI_UPDOWNMILL,
+		                                  &mPosition, nullptr, fabsf(unk158),
+		                                  0, 0, &mSoundHandle, 0, 4);
 
-	if (fabsf(unk158) < fabsf(unk160))
-		unk158 = 0.0f;
-	if (!unk190 && unk158 != 0.0f)
-		unk158 -= unk160;
+		if (fabsf(unk158) < fabsf(unk160))
+			unk158 = 0.0f;
 
-	if (unk170 < 0.0f) {
-		if (fabsf(unk178) < unk17C) {
-			unk170 = 0.0f;
-			unk178 = 0.0f;
-		} else {
-			unk170 -= unk178;
-			unk178 *= -unk188;
+		if (!mSprayedThisFrame) {
+			if (unk158 != 0.0f)
+				unk158 = unk158 - unk160;
 		}
-	} else if (!unk190 && unk170 != 0.0f) {
-		unk178 -= unk184;
-	}
 
-	unk170 += unk178;
-	if (unk170 > unk174) {
-		mBells[0]->ring();
-		mBells[1]->ring();
-		mBells[2]->ring();
-		unk170 = unk174;
-		if (unk1A0) {
-			for (int i = 0; i < 5; ++i) {
-				TMapObjBase* coin = gpItemManager->makeObjAppeared(0x2000000E);
-				if (coin) {
-					coin->mPosition.set(mPosition);
-					f32 rx = MsRandF();
-					f32 ry = MsRandF();
-					coin->mVelocity.set(10.0f, 100.0f * ry + 10.0f,
-					                    10.0f * rx - 5.0f);
-					coin->offLiveFlag(LIVE_FLAG_UNK10);
-				}
+		// Below the rest height the wheel bounces back up instead of falling.
+		f32 height = mHeight;
+		if (height < 0.0f) {
+			f32 rise = mRiseSpeed;
+			if (fabsf(rise) < mMinRiseSpeed) {
+				mHeight    = 0.0f;
+				mRiseSpeed = 0.0f;
+			} else {
+				mHeight = height - rise;
+				mRiseSpeed *= -mReboundRate;
 			}
-			unk1A0 = 0;
+		} else if (!mSprayedThisFrame && height != 0.0f) {
+			mRiseSpeed -= mGravity;
 		}
+
+		mHeight += mRiseSpeed;
+
+		if (mHeight > mHeightMax) {
+			mBells[0]->ring();
+			mBells[1]->ring();
+			mBells[2]->ring();
+
+			mHeight = mHeightMax;
+			if (mShouldPayCoins) {
+				for (int i = 0; i < 5; ++i) {
+					TMapObjBase* coin
+					    = gpItemManager->makeObjAppeared(0x2000000E);
+					if (coin != nullptr) {
+						coin->mPosition.x = mPosition.x;
+						coin->mPosition.y = mPosition.y;
+						coin->mPosition.z = mPosition.z;
+						coin->mVelocity.set(10.0f, 100.0f * MsRandF() + 10.0f,
+						                    10.0f * MsRandF() - 5.0f);
+						coin->offLiveFlag(LIVE_FLAG_UNK10);
+					}
+				}
+				mShouldPayCoins = false;
+			}
+		}
+
+		mPosition.y       = mHeight + mInitialPosition.y + mYOffset;
+		mSprayedThisFrame = false;
+		mRotation.z       = unk154;
+
+		// The Z matrix really is built once before the branch and again in
+		// both arms; the ROM has all three copies.
+		Mtx spin;
+		setMtxRotZ(spin, mRotation.z);
+		if (mRotation.y != 0.0f) {
+			Mtx yaw;
+			setMtxRotZ(spin, mRotation.z);
+			setMtxRotY(yaw, mRotation.y);
+			MTXConcat(yaw, spin, spin);
+		} else {
+			setMtxRotZ(spin, mRotation.z);
+		}
+
+		spin[0][3] = mPosition.x;
+		spin[1][3] = mPosition.y;
+		spin[2][3] = mPosition.z;
+		spin[1][3] -= mYOffset;
+		MTXCopy(spin, getModel()->getAnmMtx(0));
 	}
-
-	mPosition.y = unk170 + mInitialPosition.y + mYOffset;
-	unk190      = 0;
-
-	Mtx mtx;
-	Mtx yRot;
-	MtxPtr ptr  = mtx;
-	mRotation.z = unk154;
-	MsMtxSetRotZ(ptr, mRotation.z);
-	if (mRotation.y != 0.0f) {
-		MsMtxSetRotZ(ptr, mRotation.z);
-		MsMtxSetRotY(yRot, mRotation.y);
-		MTXConcat(yRot, ptr, ptr);
-	} else {
-		MsMtxSetRotZ(ptr, mRotation.z);
-	}
-
-	ptr[0][3] = mPosition.x;
-	ptr[1][3] = mPosition.y;
-	ptr[2][3] = mPosition.z;
-	ptr[1][3] -= mYOffset;
-	MTXCopy(ptr, getModel()->getAnmMtx(0));
 }
 
 void TBellWatermill::loadAfter()
 {
 	TMapObjTurn::loadAfter();
-	unk150    = 2;
-	unk15C    = -0.02f;
-	unk160    = -0.008f;
-	unk164    = 10.0f;
-	unk18C    = 10.0f;
-	unk174    = 1000.0f;
-	unk180    = 0.15f;
-	unk184    = 0.1f;
-	unk16C    = 4.0f;
-	unk188    = 0.5f;
-	unk17C    = 1.0f;
-	mBells[0] = (TBiancoBell*)JDrama::TNameRefGen::search("BiaBell 0");
-	mBells[1] = (TBiancoBell*)JDrama::TNameRefGen::search("BiaBell 1");
-	mBells[2] = (TBiancoBell*)JDrama::TNameRefGen::search("BiaBell 2");
-	unk1A0    = 1;
+
+	unk150        = 2;
+	unk15C        = -0.02f;
+	unk160        = -0.008f;
+	unk164        = 10.0f;
+	unk18C        = 10.0f;
+	mHeightMax    = 1000.0f;
+	mRiseAccel    = 0.15f;
+	mGravity      = 0.1f;
+	mRotSpeedMax  = 4.0f;
+	mReboundRate  = 0.5f;
+	mMinRiseSpeed = 1.0f;
+
+	mBells[0] = JDrama::TNameRefGen::search<TBiancoBell>("BiaBell 0");
+	mBells[1] = JDrama::TNameRefGen::search<TBiancoBell>("BiaBell 1");
+	mBells[2] = JDrama::TNameRefGen::search<TBiancoBell>("BiaBell 2");
+
+	mShouldPayCoins = true;
 }
 
 TBellWatermill::TBellWatermill(const char* name)
     : TMapObjTurn(name)
-    , unk16C(0.0f)
-    , unk170(0.0f)
-    , unk174(0.0f)
-    , unk178(0.0f)
-    , unk17C(0.0f)
-    , unk180(0.0f)
-    , unk184(0.0f)
-    , unk188(0.0f)
+    , mRotSpeedMax(0.0f)
+    , mHeight(0.0f)
+    , mHeightMax(0.0f)
+    , mRiseSpeed(0.0f)
+    , mMinRiseSpeed(0.0f)
+    , mRiseAccel(0.0f)
+    , mGravity(0.0f)
+    , mReboundRate(0.0f)
     , unk18C(0.0f)
-    , unk190(0)
-    , unk1A0(0)
-    , unk1A4(nullptr)
+    , mSprayedThisFrame(false)
+    , mShouldPayCoins(false)
+    , mSoundHandle(nullptr)
 {
 }
 
-// TWoodLog -------------------------------------------------------------------
+/// Fabricated: the wrapper fork over the raw global retail's frame shows here.
+static inline JGeometry::TVec3<f32>* WoodLogGetMarioPos() { return gpMarioPos; }
+
+/// Fabricated: the binder retail's frame shows at this unit's anm-matrix reads.
+static inline MtxPtr WoodLogAnmMtx(TWoodLog* p)
+{
+	J3DModel* model = p->getModel();
+	return model->getAnmMtx(0);
+}
 
 void TWoodLog::control()
 {
 	TMapObjFloatOnSea::control();
 
-	Mtx inv;
-	MTXInverse(getModel()->getAnmMtx(0), inv);
+	// Push a swimming Mario out to the nearer long side of the log.
+	Mtx inverse;
+	MTXInverse(WoodLogAnmMtx(this), inverse);
+
 	JGeometry::TVec3<f32> marioPos;
-	marioPos.set(SMS_GetMarioPos());
+	marioPos.x = WoodLogGetMarioPos()->x;
+	marioPos.y = gpMarioPos->y;
+	marioPos.z = gpMarioPos->z;
 	JGeometry::TVec3<f32> local;
-	MTXMultVec(inv, &marioPos, &local);
+	MTXMultVec(inverse, marioPos, local);
 
 	if (SMS_IsMarioStatusTypeSwimming() && -232.0f < local.y
 	    && -141.0f < local.x && local.x < 141.0f && -441.0f < local.z
@@ -891,8 +1179,8 @@ void TWoodLog::control()
 		else
 			local.x = -141.0f;
 
-		JGeometry::TVec3<f32> world;
-		MTXMultVec(getModel()->getAnmMtx(0), &local, &world);
-		SMS_MarioMoveRequest(world);
+		JGeometry::TVec3<f32> pushTo;
+		MTXMultVec(WoodLogAnmMtx(this), local, pushTo);
+		SMS_MarioMoveRequest(pushTo);
 	}
 }

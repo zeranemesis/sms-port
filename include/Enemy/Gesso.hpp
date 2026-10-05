@@ -100,7 +100,7 @@ public:
 	void polluteBehavior();
 	void setPolluteGoal();
 	void pollute();
-	void isUseBodyCallBack() const;
+	bool isUseBodyCallBack() const;
 	void rollCheck();
 	void rollEnd();
 	void modifyRotate();
@@ -120,28 +120,15 @@ public:
 	// fabricated
 	TGessoSaveLoadParams* getSaveParams() const { return unk1E8; }
 
-	// TODO: the ROM inlines this 4-way decision at every MsIsInSight call site
-	// and never emits a symbol for it, but MWCC keeps emitting a weak
-	// out-of-line copy of this helper and calling it, which costs ~6% on
-	// TGesso::walkBehavior and TNerveGessoStay::execute. Spelling the decision
-	// out at each call site is the remaining lever; see the inline-budget
-	// sections of docs/AGENT_MATCHING_TIPS.md.
 	inline f32 getSightDirection() const
 	{
 		if (mState == STATE_WANDERING)
 			return 0.0f;
 
-		if (unk1A1 != 0) {
-			if (unk1C4 != 0)
-				return 0.0f;
-			else
-				return 180.0f;
-		} else {
-			if (unk1C4 != 0)
-				return 90.0f;
-			else
-				return 270.0f;
-		}
+		if (unk1A1 != 0)
+			return unk1C4 != 0 ? 0.0f : 180.0f;
+
+		return unk1C4 != 0 ? 90.0f : 270.0f;
 	}
 
 	f32 getUnk1B0() const { return mTurnAngle; }

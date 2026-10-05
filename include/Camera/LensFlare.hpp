@@ -11,6 +11,11 @@ public:
 	TLensFlare(const char* name);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
+	// fabricated, inlined into perform
+	void move();
+	void calcAnim();
+	void entry();
+
 public:
 	/* 0x10 */ J3DModelData* unk10;
 	/* 0x14 */ J3DModel* unk14;

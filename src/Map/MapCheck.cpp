@@ -27,11 +27,8 @@ inline static bool someUnknownInline(TBGCheckData* r31, TBGWallCheckRecord* r29)
 	    && r31->isWaterSurface())
 		return false;
 
-	// Declaration order matters for the FPR numbering: the ROM issues
-	// `lfs f5, 4(r29)` (cy) before `lfs f6, 0(r29)` (cx), so cy is declared
-	// first. Writing cx/cy/cz shifts every FPR in the inlined body by one.
-	f32 cy = r29->mCenter.y;
 	f32 cx = r29->mCenter.x;
+	f32 cy = r29->mCenter.y;
 	f32 cz = r29->mCenter.z;
 
 	f32 nx = r31->getNormal().x;
@@ -48,11 +45,7 @@ inline static bool someUnknownInline(TBGCheckData* r31, TBGWallCheckRecord* r29)
 	f32 y2 = r31->getPoint2().y;
 	f32 y3 = r31->getPoint3().y;
 
-	// The X/Z-facing discriminator. The ROM reads this with
-	// `lhz r0, 4(r31)` + `rlwinm. r0, r0, 0, 28, 28` (0x8018523C/0x80185244),
-	// and per the mask table in MapData.hpp that instruction is exactly
-	// `checkFlag(0x8)` - it is not bit 2 of the flag word.
-	if (r31->checkFlag(0x8)) {
+	if (r31->checkFlag(BG_CHECK_FLAG_X_FACING)) {
 		if (nx > 0.0f) {
 			cz = -cz;
 
@@ -123,20 +116,16 @@ inline static bool someUnknownInline(TBGCheckData* r31, TBGWallCheckRecord* r29)
 	return true;
 }
 
+// TODO: 97.4%. Retail's frame is 0xe0 larger (0x310 against 0x230) with no
+// extra stack traffic, so the fabricated someUnknownInline/skewProduct shape
+// is missing inline levels; the volatile FPR numbering of cx/cy/cz and the
+// early `mr r3, r31` before the first mMinY compare follow from that.
+// A named result in skewProduct is +0x30 and inert otherwise.
 int TMapCollisionData::checkWallList(const TBGCheckList* param_1,
                                      TBGWallCheckRecord* param_2)
 {
 	if (!param_1)
 		return 0;
-
-
-	// version stores a single byte below the register save area (the ROM uses
-	// only 9 distinct stack slots: 0x4, 0x2d4..0x308, 0x314). The whole 0x2d4
-	// bytes of "local" space is reserved-but-never-used, so it can only come
-	// from MWCC's frame sizing for the inlined someUnknownInline body. We
-	// cannot reproduce that sizing directly, so pad it back out by hand.
-	
-	
 
 	f32 f27 = param_2->mCenter.y;
 	// param_1: r28
@@ -145,8 +134,8 @@ int TMapCollisionData::checkWallList(const TBGCheckList* param_1,
 	TBGCheckData* r31;
 	int r30 = 0;
 	while (param_1) {
-		r31      = param_1->unk8;
-		param_1  = param_1->mNext;
+		r31 = param_1->unk8;
+		param_1           = param_1->mNext;
 
 		if (r31->mMinY > f27)
 			continue;
@@ -170,12 +159,13 @@ int TMapCollisionData::checkWallList(const TBGCheckList* param_1,
 int TMapCollisionData::checkWalls(TBGWallCheckRecord* param_1) const
 {
 	param_1->mResultWallsNum = 0;
-	if (param_1->mCenter.x < -mGridExtentX || mGridExtentX <= param_1->mCenter.x
+	if (param_1->mCenter.x < -getGridExtentX()
+	    || getGridExtentX() <= param_1->mCenter.x
 	    || param_1->mCenter.z < -mGridExtentY
 	    || mGridExtentY <= param_1->mCenter.z)
 		return 0;
 
-	int gridX = (param_1->mCenter.x + mGridExtentX) * (1.0f / 1024);
+	int gridX = (param_1->mCenter.x + getGridExtentX()) * (1.0f / 1024);
 	int gridZ = (param_1->mCenter.z + mGridExtentY) * (1.0f / 1024);
 
 	int iVar6
@@ -188,6 +178,16 @@ int TMapCollisionData::checkWalls(TBGWallCheckRecord* param_1) const
 	return iVar6;
 }
 
+// The roof and ground lists test the three edges inline, sharing the corner
+// loads between edges (z before x for each corner after the first).
+// TODO: roof frame 0x60 vs 0x70, ground 0x60 vs 0x78 (both 0x38 before their
+// corner, normal and distance reads went through the TBGCheckData
+// accessors); only slots differ. A shared edge helper with four named corner reads gives the
+// 0x70 roof frame but loses retail's register pairing (97.6-98.5).
+// Retail tests the water flag with a signed `cmpwi` hoisted out of the loop:
+// `param_4 &= 0x4` plus `(s32)param_4 != 0` gives roof 99.9 (slots only) but
+// the cast is a no-op conversion, so it is not used; an `int` or `bool`
+// local for the mask is 99.0/93.5.
 f32 TMapCollisionData::checkRoofList(f32 x, f32 y, f32 z, u8 param_4,
                                      const TBGCheckList* head,
                                      const TBGCheckData** result)
@@ -199,24 +199,30 @@ f32 TMapCollisionData::checkRoofList(f32 x, f32 y, f32 z, u8 param_4,
 		if (param_4 & 0x4 && data->isWaterThrough())
 			continue;
 
-		if ((data->mPoint1.z - z) * (data->mPoint2.x - data->mPoint1.x)
-		        - (data->mPoint1.x - x) * (data->mPoint2.z - data->mPoint1.z)
+		f32 point1x = data->getPoint1().x;
+		f32 point1z = data->getPoint1().z;
+		f32 point2z = data->getPoint2().z;
+		f32 point2x = data->getPoint2().x;
+		if ((point1z - z) * (point2x - point1x)
+		        - (point1x - x) * (point2z - point1z)
 		    > 1.0f)
 			continue;
 
-		if ((data->mPoint2.z - z) * (data->mPoint3.x - data->mPoint2.x)
-		        - (data->mPoint2.x - x) * (data->mPoint3.z - data->mPoint2.z)
+		f32 point3z = data->getPoint3().z;
+		f32 point3x = data->getPoint3().x;
+		if ((point2z - z) * (point3x - point2x)
+		        - (point2x - x) * (point3z - point2z)
 		    > 1.0f)
 			continue;
 
-		if ((data->mPoint3.z - z) * (data->mPoint1.x - data->mPoint3.x)
-		        - (data->mPoint3.x - x) * (data->mPoint1.z - data->mPoint3.z)
+		if ((point3z - z) * (point1x - point3x)
+		        - (point3x - x) * (point1z - point3z)
 		    > 1.0f)
 			continue;
 
-		f32 tmp = (x * data->mNormal.x) + (z * data->mNormal.z)
-		          + data->mPlaneDistance;
-		f32 dVar10 = -tmp / data->mNormal.y;
+		f32 tmp = (x * data->getNormal().x) + (z * data->getNormal().z)
+		          + data->getPlaneDistance();
+		f32 dVar10 = -tmp / data->getNormal().y;
 
 		if (!(y - (dVar10 - -78.0f) > 0.0f)) {
 			*result = data;
@@ -228,21 +234,24 @@ f32 TMapCollisionData::checkRoofList(f32 x, f32 y, f32 z, u8 param_4,
 	return 9999999.0f;
 }
 
+// The first grid's roof list is read through a named root; retail's frame
+// holds that reference above local_4c.
 f32 TMapCollisionData::checkRoof(f32 x, f32 y, f32 z, u8 flags,
                                  const TBGCheckData** result) const
 {
-	if (x < -mGridExtentX || mGridExtentX <= x || z < -mGridExtentY
+	if (x < -getGridExtentX() || getGridExtentX() <= x || z < -mGridExtentY
 	    || mGridExtentY <= z) {
 		*result = &mIllegalCheckData;
 		return 9999999.0f;
 	}
 
-	int gridX = (x + mGridExtentX) * (1.0f / 1024);
+	int gridX = (x + getGridExtentX()) * (1.0f / 1024);
 	int gridZ = (z + mGridExtentY) * (1.0f / 1024);
 
+	const TBGCheckListRoot& gridRoot = getGridRoot18(gridX, gridZ);
+	const TBGCheckList* roofList = gridRoot.getRoofList();
 	const TBGCheckData* local_4c;
-	f32 dVar5 = checkRoofList(
-	    x, y, z, flags, getGridRoot18(gridX, gridZ).getRoofList(), &local_4c);
+	f32 dVar5 = checkRoofList(x, y, z, flags, roofList, &local_4c);
 
 	const TBGCheckData* local_50;
 	f32 dVar6 = checkRoofList(
@@ -274,24 +283,30 @@ f32 TMapCollisionData::checkGroundList(f32 x, f32 y, f32 z, u8 flags,
 		if ((flags & IGNORE_WATER_SURFACE) && data->isWaterSurface())
 			continue;
 
-		if ((data->mPoint1.z - z) * (data->mPoint2.x - data->mPoint1.x)
-		        - (data->mPoint1.x - x) * (data->mPoint2.z - data->mPoint1.z)
+		f32 point1x = data->getPoint1().x;
+		f32 point1z = data->getPoint1().z;
+		f32 point2z = data->getPoint2().z;
+		f32 point2x = data->getPoint2().x;
+		if ((point1z - z) * (point2x - point1x)
+		        - (point1x - x) * (point2z - point1z)
 		    < -1.0f)
 			continue;
 
-		if ((data->mPoint2.z - z) * (data->mPoint3.x - data->mPoint2.x)
-		        - (data->mPoint2.x - x) * (data->mPoint3.z - data->mPoint2.z)
+		f32 point3z = data->getPoint3().z;
+		f32 point3x = data->getPoint3().x;
+		if ((point2z - z) * (point3x - point2x)
+		        - (point2x - x) * (point3z - point2z)
 		    < -1.0f)
 			continue;
 
-		if ((data->mPoint3.z - z) * (data->mPoint1.x - data->mPoint3.x)
-		        - (data->mPoint3.x - x) * (data->mPoint1.z - data->mPoint3.z)
+		if ((point3z - z) * (point1x - point3x)
+		        - (point3x - x) * (point1z - point3z)
 		    < -1.0f)
 			continue;
 
 		f32 tmp
-		    = x * data->mNormal.x + z * data->mNormal.z + data->mPlaneDistance;
-		f32 dVar10 = -tmp / data->mNormal.y;
+		    = x * data->getNormal().x + z * data->getNormal().z + data->getPlaneDistance();
+		f32 dVar10 = -tmp / data->getNormal().y;
 
 		if (!(y - (dVar10 + -78.0f) < 0.0f)) {
 			*result = data;
@@ -300,12 +315,21 @@ f32 TMapCollisionData::checkGroundList(f32 x, f32 y, f32 z, u8 flags,
 	}
 
 	*result = &mIllegalCheckData;
-	return 9999999.0f;
+	return -32767.0f;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TMapCollisionData::checkGround (batch 127).
+static inline TMapCheckGroundPlane* MapCheckGroundPlane(const TMapCollisionData* p)
+{
+	TMapCheckGroundPlane* groundPlane = p->mGroundPlane;
+	return groundPlane;
 }
 
 f32 TMapCollisionData::checkGround(f32 x, f32 y, f32 z, u8 flags,
                                    const TBGCheckData** result) const
 {
+	TMapCheckGroundPlane* groundPlane;
 	if (x < -mGridExtentX || mGridExtentX <= x || z < -mGridExtentY
 	    || mGridExtentY <= z) {
 		*result = &mIllegalCheckData;
@@ -315,19 +339,19 @@ f32 TMapCollisionData::checkGround(f32 x, f32 y, f32 z, u8 flags,
 	int gridX = (x + mGridExtentX) * (1.0f / 1024);
 	int gridZ = (z + mGridExtentY) * (1.0f / 1024);
 
+	const TBGCheckListRoot& gridRoot = getGridRoot18(gridX, gridZ);
 	const TBGCheckData* local_60;
-	f32 dVar5 = checkGroundList(
-	    x, y, z, flags, getGridRoot18(gridX, gridZ).unk0[0].getNext(),
-	    &local_60);
+	f32 dVar5 = checkGroundList(x, y, z, flags, gridRoot.getGroundList(),
+	                           &local_60);
 
 	const TBGCheckData* local_64;
 	f32 dVar6 = checkGroundList(
-	    x, y, z, flags, getGridRoot14(gridX, gridZ).unk0[0].getNext(),
-	    &local_64);
+	    x, y, z, flags, getGridRoot14(gridX, gridZ).getGroundList(), &local_64);
 
-	if (mGroundPlane != nullptr) {
+	groundPlane = MapCheckGroundPlane(this);
+	if (groundPlane != nullptr) {
 		const TBGCheckData* local_68;
-		f32 dVar7 = mGroundPlane->checkPlaneGround(x, y, z, &local_68);
+		f32 dVar7 = MapCheckGroundPlane(this)->checkPlaneGround(x, y, z, &local_68);
 		if (dVar7 > dVar6) {
 			local_64 = local_68;
 			dVar6    = dVar7;
@@ -343,17 +367,26 @@ f32 TMapCollisionData::checkGround(f32 x, f32 y, f32 z, u8 flags,
 	}
 }
 
-static f32 angle_between(const JGeometry::TVec3<f32>& a,
+// The map lists no angle_between, so it is not an out-of-line static.
+static inline f32 angle_between(const JGeometry::TVec3<f32>& a,
                          const JGeometry::TVec3<f32>& b)
 {
 	JGeometry::TVec3<f32> cross;
 	cross.cross(a, b);
 	f32 crossMag = cross.length();
-	f32 dot      = a.x * b.x + a.y * b.y + a.z * b.z;
+	f32 dot      = a.dot(b);
 	f32 angle    = atan2f(crossMag, dot);
 	return fabsf(angle);
 }
 
+// TODO: frame 0x188 vs retail 0x1d8 (0x50 of missing inline temporaries;
+// a.dot(b) in angle_between gave 0x10). Retail's named block is 0x24 taller
+// (a/b/c reserve slots) -- early declarations, by-value angle_between
+// parameters and `a = p - hit` are all worse. The rest is FPR scheduling.
+// Also inert: a/b/c declared after dir or before hit; angle_between with
+// fewer named results or marked inline. Map check: retail has 0x24 more
+// between dir and hit and 0x40 more between hit and the add temp; named
+// point copies, `a(p); a -= hit` and an inlined cross (c-m7) are worse.
 static bool bgIntersectLine(const TBGCheckData* data,
                             const JGeometry::TVec3<f32>& start,
                             const JGeometry::TVec3<f32>& end, bool front_only,
@@ -410,10 +443,7 @@ static bool bgIntersectLine(const TBGCheckData* data,
 	return true;
 }
 
-// UNUSED in the ROM (marioEU.MAP lists it at 0x78 = 30 instructions); it is
-// fully inlined into intersectLine, which is why validate-symbol-order.py
-// reports it MISSING. Never drop the `inline` - a live `bl` would cost bytes.
-inline const TBGCheckData* intersectLineList(const TBGCheckList* head,
+static const TBGCheckData* intersectLineList(const TBGCheckList* head,
                                              const JGeometry::TVec3<f32>& start,
                                              const JGeometry::TVec3<f32>& end,
                                              bool front_only,
@@ -430,92 +460,81 @@ inline const TBGCheckData* intersectLineList(const TBGCheckList* head,
 	return nullptr;
 }
 
+// Retail copies both endpoints before subtracting the origin from either.
+static inline f32 LineSide(const JGeometry::TVec2<f32>& o,
+                           const JGeometry::TVec2<f32>& a,
+                           const JGeometry::TVec2<f32>& b)
+{
+	JGeometry::TVec2<f32> p = a;
+	JGeometry::TVec2<f32> q = b;
+	p -= o;
+	q -= o;
+	return p.cross(q);
+}
+
 static bool LineInLineXZ(const JGeometry::TVec2<f32>& a0,
                          const JGeometry::TVec2<f32>& a1,
                          const JGeometry::TVec2<f32>& b0,
                          const JGeometry::TVec2<f32>& b1)
 {
-	// The ROM compares the cross-product products against 1.0f (SDA @2906),
-	// not 0.0f, and rejects with `fcmpo/cror eq,lt,eq/bne` i.e. `> 1.0f`,
-	// so `<= 1.0f` (not `<`) reproduces both the constant and the branch.
-	// marioEU.MAP lists this as UNUSED at 0x1bc = 111 instructions; the copy we
-	// emit out of line compiles to exactly 111 instructions / 444 bytes, so the
-	// body above is byte-size correct (it is only inlined in the ROM).
-	if ((b0 - a0).cross(a1 - a0) * (b1 - a0).cross(a1 - a0) <= 1.0f
-	    && (b0 - b1).cross(a1 - b1) * (b0 - b1).cross(a0 - b1) <= 1.0f)
+	if (LineSide(a0, a1, b0) * LineSide(a0, a1, b1) <= 0.0f
+	    && LineSide(b0, b1, a0) * LineSide(b0, b1, a1) <= 0.0f)
 		return true;
 
 	return false;
 }
 
+// TODO: 96.6%. Frame 0x18 too small and a register permutation: retail
+// keeps the parameters in r24-r28 above the grid bounds (r20-r23); ours puts
+// the bounds above the parameters (declaring the loop counters first, or the
+// bounds as named ints, changes nothing). Retail converts start.x/end.x twice
+// (once for the swap test) but start.z/end.z once, which the int swap below
+// reproduces. Grid bounds built by a TVec2<int>-returning helper give the
+// exact 0x510 frame but 96.3% (slot pairs and the same register swap).
 const TBGCheckData* TMapCollisionData::intersectLine(
     const JGeometry::TVec3<f32>& start, const JGeometry::TVec3<f32>& end,
     bool front_only, JGeometry::TVec3<f32>* hit_pos) const
 {
-	JGeometry::TVec2<int> start2d(start.x, start.z);
-	JGeometry::TVec2<int> end2d(end.x, end.z);
-
-	// Declaration order matters: the ROM's stack slots (descending address)
-	// are minXi, minZi, maxXi, maxZi, i.e. all four are initialised before
-	// either swap test. Writing minXi/maxXi then the test then minZi/maxZi
-	// costs ~1.5% of the unit.
-	int minXi = start2d.x;
-	int minZi = start2d.y;
-	int maxXi = end2d.x;
-	int maxZi = end2d.y;
-
-	if (start2d.x > end2d.x) {
-		minXi = end2d.x;
-		maxXi = start2d.x;
+	int minXi = start.x, maxXi = end.x, minZi = start.z, maxZi = end.z;
+	if ((int)start.x > (int)end.x) {
+		int t = minXi;
+		minXi = maxXi;
+		maxXi = t;
+	}
+	if (minZi > maxZi) {
+		int t = minZi;
+		minZi = maxZi;
+		maxZi = t;
 	}
 
-	if (start2d.y > end2d.y) {
-		minZi = end2d.y;
-		maxZi = start2d.y;
-	}
+	JGeometry::TVec2<f32> lineA(start.x, start.z);
+	JGeometry::TVec2<f32> lineB(end.x, end.z);
 
-	int minGridZ = (int)((minZi + mGridExtentY) * (1.0f / 1024));
-	int minGridX = (int)((minXi + mGridExtentX) * (1.0f / 1024));
-	int maxGridX = (int)((maxXi + mGridExtentX) * (1.0f / 1024));
-	int maxGridZ = (int)((maxZi + mGridExtentY) * (1.0f / 1024));
+	JGeometry::TVec2<int> minGrid((int)((minXi + mGridExtentX) * (1.0f / 1024)),
+	                              (int)((minZi + mGridExtentY) * (1.0f / 1024)));
+	JGeometry::TVec2<int> maxGrid((int)((maxXi + mGridExtentX) * (1.0f / 1024)),
+	                              (int)((maxZi + mGridExtentY) * (1.0f / 1024)));
 
-	for (int gridZ = minGridZ; gridZ <= maxGridZ; ++gridZ) {
-		for (int gridX = minGridX; gridX <= maxGridX; ++gridX) {
-			if (gridX == minGridX && gridZ == minGridZ) {
+	for (int gridZ = minGrid.y; gridZ <= maxGrid.y; ++gridZ) {
+		for (int gridX = minGrid.x; gridX <= maxGrid.x; ++gridX) {
+			if (gridX == minGrid.x && gridZ == minGrid.y) {
 			} else {
-				// Still 71%, and the residual is understood - it is not the
-				// `(s32)(z0i - mGridExtentY)` arithmetic itself. The ROM keeps
-				// all four corners in 0x3c0..0x3df (TVec2<f32>, `stfs` pairs)
-				// and builds them with 8 separate `fctiwz`, reloading
-				// mGridExtentX/Y from `this` before every pair (0x80183CC0,
-				// 0x80183CD8, 0x80183D48, 0x80183DA0, 0x80183DF8). We emit the
-				// same 8 `fctiwz` but hoist the two extent loads out of the
-				// loop, so 4 loads and 4 stores are missing and the frame comes
-				// out 0x558 instead of 0x510 (ROM local area 0x280..0x48f, ours
-				// 0x274..0x4df). Making MWCC distrust the hoisted `this->`
-				// loads - i.e. forcing a reload between the corner expressions -
-				// is what would close this; no arithmetic change will.
 				f32 x0i = gridX * 1024.0f;
 				f32 z0i = gridZ * 1024.0f;
 				f32 x1i = (gridX + 1) * 1024.0f;
 				f32 z1i = (gridZ + 1) * 1024.0f;
 
-				JGeometry::TVec2<f32> p00((s32)(x0i - mGridExtentX),
-				                          (s32)(z0i - mGridExtentY));
-				JGeometry::TVec2<f32> p10((s32)(x1i - mGridExtentX),
-				                          (s32)(z0i - mGridExtentY));
-				JGeometry::TVec2<f32> p01((s32)(x0i - mGridExtentX),
-				                          (s32)(z1i - mGridExtentY));
-				JGeometry::TVec2<f32> p11((s32)(x1i - mGridExtentX),
-				                          (s32)(z1i - mGridExtentY));
+				JGeometry::TVec2<f32> corner[4];
+				corner[0].set((s32)(x0i - mGridExtentX), (s32)(z0i - mGridExtentY));
+				corner[1].set((s32)(x1i - mGridExtentX), (s32)(z0i - mGridExtentY));
+				corner[2].set((s32)(x0i - mGridExtentX), (s32)(z1i - mGridExtentY));
+				corner[3].set((s32)(x1i - mGridExtentX), (s32)(z1i - mGridExtentY));
 
-				JGeometry::TVec2<f32> lineA(start.x, start.z);
-				JGeometry::TVec2<f32> lineB(end.x, end.z);
 
-				if (!LineInLineXZ(lineA, lineB, p10, p00)
-				    && !LineInLineXZ(lineA, lineB, p01, p00)
-				    && !LineInLineXZ(lineA, lineB, p11, p01)
-				    && !LineInLineXZ(lineA, lineB, p10, p11))
+				if (!LineInLineXZ(lineA, lineB, corner[0], corner[1])
+				    && !LineInLineXZ(lineA, lineB, corner[0], corner[2])
+				    && !LineInLineXZ(lineA, lineB, corner[2], corner[3])
+				    && !LineInLineXZ(lineA, lineB, corner[3], corner[1]))
 					continue;
 			}
 

@@ -12,7 +12,30 @@ public:
 	template <typename U> TVec2(U x_, U y_) { set(x_, y_); }
 
 	// NOTE: Present in TP, presumably to force use of stfs/lfs instead of
-	// stw/lwz, but it seems like SMS didn't have them yet?
+	// stw/lwz. SMS does not have the assignment operator, and this was
+	// measured rather than assumed: std::__copy<TCameraMapTool>
+	// (System/MarNameRefGen.cpp) copies the class's 0x18 field with a *paired*
+	// lwz/lwz/stw/stw. Declaring an operator= takes that function from exact
+	// to 88.3%, and spelling the field out as two f32 members does the same,
+	// because MWCC copies scalar float members with lfs/stfs.
+	//
+	// The 0x18 field turned out not to be a TVec2 at all: it is an f32[2].
+	// TCameraMapTool's implicit copy constructor word-copies it while
+	// copying the TVec3 above it through TVec3's user copy constructor, and
+	// MWCC block-copies an *array* member but recurses to lfs/stfs through a
+	// class-type member that has no user copy constructor. Giving TVec2 a
+	// word-copying copy constructor reproduces that one function too, but it
+	// takes TMapCollisionData::intersectLine 71.4 -> 57.3 and pushes the
+	// map-exact UNUSED LineInLineXZ from 0x1bc to 0x20c, so TVec2 keeps
+	// neither a copy constructor nor an operator=.
+	//
+	// Enabling operator= does gain TSelectShineManager::initData 97.3 -> 98.0
+	// and ::perform 79.6 -> 80.3, and getAngle's UNUSED body only reaches the
+	// map's 0x88 with float copies -- but against the above that means
+	// getAngle reaches its lfs/stfs some other way (a component-wise sub()
+	// against a temporary rather than `toCenter = toCenter - ...`), not
+	// through operator=. The copy constructor on its own changes nothing
+	// anywhere, so it stays out too.
 
 	// TVec2(const TVec2& other)
 	// {
@@ -102,6 +125,12 @@ public:
 		y *= scale;
 	}
 
+	void scale(f32 scale, const TVec2& b)
+	{
+		x = b.x * scale;
+		y = b.y * scale;
+	}
+
 	// fabricated
 	void rotate(f32 angle)
 	{
@@ -133,14 +162,14 @@ public:
 
 	TVec2 operator*(T scalar) const { return TVec2(x * scalar, y * scalar); }
 
-	TVec2 operator+(const TVec2& other) const
+	const TVec2& operator+(const TVec2& other) const
 	{
 		TVec2 result = *this;
 		result += other;
 		return result;
 	}
 
-	TVec2 operator-(const TVec2& other) const
+	const TVec2& operator-(const TVec2& other) const
 	{
 		TVec2 result = *this;
 		result -= other;
@@ -169,20 +198,27 @@ public:
 
 	// === normalize stuff lifted from JGVec3.hpp ===
 
-	// fabricated
-	void setLength(f32 length)
+	// The two-argument forwarder is not cosmetic: it is the inline level that
+	// puts TVec2::dot at depth five inside TBathtubPeach::goTo, so MWCC emits
+	// the weak dot__Q29JGeometry8TVec2<f>CFRCQ29JGeometry8TVec2<f> the map
+	// lists for BathtubPeach.cpp instead of expanding it. TVec3 has the same
+	// pair in JGVec3.hpp.
+	void setLength(f32 length) { setLength(*this, length); }
+
+	void normalize() { setLength(*this, TUtil<f32>::one()); }
+
+	void normalize(const TVec2& other) { setLength(other, TUtil<f32>::one()); }
+
+	void setLength(const TVec2& v, f32 length)
 	{
-		f32 lsq = squared();
+		f32 lsq = v.squared();
 		if (lsq <= TUtil<f32>::epsilon()) {
 			zero();
 			return;
 		}
 
-		scale(length * JGeometry::TUtil<f32>::inv_sqrt(lsq));
+		scale(length * JGeometry::TUtil<f32>::inv_sqrt(lsq), v);
 	}
-
-	// fabricated
-	void normalize() { setLength(1.0f); }
 
 	T x;
 	T y;

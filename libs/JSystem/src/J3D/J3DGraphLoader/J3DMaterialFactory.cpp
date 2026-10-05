@@ -16,7 +16,7 @@ J3DMaterialFactory::J3DMaterialFactory(const J3DMaterialBlock& block)
 	mpMaterialID = JSUConvertOffsetToPtr<u16>(&block, block.mpMaterialID);
 
 	if (block.mpIndInitData != nullptr
-	    && ((u32)block.mpIndInitData - (u32)block.mpNameTable) > 4)
+	    && ((u32)(void*)block.mpIndInitData - (u32)(void*)block.mpNameTable) > 4)
 		mpIndInitData = JSUConvertOffsetToPtr<J3DIndInitData>(
 		    &block, block.mpIndInitData);
 	else
@@ -255,6 +255,11 @@ J3DGXColor J3DMaterialFactory::newAmbColor(int idx, int stage) const
 		return dflt;
 }
 
+// TODO: `newLight__18J3DMaterialFactoryCFii` (UNUSED, 0x94) belongs here,
+// between `newAmbColor` and `newTexGenNum`. It is still MISSING from this TU --
+// 37 instructions built from `mpLightInfo` and the init data's light index, in
+// the shape of `newAmbColor`/`newColorChan`. Dead-stripped, so it does not
+// affect the link, but `validate-symbol-order.py` fails on it.
 u32 J3DMaterialFactory::newTexGenNum(int idx) const
 {
 	J3DMaterialInitData* initData = &mpMaterialInitData[mpMaterialID[idx]];
@@ -419,6 +424,14 @@ J3DIndTexCoordScale J3DMaterialFactory::newIndTexCoordScale(int idx,
 		return dflt;
 }
 
+// UNUSED (map size 0x1c). The `new*` family all resolve the init data with
+// this expression; retail kept an out-of-line copy here, between
+// `newIndTexCoordScale` and `newFog`.
+J3DMaterialInitData* J3DMaterialFactory::getMaterialInitData(u16 idx) const
+{
+	return &mpMaterialInitData[getMaterialID(idx)];
+}
+
 J3DFog* J3DMaterialFactory::newFog(int idx) const
 {
 	J3DFog* ret = nullptr;
@@ -481,12 +494,32 @@ u8 J3DMaterialFactory::newDither(int idx) const
 		return 0xFF;
 }
 
+// TODO: parked TU-local lever. The 8 bytes of low region `newNBTScale` needs
+// over the plain sibling spelling are one binding expansion on the **u16**
+// material-id read (header round 23's rule), and retail almost certainly spelt
+// it by binding inside `getMaterialID` itself:
+//
+//   u16 getMaterialID(int idx) const { u16 id = mpMaterialID[idx]; return id; }
+//
+// That form makes this function byte-exact with the plain
+// `&mpMaterialInitData[getMaterialID(idx)]` body, but `J3DMaterialFactory.hpp`
+// is shared: it drops `J3DModelLoader_v26::readMaterial` to 99.9% and
+// `readMaterialTable` to 99.8%, both linked today. So the binding is parked
+// here instead, where it costs the same +8. Promote it into the header once
+// those two `J3DModelLoader` functions are understood.
+static inline u16 J3DMaterialFactoryMaterialID(const J3DMaterialFactory* factory,
+                                               int idx)
+{
+	u16 id = factory->getMaterialID(idx);
+	return id;
+}
+
 J3DNBTScale J3DMaterialFactory::newNBTScale(int idx) const
 {
 	J3DNBTScale dflt;
 
-
-	J3DMaterialInitData* initData = &mpMaterialInitData[mpMaterialID[idx]];
+	J3DMaterialInitData* initData
+	    = &mpMaterialInitData[J3DMaterialFactoryMaterialID(this, idx)];
 
 	if (initData->mNBTScaleIdx != 0xFFFF)
 		return J3DNBTScale(mpNBTScaleInfo[initData->mNBTScaleIdx]);

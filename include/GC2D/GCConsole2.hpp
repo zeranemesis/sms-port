@@ -24,6 +24,18 @@ class TBathtub;
 class TBossEel;
 class TConsoleStr;
 
+// Balloon message ids passed to TGCConsole2::startAppearBalloon(). The ids
+// below 0x40 index the shared balloon table; the 0xE#### ones are a separate
+// group. Only the ids a caller's context pins down are named.
+// fabricated: the names come from the functions that raise each message in
+// tinkoopa.cpp, not from anything in the binary.
+enum EnumBalloonMessage {
+	BALLOON_MSG_TINKOOPA_KILLER_APPROACHING = 0x9,
+	BALLOON_MSG_TINKOOPA_LAP                = 0xA,
+	BALLOON_MSG_TINKOOPA_FIRST_FLAME        = 0xB,
+	BALLOON_MSG_TINKOOPA_PARTS_HIT          = 0x24,
+};
+
 class TGCConsole2 : public JDrama::TViewObj {
 public:
 	TGCConsole2(const char* name = "<TGCConsole2>");
@@ -37,13 +49,10 @@ public:
 	void startDisappearTank();
 	void startAppearCoin();
 	void startDisappearCoin();
-	void countShine();
-	void countBlueCoin();
-	u32* checkDolpic8();
 	void startInsertLife(int);
 	void resetLife(int);
 	bool startAppearLife(int);
-	void startDisappearLife(int);
+	bool startDisappearLife(int);
 	void startDownLeftBot();
 	void startUpLeftBot();
 	void startAppearTelop(bool);
@@ -64,6 +73,9 @@ public:
 	void startDisappearMario();
 	void startAppearMario(bool);
 	void processMoveNozzle();
+	u32* checkDolpic8();
+	void countShine();
+	void countBlueCoin();
 	void changeNum(TBlendPane*, int, int);
 	void setTimer(s32);
 	void startMoveTimer(int);
@@ -100,15 +112,21 @@ public:
 	static JUTPoint cCoinBotPoint;
 
 public:
+	// fabricated: header round 20 accessor candidates
+	TExPane* getUnk140() { return unk140; }
+	TExPane* getUnk160() { return unk160; }
+	s16 getUnk26A() const { return unk26A; }
+	s16 getUnk3CC() const { return unk3CC; }
+
 	/* 0x10 */ int unk10;
 	/* 0x14 */ u32 unk14;
 	/* 0x18 */ int unk18;
 	/* 0x1C */ s16 unk1C;
 	/* 0x20 */ s32 unk20;
 	/* 0x24 */ s32 unk24;
-	/* 0x28 */ u32 unk28;
-	/* 0x2C */ u32 unk2C;
-	/* 0x30 */ u32 unk30;
+	/* 0x28 */ s32 unk28;
+	/* 0x2C */ s32 unk2C;
+	/* 0x30 */ s32 unk30;
 	/* 0x34 */ u8 unk34;
 	/* 0x35 */ u8 unk35;
 	/* 0x36 */ u8 unk36;
@@ -144,15 +162,15 @@ public:
 	/* 0x59 */ u8 unk59;
 	/* 0x5A */ u8 unk5A;
 	/* 0x5C */ u32 unk5C;
-	/* 0x60 */ u8 unk60;
+	/* 0x60 */ s8 unk60;
 	/* 0x64 */ u32 unk64;
-	/* 0x68 */ u8 unk68;
+	/* 0x68 */ s8 unk68;
 	/* 0x6C */ s32 unk6C;
 	/* 0x70 */ u16 unk70;
-	/* 0x72 */ u8 unk72;
+	/* 0x72 */ s8 unk72;
 	/* 0x73 */ u8 unk73;
 	/* 0x74 */ u16 unk74;
-	/* 0x76 */ u8 unk76;
+	/* 0x76 */ s8 unk76;
 	/* 0x77 */ u8 unk77;
 	/* 0x78 */ u16 unk78;
 	/* 0x7A */ char unk7A[2];
@@ -160,7 +178,7 @@ public:
 	/* 0x80 */ u32 unk80;
 	/* 0x84 */ u16 unk84;
 	/* 0x86 */ u16 unk86;
-	/* 0x88 */ u8 unk88;
+	/* 0x88 */ s8 unk88;
 	/* 0x8A */ u16 unk8A;
 	/* 0x8C */ int unk8C;
 	/* 0x90 */ THelpActor** unk90;
@@ -230,7 +248,7 @@ public:
 	/* 0x2F8 */ TExPane* unk2F8;
 	/* 0x2FC */ JUTRect unk2FC;
 	/* 0x30C */ u8 unk30C;
-	/* 0x310 */ u32 unk310;
+	/* 0x310 */ int unk310;
 	/* 0x314 */ J2DPane* unk314[4];
 	/* 0x324 */ J2DPane* unk324;
 	/* 0x328 */ J2DPicture* unk328;
@@ -243,15 +261,19 @@ public:
 	/* 0x398 */ TBoundPane* unk398;
 	/* 0x39C */ TBoundPane* unk39C[3];
 	/* 0x3A8 */ TExPane* unk3A8;
-#ifdef VERSION_GMSP01
-	/* 0x3AC */ u8 unk3AC[2];
-	/* 0x3AE */ u16 mMarioVisibleTimer;
-	/* 0x3B0 */ u8 mMarioAppearFlag;
-	/* 0x3B1 */ u8 unk3B1[3];
+	/* 0x3AC */ u8 unk3AC;
+#if defined(VERSION_GMSE01)
+	// The US build inserts a halfword and a byte here, which pushes the
+	// "appear animation belongs to the camera demo" flag from 0x3AD to 0x3B0
+	// and every later member by four bytes.
+	// TODO: recover what the US halfword at 0x3AE and byte at 0x3AD hold.
+	/* 0x3AD */ u8 unk3AD_US;
+	/* 0x3AE */ u16 unk3AE_US;
+	/* 0x3B0 */ u8 mAppearFromDemo;
+	// Following names/offset comments retain the Japanese layout; US is +4.
 #else
-	/* 0x3AC */ u8 unk3AC[1];
-	/* 0x3AD */ u8 mMarioAppearFlag;
-	/* 0x3AE */ u16 mMarioVisibleTimer;
+	/* 0x3AD */ u8 mAppearFromDemo;
+	/* 0x3AE */ u8 unk3AE[2];
 #endif
 	/* 0x3B0 */ J2DWindow* unk3B0;
 	/* 0x3B4 */ J2DTextBox* unk3B4;
@@ -315,8 +337,8 @@ public:
 	/* 0x554 */ s32 mTelopTextWidth;
 	/* 0x558 */ u8 unk558;
 	/* 0x55C */ u32 unk55C;
-	/* 0x560 */ u16 unk560;
-	/* 0x562 */ u16 unk562;
+	/* 0x560 */ s16 unk560;
+	/* 0x562 */ s16 unk562;
 	/* 0x564 */ f32 unk564;
 	/* 0x568 */ f32 unk568;
 	/* 0x56C */ u8 unk56C;

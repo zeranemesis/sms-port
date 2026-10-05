@@ -16,6 +16,7 @@ class J2DPane;
  */
 class TExPane {
 public:
+	TExPane(JUTTexture*, GXCullMode);
 	TExPane(J2DScreen*, u32);
 
 	/// Performs one frame of the animations.
@@ -59,19 +60,9 @@ public:
 	}
 
 	/// Initiates a pane's alpha animation.
-	/// The clamp is written out here: going through a separate clamp helper
-	/// adds an inline level that breaks the inlining pattern in Guide.cpp.
-	/// TODO: an `if/else` for the lower bound takes the out-of-line copy in
-	/// Guide.cpp from 96.8% to 99.7%, but shifts registers in
-	/// TOptionRumbleUnit/TOptionSoundUnit::setState, so the true shape is
-	/// still unknown.
 	void setPaneAlpha(s32 time, s16 target_alpha, s16 initial_alpha)
 	{
-		s16 a;
-		if (initial_alpha < 0)
-			a = 0;
-		else
-			a = initial_alpha;
+		s16 a = initial_alpha < 0 ? s16(0) : initial_alpha;
 		if (a > 255)
 			a = 255;
 		mPane->setAlpha(a);
@@ -82,24 +73,27 @@ public:
 		mAlphaAnimPending = true;
 	}
 
-	// fabricated and incorrect
+	// Fabricated name: the map has no setCenteredSize, so it was inlined at
+	// every site. The body is right, though -- ConsoleStr::processReady
+	// matches exactly with the offsets as written here.
 	void setCenteredSize(s32 time, s32 target_w, s32 target_h, s32 initial_w,
 	                     s32 initial_h)
 	{
 		setPaneSize(time, target_w, target_h, initial_w, initial_h);
-		setPaneOffset(
-		    time, (mInitialBounds.x2 - mInitialBounds.x1 - target_w) * 0.5f,
-		    (mInitialBounds.y2 - mInitialBounds.y1 - target_h) * 0.5f,
-		    (mInitialBounds.x2 - mInitialBounds.x1 - initial_w) * 0.5f,
-		    (mInitialBounds.y2 - mInitialBounds.y1 - initial_h) * 0.5f);
+		s32 initH = mInitialBounds.getHeight();
+		s32 initW = mInitialBounds.getWidth();
+		setPaneOffset(time, (initW - target_w) * 0.5f,
+		              (initH - target_h) * 0.5f, (initW - initial_w) * 0.5f,
+		              (initH - initial_h) * 0.5f);
 	}
 
-	// fabricated
+	// Fabricated name. CardSave/CardLoad initialize the size from the
+	// offset interpolator here, rather than the size interpolator.
 	void updateCenteredSize(s32 time, s32 target_w, s32 target_h)
 	{
 		setCenteredSize(time, target_w, target_h,
-		                mSizeInterpolator.getCurrentX(),
-		                mSizeInterpolator.getCurrentY());
+		                mOffsetInterpolator.getCurrentX(),
+		                mOffsetInterpolator.getCurrentY());
 	}
 
 	J2DPane* getPane() const { return mPane; }

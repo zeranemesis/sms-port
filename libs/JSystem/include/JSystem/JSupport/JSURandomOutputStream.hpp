@@ -7,9 +7,13 @@ class JSURandomOutputStream : public JSUOutputStream {
 public:
 	virtual int getLength() const   = 0;
 	virtual int getPosition() const = 0;
+	u32 poke(void* buf, s32 len);
 	virtual void seek(s32 offset, JSUStreamSeekFrom from);
 	virtual int getAvailable() const { return getLength() - getPosition(); }
 	virtual int seekPos(s32 offset, JSUStreamSeekFrom from) = 0;
+
+	// See JSURandomInputStream::isDrained.
+	bool isDrained() const { return getLength() - getPosition() == 0; }
 };
 
 #endif

@@ -295,13 +295,22 @@ BOOL CLBChaseSpecialDecrease(f32* value, f32 desired, f32 ratio, f32 speed);
 void CLBCrossToPolar(const Vec& origin, const Vec& in, f32* out_radius,
                      s16* pitch, s16* yaw);
 
-inline void CLBCrossToPolar(const Vec& origin, const Vec& in, s16* out_pitch,
-                            s16* out_yaw)
+// Fabricated name for a measured level: the ROM calls MsSqrtf out of line
+// from every expansion of the polar conversion below (UNUSED
+// CPolarSubCamera::calcExternalData_ is 0x13c only with the call, and
+// calcPosAndAt_'s wall-check site calls it too), while MarioMove expands the
+// same MsSqrtf one level shallower.
+inline f32 CLBDistXZ(const Vec& origin, const Vec& in)
 {
 	f32 dx = in.x - origin.x;
 	f32 dz = in.z - origin.z;
+	return MsSqrtf(dx * dx + dz * dz);
+}
 
-	*out_pitch = matan(MsSqrtf(dx * dx + dz * dz), in.y - origin.y);
+inline void CLBCrossToPolar(const Vec& origin, const Vec& in, s16* out_pitch,
+                            s16* out_yaw)
+{
+	*out_pitch = matan(CLBDistXZ(origin, in), in.y - origin.y);
 	*out_yaw   = matan(in.z - origin.z, in.x - origin.x);
 }
 
@@ -335,37 +344,49 @@ void CLBRotatePosAndUp(s16, s16, const JGeometry::TVec3<f32>&,
                        const JGeometry::TVec3<f32>&, JGeometry::TVec3<f32>*,
                        JGeometry::TVec3<f32>*);
 
+// The last addressable pixel index of the game render area.  Both are
+// parameterless binders over the real out-of-line Resolution.cpp accessors,
+// and that shape is what pays CLBScreenFPosToSPos's 8 bytes of dead pool: a
+// parameterless binder is +8 in the library price ladder (batch 170) and this
+// one is +4 per expansion, so the two of them land retail's frame exactly.
+// Returning the raw size and subtracting 1 at the call site instead keeps the
+// frame but reorders the 0.5f literal load against the `1.0f + x` add.
+static inline int CLBGameRenderWidthMax()
+{
+	extern u16 SMSGetGameRenderWidth();
+	u16 width = SMSGetGameRenderWidth();
+	return width - 1;
+}
+
+static inline int CLBGameRenderHeightMax()
+{
+	extern u16 SMSGetGameRenderHeight();
+	u16 height = SMSGetGameRenderHeight();
+	return height - 1;
+}
+
 inline void CLBScreenFPosToSPos(JGeometry::TVec2<s16>* out,
                                 const JGeometry::TVec2<f32>& in)
 {
-	// The declarations must return u16, not s16: the ROM zero-extends the
-	// result (`clrlwi r3, r3, 16`) before the `- 1`, and `extsh` for a signed
-	// return is what a wrong prototype produces. (The real prototypes live in
-	// include/System/Resolution.hpp, which cannot be included here.)
-	extern u16 SMSGetGameRenderHeight();
-	extern u16 SMSGetGameRenderWidth();
-	// Tiny size mismatch: every instruction of the out-of-line copy matches,
-	// but the ROM frame is 0x30 and ours is 0x28 -- the target reserves two more
-	// dead 4-byte locals below the two int->double words at 0x18/0x1c. Tried and
-	// rejected: named f32/u16/s16 intermediates (no frame change or wrong
-	// instructions). Needs 2 more stack objects of some kind.
-
+	// The Resolution.cpp externs are `u16`, as System/Resolution.hpp
+	// declares them: retail zero-extends the result (`clrlwi r3, r3, 16`)
+	// before the `- 1` and the signed int-to-float conversion, where an
+	// `s16` return gives `extsh`.  Resolution.hpp itself cannot be included
+	// here because of troubles with MapDraw.cpp, so the declarations live in
+	// the two binders above.
 	f32 x = in.x;
-	// TODO: definitely more inlines but I couldn't get it to work out...
 	if (x < -1.0f || 1.0f < x)
 		out->x = -1;
-	else {
-		s32 w = SMSGetGameRenderWidth() - 1;
-		out->x = CLBRoundf<s16>((1.0f + x) * (0.5f * (f32)w));
-	}
+	else
+		out->x = CLBRoundf<s16>(
+		    (1.0f + x) * (0.5f * (f32)CLBGameRenderWidthMax()));
 
 	f32 y = in.y;
 	if (y < -1.0f || 1.0f < y)
 		out->y = -1;
-	else {
-		s32 h = SMSGetGameRenderHeight() - 1;
-		out->y = CLBRoundf<s16>((y - 1.0f) * (-0.5f * (f32)h));
-	}
+	else
+		out->y = CLBRoundf<s16>(
+		    (y - 1.0f) * (-0.5f * (f32)CLBGameRenderHeightMax()));
 }
 
 #endif

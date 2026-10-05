@@ -77,7 +77,10 @@ protected:
 
 class J3DCallBackPacket : public J3DPacket {
 public:
-	typedef void (*CallbackT)(J3DCallBackPacket*, int);
+	// The retail callback `ShapePacketCallBackFunc` (src/MarioUtil/PacketUtil.cpp)
+	// ends in `li r3, 1`, so the callback returns a value; J3DNode.hpp's sibling
+	// `J3DNodeCallBack` typedef spells that return type `BOOL`.
+	typedef BOOL (*CallbackT)(J3DCallBackPacket*, int);
 
 	J3DCallBackPacket() { mpCallBack = nullptr; }
 
@@ -138,10 +141,9 @@ class J3DMatPacket : public J3DDrawPacket {
 public:
 	J3DMatPacket();
 
-	virtual bool isSame(J3DMatPacket* other) const
-	{
-		return unk3C == other->unk3C && (unk3C >> DIFF_BIT) == 0;
-	}
+	// Defined inline in J3DPacket.cpp only: the map has it weak there and in
+	// no other unit, and SDLModel.cpp's vtable references it without a copy.
+	virtual bool isSame(J3DMatPacket* other) const;
 	virtual bool entry(J3DDrawBuffer* buffer)
 	{
 		J3DDrawBuffer::sortFunc func
@@ -171,15 +173,16 @@ public:
 	}
 
 	bool isChanged() const { return unk3C & DIFF_FLAG; }
-	uintptr_t getMaterialID() const { return unk3C; }
-	void setMaterialID(uintptr_t id) { unk3C = id; }
+	u32 getMaterialID() const { return unk3C; }
+	void setMaterialID(u32 id) { unk3C = id; }
 	void setMaterialAnmID(J3DMaterialAnm* materialAnm)
 	{
 		unk44 = (uintptr_t)materialAnm;
 	}
 
 	enum {
-		DIFF_BIT  = (sizeof(uintptr_t) * CHAR_BIT - 1),
+		// the top bit of the 32-bit material ID word (J3DMaterial::DIFF_FLAG)
+		DIFF_BIT  = 31,
 		DIFF_FLAG = 1 << DIFF_BIT,
 	};
 
@@ -189,7 +192,7 @@ private:
 private:
 	/* 0x34 */ J3DShapePacket* mpShapePacket;
 	/* 0x38 */ J3DMaterial* mpMaterial;
-	/* 0x3C */ uintptr_t unk3C;
+	/* 0x3C */ u32 unk3C;
 	/* 0x40 */ J3DTexture* mTexture;
 	/* 0x44 */ uintptr_t unk44;
 };

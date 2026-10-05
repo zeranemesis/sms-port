@@ -20,9 +20,10 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 
-int TPollutionLayer::mEffectTime   = 15;
+// .sdata order follows marioUS.MAP.
 f32 TPollutionLayerWave::mInterval = 300.0f;
 u8 TPollutionLayerWave::mAlpha     = 0xE6;
+int TPollutionLayer::mEffectTime   = 15;
 
 void TPollutionLayerWave::initGX() const
 {
@@ -63,11 +64,29 @@ void TPollutionLayerWave::initGX() const
 	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
 }
 
+// Frame levels for TPollutionLayerWave::draw (cc37): the pure 0x38 pool gap
+// is priced by a TVec2 temporary into each texture-coordinate helper and one
+// direct-return plus one binding level over the two wave-height reads. Many
+// combinations of these fit a frame-only gap (16 exact arrangements measured,
+// none fully symmetric), so the choice between them is weakly evidenced.
+static inline void PollutionLayerWaveTexCoord(const JGeometry::TVec2<f32>& st)
+{
+	GXTexCoord2f32(st.x, st.y);
+}
+
+static inline f32 PollutionLayerWaveHeight(f32 x, f32 z)
+{
+	return gpMapObjWave->getWaveHeight(x, z);
+}
+
+static inline f32 PollutionLayerWaveHeightBound(f32 x, f32 z)
+{
+	f32 height = gpMapObjWave->getWaveHeight(x, z);
+	return height;
+}
+
 void TPollutionLayerWave::draw() const
 {
-
-	
-	
 	u16 xCount   = (u16)((mMaxX - mMinX) / mInterval);
 	f32 invXSize = 1.0f / (mMaxX - mMinX);
 	f32 invZSize = 1.0f / (mMaxZ - mMinZ);
@@ -77,14 +96,17 @@ void TPollutionLayerWave::draw() const
 		for (f32 x = mMinX; x < mMaxX - mInterval; x += mInterval) {
 			f32 zNext = z + mInterval;
 
-			f32 h1 = gpMapObjWave->getWaveHeight(x, z);
+			f32 h1 = PollutionLayerWaveHeight(x, z);
 			GXPosition3f32(x, h1 - 10.0f, z);
-			GXTexCoord2f32(invXSize * (x - mMinX), invZSize * (z - mMinZ));
+			PollutionLayerWaveTexCoord(JGeometry::TVec2<f32>(
+			    invXSize * (x - mMinX), invZSize * (z - mMinZ)));
 
-			f32 h2 = gpMapObjWave->getWaveHeight(x, zNext);
+			f32 h2 = PollutionLayerWaveHeightBound(x, zNext);
 			GXPosition3f32(x, h2 - 10.0f, zNext);
-			GXTexCoord2f32(invXSize * (x - mMinX), invZSize * (zNext - mMinZ));
+			PollutionLayerWaveTexCoord(JGeometry::TVec2<f32>(
+			    invXSize * (x - mMinX), invZSize * (zNext - mMinZ)));
 		}
+		GXEnd();
 	}
 }
 
@@ -103,13 +125,19 @@ ResTIMG* TPollutionLayerWave::getTexResource(const char* name)
 	return (ResTIMG*)JKRFileLoader::getGlbResource(buf);
 }
 
+// A direct-return fork over the parameter, worth +8 of frame in
+// TPollutionLayerWave::initJointModel; binding it to a named local first is
+// +0x10 and overshoots.
+static inline TJointModelManager*
+PollutionLayerWaveManager(TJointModelManager* mgr)
+{
+	return mgr;
+}
+
 void TPollutionLayerWave::initJointModel(TJointModelManager* mgr,
                                          const char* name, MActorAnmData*)
 {
-
-	
-	
-	mManager = mgr;
+	mManager = PollutionLayerWaveManager(mgr);
 
 	initPollutionTex(name);
 }
@@ -158,6 +186,22 @@ TPollutionLayerWallBase::TPollutionLayerWallBase()
 {
 }
 
+// TODO: 99.3%. Only the first two loads are swapped: retail reads mMinX before
+// mtx[0][3]. Refuted: dropping the x/z locals for raw mtx reads (88.9%, an extra
+// `addi r5, r4, 0x20`); the compare forms are already retail's.
+// Also inert (cc37): getMinX() or a TU-local fork/binder on the first
+// operand, a named minX before or after x, z declared before x, split
+// declarations, reading x/z through getBaseTRMtx() per site; `mMinX > x`
+// and a TU-local predicate for the whole test regress.
+// c-m29: an unnamed `model->getBaseTRMtx()[0][3]` at both x sites gives
+// retail's mMinX-then-x order but loads z late (93.0); named z is always early.
+// TODO: 99.3%, one load-order pair: retail loads mMinX (0x38(r3)) before the
+// matrix x (0x2c(r4)); ours loads x first. c-k7 debugger read: the
+// pre-regalloc schedule puts `mr r33,r4; addi r34,r33,0x20` ahead of the x
+// load (getBaseTRMtx() returns the embedded matrix's address), so x's chain is
+// one instruction longer than mMinX's and wins the tie. Retail's x has no
+// longer chain than mMinX. Inert (6): x unnamed, z named first, no named
+// locals, `mMinX > x` operand order, getMinX()/getMinZ(), a named minX.
 void TPollutionLayer::stampModel(J3DModel* model)
 {
 	MtxPtr mtx = model->getBaseTRMtx();
@@ -168,15 +212,34 @@ void TPollutionLayer::stampModel(J3DModel* model)
 	gpPollution->unk70.pushModelStampTask(mIndexInParent & 0xff, model);
 }
 
+// Pragma residue (sweep 360): protects TPollutionLayer::cleaned (99.91 ->
+// 97.9). The body is *empty* and the map lists it (func,global) at 4 bytes,
+// yet retail bl's it from cleaned in the same TU -- a zero-statement body the
+// compiler must not expand, which no statement count can explain. Measured and
+// rejected: an explicitly qualified call (this->TPollutionLayer::appearItem)
+// does not suppress the expansion.
+// c-k19: the map lists `UNUSED sCounter$2393` and `UNUSED init$2394` in
+// PollutionLayer.cpp's .sbss, a guarded function-local static parsed 28
+// names before cleaned's first static (effect_counter$2421). A local
+// `static int` alone is 3 names before the next function here, so retail's
+// appearItem most likely held a counter-driven item spawn of roughly twenty
+// parse-time names whose code the optimiser removed after the inliner had
+// already counted it: over budget, so called, then emptied to a `blr`, with
+// the static left unreferenced. Scratch probes with the game flags confirm
+// the mechanism (`int on = 0; if (on) { static int sCounter = 0; ... }`
+// compiles to `blr` and leaves the static unreferenced); the dead condition
+// itself is not recoverable, so the pragma stays.
 #pragma dont_inline on
 void TPollutionLayer::appearItem(f32, f32, f32) { }
 #pragma dont_inline off
 
+// A direct-return conversion level over each offset-table read: +0x18 of
+// pool for the pair in cleaned (the product stays in the caller, so fp_contract
+// still fuses the `+=`; a fork returning the product unfuses it).
+static inline f32 PollutionLayerOffset(int offset) { return offset; }
+
 void TPollutionLayer::cleaned(f32 x, f32 y, f32 z, f32 s)
 {
-
-	
-	
 	static int effect_counter = 1;
 	effect_counter += 1;
 
@@ -186,7 +249,7 @@ void TPollutionLayer::cleaned(f32 x, f32 y, f32 z, f32 s)
 		static JGeometry::TVec3<f32> pos[10];
 		static int now_pos_no = 0;
 
-		pos[now_pos_no].set(x, y, z);
+		pos[now_pos_no].set(JGeometry::TVec3<f32>(x, y, z));
 
 		static int x_offset_table[] = { -1, 0, 2, 4, 1, -1, -2, 0, 3, -3 };
 		static int z_offset_table[] = { -1, -1, 0, 2, -2, -3, 0, 3, 0, 1 };
@@ -194,8 +257,8 @@ void TPollutionLayer::cleaned(f32 x, f32 y, f32 z, f32 s)
 		static int counter_x = 0;
 		static int counter_z = 0;
 
-		pos[now_pos_no].x += 32.0f * (f32)x_offset_table[counter_x];
-		pos[now_pos_no].z += 32.0f * (f32)z_offset_table[counter_z];
+		pos[now_pos_no].x += 32.0f * PollutionLayerOffset(x_offset_table[counter_x]);
+		pos[now_pos_no].z += 32.0f * PollutionLayerOffset(z_offset_table[counter_z]);
 
 		counter_x += 1;
 		counter_z += 3;
@@ -254,15 +317,27 @@ void TPollutionLayer::stamp(u16 stamp_type, f32 x, f32 y, f32 z, f32 size)
 
 void TPollutionLayer::isProhibit(f32, f32, f32) const { }
 
+// Two frame levels over the height parameter of the f32 overload of
+// isPolluted: the direct-return fork is +8 and the binding form another +8,
+// which is the whole gap. Binding an argument of either virtual accessor call
+// instead reaches the same frame but hoists the receiver load.
+static inline f32 PollutionLayerLimit(f32 y) { return y; }
+
+static inline f32 PollutionLayerHeight(f32 y)
+{
+	f32 height = y;
+	return height;
+}
+
 bool TPollutionLayer::isPolluted(f32 x, f32 y, f32 z) const
 {
 	if (!isInArea(x, y, z))
 		return false;
-	if (getPlaneType() == 6 && y > 1.0f)
+	if (getPlaneType() == 6 && PollutionLayerLimit(y) > 1.0f)
 		return false;
 	int texS = getTexPosS(x);
 	int texT = getTexPosT(z);
-	return isPolluted(texS, texT, y);
+	return isPolluted(texS, texT, PollutionLayerHeight(y));
 }
 
 bool TPollutionLayer::isPolluted(int s, int t, f32 y) const
@@ -288,6 +363,17 @@ static inline u8 readBmpPixel(const u8* bmp, int x, int y, int w, int h)
 	return bmp[0x436 + x + w * (h - 1 - y)];
 }
 
+// TODO: 99.9%, frame 0x70 short (0x168 vs 0x1d8; the path buffer sits at
+// 0x44, retail 0xb8, so about 0x74 of pool is missing below it) plus one
+// commuted `add` in the pixel index (retail w*(h-1-y) first). Tried (cc37):
+// every operand order and grouping of the readBmpPixel index, a named row or
+// index inside it, reading the pixel inline in the caller (frame -0x10) --
+// the `add` never moves, so it is allocation-driven, not a spelling.
+// c-k19: hsearch dbg puts all 29 missing words below fullPath. The cVar1
+// test and the pixel loops moved into a `this`-taking inline level supply
+// 0x40 of them (0x168 -> 0x1a8, instructions unchanged) but number the loop
+// webs in reverse (x/y/depth r30/r29/r28 against retail's r26/r27/r30,
+// 98.3%), so retail's level, if any, sits elsewhere.
 void TPollutionLayer::initTexImage(const char* name)
 {
 	char fullPath[256];
@@ -321,7 +407,13 @@ void TPollutionLayer::initTexImage(const char* name)
 	DCStoreRange(mPollutionMap, mPos.getWidth() * mPos.getHeight());
 }
 
-void TPollutionLayer::initTex(const char*) { }
+void TPollutionLayer::initTex(const char* name)
+{
+	mPollutionImage               = getTexResource(name);
+	mPollutionImage->alphaEnabled = 2;
+
+	mPollutionMap = (u8*)mPollutionImage + mPollutionImage->imageDataOffset;
+}
 
 void TPollutionLayer::initLayerInfo(const TPollutionLayerInfo* param_1)
 {
@@ -360,15 +452,20 @@ void TPollutionLayer::initPollutionTex(const char* depth_tex_name)
 	          info->mLog2Width, info->mLog2Height);
 	unk88 = info->unk24;
 
-	mPollutionImage               = getTexResource(depth_tex_name);
-	mPollutionImage->alphaEnabled = 2;
-
-	mPollutionMap = (u8*)mPollutionImage + mPollutionImage->imageDataOffset;
+	initTex(depth_tex_name);
 	initTexImage(depth_tex_name);
 
 	if (getPollutionType() == POLLUTION_TYPE_ELECTRIC)
 		SMS_LoadParticle("/scene/map/pollution/ms_thunder_s.jpa",
 		                 MAP_POLLUTION_MS_THUNDER_S);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TPollutionLayer::initJointModel (batch 127).
+static inline int PollutionLayerChildrenNum(const TPollutionLayer* p)
+{
+	int childrenNum = p->mChildrenNum;
+	return childrenNum;
 }
 
 void TPollutionLayer::initJointModel(TJointModelManager* param_1,
@@ -388,7 +485,7 @@ void TPollutionLayer::initJointModel(TJointModelManager* param_1,
 	if (mActor->checkAnmFileExist(param_2, ANM_TYPE_BRK))
 		mActor->setBrk(param_2);
 
-	for (int i = 0; i < mChildrenNum; ++i)
+	for (int i = 0; i < PollutionLayerChildrenNum(this); ++i)
 		((TPollutionObj*)mChildren[i])->initAreaInfo(this);
 }
 

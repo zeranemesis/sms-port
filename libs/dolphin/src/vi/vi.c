@@ -124,9 +124,9 @@ static u16 taps[25]
 
 static u32 getCurrentFieldEvenOdd(void);
 
-inline static u32 getEncoderType(void) { return 1; }
+static u32 getEncoderType(void) { return 1; }
 
-inline static s32 cntlzd(u64 bit)
+static s32 cntlzd(u64 bit)
 {
 	u32 hi;
 	u32 lo;
@@ -141,7 +141,7 @@ inline static s32 cntlzd(u64 bit)
 	return __cntlzw(lo) + 32;
 }
 
-inline static int VISetRegs(void)
+static int VISetRegs(void)
 {
 	s32 regIndex;
 
@@ -210,6 +210,18 @@ static void __VIRetraceHandler(__OSInterrupt unused, OSContext* context)
 	OSWakeupThread(&retraceQueue);
 	OSClearContext(&exceptionContext);
 	OSSetCurrentContext(context);
+}
+
+VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback cb)
+{
+	BOOL enabled;
+	VIRetraceCallback oldcb;
+
+	oldcb   = PreCB;
+	enabled = OSDisableInterrupts();
+	PreCB   = cb;
+	OSRestoreInterrupts(enabled);
+	return oldcb;
 }
 
 VIRetraceCallback VISetPostRetraceCallback(VIRetraceCallback cb)
@@ -329,7 +341,7 @@ void __VIInit(VITVMode mode)
 #define CLAMP(val, min, max)                                                   \
 	((val) > (max) ? (max) : (val) < (min) ? (min) : (val))
 
-inline static void AdjustPosition(u16 acv)
+static void AdjustPosition(u16 acv)
 {
 	s32 coeff;
 	s32 frac;
@@ -357,7 +369,7 @@ inline static void AdjustPosition(u16 acv)
 	         / coeff);
 }
 
-inline static void ImportAdjustingValues(void)
+static void ImportAdjustingValues(void)
 {
 	OSSram* sram = __OSLockSram();
 
@@ -472,7 +484,7 @@ void VIWaitForRetrace(void)
 	OSRestoreInterrupts(enabled);
 }
 
-inline static void setInterruptRegs(VITiming* tm)
+static void setInterruptRegs(VITiming* tm)
 {
 	u16 hct, vct;
 	u16 borrow;
@@ -494,7 +506,7 @@ inline static void setInterruptRegs(VITiming* tm)
 	vct;
 }
 
-inline static void setPicConfig(u16 fbSizeX, VIXFBMode xfbMode, u16 panPosX,
+static void setPicConfig(u16 fbSizeX, VIXFBMode xfbMode, u16 panPosX,
                                 u16 panSizeX, u8* wordPerLine, u8* std, u8* wpl,
                                 u8* xof)
 {
@@ -506,7 +518,7 @@ inline static void setPicConfig(u16 fbSizeX, VIXFBMode xfbMode, u16 panPosX,
 	changed |= 0x8000000;
 }
 
-inline static void setBBIntervalRegs(VITiming* tm)
+static void setBBIntervalRegs(VITiming* tm)
 {
 	u16 val;
 
@@ -527,7 +539,7 @@ inline static void setBBIntervalRegs(VITiming* tm)
 	changed |= (1LL << (63 - 12));
 }
 
-inline static void setScalingRegs(u16 panSizeX, u16 dispSizeX, BOOL threeD)
+static void setScalingRegs(u16 panSizeX, u16 dispSizeX, BOOL threeD)
 {
 	u32 scale;
 
@@ -544,7 +556,7 @@ inline static void setScalingRegs(u16 panSizeX, u16 dispSizeX, BOOL threeD)
 	}
 }
 
-inline static void calcFbbs(u32 bufAddr, u16 panPosX, u16 panPosY,
+static void calcFbbs(u32 bufAddr, u16 panPosX, u16 panPosY,
                             u8 wordPerLine, VIXFBMode xfbMode, u16 dispPosY,
                             u32* tfbb, u32* bfbb)
 {
@@ -611,7 +623,7 @@ static void setFbbRegs(SomeVIStruct* HorVer, u32* tfbb, u32* bfbb, u32* rtfbb,
 	}
 }
 
-inline static void setHorizontalRegs(VITiming* tm, u16 dispPosX, u16 dispSizeX)
+static void setHorizontalRegs(VITiming* tm, u16 dispPosX, u16 dispSizeX)
 {
 	u32 hbe;
 	u32 hbs;
@@ -824,6 +836,18 @@ void VISetNextFrameBuffer(void* fb)
 	OSRestoreInterrupts(enabled);
 }
 
+void VISetNextRightFrameBuffer(void* fb)
+{
+	BOOL enabled;
+
+	enabled         = OSDisableInterrupts();
+	HorVer.rbufAddr = (u32)fb;
+	FBSet           = 1;
+	setFbbRegs(&HorVer, &HorVer.tfbb, &HorVer.bfbb, &HorVer.rtfbb,
+	           &HorVer.rbfbb);
+	OSRestoreInterrupts(enabled);
+}
+
 void VISetBlack(BOOL black)
 {
 	BOOL enabled;
@@ -840,7 +864,7 @@ void VISetBlack(BOOL black)
 
 u32 VIGetRetraceCount(void) { return retraceCount; }
 
-inline static u32 getCurrentHalfLine(void)
+static u32 getCurrentHalfLine(void)
 {
 	u32 hcount;
 	u32 vcount0;
@@ -928,4 +952,14 @@ u32 VIGetDTVStatus(void)
 	result  = GET_REG_FIELD(__VIRegs[0x37], 2, 0);
 	OSRestoreInterrupts(enabled);
 	return result & 1;
+}
+
+void __VIGetAdjustingValues(s16* x, s16* y)
+{
+	BOOL enabled;
+
+	enabled = OSDisableInterrupts();
+	*x      = displayOffsetH;
+	*y      = displayOffsetV;
+	OSRestoreInterrupts(enabled);
 }

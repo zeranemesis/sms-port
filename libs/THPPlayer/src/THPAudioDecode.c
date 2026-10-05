@@ -72,10 +72,19 @@ static void* AudioDecoder(void* arg)
 	}
 }
 
+// Every declaration sits at the top of its block (C89, as in the rest of the
+// file). The function-scope order is what ranks the callee-saved set: retail's
+// frame (r31) > &AudioDecodeThread > &ActivePlayer > readSize (r28) needs
+// `size` at function scope and `frame` declared after both readSize and size.
+// Every other order leaves frame below the two global-address temporaries
+// (89.3% or 86.3%); `remaining` at function scope as well is 99.8%, seven
+// slots off. The same rotation is open in
+// TMapObjRevivalPollution::loadAfter (src/MoveBG/MapObjPollution.cpp).
 static void* AudioDecoderForOnMemory(void* arg)
 {
-	s32 frame;
 	s32 readSize;
+	s32 size;
+	s32 frame;
 	THPReadBuffer readBuffer;
 
 	frame          = 0;
@@ -83,11 +92,13 @@ static void* AudioDecoderForOnMemory(void* arg)
 	readBuffer.ptr = (u8*)arg;
 
 	while (TRUE) {
+		s32 remaining;
+
 		readBuffer.frameNumber = frame;
 		AudioDecode(&readBuffer);
 
-		s32 remaining = (frame + ActivePlayer.initReadFrame)
-		                % ActivePlayer.header.numFrames;
+		remaining = (frame + ActivePlayer.initReadFrame)
+		            % ActivePlayer.header.numFrames;
 
 		if (remaining == ActivePlayer.header.numFrames - 1) {
 			if ((ActivePlayer.playFlag & 1)) {
@@ -97,7 +108,7 @@ static void* AudioDecoderForOnMemory(void* arg)
 				OSSuspendThread(&AudioDecodeThread);
 			}
 		} else {
-			s32 size = *(s32*)readBuffer.ptr;
+			size = *(s32*)readBuffer.ptr;
 			readBuffer.ptr += readSize;
 			readSize = size;
 		}

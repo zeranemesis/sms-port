@@ -11,6 +11,8 @@ class TSilhouette;
 
 extern TSilhouette* gpSilhouetteManager;
 
+inline TSilhouette* SMSGetSilhouetteManager() { return gpSilhouetteManager; }
+
 class TSilhouette : public JDrama::TViewObj {
 public:
 	TSilhouette(const char* name = "<TSilhouette>")

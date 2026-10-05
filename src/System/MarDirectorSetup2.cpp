@@ -19,6 +19,7 @@
 #include <GC2D/SunGlass.hpp>
 #include <THPPlayer/THPPlayer.h>
 #include <MSound/MSound.hpp>
+#include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjDolpic.hpp>
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/JKernel/JKRMemArchive.hpp>
@@ -39,66 +40,88 @@ class JPAEmitterManager;
 
 extern JPAEmitterManager* gpEmitterManager4D2;
 
+// Two-local binder over search2: 0x408 alone / 0x410 with Setup2GamePad.
+// TColor then sits 4 low of retail (pool ordering). Root/instance forks that
+// closed preEntry's same residue are inert here (every site already shares
+// one binder). One-local forms drop to 0x3d0.
+template <class T> static inline T* Setup2Search(const char* name)
+{
+	JDrama::TNameRef* ref = JDrama::TNameRefGen::search2(name);
+	T* obj                = (T*)ref;
+	return obj;
+}
+
+static inline TMarioGamePad* Setup2GamePad(TMarDirector* dir)
+{
+	TMarioGamePad* pad = dir->getGamePad();
+	return pad;
+}
+
+// The setColor TColor temporaries (0x2ec / 0x2f0, directly under graphics)
+// are compiler temporaries allocated above the inline pool, and the console's
+// cue write decides whether a dead word lands above them: `unkC = <cue>`
+// builds a TFlagT<u16> temporary that ours places after the TColor (4 dead
+// bytes under graphics, the colour 4 low), while `unkC.set(<cue>)` has none.
+// The 4 bytes retail has under the colour come from reading the map through
+// getCurrentMap() at the stage test, as the MSStage::init call below does.
+// Setup2Search + Setup2GamePad + getCurrentMap/Stage are load-bearing for the
+// exact frame and argument order; one-local binders drop the frame to 0x3d0.
+//
+// The `graphics.unk0 = 0` below is read off the target: retail's second `sth`
+// goes to graphics+0x00, not graphics+0xFE (the +0xF4 `stw -1` and +0xFC `sth
+// 0` before it are TColor's and TFlagT's default ctors, since TGraphics has
+// only an implicit one).
 void TMarDirector::setup2()
 {
-	unkBC = static_cast<TNameRefAryT<TStageEventInfo>*>(
-	    JDrama::TNameRefGen::search("イベントテーブル"));
+	unkBC = Setup2Search<TNameRefAryT<TStageEventInfo> >("イベントテーブル");
 	if (unkBC) {
-		u16 i = 0;
-		for (TStageEventInfo* it = unkBC->begin(); it != unkBC->end();
-		     ++i, ++it) {
-			TMapObjBase* obj = static_cast<TMapObjBase*>(
-			    JDrama::TNameRefGen::search(it->unk14));
+		u16 eventId = 0;
+		for (TStageEventInfo* it = unkBC->begin(); it != unkBC->end(); ++it) {
+			TMapObjBase* obj = Setup2Search<TMapObjBase>(it->unk14);
 			if (obj) {
-				obj->setEventId(i);
-				it->unk28 = obj;
+				obj->mEventId = eventId;
+				it->unk28     = obj;
 			}
+			eventId++;
 		}
 	}
 
-	static_cast<TMario*>(JDrama::TNameRefGen::search("マリオ"))
-	    ->setGamePad(unk18[0]);
-	static_cast<CPolarSubCamera*>(JDrama::TNameRefGen::search("camera 1"))
-	    ->setGamePad(unk18[0]);
+	Setup2Search<TMario>("マリオ")->setGamePad(unk18[0]);
 
-	unk84 = static_cast<TTalkCursor*>(
-	    JDrama::TNameRefGen::search("会話カーソル"));
+	Setup2Search<CPolarSubCamera>("camera 1")->unk120 = Setup2GamePad(this);
 
-	mConsole = static_cast<TGCConsole2*>(
-	    JDrama::TNameRefGen::search("GCコンソール"));
+	unk84 = Setup2Search<TTalkCursor>("会話カーソル");
 
-	mConsole->unkC = CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW;
+	mConsole = Setup2Search<TGCConsole2>("GCコンソール");
 
-	unkDC = static_cast<TShineFader*>(
-	    JDrama::TNameRefGen::search("シャインフェーダー"));
+	mConsole->unkC.set(CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW);
+
+	unkDC = Setup2Search<TShineFader>("シャインフェーダー");
 
 	unkDC->mRate = 120.0f;
 	unkDC->setColor(JUtility::TColor(0xD2, 0xD2, 0xD2, 0xFF));
 
-	unkE0 = static_cast<TSunGlass*>(
-	    JDrama::TNameRefGen::search("サングラスフェーダ"));
-	unk78 = static_cast<TGuide*>(JDrama::TNameRefGen::search("ガイド画面"));
-	unkAC = static_cast<TPauseMenu2*>(
-	    JDrama::TNameRefGen::search("ポーズメニュー"));
-	unkAC->mGamePad = unk18[0];
-	unkB0 = static_cast<TTalk2D2*>(JDrama::TNameRefGen::search("会話表示"));
-	unkB0->unk24C = unk18[0];
-	unk70
-	    = static_cast<TCardLoad*>(JDrama::TNameRefGen::search("データロード"));
+	unkE0 = Setup2Search<TSunGlass>("サングラスフェーダ");
+	unk78 = Setup2Search<TGuide>("ガイド画面");
+	unkAC            = Setup2Search<TPauseMenu2>("ポーズメニュー");
+	unkAC->mGamePad  = unk18[0];
+	unkB0            = Setup2Search<TTalk2D2>("会話表示");
+	unkB0->mGamePad  = unk18[0];
+	unk70 = Setup2Search<TCardLoad>("データロード");
 
 	unk70->unk38 = unk18[0];
-	unk78->unkC0 = unk18[0];
+	unk78->mGamePad = unk18[0];
 
 	unk18[0]->mFlags = 0;
-	if (mMap == 15) {
+	if (getCurrentMap() == 15) {
 		unkAC->unkC = CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW;
 		unkB0->unkC = CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW;
-		unk18[0]->onFlag(TMarioGamePad::PAD_FLAG_NO_B);
+		unk18[0]->onFlag(0x20);
 	} else {
 		unk70->unkC = CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW;
 	}
 
-	unk254 = static_cast<TDemoCannon*>(JDrama::TNameRefGen::search("デモ砲台"));
+	unk254 = Setup2Search<TDemoCannon>("デモ砲台");
 
 	TDrawSyncManager::smInstance->setCallback(1, 0x7D, 0x7D, gpSunMgr);
 	TDrawSyncManager::smInstance->setCallback(2, 0x7E, 0x91,
@@ -119,17 +142,15 @@ void TMarDirector::setup2()
 	GXSetDrawDone();
 	GXWaitDrawDone();
 
-	TMapEventSinkInPollution* sinkInPollutionEvent;
-
-	sinkInPollutionEvent = static_cast<TMapEventSinkInPollution*>(
-	    JDrama::TNameRefGen::search("イベント（地形沈む）"));
+	TMapEventSinkInPollution* sinkInPollutionEvent
+	    = Setup2Search<TMapEventSinkInPollution>("イベント（地形沈む）");
 
 	if (!sinkInPollutionEvent) {
-		sinkInPollutionEvent = static_cast<TMapEventSinkInPollution*>(
-		    JDrama::TNameRefGen::search("イベント（地形沈む再汚染）"));
+		sinkInPollutionEvent = Setup2Search<TMapEventSinkInPollution>(
+		    "イベント（地形沈む再汚染）");
 		if (!sinkInPollutionEvent) {
-			sinkInPollutionEvent = static_cast<TMapEventSinkInPollution*>(
-			    JDrama::TNameRefGen::search("イベント（地形沈むビアンコ）"));
+			sinkInPollutionEvent = Setup2Search<TMapEventSinkInPollution>(
+			    "イベント（地形沈むビアンコ）");
 		}
 	}
 
@@ -137,32 +158,38 @@ void TMarDirector::setup2()
 		sinkInPollutionEvent->initBuriedBuilding();
 }
 
+// Three of five getVolume sites through a pointer-returning binder (+8 each)
+// lands the 0x38 frame; yoshi/scene stay as raw casts. Five binder sites
+// overshoot to 0x48; zero stay at 0x20.
+static inline JKRMemArchive* Setup2GetMemArchive(const char* name)
+{
+	JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume(name);
+	return arch;
+}
+
 TMarDirector::~TMarDirector()
 {
-
-	
-	
 	gpMSound->exitStage();
-	if (SMSGetApplication()->mCurrArea.getStage() == 15) {
-		if (JKRMemArchive* arch
-		    = (JKRMemArchive*)JKRFileLoader::getVolume("option"))
+	if (gpApplication.mCurrArea.unk0 == 15) {
+		if (JKRMemArchive* arch = Setup2GetMemArchive("option"))
 			arch->unmountFixed();
 	}
 
+	if (JKRMemArchive* arch = Setup2GetMemArchive("game_6"))
+		arch->unmountFixed();
+
+	if (JKRMemArchive* arch = Setup2GetMemArchive("guide"))
+		arch->unmountFixed();
+
 	if (JKRMemArchive* arch
-	    = (JKRMemArchive*)JKRFileLoader::getVolume("game_6"))
+	    = (JKRMemArchive*)JKRFileLoader::getVolume("yoshi"))
 		arch->unmountFixed();
 
-	if (JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume("guide"))
+	if (JKRMemArchive* arch
+	    = (JKRMemArchive*)JKRFileLoader::getVolume("scene"))
 		arch->unmountFixed();
 
-	if (JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume("yoshi"))
-		arch->unmountFixed();
-
-	if (JKRMemArchive* arch = (JKRMemArchive*)JKRFileLoader::getVolume("scene"))
-		arch->unmountFixed();
-
-	unk18[0]->offFlag(TMarioGamePad::PAD_FLAG_NO_B);
+	unk18[0]->offFlag(0x20);
 	if (mMap == 1 || (mMap == 0 && unk7D == 0)) {
 		THPPlayerStop();
 		THPPlayerClose();

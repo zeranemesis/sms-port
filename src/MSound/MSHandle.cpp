@@ -57,24 +57,6 @@ f32 MSHandle::cDol_0Rad             = 1.0316f;
 f32 MSHandle::cDol_HalfRad          = 1.5707999f;
 f32 MSHandle::cDol_FullRad          = 2.1099999f;
 
-// TODO: find a home for this
-static u32 get_thing(u32 param_1)
-{
-	u32 uVar1 = param_1 >> 30;
-	u32 uVar2 = param_1 >> 12 & 0xF;
-
-	if (uVar1 == 0)
-		return uVar2;
-
-	if (uVar1 == 2)
-		return 0x10;
-
-	if (uVar1 == 3)
-		return 0x11;
-
-	return 0xffffffff;
-}
-
 f32 MSHandle::MSACos(f32 param_1)
 {
 	s32 iVar1 = (param_1 + 1.0f) * 50.0f;
@@ -90,10 +72,8 @@ f32 MSHandle::MSACos(f32 param_1)
 
 void MSHandle::setSeDistanceParameters()
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
-	u8 type = smSeCategory[get_thing(mSoundID)].mType;
-	if (mState == SOUNDSTATE_Prepared)
+	u8 type = smSeCategory[MSGetSeCategory(getID())].mType;
+	if (getStatus() == SOUNDSTATE_Prepared)
 		type = 0;
 
 	setSeDistanceVolume(type);
@@ -126,17 +106,18 @@ void MSHandle::setSeDistancePitch(u8 moveTime)
 
 void MSHandle::setSeDistancePan(u8 moveTime)
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	FabricatedPositionInfo* ptr = unk1C;
 
 	f32 thing = ptr->unk18;
 
 	f32 d = calcPan(ptr->mCamSpacePos, thing,
-	                smSeCategory[get_thing(mSoundID)].unk4);
+	                smSeCategory[MSGetSeCategory(getID())].unk4);
 	setSeInterPan(4, d, moveTime, 0);
 }
 
+// The final clamp reuses fVar4 rather than naming a fresh `r`: the extra
+// named local was the 8 bytes of frame (0x38 against retail's 0x30) that
+// earlier passes attributed to the third saved FPR.
 f32 MSHandle::calcPan(const Vec& param_1, f32 param_2, f32 param_3)
 {
 	f32 fVar2 = cPan_MaxAmp;
@@ -155,7 +136,6 @@ f32 MSHandle::calcPan(const Vec& param_1, f32 param_2, f32 param_3)
 		fVar4 = fVar2 * fVar4;
 	}
 
-	f32 fVar1;
 	if (param_2 < cPan_HiSence_Dist) {
 		fVar4 *= param_2 / cPan_HiSence_Dist;
 	} else {
@@ -166,14 +146,25 @@ f32 MSHandle::calcPan(const Vec& param_1, f32 param_2, f32 param_3)
 
 	fVar4 += fVar2;
 
-	f32 r = fVar4 > 1.0f ? 1.0f : fVar4;
-	return r < 0.0f ? 0.0f : r;
+	fVar4 = fVar4 > 1.0f ? 1.0f : fVar4;
+	return fVar4 < 0.0f ? 0.0f : fVar4;
 }
 
 void MSHandle::setSeDistanceDolby(u8 moveTime)
 {
 	f32 d = calcDolby(unk1C->mCamSpacePos, unk1C->unk18);
 	setSeInterDolby(4, d, moveTime, 0);
+}
+
+// The near-distance blend is its own level with the value modified in place:
+// spelled inline, MWCC gave the four if/else results f3 and the clamp f0
+// where retail has f0 and f2 (every instruction and the frame were already
+// exact; a TU-local curve helper and clamp helpers were inert).
+static inline f32 MSDolHi(f32 a, f32 dist)
+{
+	if (dist < MSHandle::cPan_HiSence_Dist)
+		a = dist * ((a - 0.5f) / MSHandle::cPan_HiSence_Dist) + 0.5f;
+	return a;
 }
 
 f32 MSHandle::calcDolby(const Vec& pos, f32 dist)
@@ -194,18 +185,18 @@ f32 MSHandle::calcDolby(const Vec& pos, f32 dist)
 		dVar2 = 1.0f;
 	}
 
-	if (dist < cPan_HiSence_Dist) {
-		dVar2 = dist * ((dVar2 - 0.5f) / cPan_HiSence_Dist) + 0.5f;
-	}
+	dVar2 = MSDolHi(dVar2, dist);
 
 	f32 r = dVar2 > 1.0f ? 1.0f : dVar2;
 	return r < 0.0f ? 0.0f : r;
 }
 
+// The curve index is truncated to the u8 that setDistanceVolumeCommon takes
+// and masked in a second statement: the separate `&=` keeps getSwBit's r3
+// live past MSGetSeCategory's `>> 30` in the first schedule, which is what
+// gives retail's r5 there (one folded `>> 16 & 7` lets the shift reuse r3).
 void MSHandle::setSeDistanceVolume(u8 moveTime)
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	u32 swBit = getSwBit();
 	if (swBit & MSSeSwBit_ModDistanceVolume) {
 		f32 d = JALSystem::processModDistVolume(mSoundID, unk1C->unk18);
@@ -215,10 +206,10 @@ void MSHandle::setSeDistanceVolume(u8 moveTime)
 
 	f32 volume;
 	if (!(swBit & JAISeSwBit_NoDistanceVolume)) {
-		// TODO: inline?
-		u32 tmp = getSwBit() >> JAISeSwBit_DistanceVolumeCurveShift & 0x7;
-		volume = setDistanceVolumeCommon(smSeCategory[get_thing(mSoundID)].unk4,
-		                                 tmp);
+		u8 curve = getSwBit() >> JAISeSwBit_DistanceVolumeCurveShift;
+		curve &= 0x7;
+		volume = setDistanceVolumeCommon(
+		    smSeCategory[MSGetSeCategory(getID())].unk4, curve);
 	} else {
 		volume = 1.0f;
 	}
@@ -230,7 +221,7 @@ f32 MSHandle::setDistanceVolumeCommon(f32 volume, u8 moveTime)
 {
 	f32 fVar1         = unk1C->unk18;
 	f32 maxVolumeDist = JAIGlobalParameter::getParamMaxVolumeDistance();
-	u32 uVar1         = get_thing(mSoundID);
+	u32 uVar1         = MSGetSeCategory(getID());
 	return calcVolume(fVar1, volume, maxVolumeDist, moveTime, uVar1);
 }
 

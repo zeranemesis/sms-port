@@ -39,93 +39,112 @@ void MAnmSound::setSpeedModifySound(JAISound* sound,
 		JAIAnimeSound::setSpeedModifySound(sound, frame_data, speed);
 }
 
-#ifdef VERSION_GMSP01
-void MAnmSoundMario::startAnimSound(void* interface, u32 id,
-                                    JAISoundHandle* out_handle,
-                                    JAIActor* actor, u8 camera_idx)
+// Fabricated name; a TU-local level over the voice-number field (see case 7).
+static inline u32 MarioVoiceNo(u32 groundNo) { return (groundNo >> 24) & 0xF; }
+
+void MAnmSoundMario::startAnimSound(void* interface, u32 sound_id,
+                                    JAISound** out_handle, JAIActor* actor,
+                                    u8 camera_idx)
 {
-	if (!MSGMSound->gateCheck(id))
-		return;
+	if (MSGMSound->gateCheck(sound_id)) {
+		u32 category = MSGetSeCategory(sound_id);
+		switch (category) {
+		case 0:
+			if ((actor->mGroundNumber & 0x1000) == 0x1000)
+				return;
+			break;
 
-	// fakematch: only inflates the stack frame from 0x30 to the ROM's 0x38.
-	
-	
-
-	u32 category = id >> 30;
-	s32 soundType = (id >> 12) & 0xF;
-	if (category != 0) {
-		if (category == 2)
-			soundType = 0x10;
-		else if (category == 3)
-			soundType = 0x11;
-		else
-			soundType = -1;
-	}
-
-	switch (soundType) {
-	case 0:
-		if ((actor->mGroundNumber & 0x1000) == 0x1000)
+		// The voice number comes out of a returning helper: a named local
+		// swaps r0/r5 against groundNo, an unnamed expression drops the
+		// `extsh`.
+		case 7: {
+			u32 groundNo = actor->mGroundNumber;
+			MSGMSound->startMarioVoice(sound_id, MarioVoiceNo(groundNo),
+			                           groundNo >> 28);
 			return;
-		break;
-
-	case 7:
-		{
-			u32 groundNumber = actor->mGroundNumber;
-			MSGMSound->startMarioVoice(
-			    id, static_cast<s16>((groundNumber >> 24) & 0xF),
-			    static_cast<u8>(groundNumber >> 28));
 		}
-		return;
+		}
 
-	default:
-		break;
+		MSoundSESystem::MSoundSE::startSoundActorInner(sound_id, out_handle,
+		                                               actor, 0, camera_idx);
 	}
-
-	MSoundSESystem::MSoundSE::startSoundActorInner(
-	    id, out_handle, actor, 0, camera_idx);
 }
-#endif
 
 f32 MSMarioPosVolume::getDistFromMario(const Vec& pos)
 {
+	// TODO: retail calls `bl std::sqrtf` here when this body is inlined into
+	// MAnmSoundNPC::startAnimSound (22 extra instructions there), while the
+	// out-of-line copy of this function does expand it -- the documented
+	// "weak plus bl" residue class (catalog: codegen-tells batch 104). Its
+	// cost must be 10-14 statements to fit depth 1 and be refused at depth 2,
+	// so math.h's sqrtf body is probably a statement or two short; that header
+	// is shared with every linked unit, so it is not touched here.
 	if (MSGMSound->cameraLooksAtMario()) {
 		const Vec* mario = MSGMSound->unkAC[0].mPosition;
-		// TODO (libs/ blocker, one of the seven measured MSL gaps): the ROM
-		// emits an out-of-line weak `sqrtf__3stdFf` in this TU and calls it;
-		// libs/.../MSL_Common/math.h only has an *inlined* sqrtf, so the
-		// out-of-line copy is never emitted and the whole Newton-Raphson
-		// body (~24 instructions) is inlined into the caller instead. Do NOT
-		// edit libs/ - the arithmetic is correct, only the call shape cannot
-		// be reproduced from game code.
-		return std::sqrtf(std::powf(pos.x - mario->x, 2.0f)
+		f32 dist = std::sqrtf(std::powf(pos.x - mario->x, 2.0f)
 		                  + std::powf(pos.y - mario->y, 2.0f)
 		                  + std::powf(pos.z - mario->z, 2.0f));
+		return dist;
 	}
 
 	return 0.0f;
+}
+
+// The level over the translation is `JAIActor::getTranslation()` in
+// JAIConst.hpp (header round 23 promoted it out of a TU-local clone here; the
+// reference-returning accessor is worth the same 8 low bytes the free function
+// was, tree-wide neutral).
+// Research batch 146: retail's `bl std::sqrtf` inside getDistFromMario is a
+// depth measurement, not the "weak plus bl" refusal it was filed as. The
+// measured budget is 14 / 9 / 6 / 2 / never at depths 1-5 and math.h's body
+// costs exactly 8, so it expands at depths 1 and 2 and is called from depth 3.
+// getDistFromMario is UNUSED 0x104 (expanded everywhere), so reaching the ROM
+// needs one inline level between it and this function.
+// Refuted for the level: a helper that wraps the distance *and*
+// MSHandle::calcVolume together (89.9%, 153 instructions, 9 deletions -- the
+// compare has to stay in this body), and `const Vec& pos` bound here instead
+// of passed straight through (31 deletions, the level collapses). The named
+// `dist` pays 8 of the 16 bytes of frame this body is still short; a second
+// stacked level pays 16 and overshoots to 0x98, so retail's 0x90 wants one
+// +16 binding in a single level, which nothing natural here supplies.
+// (Closed since: the other 8 are the EntryWord level on the flag mask.)
+static inline f32 MarioDistance(JAIActor* actor)
+{
+	f32 dist = MSMarioPosVolume::getDistFromMario(actor->getTranslation());
+
+	return dist;
+}
+
+// Fabricated name: a TU-local level over the entry word, read through it only
+// for the flag mask. It reserves retail's four low bytes below the random
+// draw's float-bits slot (0x44); every further use adds 4-8 of frame.
+static inline u32 EntryWord(JAIAnimeSoundData* p, u32 i)
+{
+	return p->mEntries[i].unk10;
 }
 
 void MAnmSoundNPC::startAnimSound(void* interface, u32 sound_id,
                                   JAISound** out_handle, JAIActor* actor,
                                   u8 camera_idx)
 {
-	// TODO: the ROM rematerialises &mEntries[mDataCounter] and re-reads
-	// unk10 (add r4,r31,r5 / lwz r4,0x18(r4)) just before the JAIConst::random
-	// update, because the value is no longer live in a register by then. Our
-	// register allocation keeps it in r5 across the whole block, so those two
-	// instructions are missing. Not yet found a source spelling that makes
-	// MWCC drop the cached copy.
 	if (MSGMSound->gateCheck(sound_id)) {
-		// fakematch: only inflates the stack frame from 0x88 to the ROM's 0x90.
-		
-		
-
 		JAIAnimeSoundData* ptr = mData;
 
-		if (ptr->mEntries[mDataCounter].unk10 & 0xFFFF0000) {
-			if (ptr->mEntries[mDataCounter].unk10 & 0xFF000000) {
+		// The masked value is a named local in retail: both inner tests
+		// read it (`clrrwi. r4, r3, 16` stays live and feeds
+		// `clrrwi. r0, r4, 24` and `rlwinm. r0, r4, 0, 8, 15`), which is
+		// also what forces the raw word to be re-loaded for the 0xFF0000
+		// branch after `lbz r3, 0x98(r26)` clobbers it.
+		u32 flags = EntryWord(ptr, mDataCounter) & 0xFFFF0000;
+		if (flags) {
+			if (flags & 0xFF000000) {
+				// The divisor comes from the entry word, not from
+				// mLoopCount: retail's `srwi r3, r3, 24` reads the
+				// value loaded at 0x54, while mLoopCount (0x84) only
+				// feeds the `cmplwi` and the later `add`.
 				u32 uVar5 = mLoopCount;
-				u32 uVar6 = (ptr->mEntries[mDataCounter].unk10 >> 24) + 1;
+				u32 uVar6
+				    = (ptr->mEntries[mDataCounter].unk10 >> 24) + 1;
 				if (uVar5 != 0) {
 					u32 uVar3 = uVar5 + unk98 % uVar6;
 					if (uVar3 % uVar6 != 0)
@@ -133,10 +152,12 @@ void MAnmSoundNPC::startAnimSound(void* interface, u32 sound_id,
 				}
 			}
 
-			if (ptr->mEntries[mDataCounter].unk10 & 0xFF0000) {
+			if (flags & 0xFF0000) {
+				// `b = b * r`, not `b *= r`: the compound form swaps
+				// r3/r0 against r4 over these three statements.
 				u8 b = ptr->mEntries[mDataCounter].unk10 >> 16;
 				b += 1;
-				b *= JAIConst::random.get_ufloat_1();
+				b = b * JAIConst::random.get_ufloat_1();
 				if (b != 0)
 					return;
 			}
@@ -149,10 +170,45 @@ void MAnmSoundNPC::startAnimSound(void* interface, u32 sound_id,
 			if (*out_handle != nullptr
 			    && !(ptr->mEntries[mDataCounter].unk10 & 0x8000)) {
 
+				// TODO: 99.7%, frame and every stack slot exact. Left:
+				// the translation pointer is r29 and Mario's r27, retail
+				// r27 and r29. The FPR rotation (volume f31, powf
+				// results f29/f30) closed with the named `dist` result
+				// inside getDistFromMario (c-k25): its extra web is the
+				// 32nd FPR neighbour c-k2 asked for. The GPR pair is
+				// colouring order: `pos`'s parameter object is the dead
+				// stack slot the MarioDistance level pays for, so its
+				// register is the IRO temp @417, coloured after the
+				// inlined `mario` local; retail colours pos first.
+				// Inert or worse (c-k25): non-const or reference mario,
+				// a declare-then-assign mario, a `VecDistance(a, b)`
+				// level under getDistFromMario (+8 frame, registers
+				// unchanged), and any MarioDistance taking the position
+				// (getDistFromMario stops inlining). Older notes: Inert: declaring
+				// either float at the top of the function or block, a
+				// ternary or if/else, `const`, a named sound pointer, a
+				// `const Vec&` Mario, a named sum, `x + (y + z)`, and a
+				// helper taking the position (-0x10 of frame).
+				// Also inert (c-link3): getDistFromMario with named pow
+				// results (+0x10), a `const Vec&` Mario, an early return
+				// or a result local; declaring the distance after the
+				// volume or in the `if`. A TU-local volume helper taking
+				// (actor, ptr, index) fixes r27/r29 but hoists the
+				// mDataCounter read and keeps the volume in f29.
+				// c-k2 (mwcc-debugger replay): the FPR residue is one
+				// degree -- dVar10 has 31 neighbours (K 32), so it is
+				// pushed in the first sweep and coloured last; retail
+				// needs a 32nd FPR neighbour live across the distance
+				// (a ghost copy web would do). The GPR residue is
+				// colouring order: getDistFromMario's `pos` is the IRO
+				// temp @417, coloured after the inlined `mario` (@404);
+				// retail colours it among the pcode temporaries. Inert:
+				// named 2000/600 locals, a named calcVolume result, an
+				// else arm, and an (this, ptr, actor) volume helper with
+				// or without the MarioDistance level (frame -8 / +8).
 				f32 dVar10 = 1.0f;
 
-				f32 fVar11
-				    = MSMarioPosVolume::getDistFromMario(*actor->mTranslation);
+				f32 fVar11 = MarioDistance(actor);
 
 				if (fVar11 != 0.0f)
 					dVar10 = MSHandle::calcVolume(

@@ -14,18 +14,39 @@
 JPADrawVisitorContainer JPADraw::vc;
 JPADrawClipBoard JPADraw::cb;
 
+// Closed by structural pass 167.  Every instruction always matched; the whole
+// residue was 16 bytes of inline-temp low region (frame 0x180 against retail's
+// 0x190), invisible in the diff because nothing addressed the pool.  Header
+// round 27 had priced the same +16 as a binding written *inside*
+// `getEmitterDataBlockInfoPtr`, but that costs
+// JPAParticle::checkCreateChildParticle (byte-exact, 100 -> 99.8), so it could
+// not be committed.  The TU-local binding below is the same +16 at zero cost to
+// anything else: it is worth +8 per expansion (all five sites give +0x28), so
+// it stands at exactly two of the five data-block reads, which is what lands
+// the frame -- retail reloads the info pointer at every one of the five, so a
+// named local holding it is not an option (it would CSE the five loads into
+// one).  Earlier rejected on this function: routing `mScaleOut = 1.0f` through
+// `setKeyScl()` (+0) and a `getDrawCtx()` accessor (pruned project-wide).
+static inline JPADataBlockLinkInfo*
+JPADrawEmitterDataBlockInfo(JPABaseEmitter* emitter)
+{
+	JPADataBlockLinkInfo* info = emitter->getEmitterDataBlockInfoPtr();
+	return info;
+}
+
 BOOL JPADraw::initialize(JPABaseEmitter* emitter,
                          JPATextureResource* tex_resource)
 {
 	int i;
+
 	mDrawCtx.pcb = &cb;
 
 	mDrawCtx.mBaseEmitter = emitter;
 
 	mDrawCtx.mBaseShape
-	    = mDrawCtx.mBaseEmitter->getEmitterDataBlockInfoPtr()->getBaseShape();
+	    = JPADrawEmitterDataBlockInfo(mDrawCtx.mBaseEmitter)->getBaseShape();
 	mDrawCtx.mExtraShape
-	    = mDrawCtx.mBaseEmitter->getEmitterDataBlockInfoPtr()->getExtraShape();
+	    = JPADrawEmitterDataBlockInfo(mDrawCtx.mBaseEmitter)->getExtraShape();
 	mDrawCtx.mSweepShape
 	    = mDrawCtx.mBaseEmitter->getEmitterDataBlockInfoPtr()->getSweepShape();
 	mDrawCtx.mExTexShape
@@ -90,7 +111,6 @@ BOOL JPADraw::initialize(JPABaseEmitter* emitter,
 		mpCalcChldVis[i] = nullptr;
 
 	JPADrawVisitorDefFlags flags;
-
 
 	flags.mbIsEnableDrawParent = mDrawCtx.mSweepShape == nullptr
 	                             || mDrawCtx.mSweepShape->isEnableDrawParent();
@@ -324,6 +344,15 @@ const ResTIMG* JPADraw::swapImage(const ResTIMG* param_1, s16 param_2)
 	u8 id   = param_2;
 	u32 idx = mDrawCtx.mTexIndices[id];
 	return mDrawCtx.mTexResource->swapImage(param_1, idx);
+}
+
+BOOL JPADraw::loadTexture(u8 idx, GXTexMapID map_id)
+{
+	JUT_ASSERT(
+	    mDrawCtx.mBaseEmitter->getEmitterDataBlockInfoPtr()->getTextureNum()
+	    > idx);
+	mDrawCtx.mTexResource->load(mDrawCtx.mTexIndices[idx], map_id);
+	return true;
 }
 
 void JPADraw::setDrawExecVisitorsBeforeCB(
@@ -1099,9 +1128,16 @@ void JPADraw::zDraw()
 		zDrawChild();
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// JPADraw::zDrawParticle (batch 127).
+static inline u8 JPADrawExecPtclVisNum(const JPADraw* p)
+{
+	u8 execPtclVisNum = p->execPtclVisNum;
+	return execPtclVisNum;
+}
+
 void JPADraw::zDrawParticle()
 {
-
 	unkC2 &= ~0x2;
 	setParticleClipBoard();
 	mDrawCtx.unk18 = mDrawCtx.mBaseEmitter->getParticleList();
@@ -1133,7 +1169,7 @@ void JPADraw::zDrawParticle()
 		JSULink<JPABaseParticle>* link;
 		for (link = particles->getFirst(); link; link = link->getNext()) {
 			JPABaseParticle* particle = link->getObject();
-			for (int i = 0; i < execPtclVisNum; ++i)
+			for (int i = 0; i < JPADrawExecPtclVisNum(this); ++i)
 				mpExecPtclVis[i]->exec(&mDrawCtx, particle);
 		}
 	} else {
@@ -1148,9 +1184,16 @@ void JPADraw::zDrawParticle()
 	GXSetMisc(GX_MT_XF_FLUSH, 0);
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// JPADraw::zDrawChild (batch 127).
+static inline u8 JPADrawExecChldVisNum(const JPADraw* p)
+{
+	u8 execChldVisNum = p->execChldVisNum;
+	return execChldVisNum;
+}
+
 void JPADraw::zDrawChild()
 {
-
 	unkC2 |= 0x2;
 	setChildClipBoard();
 	mDrawCtx.unk18 = mDrawCtx.mBaseEmitter->getChildParticleList();
@@ -1190,7 +1233,7 @@ void JPADraw::zDrawChild()
 		JSULink<JPABaseParticle>* link;
 		for (link = particles->getFirst(); link; link = link->getNext()) {
 			JPABaseParticle* particle = link->getObject();
-			for (int i = 0; i < execChldVisNum; ++i)
+			for (int i = 0; i < JPADrawExecChldVisNum(this); ++i)
 				mpExecChldVis[i]->exec(&mDrawCtx, particle);
 		}
 	} else {
@@ -1218,12 +1261,43 @@ s16 JPADraw::getMainTextureID(u8 i)
 	return result;
 }
 
+s16 JPADraw::getIndTextureID()
+{
+	s16 result = -1;
+	if (mDrawCtx.mExTexShape != nullptr
+	    && mDrawCtx.mExTexShape->getIndTexMode() != 0)
+		result = mDrawCtx.mExTexShape->getIndTextureID();
+	return result;
+}
+
+s16 JPADraw::getIndSubTextureID()
+{
+	s16 result = -1;
+	if (mDrawCtx.mExTexShape != nullptr
+	    && mDrawCtx.mExTexShape->getIndTexMode() == 2)
+		result = mDrawCtx.mExTexShape->getSubTextureID();
+	return result;
+}
+
+s16 JPADraw::getSecondTextureID()
+{
+	s16 result = -1;
+	if (mDrawCtx.mExTexShape != nullptr
+	    && mDrawCtx.mExTexShape->isEnableSecondTex())
+		result = mDrawCtx.mExTexShape->getSecondTexIndex();
+	return result;
+}
+
 void JPADraw::loadYBBMtx(MtxPtr mtx)
 {
 	JGeometry::TVec3<f32> v(0.0f, mtx[1][1], mtx[2][1]);
-
 	JUT_ASSERT(!v.isZero());
 	v.normalize();
+	// The Y-billboard matrix is a rotation about X built from the normalised
+	// (y, z) of the view matrix's Y column; naming the two components is what
+	// gives retail's 0x48 frame (it is 0x40 with v.y/v.z spelled at each use).
+	f32 cos = v.y;
+	f32 sin = v.z;
 
 	cb.unk38[0][0] = 1.0f;
 	cb.unk38[0][1] = 0.0f;
@@ -1231,13 +1305,13 @@ void JPADraw::loadYBBMtx(MtxPtr mtx)
 	cb.unk38[0][3] = mtx[0][3];
 
 	cb.unk38[1][0] = 0.0f;
-	cb.unk38[1][1] = v.y;
-	cb.unk38[1][2] = -v.z;
+	cb.unk38[1][1] = cos;
+	cb.unk38[1][2] = -sin;
 	cb.unk38[1][3] = mtx[1][3];
 
 	cb.unk38[2][0] = 0.0f;
-	cb.unk38[2][1] = v.z;
-	cb.unk38[2][2] = v.y;
+	cb.unk38[2][1] = sin;
+	cb.unk38[2][2] = cos;
 	cb.unk38[2][3] = mtx[2][3];
 
 	MTXIdentity(cb.unk68);

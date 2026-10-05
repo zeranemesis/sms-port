@@ -16,14 +16,34 @@
 // rogue includes
 #include <M3DUtil/InfectiousStrings.hpp>
 
+// Parked helper for a JDRNameRefGen.hpp item: the ROM's
+// `JDrama::TNameRefGen::search2` binds its result before returning it, which is
+// worth 8-16 bytes of frame per expansion (the "named-and-returned result"
+// carrier of closure batch 74/82). Measured here: +16 per site in initECTMir
+// (0x60 -> 0x80 over two sites) and +8 in setupPerformList_console; it is
+// parked rather than put in the header because 40 other units expand search2
+// and the header batch owns that file. It is deliberately NOT used in
+// initECDisp: 13 sites there overshoot the ROM's 0x370 by 48.
+static inline JDrama::TNameRef* ECTSearch(const char* name)
+{
+	JDrama::TNameRef* ref = JDrama::TNameRefGen::search2(name);
+	return ref;
+}
+
+// TODO: 24 bytes of frame short (0x200 vs 0x218) after the ECTSearch
+// level (+32 over three sites). Retail converts the TOrthoProj width before
+// the height and keeps one fewer vtable spilled; inert: size.mWidth/mHeight
+// for the projection, reusing the outer rect, TRect constructors, raw
+// search2 at either remaining site. Naming both projections before their
+// push_back (upstream's spelling) aligns the register choice.
 void TMarDirector::initECTGft(
     TPerformList* param_1, TPerformList* param_2,
     JDrama::TViewObjPtrListT<JDrama::TViewObj>* perf_event_group,
     JDrama::TViewObjPtrListT<JDrama::TViewObj>* scene)
 {
 	if (gpPollution->getJointModelNum() == 0) {
-		TBathWaterManager* bathtubWater = static_cast<TBathWaterManager*>(
-		    JDrama::TNameRefGen::search("バスタブの水"));
+		TBathWaterManager* bathtubWater
+		    = (TBathWaterManager*)ECTSearch("バスタブの水");
 		if (bathtubWater)
 			param_2->push_back(bathtubWater->getPreprocessor(), CUE_DRAW);
 
@@ -31,10 +51,9 @@ void TMarDirector::initECTGft(
 	}
 
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* graffitiGroup
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("落書きグループ"));
-	JDrama::TViewObj* drawInit = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("SMS Draw Init"));
+	    = (JDrama::TViewObjPtrListT<JDrama::TViewObj>*)ECTSearch(
+	        "落書きグループ");
+	JDrama::TViewObj* drawInit = (JDrama::TViewObj*)ECTSearch("SMS Draw Init");
 
 	JDrama::TEfbCtrlTex* graffitiEfbTex
 	    = new JDrama::TEfbCtrlTex("graffito check");
@@ -47,7 +66,7 @@ void TMarDirector::initECTGft(
 
 	param_1->push_back(new JDrama::TViewport(rect, "graffito"), CUE_DRAW);
 	JDrama::TOrthoProj* ortho
-	    = new JDrama::TOrthoProj(-1.0f, 1.0f, 0.0f, 512.0f, 0.0f, 512.0f);
+	    = new JDrama::TOrthoProj(-1.0f, 1.0f, 0.0f, 0.0f, 512.0f, 512.0f);
 	param_1->push_back(ortho, CUE_SET_PROJECTION);
 	param_1->push_back(drawInit, CUE_DRAW);
 	param_1->push_back(graffitiGroup, CUE_UNK1000000);
@@ -70,7 +89,7 @@ void TMarDirector::initECTGft(
 		param_2->push_back(efbTex, CUE_DRAW_INIT);
 		param_2->push_back(new JDrama::TViewport(rect, "graffito"), CUE_DRAW);
 		JDrama::TOrthoProj* ortho = new JDrama::TOrthoProj(
-		    -1.0f, 1.0f, 0.0f, img->height, 0.0f, img->width);
+		    -1.0f, 1.0f, 0.0f, 0.0f, img->height, img->width);
 		param_2->push_back(ortho, CUE_SET_PROJECTION);
 		param_2->push_back(drawInit, CUE_DRAW);
 		param_2->push_back(graffitiGroup, (i << CUE_OFFSET_POLLUTION_LAYER)
@@ -80,72 +99,119 @@ void TMarDirector::initECTGft(
 	}
 }
 
+// Binding level over the address of a struct member, worth +8 of low region
+// in TMarDirector::initECTMir (batch 130).
+static inline const GXTexObj* MarDirectorInitECTUnk60(const TMirrorCamera* p)
+{
+	const GXTexObj* v60 = &p->unk60;
+	return v60;
+}
+
 JDrama::TViewObj* TMarDirector::initECTMir(
     TPerformList* param_1,
     JDrama::TViewObjPtrListT<JDrama::TViewObj, JDrama::TViewObj>* param_2)
 {
-	JDrama::TEfbCtrlTex* mirrorTex = static_cast<JDrama::TEfbCtrlTex*>(
-	    JDrama::TNameRefGen::search("鏡描画ステージ"));
+	JDrama::TEfbCtrlTex* mirrorTex
+	    = (JDrama::TEfbCtrlTex*)ECTSearch("鏡描画ステージ");
 
 	mirrorTex->unk20.set(0x228);
 	mirrorTex->mVFilter = SMSVFilter_flicker;
 
-	TMirrorCamera* mirrorCam
-	    = static_cast<TMirrorCamera*>(JDrama::TNameRefGen::search("鏡カメラ"));
+	TMirrorCamera* mirrorCam = (TMirrorCamera*)ECTSearch("鏡カメラ");
 
-	GXTexObj& obj = mirrorCam->unk60;
+	GXTexObj& obj = *MarDirectorInitECTUnk60(mirrorCam);
 	mirrorTex->setTexAttb(obj);
+	// TODO: 99.8%, frame 0x80 against the ROM's 0x88. Passing the rectangle
+	// as an unnamed temporary instead
+	// (`setSrcRect(JDrama::TRect(0, 0, w, h))`, same instructions, the
+	// `bl JUTRect::set` and the `&temp` hand-off are identical) makes the
+	// frame byte-exact and cuts the diff from 12 operand mismatches to 3,
+	// but leaves the rectangle's slot at 0x60 where the ROM has 0x64 (+4
+	// low) and swaps the last two argument loads -- retail materialises the
+	// receiver (`addi r3, r29, 0`) before the rectangle's address, we do it
+	// the other way round. `fuzzy_match` scores that spelling 99.6 because
+	// it weighs the register operands above the `stwu`, so it is not
+	// committed; whichever lever supplies the last +4 should land both at
+	// once. Measured and inert on top of it: qualifying the call as
+	// `JDrama::TEfbCtrl::setSrcRect`, a `JDrama::TEfbCtrl*` receiver local,
+	// one more binding level above the first ECTSearch, `unk20 = 0x228`
+	// instead of `unk20.set(0x228)`, and swapping the width/height
+	// arguments.
 	JDrama::TRect rect(0, 0, GXGetTexObjWidth(&obj), GXGetTexObjHeight(&obj));
 	mirrorTex->setSrcRect(rect);
 
 	return mirrorTex;
 }
 
-extern void marker();
-
+// TODO: 99.8%. `initECDisp` is a *static* member in the ROM, like its
+// neighbours `initECTMir`, `initECTGft` and `preEntry`: retail's prologue
+// clobbers r4 with the `.rodata` base immediately and keeps r3 and r5, so the
+// `TPerformList*` the whole body uses as `push_back`'s receiver arrives in
+// **r3**, which can only happen with no `this`. The single call site sets only
+// r3/r4/r5 (`lwz r3, 0x24(r30)` / `lwz r4, 0xa60(r1)` / `mr r5, r28`), which
+// confirms the three-parameter static shape. With `static` the parameter
+// registers line up and `insert`'s receiver is the *third* parameter (r5), so
+// the five `insert` calls go through `param_3` and `param_2` is genuinely
+// unused in this revision. Applied in header round 20 (batch 117): zero
+// regressions whole-tree, initECDisp 97.50 -> 97.55 and the single caller
+// `TMarDirector::setupObjects` 98.00 -> 98.08 (the `this` argument it no
+// longer has to set up).
+//
+// The named glow/flare labels recover retail's object construction and
+// register allocation; its sun-model branch passes `false` to TLensGlow
+// while the sunset branch passes `true`. The stage rectangle is a temporary
+// (upstream's spelling; a named local was 8 bytes of frame short). The
+// residue is a 0x70-byte frame deficit (0x300 vs 0x370), with all list
+// temporaries correspondingly low. The ECTSearch level above overshoots here
+// (+152 over 13 sites), so this function's low region is not the search
+// chain.
 void TMarDirector::initECDisp(
     TPerformList* param_1,
-    JDrama::TViewObjPtrListT<JDrama::TViewObj, JDrama::TViewObj>*
-        perf_event_group,
-    JDrama::TViewObjPtrListT<JDrama::TViewObj, JDrama::TViewObj>* scene)
+    JDrama::TViewObjPtrListT<JDrama::TViewObj, JDrama::TViewObj>* param_2,
+    JDrama::TViewObjPtrListT<JDrama::TViewObj, JDrama::TViewObj>* param_3)
 {
 	JDrama::TEfbCtrlDisp* stageDisp = new JDrama::TEfbCtrlDisp("stageDisp");
 	stageDisp->JDrama::TEfbCtrl::setSrcRect(JDrama::TRect(
 	    0, 0, (u16)SMSGetGameRenderWidth(), (u16)SMSGetGameRenderHeight()));
-	scene->insert(stageDisp);
+	param_3->insert(stageDisp);
 
 	JDrama::TViewObj* composite3
-	    = static_cast<JDrama::TViewObj*>(JDrama::TNameRefGen::search("合成3"));
-	JDrama::TViewObj* specularSheen = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("スペキュラシーン"));
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("合成3");
+	JDrama::TViewObj* specularSheen
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("スペキュラシーン");
 
-	const char* glowName  = "太陽遮蔽物グロー";
-	const char* flareName = "レンズフレア";
-
+	const char* glowName       = "太陽遮蔽物グロー";
+	const char* flareName      = "レンズフレア";
 	TLensGlow* lensGlow       = nullptr;
 	TLensFlare* lensFlare     = nullptr;
 	JDrama::TOrthoProj* ortho = nullptr;
 
-	if (JDrama::TNameRefGen::search("太陽モデル")) {
+	JDrama::TViewObj* sunModel
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("太陽モデル");
+
+	if (sunModel) {
 		lensGlow = new TLensGlow(false, glowName);
-		scene->insert(lensGlow);
+		param_3->insert(lensGlow);
 		lensFlare = new TLensFlare(flareName);
-		scene->insert(lensFlare);
-	} else if (JDrama::TNameRefGen::search("夕日モデル")) {
-		lensGlow = new TLensGlow(true, glowName);
-		scene->insert(lensGlow);
-		lensFlare = new TLensFlare(flareName);
-		scene->insert(lensFlare);
+		param_3->insert(lensFlare);
+	} else {
+		sunModel = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("夕日モデル");
+		if (sunModel) {
+			lensGlow = new TLensGlow(true, glowName);
+			param_3->insert(lensGlow);
+			lensFlare = new TLensFlare(flareName);
+			param_3->insert(lensFlare);
+		}
 	}
 
 	if (specularSheen || lensFlare || lensGlow) {
 		f32 w = (u16)SMSGetGameRenderWidth() / 2;
 		f32 h = (u16)SMSGetGameRenderHeight() / 2;
-		ortho = new JDrama::TOrthoProj(-1.0f, 1.0f, h, -h, -w, w);
+		ortho = new JDrama::TOrthoProj(-1.0f, 1.0f, -w, h, -h, w);
 	}
 
 	JDrama::TOrthoProj* ortho2 = new JDrama::TOrthoProj(
-	    10.0f, 300000.0f, 0.0f, (u16)SMSGetGameRenderHeight(), 0.0f,
+	    10.0f, 300000.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderHeight(),
 	    (u16)SMSGetGameRenderWidth());
 
 	param_1->push_back(stageDisp, CUE_DRAW_INIT);
@@ -154,14 +220,16 @@ void TMarDirector::initECDisp(
 	param_1->push_back(ortho2, CUE_SET_PROJECTION);
 	param_1->push_back(composite3, CUE_DRAW);
 
-	JDrama::TViewObj* setViewMtx = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("J3D System Set View Mtx"));
-	JDrama::TViewObj* drawInit = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("SMS Draw Init"));
-	JDrama::TDrawBufObj* drawBufLensFlare = static_cast<JDrama::TDrawBufObj*>(
-	    JDrama::TNameRefGen::search("DrawBuf LensFlare"));
-	JDrama::TCamera* camera1 = static_cast<JDrama::TCamera*>(
-	    JDrama::TNameRefGen::search("camera 1"));
+	JDrama::TViewObj* setViewMtx
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2(
+	        "J3D System Set View Mtx");
+	JDrama::TViewObj* drawInit
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("SMS Draw Init");
+	JDrama::TDrawBufObj* drawBufLensFlare
+	    = (JDrama::TDrawBufObj*)JDrama::TNameRefGen::search2(
+	        "DrawBuf LensFlare");
+	JDrama::TCamera* camera1
+	    = (JDrama::TCamera*)JDrama::TNameRefGen::search2("camera 1");
 
 	if (specularSheen || lensFlare || lensGlow) {
 		param_1->push_back(ortho, CUE_SET_PROJECTION);
@@ -184,10 +252,10 @@ void TMarDirector::initECDisp(
 		}
 	}
 
-	JDrama::TCamera* drawBufChrOpa = static_cast<JDrama::TCamera*>(
-	    JDrama::TNameRefGen::search("DrawBuf ChrOpa"));
-	JDrama::TCamera* drawBufChrXlu = static_cast<JDrama::TCamera*>(
-	    JDrama::TNameRefGen::search("DrawBuf ChrXlu"));
+	JDrama::TCamera* drawBufChrOpa
+	    = (JDrama::TCamera*)JDrama::TNameRefGen::search2("DrawBuf ChrOpa");
+	JDrama::TCamera* drawBufChrXlu
+	    = (JDrama::TCamera*)JDrama::TNameRefGen::search2("DrawBuf ChrXlu");
 
 	param_1->push_back(camera1, CUE_SET_PROJECTION);
 	param_1->push_back(setViewMtx, CUE_CALC_VIEW);
@@ -200,38 +268,63 @@ void TMarDirector::initECDisp(
 	param_1->push_back(drawBufChrXlu, CUE_DRAW);
 
 	JDrama::TOrthoProj* ortho3 = new JDrama::TOrthoProj(
-	    -1.0f, 1.0f, 0.0f, (u16)SMSGetGameRenderHeight(), 0.0f,
+	    -1.0f, 1.0f, 0.0f, 0.0f, (u16)SMSGetGameRenderHeight(),
 	    (u16)SMSGetGameRenderWidth());
 	param_1->push_back(ortho3, CUE_SET_PROJECTION);
 
-	JDrama::TViewObj* group2D2 = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("Group 2D 2"));
+	JDrama::TViewObj* group2D2
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("Group 2D 2");
 	param_1->push_back(group2D2, CUE_DRAW);
 
 	JDrama::TOrthoProj* ortho4
-	    = new JDrama::TOrthoProj(-500.0f, 500.0f, 16.0f, 464.0f, 0.0f, 600.0f);
+	    = new JDrama::TOrthoProj(-500.0f, 500.0f, 0.0f, 16.0f, 464.0f, 600.0f);
 	param_1->push_back(ortho4, CUE_SET_PROJECTION);
 
-	JDrama::TViewObj* group2D = static_cast<JDrama::TViewObj*>(
-	    JDrama::TNameRefGen::search("Group 2D"));
+	JDrama::TViewObj* group2D
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("Group 2D");
 	param_1->push_back(group2D, CUE_DRAW);
 
 	param_1->push_back(ortho4, CUE_SET_PROJECTION);
 	JDrama::TViewObj* guide
-	    = static_cast<JDrama::TViewObj*>(JDrama::TNameRefGen::search("Guide"));
+	    = (JDrama::TViewObj*)JDrama::TNameRefGen::search2("Guide");
 	param_1->push_back(guide, CUE_DRAW);
 	param_1->push_back(stageDisp, CUE_DRAW);
 }
 
 extern JPAEmitterManager* gpEmitterManager4D2;
 
+static inline JPAEmitterManager* MarDirectorEmitterManager4D2()
+{
+	JPAEmitterManager* r = gpEmitterManager4D2;
+	return r;
+}
+
+// TODO: 99.8%, frame exact; every referenced slot is 4 bytes low, i.e. one
+// +4 of low region below the ECTSearch expansion, which is the earliest one.
+// Rejected: a second pointer-returning level over ECTSearch (a typed
+// `ECTSearchViewObjList` binding the cast result) -- a pointer return is worth
+// +4 elsewhere but is +8 here, overshooting to 0x88 and adding an
+// instruction (99.8 -> 97.2). No +4 lever is known for this pool.
+// Re-pass 172 found a measurable step but not the closure. A console-only
+// three-level stack -- a fork over `TNameRefGen::instance`
+// (`ECTRootNameRef()`), a fork `ECTRootSearch()` calling `search` through it,
+// and the existing binder on top -- takes this function from 17 markers to
+// **6** with the frame still exact: every slot up to 0x54 then matches and the
+// only residue left is the `TList_pointer_void::insert` sub-block sitting 4
+// bytes high (0x4c/0x48/0x44 against retail's 0x48/0x44/0x40), i.e. the
+// research-161 JGadget stride, not a shortage. It was not committed because it
+// is two fabricated helpers for a function that still does not close; retry it
+// together with the JGadget grouping. Also measured: routing the site through
+// the root-ref fork with no extra fork is +0; the same stack with the top level
+// a fork instead of a binder is 0x78 (22 markers) and with `ECTRootSearch`
+// binding instead of forking 0x88 (22 markers); a plain redundant fork over
+// `search2` under the binder gives 11 markers.
 void TMarDirector::setupPerformList_console()
 {
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* list
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("Group 2D"));
+	    = (JDrama::TViewObjPtrListT<JDrama::TViewObj>*)ECTSearch("Group 2D");
 
-	list->insert(new TEmitterViewObj(gpEmitterManager4D2));
+	list->insert(new TEmitterViewObj(MarDirectorEmitterManager4D2()));
 
 	unk30->push_back(list, CUE_MOVE | CUE_CALC_ANIM);
 	unk30->push_back("Group 2D 2", CUE_MOVE | CUE_CALC_ANIM);

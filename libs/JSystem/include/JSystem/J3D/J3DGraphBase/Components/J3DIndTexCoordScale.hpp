@@ -20,7 +20,7 @@ public:
 	u8 getScaleS() { return mScaleS; }
 	u8 getScaleT() { return mScaleT; }
 
-	void load(u32) const { }
+	void load(u32) const;
 };
 
 #endif

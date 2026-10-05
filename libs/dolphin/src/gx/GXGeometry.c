@@ -67,12 +67,24 @@ void GXSetLineWidth(u8 width, GXTexOffset texOffsets)
 	gx->bpSent = 0;
 }
 
+void GXGetLineWidth(u8* width, GXTexOffset* texOffsets)
+{
+	*width      = GET_REG_FIELD(gx->lpSize, 8, 0);
+	*texOffsets = GET_REG_FIELD(gx->lpSize, 3, 16);
+}
+
 void GXSetPointSize(u8 pointSize, GXTexOffset texOffsets)
 {
 	SET_REG_FIELD(0x1D5, gx->lpSize, 8, 8, pointSize);
 	SET_REG_FIELD(0x1D6, gx->lpSize, 3, 19, texOffsets);
 	GX_WRITE_BP_REG(gx->lpSize);
 	gx->bpSent = 0;
+}
+
+void GXGetPointSize(u8* pointSize, GXTexOffset* texOffsets)
+{
+	*pointSize  = GET_REG_FIELD(gx->lpSize, 8, 8);
+	*texOffsets = GET_REG_FIELD(gx->lpSize, 3, 19);
 }
 
 void GXEnableTexOffsets(GXTexCoordID coord, u8 line_enable, u8 point_enable)
@@ -101,6 +113,23 @@ void GXSetCullMode(GXCullMode mode)
 	}
 	SET_REG_FIELD(0x225, gx->genMode, 2, 14, hwMode);
 	gx->dirtyState |= 4;
+}
+
+void GXGetCullMode(GXCullMode* mode)
+{
+	GXCullMode hwMode = GET_REG_FIELD(gx->genMode, 2, 14);
+
+	switch (hwMode) {
+	case GX_CULL_FRONT:
+		*mode = GX_CULL_BACK;
+		break;
+	case GX_CULL_BACK:
+		*mode = GX_CULL_FRONT;
+		break;
+	default:
+		*mode = hwMode;
+		break;
+	}
 }
 
 void GXSetCoPlanar(GXBool enable)

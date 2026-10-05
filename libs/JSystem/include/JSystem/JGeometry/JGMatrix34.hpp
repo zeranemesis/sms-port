@@ -23,6 +23,12 @@ inline void gekko_ps_copy12(register void* dst, register void* src)
 		psq_st f8, 32(dst), 0, 0
 		psq_st f10, 40(dst), 0, 0
 	}
+#else
+	// Copy twelve floats (one 3x4 matrix).
+	f32* d       = (f32*)dst;
+	const f32* s = (const f32*)src;
+	for (int i = 0; i < 12; i++)
+		d[i] = s[i];
 #endif // clang-format on
 }
 
@@ -95,33 +101,35 @@ public:
 	// from SMG
 	void identity()
 	{
-		this->ref(0, 3) = this->ref(1, 3) = this->ref(2, 3) = 0.0f;
-
-		this->ref(0, 2) = this->ref(1, 2) = 0.0f;
-		this->ref(0, 1) = this->ref(2, 1) = 0.0f;
-		this->ref(1, 0) = this->ref(2, 0) = 0.0f;
+		this->ref(1, 0) = this->ref(2, 0) = this->ref(0, 1)
+		    = this->ref(2, 1) = this->ref(0, 2) = this->ref(1, 2)
+		    = this->ref(0, 3) = this->ref(1, 3) = this->ref(2, 3) = 0.0f;
 
 		this->ref(0, 0) = this->ref(1, 1) = this->ref(2, 2) = 1.0f;
 	}
 
+	// r = a * b, with b's translation carried through a's 3x3 and a's own
+	// translation added last. The 3x4 has no fourth row, so the 3x3 part
+	// contracts a's row against b's column: this is the shape
+	// TKoopa::calcRootMatrix and TBathWaterManager::perform spell out.
 	void concat(const T& a, const T& b)
 	{
 		this->set(
 		    // clang-format off
-		a.at(0, 0) * b.at(0, 0) + a.at(1, 0) * b.at(0, 1) + a.at(2, 0) * b.at(0, 2),
-		a.at(0, 0) * b.at(1, 0) + a.at(1, 0) * b.at(1, 1) + a.at(2, 0) * b.at(1, 2),
-		a.at(0, 0) * b.at(2, 0) + a.at(1, 0) * b.at(2, 1) + a.at(2, 0) * b.at(2, 2),
-		a.at(0, 0) * b.at(0, 3) + a.at(1, 0) * b.at(3, 1) + a.at(2, 0) * b.at(3, 2) + a.at(3, 0),
+		a.at(0, 0) * b.at(0, 0) + a.at(0, 1) * b.at(1, 0) + a.at(0, 2) * b.at(2, 0),
+		a.at(0, 0) * b.at(0, 1) + a.at(0, 1) * b.at(1, 1) + a.at(0, 2) * b.at(2, 1),
+		a.at(0, 0) * b.at(0, 2) + a.at(0, 1) * b.at(1, 2) + a.at(0, 2) * b.at(2, 2),
+		a.at(0, 3) + (a.at(0, 0) * b.at(0, 3) + a.at(0, 1) * b.at(1, 3) + a.at(0, 2) * b.at(2, 3)),
 
-		a.at(0, 1) * b.at(0, 0) + a.at(1, 1) * b.at(0, 1) + a.at(2, 1) * b.at(0, 2),
-		a.at(0, 1) * b.at(1, 0) + a.at(1, 1) * b.at(1, 1) + a.at(2, 1) * b.at(1, 2),
-		a.at(0, 1) * b.at(2, 0) + a.at(1, 1) * b.at(2, 1) + a.at(2, 1) * b.at(2, 2),
-		a.at(0, 1) * b.at(3, 0) + a.at(1, 1) * b.at(3, 1) + a.at(2, 1) * b.at(3, 2) + a.at(3, 1),
+		a.at(1, 0) * b.at(0, 0) + a.at(1, 1) * b.at(1, 0) + a.at(1, 2) * b.at(2, 0),
+		a.at(1, 0) * b.at(0, 1) + a.at(1, 1) * b.at(1, 1) + a.at(1, 2) * b.at(2, 1),
+		a.at(1, 0) * b.at(0, 2) + a.at(1, 1) * b.at(1, 2) + a.at(1, 2) * b.at(2, 2),
+		a.at(1, 3) + (a.at(1, 0) * b.at(0, 3) + a.at(1, 1) * b.at(1, 3) + a.at(1, 2) * b.at(2, 3)),
 
-		a.at(0, 2) * b.at(0, 0) + a.at(1, 2) * b.at(0, 1) + a.at(2, 2) * b.at(0, 2),
-		a.at(0, 2) * b.at(1, 0) + a.at(1, 2) * b.at(1, 1) + a.at(2, 2) * b.at(1, 2),
-		a.at(0, 2) * b.at(2, 0) + a.at(1, 2) * b.at(2, 1) + a.at(2, 2) * b.at(2, 2),
-		a.at(0, 2) * b.at(3, 0) + a.at(1, 2) * b.at(3, 1) + a.at(2, 2) * b.at(3, 2) + a.at(3, 2)
+		a.at(2, 0) * b.at(0, 0) + a.at(2, 1) * b.at(1, 0) + a.at(2, 2) * b.at(2, 0),
+		a.at(2, 0) * b.at(0, 1) + a.at(2, 1) * b.at(1, 1) + a.at(2, 2) * b.at(2, 1),
+		a.at(2, 0) * b.at(0, 2) + a.at(2, 1) * b.at(1, 2) + a.at(2, 2) * b.at(2, 2),
+		a.at(2, 3) + (a.at(2, 0) * b.at(0, 3) + a.at(2, 1) * b.at(1, 3) + a.at(2, 2) * b.at(2, 3))
 		    // clang-format on
 		);
 	}
@@ -130,20 +138,20 @@ public:
 	{
 		this->set(
 		    // clang-format off
-		this->at(0, 0) * b.at(0, 0) + this->at(1, 0) * b.at(0, 1) + this->at(2, 0) * b.at(0, 2),
-		this->at(0, 0) * b.at(1, 0) + this->at(1, 0) * b.at(1, 1) + this->at(2, 0) * b.at(1, 2),
-		this->at(0, 0) * b.at(2, 0) + this->at(1, 0) * b.at(2, 1) + this->at(2, 0) * b.at(2, 2),
-		this->at(0, 3) + this->at(0, 0) * b.at(0, 3) + this->at(0, 1) * b.at(1, 3) + this->at(0, 2) * b.at(2, 3),
+		this->at(0, 0) * b.at(0, 0) + this->at(0, 1) * b.at(1, 0) + this->at(0, 2) * b.at(2, 0),
+		this->at(0, 0) * b.at(0, 1) + this->at(0, 1) * b.at(1, 1) + this->at(0, 2) * b.at(2, 1),
+		this->at(0, 0) * b.at(0, 2) + this->at(0, 1) * b.at(1, 2) + this->at(0, 2) * b.at(2, 2),
+		this->at(0, 3) + (this->at(0, 0) * b.at(0, 3) + this->at(0, 1) * b.at(1, 3) + this->at(0, 2) * b.at(2, 3)),
 
-		this->at(0, 1) * b.at(0, 0) + this->at(1, 1) * b.at(0, 1) + this->at(2, 1) * b.at(0, 2),
-		this->at(0, 1) * b.at(1, 0) + this->at(1, 1) * b.at(1, 1) + this->at(2, 1) * b.at(1, 2),
-		this->at(0, 1) * b.at(2, 0) + this->at(1, 1) * b.at(2, 1) + this->at(2, 1) * b.at(2, 2),
-		this->at(1, 3) + this->at(1, 0) * b.at(0, 3) + this->at(1, 1) * b.at(1, 3) + this->at(1, 2) * b.at(2, 3),
+		this->at(1, 0) * b.at(0, 0) + this->at(1, 1) * b.at(1, 0) + this->at(1, 2) * b.at(2, 0),
+		this->at(1, 0) * b.at(0, 1) + this->at(1, 1) * b.at(1, 1) + this->at(1, 2) * b.at(2, 1),
+		this->at(1, 0) * b.at(0, 2) + this->at(1, 1) * b.at(1, 2) + this->at(1, 2) * b.at(2, 2),
+		this->at(1, 3) + (this->at(1, 0) * b.at(0, 3) + this->at(1, 1) * b.at(1, 3) + this->at(1, 2) * b.at(2, 3)),
 
-		this->at(0, 2) * b.at(0, 0) + this->at(1, 2) * b.at(0, 1) + this->at(2, 2) * b.at(0, 2),
-		this->at(0, 2) * b.at(1, 0) + this->at(1, 2) * b.at(1, 1) + this->at(2, 2) * b.at(1, 2),
-		this->at(0, 2) * b.at(2, 0) + this->at(1, 2) * b.at(2, 1) + this->at(2, 2) * b.at(2, 2),
-		this->at(2, 3) + this->at(2, 0) * b.at(0, 3) + this->at(2, 1) * b.at(1, 3) + this->at(2, 2) * b.at(2, 3)
+		this->at(2, 0) * b.at(0, 0) + this->at(2, 1) * b.at(1, 0) + this->at(2, 2) * b.at(2, 0),
+		this->at(2, 0) * b.at(0, 1) + this->at(2, 1) * b.at(1, 1) + this->at(2, 2) * b.at(2, 1),
+		this->at(2, 0) * b.at(0, 2) + this->at(2, 1) * b.at(1, 2) + this->at(2, 2) * b.at(2, 2),
+		this->at(2, 3) + (this->at(2, 0) * b.at(0, 3) + this->at(2, 1) * b.at(1, 3) + this->at(2, 2) * b.at(2, 3))
 		    // clang-format on
 		);
 	}

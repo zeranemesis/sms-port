@@ -34,50 +34,52 @@ TWalkerEnemy::TWalkerEnemy(const char* name)
 
 void TWalkerEnemy::init(TLiveManager* param_1)
 {
-
-	
-	
 	TSmallEnemy::init(param_1);
 	mBinder = new TWalker;
 	getWalker()->reset();
 	getWalker()->unk18 = 150.0f;
 
 	mMarchSpeed = getSaveParam2()->unk324.rand();
-	mSpine->initWith(&TNerveWalkerGenerate::theNerve());
+	getSpine()->initWith(&TNerveWalkerGenerate::theNerve());
 }
 
 // TODO: fake
 static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
 {
-	f32 c = radius * MsCos(theta);
-	f32 s = radius * MsSin(theta);
+	f32 c = radius * JMACos(theta);
+	f32 s = radius * JMASin(theta);
 	return JGeometry::TVec3<f32>(s, 0.0f, c);
 }
 
+// Retail keeps a virtual `getSaveParam()` call whose result is dead after the
+// polar temp. It is spelled here as a dead named read of a walker parameter
+// (which member it read is unobservable); the named `f32` from the reference
+// `get()` gives the vector slots their 16-byte stride, and the accessor reads
+// (`getGroundPlane`, `getSpine`, `getRotation`) carry the rest of the pool.
 void TWalkerEnemy::moveObject()
 {
-	if (!mGroundPlane->checkFlag(BG_CHECK_FLAG_ILLEGAL)
-	    && (mInstanceIndex & 0xF) == (gpMarDirector->mMoveTickCount & 0xF)) {
+	if (!getGroundPlane()->checkFlag(BG_CHECK_FLAG_ILLEGAL)
+	    && (mInstanceIndex & 0xF) == (gpMarDirector->unk58 & 0xF)) {
 		doShortCut();
 	}
 
 	TSmallEnemy::moveObject();
 
 	if (getWalker()->getUnk1C()
-	    && mSpine->getCurrentNerve() != &TNerveSmallEnemyJump::theNerve()) {
+	    && getSpine()->getCurrentNerve() != &TNerveSmallEnemyJump::theNerve()) {
 
 		// TODO: some order of inlines should be used instead of tmps
-		f32 yAngle = mRotation.y;
+		f32 yAngle = getRotation().y;
 		f32 f      = getSaveParam2()->unk324.mMax;
 
 		JGeometry::TVec3<f32> local = polarXZ(yAngle, f);
 
-		getSaveParam();
+		f32 cycle = getSaveParam2()->mSLZigzagCycle.get();
 		mVelocity.x = local.x;
 		mVelocity.z = local.z;
-		mSpine->pushNerve(&TNerveSmallEnemyJump::theNerve());
+		getSpine()->pushNerve(&TNerveSmallEnemyJump::theNerve());
 		onLiveFlag(LIVE_FLAG_AIRBORNE);
-		mRotation.y += 5.0f;
+		mPosition.y += 5.0f;
 	}
 }
 
@@ -100,10 +102,16 @@ void TWalkerEnemy::reset()
 
 	mMarchSpeed = getSaveParam2()->unk324.rand();
 
-	((TWalker*)mBinder)->reset();
-	mSpine->reset();
+	getWalker()->reset();
+	getSpine()->reset();
 	mSpine->setNext(mSpine->getDefault());
-	setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+
+	// The node is a named local and the `getSpine()` above carries the +4 of
+	// pool that puts it at 0x38: `setGoalPathMario()` lands the temp at 0x20,
+	// the named node alone at 0x34, and routing `setNext` through `getSpine()`
+	// as well overshoots the frame to 0x68.
+	TPathNode node((THitActor*)gpMarioAddress);
+	setGoalPath(node);
 }
 
 void TWalkerEnemy::walkBehavior(int param_1, float param_2)
@@ -134,6 +142,17 @@ void TWalkerEnemy::walkBehavior(int param_1, float param_2)
 	}
 }
 
+// TU-local fork of the Mario global, worth +4 of low region (the "global fork
+// is +4 per read" rung).  `setGoalPathMario()` and the spelled-out
+// `setGoalPath((THitActor*)gpMarioAddress)` bracket retail here without ever
+// hitting it: measured against retail's TPathNode temp at 0x34 / frame 0x50,
+// the direct call is 0x30/0x48, the header's `setGoalPathMario()` (which binds
+// its own `THitActor* mario`) is 0x2c/0x50, and a TU-local binder over
+// `checkUnk150` is a uniform +8/+8 on either, so every combination lands on
+// the 8-byte grid 4 away from retail.  Forking the global read out of the
+// argument is the missing 4 and closes the function.
+static inline THitActor* WalkerEnemyMario() { return (THitActor*)gpMarioAddress; }
+
 void TWalkerEnemy::behaveToFindMario()
 {
 	if (checkUnk150(2)) {
@@ -141,7 +160,7 @@ void TWalkerEnemy::behaveToFindMario()
 		mSpine->pushAfterCurrent(&TNerveWalkerEscape::theNerve());
 		mSpine->pushAfterCurrent(&TNerveSmallEnemyJump::theNerve());
 	} else {
-		setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		setGoalPath(WalkerEnemyMario());
 		mSpine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
 		mSpine->pushAfterCurrent(&TNerveWalkerAttack::theNerve());
 		mSpine->pushAfterCurrent(&TNerveSmallEnemyJump::theNerve());
@@ -154,20 +173,12 @@ void TWalkerEnemy::initAttacker(THitActor* param_1)
 	unk184    = 1;
 }
 
-// TODO: look for more places to use this
-static inline f32 dist(const JGeometry::TVec3<f32>& a,
-                       const JGeometry::TVec3<f32>& b)
-{
-	JGeometry::TVec3<f32> tmp = a;
-	tmp.sub(b);
-	return tmp.length();
-}
 
 bool TWalkerEnemy::isResignationAttack()
 {
-	f32 fVar1 = getSaveParam2()->getSLGiveUpLength();
+	f32 fVar1 = getSaveParam2()->mSLGiveUpLength.get();
 
-	if (dist(unk104.getPoint(), mPosition) > fVar1)
+	if (MsDistance(unk104.getPointRaw(), mPosition) > fVar1)
 		return true;
 	else
 		return false;
@@ -175,7 +186,7 @@ bool TWalkerEnemy::isResignationAttack()
 
 bool TWalkerEnemy::isReachedToGoalXZ()
 {
-	JGeometry::TVec3<f32> tmp = getUnk104().getPoint();
+	JGeometry::TVec3<f32> tmp = getUnk104().getPointRaw();
 	tmp -= mPosition;
 	tmp.y = 0.0f;
 
@@ -231,11 +242,17 @@ DEFINE_NERVE(TNerveWalkerGraphWander, TLiveActor)
 	}
 }
 
+// Binding level worth +16 of low region, landing
+// TNerveWalkerAttack::execute's frame at 0x50 (batch 121).
+static inline const JGeometry::TVec3<f32>&
+WalkerEnemyGetPosition(const TWalkerEnemy* p)
+{
+	const JGeometry::TVec3<f32>& position = p->getPosition();
+	return position;
+}
+
 DEFINE_NERVE(TNerveWalkerAttack, TLiveActor)
 {
-
-	
-	
 	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
 
 	if (spine->getTime() == 0)
@@ -250,7 +267,8 @@ DEFINE_NERVE(TNerveWalkerAttack, TLiveActor)
 			return true;
 
 		f32 giveUpHeight = self->getSaveParam2()->mSLGiveUpHeight.get();
-		if (abs(SMS_GetMarioPos().y - self->getPosition().y) > giveUpHeight)
+		if (abs(SMS_GetMarioPos().y - WalkerEnemyGetPosition(self).y)
+		    > giveUpHeight)
 			return true;
 	}
 
@@ -274,6 +292,9 @@ DEFINE_NERVE(TNerveWalkerPostAttack, TLiveActor)
 	return false;
 }
 
+// The two dead `getSaveParam()` calls are two dead named parameter reads, as
+// in TWalkerEnemy::moveObject; with them, `switchNextGoalPath()` spelled out
+// (rather than called) puts the `pop()` temp at retail's slot.
 DEFINE_NERVE(TNerveWalkerEscape, TLiveActor)
 {
 	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
@@ -285,8 +306,8 @@ DEFINE_NERVE(TNerveWalkerEscape, TLiveActor)
 	if (self->isReachedToGoal())
 		self->goToRandomEscapeGraphNode();
 
-	self->getSaveParam();
-	self->getSaveParam();
+	f32 cycle = self->getSaveParam2()->mSLZigzagCycle.get();
+	f32 angle = self->getSaveParam2()->mSLZigzagAngle.get();
 	if (SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)) {
 		if (!self->unk114.empty())
 			self->unkF4 = self->unk114.pop();
@@ -310,7 +331,7 @@ DEFINE_NERVE(TNerveWalkerTraceMario, TLiveActor)
 	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
 	if (spine->getTime() == 0) {
 		self->setRunAnm();
-		self->setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		self->setGoalPathMario();
 	}
 
 	if (spine->getTime() == 10)
@@ -327,7 +348,10 @@ DEFINE_NERVE(TNerveWalkerTraceMario, TLiveActor)
 	}
 
 	f32 giveUpHeight = self->getSaveParam2()->mSLGiveUpHeight.get();
-	if (abs(SMS_GetMarioPos().y - self->getPosition().y) > giveUpHeight)
+	// Raw `mPosition`, not `getPosition()`: the accessor is worth 4 bytes of
+	// pool here, which this function no longer needs now that
+	// `setGoalPathMario()` carries its own pointer binding. Frame 0x60, exact.
+	if (abs(SMS_GetMarioPos().y - self->mPosition.y) > giveUpHeight)
 		return true;
 
 	self->walkBehavior(2, 3.0f);

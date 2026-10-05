@@ -9,7 +9,7 @@
 #include <dolphin/os.h>
 
 JKRDvdArchive::JKRDvdArchive()
-    : JKRArchive(0, MOUNT_DVD)
+    : JKRArchive((s32)0, MOUNT_DVD)
 {
 	JUT_ASSERT_F(false, "UNIMPLEMENTED");
 }
@@ -53,9 +53,20 @@ JKRDvdArchive::~JKRDvdArchive()
 	}
 }
 
+// UNUSED; JKRMemArchive::fixedInit with this class's mount mode, which
+// takes its own register (0x44, against 0x40 where the mode is 1 or 2).
 void JKRDvdArchive::fixedInit(s32 entryNum)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
+	mIsMounted  = false;
+	mMountMode  = MOUNT_DVD;
+	mMountCount = 1;
+	_54         = 2;
+	mHeap       = JKRHeap::sCurrentHeap;
+	mEntryNum   = entryNum;
+	if (sCurrentVolume)
+		return;
+	sCurrentVolume = this;
+	setCurrentDirID(0);
 }
 
 void JKRDvdArchive::mountFixed(s32 entryNum)

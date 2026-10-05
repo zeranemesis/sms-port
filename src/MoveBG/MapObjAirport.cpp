@@ -4,8 +4,9 @@
 #include <Enemy/GateKeeper.hpp>
 #include <Camera/CameraShake.hpp>
 #include <System/MarDirector.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -27,8 +28,7 @@ void TAirportSwitch::breaking()
 void TAirportSwitch::loadAfter()
 {
 	TMapObjGeneral::loadAfter();
-	unk148 = static_cast<TAirportPool*>(
-	    JDrama::TNameRefGen::search("AirportPool"));
+	unk148 = JDrama::TNameRefGen::search<TAirportPool>("AirportPool");
 }
 
 TAirportSwitch::TAirportSwitch(const char* name)
@@ -54,27 +54,31 @@ bool TAirportEventSink::control()
 		gpPollution->offLayer(0);
 
 	if (unk4C > unk48)
-		gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 0.1);
+		gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 0.1);
 
 	return TMapEventSinkInPollutionReset::control();
 }
 
-// TODO: this is all fake, need to analyze a bunch of similar functions together
-// and figure out the real inlines
-inline TMarDirector* getMarDirector() { return gpMarDirector; }
-inline TPollutionManager* getPollution() { return gpPollution; }
-
+// Exact. The frame is the sum of four inline levels, three of them local (the
+// unnamed `JDrama::TFlagT<u16>(0)` temporary every other fireStartDemoCamera
+// caller passes, `getGateKeeper()` in the guard, and `SMSGetPollutionLayer`'s
+// `SMSGetPollution()` step) and the fourth the pollution-layer lookup itself:
+// this site and TMapEventSirenaSink::watch reach the layer two levels below
+// `getLayer(i)`, through `SMSGetPollution()->getLayers()[i]`. Substituting
+// `getLayer(0)` here loses 8 bytes of expansion temporaries, and pushing the
+// extra level down into `TJointModelManager::getJointModel` instead reaches
+// every other caller and breaks the source-linked Map/MapEvent.
 bool TAirportEventSink::watch()
 {
-	if (!mIsBuildingRecovered[0] && unk6C->checkLiveFlag(LIVE_FLAG_DEAD)) {
-		mRaisingBuildingIdx    = 0;
-		TMarDirector* director = getMarDirector();
-
-		director->fireStartDemoCamera("空港坂上げカメラ", &unk6C->mPosition, -1,
-		                              0.0f, true, nullptr, 0, nullptr,
-		                              JDrama::TFlagT<u16>(0));
-		getPollution()->getLayer(0)->startDecay();
-		SMSGetMSound()->startSoundSystemSE(0x484D, 0, nullptr, 0);
+	if (!mIsBuildingRecovered[0]
+	    && getGateKeeper()->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		mRaisingBuildingIdx = 0;
+		SMSGetMarDirector()->fireStartDemoCamera(
+		    "空港坂上げカメラ", &unk6C->mPosition, -1, 0.0f, true, nullptr, 0,
+		    nullptr, JDrama::TFlagT<u16>(0));
+		SMSGetPollutionLayer(0)->startDecay();
+		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr,
+		                                 0);
 		return true;
 	}
 
@@ -85,8 +89,8 @@ void TAirportEventSink::loadAfter()
 {
 	TMapEventSinkInPollutionReset::loadAfter();
 
-	unk6C = static_cast<TGateKeeperBase*>(
-	    JDrama::TNameRefGen::search("ゲートキーパー（ビアンコ）"));
+	unk6C = JDrama::TNameRefGen::search<TGateKeeperBase>(
+	    "ゲートキーパー（ビアンコ）");
 	unk40 = 720;
 	unk44 = 480;
 	unk48 = 60;

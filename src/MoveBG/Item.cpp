@@ -4,7 +4,6 @@
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MSound/MSound.hpp>
-#include <MSound/MSoundBGM.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <System/Application.hpp>
 #include <System/StageUtil.hpp>
@@ -42,16 +41,12 @@ f32 TItem::mAppearedScaleSpeed = 0.01f;
 
 void TItem::appeared()
 {
-
-	
-	
 	if (checkMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING) && !isStateTimerEngaged()) {
 		if (mContainer != nullptr)
 			mContainer->receiveMessage(this, HIT_MESSAGE_UNK5);
 
 		if (isActorType(0x2000000f) || isActorType(0x20000010)) {
-			SMSGetMSound()->startSoundActor(MSD_SE_SY_COIN_DISAPPEAR,
-			                                &mPosition, 0, nullptr, 0, 4);
+			SMSGetMSound()->startSoundActor(MSD_SE_SY_COIN_DISAPPEAR, &mPosition);
 		}
 	}
 
@@ -94,24 +89,27 @@ void TItem::calcRootMatrix()
 		TMapObjGeneral::calcRootMatrix();
 }
 
+static inline J3DModel* ItemCalcModel(const TItem* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
 void TItem::calc()
 {
-
-	
-	
 	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isState(STATE_HOLDING)) {
 		MtxPtr src = gpItemManager->unk40;
 
 		MtxPtr mtx;
 		if (checkMapObjFlag(MAP_OBJ_FLAG_UNK100))
-			mtx = getModel()->getAnmMtx(0);
+			mtx = ItemCalcModel(this)->getAnmMtx(0);
 		else
-			mtx = getModel()->getBaseTRMtx();
+			mtx = ItemCalcModel(this)->getBaseTRMtx();
 
 		mtx[0][0] = src[0][0];
 		mtx[0][1] = src[0][1];
 		mtx[0][2] = src[0][2];
-		mtx[0][3] = mPosition.x;
+		mtx[0][3] = getPosition().x;
 
 		mtx[1][0] = src[1][0];
 		mtx[1][1] = src[1][1];
@@ -125,8 +123,9 @@ void TItem::calc()
 	}
 
 	if (isState(STATE_HOLDING) && checkMapObjFlag(MAP_OBJ_FLAG_UNK100)) {
-		// TItemNozzle holds the item through the holder's taking matrix, so
-		// the box flavours must go through the virtual override.
+		// The two nozzle items place themselves on Mario's back, so they
+		// get their own calcRootMatrix() through the vtable; everything
+		// else takes the base implementation directly.
 		if (isActorType(0x20000022) || isActorType(0x2000002A))
 			calcRootMatrix();
 		else
@@ -219,8 +218,8 @@ void TCoin::taken(THitActor* param_1)
 		mContainer->receiveMessage(this, HIT_MESSAGE_UNK8);
 
 	if (TFlagManager::smInstance->getFlag(0x40002) == 100) {
-		TShine* shine = static_cast<TShine*>(
-		    JDrama::TNameRefGen::search("シャイン（１００枚コイン用）"));
+		TShine* shine = JDrama::TNameRefGen::search<TShine>(
+		    "シャイン（１００枚コイン用）");
 
 		gpItemManager->makeShineAppearWithDemo(
 		    "シャイン（１００枚コイン用）",
@@ -238,16 +237,28 @@ void TCoin::makeObjDead()
 		unk154->unk1A |= 1;
 }
 
+// Two binding levels over the animation matrix, worth +0x10 of low region in
+// TCoin::appearWithoutSound.
+static inline MtxPtr ItemAnmMtx(const TItem* p)
+{
+	J3DModel* model = p->getModel();
+	MtxPtr mtx      = model->getAnmMtx(0);
+	return mtx;
+}
+
 void TCoin::appearWithoutSound()
 {
-
-	
-	
 	TItem::appear();
-	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    MAPOBJ_MS_WATCOIN_KIRA, getModel()->getAnmMtx(0), 0, this);
+	gpMarioParticleManager->emitAndBindToMtxPtr(MAPOBJ_MS_WATCOIN_KIRA,
+	                                            ItemAnmMtx(this), 0, this);
 	if (isActorType(0x2000000e))
 		offMapObjFlag(MAP_OBJ_FLAG_UNK10000000);
+}
+
+static inline MSound* TCoinAppearGetMSound(TCoin* p)
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
 }
 
 void TCoin::appear()
@@ -258,8 +269,8 @@ void TCoin::appear()
 			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_TIMECOIN_APPEAR, 0,
 			                                   nullptr, 0);
 	} else {
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_COIN_APPEAR, 0, nullptr,
-		                                   0);
+		TCoinAppearGetMSound(this)->startSoundSystemSE(MSD_SE_SY_COIN_APPEAR,
+		                                               0, nullptr, 0);
 	}
 
 	appearWithoutSound();
@@ -270,6 +281,22 @@ void TCoin::makeObjAppeared()
 	TItem::makeObjAppeared();
 	if (unk154)
 		unk154->unk1A &= ~1;
+}
+
+// Binding level worth +16 of low region, landing TCoin::perform's frame at
+// 0x50 (batch 121).
+static inline u16 ItemGetColNum(TCoin* p)
+{
+	u16 colNum = p->getColNum();
+	return colNum;
+}
+
+// Binding level worth +16 of low region, landing TCoin::perform's frame at
+// 0x50 (batch 121).
+static inline MActor* ItemGetMActor(const TCoin* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
 }
 
 void TCoin::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -300,12 +327,12 @@ void TCoin::perform(u32 cue, JDrama::TGraphics* graphics)
 			}
 		}
 
-		if (getColNum())
-			for (int i = 0; i < getColNum(); ++i)
+		if (ItemGetColNum(this))
+			for (int i = 0; i < ItemGetColNum(this); ++i)
 				touchActor(mCollisions[i]);
 
 	} else {
-		if ((cue & CUE_CALC_VIEW) && getMActor() == nullptr) {
+		if ((cue & CUE_CALC_VIEW) && ItemGetMActor(this) == nullptr) {
 			gpQuestionManager->request(mPosition, 60.0f);
 		}
 
@@ -319,14 +346,15 @@ void TCoin::loadAfter()
 	if (!gpMirrorModelManager->isInMirror(mPosition))
 		return;
 
-	if (gpMarDirector->getCurrentMap() == 2) {
+	if (SMSGetMarDirector()->getCurrentMap() == 2) {
 		const TBGCheckData* check;
 		gpMap->checkGround(mPosition, &check);
 		if (!check->isWaterSurface())
 			return;
 	}
 
-	unk154 = new TMirrorActor("コインin鏡");
+	TMirrorActor* actor = new TMirrorActor("コインin鏡");
+	unk154              = actor;
 	unk154->init(getModel(), 0x18);
 }
 
@@ -348,13 +376,13 @@ void TFlowerCoin::load(JSUMemoryInputStream& stream)
 	stream >> unk158;
 }
 
+void TCoinEmpty::warning() { }
+
 void TCoinEmpty::appear() { }
 
 void TCoinEmpty::makeObjAppeared() { }
 
 void TCoinEmpty::kill() { }
-
-void TCoinEmpty::warning() { }
 
 TCoinEmpty::TCoinEmpty(const char* name)
     : TCoin(name)
@@ -377,29 +405,39 @@ void TCoinRed::taken(THitActor* param_1)
 TCoinRed::TCoinRed(const char* name)
     : TCoin(name)
 {
-	unk158.zero();
+	unk158.x = unk158.y = unk158.z = 0.0f;
+}
+
+// Binding level worth +8 of low region, landing TCoinBlue::makeObjAppeared's
+// frame at 0x28 (batch 121).
+static inline u32 ItemGetEventId(TCoinBlue* p)
+{
+	u32 eventId = p->getEventId();
+	return eventId;
 }
 
 void TCoinBlue::makeObjAppeared()
 {
-
-	
-	
 	if (TFlagManager::getInstance()->getBlueCoinFlag(
-	        gpMarDirector->getCurrentMap(), getEventId()))
+	        gpMarDirector->getCurrentMap(), ItemGetEventId(this)))
 		return;
 
 	TCoin::makeObjAppeared();
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TCoinBlue::taken (batch 127).
+static inline THitActor* ItemContainer(const TCoinBlue* p)
+{
+	THitActor* container = p->mContainer;
+	return container;
+}
+
 void TCoinBlue::taken(THitActor* param_1)
 {
-
-	
-	
 	SMSGetMarDirector()->fireGetBlueCoin(this);
 
-	if (mContainer)
+	if (ItemContainer(this))
 		mContainer->receiveMessage(this, HIT_MESSAGE_UNK8);
 
 	TItem::taken(param_1);
@@ -435,18 +473,30 @@ f32 TShine::mCircleRateY   = 0.5f;
 f32 TShine::mUpSpeed       = 1.0f;
 f32 TShine::mSpeedDownRate = 0.99f;
 
+static inline MActor* TShineCalcMActor(const TShine* p)
+{
+	MActor* actor = p->getMActor();
+	return actor;
+}
+
+static inline J3DModel* TShineCalcModel(const TShine* p)
+{
+	J3DModel* model = TShineCalcMActor(p)->getModel();
+	return model;
+}
+
 void TShine::calc()
 {
-	MtxPtr mtxPos = getMActor()->getModel()->getAnmMtx(2);
+	MtxPtr mtxPos = TShineCalcModel(this)->getAnmMtx(2);
 
 	if (checkLiveFlag(LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT
 	                  | LIVE_FLAG_DEAD))
 		return;
 
-	unk198 = gpMarioParticleManager->emitAndBindToMtxPtr(
+	unk198 = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 	    PARTICLE_MS_SHINE_SENKO, mtxPos, 1, this);
-	unk19C = gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_SHINE_KIRA,
-	                                                     mtxPos, 1, this);
+	unk19C = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(PARTICLE_MS_SHINE_KIRA,
+	                                                    mtxPos, 1, this);
 	if (unk1B4 == 0) {
 		unk194 = gpMarioParticleManager->emitAndBindToMtxPtr(
 		    PARTICLE_MS_SHINE_PROMI, mtxPos, 1, this);
@@ -454,7 +504,7 @@ void TShine::calc()
 		    PARTICLE_MS_SHINE_BOW, mtxPos, 1, this);
 	}
 
-	f32 dist2 = gpCamera->unk124.squared(mPosition);
+	f32 dist2 = SMSGetCameraBound()->unk124.squared(getPosition());
 	f32 dist  = JGeometry::TUtil<f32>::sqrt(dist2);
 
 	s16 promiLife;
@@ -500,11 +550,14 @@ void TShine::calc()
 	unk1A4 = 1;
 }
 
+static inline int TShineCircleTime(const TShine* p)
+{
+	int time = p->unk168;
+	return time;
+}
+
 void TShine::movingCircle()
 {
-
-	
-	
 	// TODO: hack, remove
 	(void)0;
 	(void)0;
@@ -512,11 +565,12 @@ void TShine::movingCircle()
 	f32 prevY = mPosition.y;
 	unk158 += 180.0f / (f32)unk168;
 
-	f32 tmp = (f32)(unk168 - mStateTimer) / (f32)unk168;
+	f32 tmp = (f32)(TShineCircleTime(this) - mStateTimer)
+	          / (f32)TShineCircleTime(this);
 
 	mPosition.x += unk17C.x;
 
-	mPosition.y = unk160 * MsSin(unk158)
+	mPosition.y = unk160 * JMASin(unk158)
 	              + (tmp * (mInitialPosition.y - unk164) + unk164);
 	unk188 = mPosition.y - prevY;
 
@@ -534,6 +588,11 @@ void TShine::movingCircle()
 void TShine::movingUp()
 {
 	mPosition.y += mUpSpeed;
+	if (unk154 == 3) {
+		mRotation.y += 7.0f;
+		// Huh? Result discarded?
+		MsWrap(mRotation.y, 0.0f, 360.0f);
+	}
 	if (isStateTimerEngaged())
 		return;
 
@@ -550,6 +609,9 @@ void TShine::movingUp()
 void TShine::movingDown()
 {
 	mPosition.y -= mUpSpeed;
+	mRotation.y += 7.0f;
+	// Huh? Result discarded?
+	MsWrap(mRotation.y, 0.0f, 360.0f);
 	if (isStateTimerEngaged())
 		return;
 	unk16C      = 7.0f;
@@ -557,6 +619,29 @@ void TShine::movingDown()
 	mState      = STATE_UNKF;
 }
 
+// The light block of the idle state is one inline level (c-k23): as its own
+// body the model, matrix, colour and translation become inline objects, which
+// puts the GXColor temporary with retail's six words above it.
+static inline void ShineSetEffectLight(TShine* shine)
+{
+	J3DModel* model      = shine->getMActor()->getModel();
+	MtxPtr mtx           = model->getAnmMtx(2);
+	const GXColor& color = (GXColor) { 0xff, 0xff, 0xff, 0xff };
+	JGeometry::TVec3<f32> trans;
+	trans.x = mtx[0][3];
+	trans.y = mtx[1][3];
+	trans.z = mtx[2][3];
+	gpLightManager->setEffectLightColor(color);
+	gpLightManager->setEffectLightPos(trans);
+}
+
+// TODO: every instruction matches; frame 0xe8 against 0xf8 (was 0xa8 before
+// c-k23's light level, the six short sounds and getInitialPosition()). The
+// debugger puts retail's GXColor temporary at 0xdc and appearWithDemo's TFlagT
+// at 0xa0; ours are 0xcc and 0x9c, so 3 words are missing between them and 1
+// below the flag. Inert or worse on top: SMSGetCamera() at the demo test
+// (slots move, frame kept), `mPosition = SMS_GetMarioPos()`, raw
+// `mState == 0x10`, raw `mStateTimer > 0`, getModel() in the light level.
 void TShine::control()
 {
 	if (!isState(0x10))
@@ -570,15 +655,9 @@ void TShine::control()
 	switch (mState) {
 	case STATE_NORMAL: {
 		mRotation.y += unk16C;
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
 
-		J3DModel* model      = getMActor()->getModel();
-		MtxPtr mtx           = model->getAnmMtx(2);
-		const GXColor& color = (GXColor) { 0xff, 0xff, 0xff, 0xff };
-		JGeometry::TVec3<f32> trans(mtx[0][3], mtx[1][3], mtx[2][3]);
-		gpLightManager->setEffectLightColor(color);
-		gpLightManager->setEffectLightPos(trans);
+		ShineSetEffectLight(this);
 	} break;
 
 	case STATE_UNKB:
@@ -590,31 +669,27 @@ void TShine::control()
 		break;
 
 	case STATE_MOVING_UP:
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
 		movingUp();
 		break;
 
 	case STATE_MOVING_DOWN:
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
 		movingDown();
 		break;
 
 	case STATE_MOVING_CIRCLE:
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
 		movingCircle();
 		break;
 
 	case STATE_UNKF: {
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
-		if (mPosition.y > mInitialPosition.y) {
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		if (mPosition.y > getInitialPosition().y) {
 			mPosition.y += unk188;
 			unk188 *= mSpeedDownRate;
 		} else {
-			mPosition.y = mInitialPosition.y;
+			mPosition.y = getInitialPosition().y;
 		}
 		if (unk16C > 2.0f)
 			unk16C -= 0.1f;
@@ -636,8 +711,7 @@ void TShine::control()
 		mRotation.y += unk16C;
 		// Huh? Result discarded?
 		MsWrap(mRotation.y, 0.0f, 360.0f);
-		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
 		break;
 
 	case STATE_UNK12: {
@@ -662,16 +736,13 @@ void TShine::perform(u32 cue, JDrama::TGraphics* graphics)
 
 BOOL TShine::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	unkF8 &= 0xF7FFFFFF;
 	mPosition.set(SMS_GetMarioPos());
 	mRotation.y = 180.0f * (f32)*gpMarioAngleY / 32768.0f;
 
 	MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
-	               mPosition.y - mYOffset, mPosition.z, mRotation.x,
-	               mRotation.y, mRotation.z);
+	               mPosition.y - mYOffset, mPosition.z, getRotation().x,
+	               getRotation().y, mRotation.z);
 
 	if (SMS_IsMarioOnYoshi()) {
 		if (unk1B4)
@@ -700,10 +771,22 @@ void TShine::touchPlayer(THitActor* actor)
 	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
+static inline TFlagManager* TShineAppearSimpleGetFlagManager(TShine* p)
+{
+	TFlagManager* flagManager = TFlagManager::smInstance;
+	return flagManager;
+}
+
+static inline MSound* TShineAppearSimpleGetMSound(TShine* p)
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 void TShine::appearWithTime(int param_1, int param_2, int param_3, int param_4)
 {
 	TItem::appear();
-	TFlagManager::smInstance->setBool(true, 0x50000);
+	TShineAppearSimpleGetFlagManager(this)->setBool(true, 0x50000);
 
 	if (param_2 >= 0)
 		unk174 = param_2;
@@ -715,21 +798,22 @@ void TShine::appearWithTime(int param_1, int param_2, int param_3, int param_4)
 	unk168 = param_1 - (unk174 + unk170 + unk178);
 	unk158 = 0.0f;
 
-	f32 yDelta = mInitialPosition.y - (mUpSpeed * (f32)unk170 + mPosition.y);
+	f32 yDelta = mInitialPosition.y - (mUpSpeed * (f32)unk170 + getPosition().y);
 
-	unk17C.x = (mInitialPosition.x - mPosition.x) / (f32)unk168;
+	unk17C.x = (mInitialPosition.x - getPosition().x) / (f32)unk168;
 	unk17C.y = yDelta / (f32)unk168;
-	unk17C.z = (mInitialPosition.z - mPosition.z) / (f32)unk168;
+	unk17C.z = (mInitialPosition.z - getPosition().z) / (f32)unk168;
 
-	unk15C = getDistanceXZ(mInitialPosition);
+	unk15C = getDistanceXZ(getInitialPosition());
 	if (unk15C == 0.0f)
 		unk15C = 1000.0f;
 	if (yDelta > 0.0f)
 		unk15C += fabsf(yDelta);
 	unk160 = unk15C * mCircleRateY;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr,
-	                                0, 4);
+	TShineAppearSimpleGetMSound(this)->startSoundActor(
+	    MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr, 0, 4);
+	MSBgm::startBGM(MSD_BGM_SHINE_APPEAR);
 
 	mStateTimer = unk174;
 	mState      = STATE_UNKB;
@@ -741,11 +825,9 @@ s32 TShine::appearWithTimeCallback(uintptr_t param_1, u32 param_2)
 	TShine* shine = (TShine*)param_1;
 	if (param_2 == 0) {
 		shine->appearWithTime(shine->unk18C, -1, -1, -1);
-		gpMarDirector->onDemoFlag(
-		    TMarDirector::DEMO_FLAG_SHINE_GET_STOP_THE_WORLD);
+		gpMarDirector->unk4E |= 1;
 	} else if (param_2 == 1) {
-		gpMarDirector->offDemoFlag(
-		    TMarDirector::DEMO_FLAG_SHINE_GET_STOP_THE_WORLD);
+		gpMarDirector->unk4E &= ~1;
 	}
 	return 0;
 }
@@ -753,7 +835,7 @@ s32 TShine::appearWithTimeCallback(uintptr_t param_1, u32 param_2)
 void TShine::appearSimple(int param_1)
 {
 	TItem::appear();
-	TFlagManager::smInstance->setBool(true, 0x50000);
+	TShineAppearSimpleGetFlagManager(this)->setBool(true, 0x50000);
 
 	unk174   = 60;
 	unk170   = param_1;
@@ -766,9 +848,9 @@ void TShine::appearSimple(int param_1)
 
 	mInitialPosition = mPosition;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr,
-	                                0, 4);
-	MSBgm::startBGM(MSD_BGM_KUPPA);
+	TShineAppearSimpleGetMSound(this)->startSoundActor(
+	    MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr, 0, 4);
+	MSBgm::startBGM(MSD_BGM_SHINE_APPEAR);
 
 	mStateTimer = unk174;
 	mState      = STATE_UNKB;
@@ -777,8 +859,9 @@ void TShine::appearSimple(int param_1)
 
 void TShine::appearWithDemo(const char* param_1)
 {
-	unk18C = static_cast<TCameraMapTool*>(JDrama::TNameRefGen::search(param_1))
-	             ->mDemoLengthFrames;
+	TCameraMapTool* tool
+	    = JDrama::TNameRefGen::instance->search<TCameraMapTool>(param_1);
+	unk18C = tool->getDemoLengthFrames();
 	SMSGetMarDirector()->fireStartDemoCamera(
 	    param_1, &mPosition, -1, 0.0f, true, appearWithTimeCallback,
 	    (uintptr_t)this, nullptr, JDrama::TFlagT<u16>());
@@ -790,18 +873,23 @@ void TShine::kill()
 	unk154 = 1;
 }
 
+// Binding level worth +8 of low region, landing TShine::makeMActors's frame
+// at 0x28 (batch 121).
+static inline const char* ItemGetName(const TShine* p)
+{
+	const char* name = p->getName();
+	return name;
+}
+
 void TShine::makeMActors()
 {
-
-	
-	
 	mMActorKeeper                    = new TMActorKeeper(mManager, 1);
 	mMActorKeeper->mModelLoaderFlags = J3DMLF_MaterialPEFull
 	                                   | J3DMLF_UseUniqueMaterials
 	                                   | (2 << J3DMLF_TevStageNumShift);
 	MActor* result;
 	if (TFlagManager::smInstance->getShineFlag(mEventId)
-	    && strcmp("シャイン（マニ屋用）", getName()) != 0) {
+	    && strcmp("シャイン（マニ屋用）", ItemGetName(this)) != 0) {
 		result = initMActor("shine_empty.bmd", nullptr, getSDLModelFlag());
 		unk1B4 = 1;
 	} else {
@@ -831,6 +919,11 @@ void TShine::loadAfter()
 	}
 }
 
+static inline u8 ShineLoadNo(s32 v) { return v + 1; }
+
+// The by-value u8 level ShineLoadNo is +8 of frame. The named u32 id handed to
+// setEventId is retail's dead word between `eventId` and `v`: it replaces the
+// setter's long->u32 argument binding, which sat below `v`.
 void TShine::loadBeforeInit(JSUMemoryInputStream& stream)
 {
 	char name[0x20];
@@ -846,14 +939,15 @@ void TShine::loadBeforeInit(JSUMemoryInputStream& stream)
 	stream >> eventId;
 	if (eventId == -1)
 		eventId = 120;
-	setEventId(eventId);
+	u32 id = eventId;
+	setEventId(id);
 
 	s32 v;
 	stream >> v;
 	eventId = v;
 	if (v + 1 >= 2)
 		eventId = -1;
-	unk190 = eventId + 1;
+	unk190 = ShineLoadNo(eventId);
 }
 
 TShine::TShine(const char* name)
@@ -878,24 +972,28 @@ TShine::TShine(const char* name)
 	unk1A8.zero();
 }
 
+static inline const char* EggYoshiName(TEggYoshi* egg)
+{
+	const char* name = egg->getName();
+	return name;
+}
+
+// The director and map/stage accessors at each test (+8 per site, the map
+// load is still shared) bring the low pool; the name read through the
+// EggYoshiName binder is the last 0x10 of retail's 0x68 frame.
 void TEggYoshi::decideRandomLoveFruit()
 {
-
-	
-	
-	u8 map = gpMarDirector->mMap;
-
-	if (map == 7 && gpMarDirector->unk7D == 1) {
+	if (SMSGetMarDirector()->getCurrentMap() == 7 && SMSGetMarDirector()->getCurrentStage() == 1) {
 		unk14C = 0x40000392;
 		return;
 	}
 
-	if (map == 3) {
+	if (SMSGetMarDirector()->getCurrentMap() == 3) {
 		unk14C = 0x40000393;
 		return;
 	}
 
-	if (map == 1 && strcmp(getName(), "ヨッシーの卵（影マリオ用）") == 0) {
+	if (SMSGetMarDirector()->getCurrentMap() == 1 && strcmp(EggYoshiName(this), "ヨッシーの卵（影マリオ用）") == 0) {
 		unk14C = 0x40000394;
 		return;
 	}
@@ -938,6 +1036,12 @@ void TEggYoshi::startBalloonAnim()
 	}
 }
 
+static inline MSound* EggYoshiTouchSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 void TEggYoshi::touchFruit(THitActor* fruit)
 {
 	if (isState(0xE) || isState(STATE_HOLDING))
@@ -946,13 +1050,14 @@ void TEggYoshi::touchFruit(THitActor* fruit)
 	if (unk14C == (u32)fruit->mActorType) {
 		startAnim(1);
 		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(11.0f);
-		mRotation.y = (360.0f / 65536.0f)
-		              * matan(fruit->mPosition.z - mPosition.z,
-		                      fruit->mPosition.x - mPosition.x);
+		f32 dx = fruit->getPosition().x - getPosition().x;
+		f32 dz = fruit->getPosition().z - getPosition().z;
+		s16 ang = matan(dz, dx);
+		mRotation.y = (360.0f / 65536.0f) * ang;
 		mState = 0xB;
 		unk150 = fruit;
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_COLLECT_PRETTY, 0, nullptr,
-		                                   0);
+		EggYoshiTouchSound()->startSoundSystemSE(MSD_SE_SY_COLLECT_YOSHI, 0,
+		                                         nullptr, 0);
 	} else if (animIsFinished()) {
 		startAnim(2);
 		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(12.0f);
@@ -962,17 +1067,22 @@ void TEggYoshi::touchFruit(THitActor* fruit)
 	}
 }
 
+// Binding level worth +8 of low region, landing TEggYoshi::touchActor's
+// frame at 0x20 (batch 121).
+static inline TTakeActor* ItemGetHeldObject(TTakeActor* p)
+{
+	TTakeActor* heldObject = p->getHeldObject();
+	return heldObject;
+}
+
 void TEggYoshi::touchActor(THitActor* other)
 {
-
-	
-	
 	if (!isState(STATE_NORMAL) && !isState(0xD))
 		return;
 
 	if (other->isActorType(0x80000001)) {
 		TTakeActor* casted = static_cast<TTakeActor*>(other);
-		if (casted->getHeldObject()
+		if (ItemGetHeldObject(casted)
 		    && TMapObjBase::isFruit(casted->getHeldObject()))
 			touchFruit(casted->getHeldObject());
 	}
@@ -981,11 +1091,17 @@ void TEggYoshi::touchActor(THitActor* other)
 		touchFruit(other);
 }
 
+static inline int EggYoshiGetState(const TEggYoshi* p)
+{
+	int state = p->mState;
+	return state;
+}
+
 void TEggYoshi::control()
 {
 	TMapObjBase::control();
 
-	switch (mState) {
+	switch (EggYoshiGetState(this)) {
 	case 0xD:
 		if (animIsFinished()) {
 			startAnim(0);
@@ -998,7 +1114,7 @@ void TEggYoshi::control()
 			startAnim(3);
 			TYoshi* yoshi = SMS_GetYoshi();
 			if (!yoshi->isHatched()) {
-				JGeometry::TVec3<f32> pos = mPosition;
+				JGeometry::TVec3<f32> pos = getPosition();
 				yoshi->appearFromEgg(pos, mRotation.y, this);
 				yoshi->setEggYoshiPtr(this);
 			}
@@ -1007,7 +1123,7 @@ void TEggYoshi::control()
 		break;
 	case 0xC:
 		if (animIsFinished()) {
-			kill();
+			makeObjDead();
 			mState = STATE_DEAD;
 		}
 		break;
@@ -1034,30 +1150,45 @@ void TEggYoshi::control()
 	}
 }
 
+static inline MActor* EggYoshiGetFukidashi(const TEggYoshi* p)
+{
+	MActor* actor = p->unk148;
+	return actor;
+}
+
 void TEggYoshi::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	TMapObjGeneral::perform(cue, graphics);
 
 	if (!isState(0xC) && !isState(STATE_DEAD) && !isState(STATE_HOLDING)
 	    && !isState(STATE_APPEARING) && !isState(0xE) && !isState(0xF)
 	    && !isState(0x10)) {
 		if (cue & CUE_CALC_ANIM)
-			unk148->getModel()->setBaseTRMtx(getModel()->getAnmMtx(0));
+			EggYoshiGetFukidashi(this)->getModel()->setBaseTRMtx(
+			    getModel()->getAnmMtx(0));
 
-		unk148->perform(cue, graphics);
+		EggYoshiGetFukidashi(this)->perform(cue, graphics);
 	}
+}
+
+// Binding level worth +8 of low region, landing TEggYoshi::startFruit's
+// frame at 0x20 (batch 124).
+static inline bool ItemIsStateL0(TEggYoshi* p, u32 i)
+{
+	bool state = p->isState(i);
+	return state;
+}
+
+static inline bool ItemIsState(TEggYoshi* p, u32 i)
+{
+	bool state = ItemIsStateL0(p, i);
+	return state;
 }
 
 void TEggYoshi::startFruit()
 {
-
-	
-	
 	receiveMessage(nullptr, HIT_MESSAGE_UNK10);
-	if (isState(0) || isState(0xE) || isState(0xF) || isState(0x10))
+	if (ItemIsState(this, 0) || isState(0xE) || isState(0xF) || isState(0x10))
 		receiveMessage(nullptr, HIT_MESSAGE_UNK10);
 }
 
@@ -1076,9 +1207,12 @@ BOOL TEggYoshi::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if (message == HIT_MESSAGE_UNK10) {
-		JGeometry::TVec3<f32> v = mVelocity;
+		// Named scalar before the TVec3 so it ranks above the copy.
+		f32 y;
+		JGeometry::TVec3<f32> v = getVelocity();
 		makeObjAppeared();
-		mVelocity.y = v.y;
+		y           = v.y;
+		mVelocity.y = y;
 		offLiveFlag(LIVE_FLAG_UNK10);
 		decideRandomLoveFruit();
 		startBalloonAnim();
@@ -1095,15 +1229,24 @@ BOOL TEggYoshi::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
+static inline J3DModel* EggYoshiLoadModel(const TEggYoshi* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+static inline TFlagManager* EggYoshiLoadFlags()
+{
+	TFlagManager* flagManager = TFlagManager::getInstance();
+	return flagManager;
+}
+
 void TEggYoshi::load(JSUMemoryInputStream& stream)
 {
-
-	
-	
 	TMapObjBase::load(stream);
 
 	if (strcmp(unkF4, "eggYoshiEvent") == 0) {
-		if (TFlagManager::getInstance()->getFlag(0x60003) == 1) {
+		if (EggYoshiLoadFlags()->getFlag(0x60003) == 1) {
 			mState = 0xE;
 		} else {
 			makeObjDead();
@@ -1123,8 +1266,8 @@ void TEggYoshi::load(JSUMemoryInputStream& stream)
 	    "/scene/mapObj/eggYoshi_fukidashi.bmd", mManager->getMActorAnmData(), 3,
 	    J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
 	        | (1 << J3DMLF_TevStageNumShift));
-	MtxPtr src = getModel()->getAnmMtx(0);
-	MTXCopy(src, unk148->getModel()->getBaseTRMtx());
+	MtxPtr src = EggYoshiLoadModel(this)->getAnmMtx(0);
+	PSMTXCopy(src, unk148->getModel()->getBaseTRMtx());
 	unk148->setBck("eggyoshi_fukidashi_wait");
 	unk148->setBtp("eggyoshi_fukidashi");
 	unk148->getFrameCtrl(ANM_TYPE_BTP)->setRate(0.0f);
@@ -1145,9 +1288,6 @@ TEggYoshi::TEggYoshi(const char* name)
 
 void TItemNozzle::touchPlayer(THitActor* param_1)
 {
-
-	
-	
 	if (isState(STATE_HOLDING))
 		return;
 
@@ -1168,8 +1308,7 @@ void TItemNozzle::touchPlayer(THitActor* param_1)
 	else
 		boxKind = 4;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_SY_GET_NOZZLE, &mPosition, 0,
-	                                nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_SY_GET_NOZZLE, &mPosition);
 	gpItemManager->resetNozzleBoxesModel(boxKind);
 	gpMarDirector->fireGetNozzle(this);
 }
@@ -1209,19 +1348,35 @@ void TItemNozzle::appearing()
 
 void TItemNozzle::control() { TMapObjGeneral::control(); }
 
-// TODO: nonmatching. Every instruction matches; the frame is 16 bytes
-// short, i.e. four compiler temporaries the original had and this shape
-// does not produce.
+// Binding level over a raw member read, worth +16 of low region in
+// TItemNozzle::calcRootMatrix (batch 127).
+static inline TTakeActor* ItemHolder(const TItemNozzle* p)
+{
+	TTakeActor* holder = p->mHolder;
+	return holder;
+}
+
+// TODO: all 66 instructions match; the frame is 0x28 against the map's 0x38,
+// so retail reached the holder matrix or the position store through 16 more
+// bytes of named/temporary slots than this spelling uses.
 void TItemNozzle::calcRootMatrix()
 {
+	// TODO: every instruction matches; the frame is 0x28 against the ROM's
+	// 0x38 with no referenced local slot at all, so the residue is 16 bytes
+	// of dead low region. Measured in place: a dead 48-byte `Mtx` is +48, a
+	// dead 12-byte `TVec3` +8 and a dead 16-byte object exactly +16 (a
+	// `TQuat4<f32>` reaches 100%), so the ROM declared one 16-byte local
+	// here. Nothing in the body wants a quaternion and the byte count is the
+	// only evidence, so it stays unnamed. Inert here (all +0): `getHolder()`
+	// at either or both reads, a TU-local `static MtxPtr` helper binding the
+	// holder matrix or the anim matrix (named pointer locals are worth
+	// nothing), and `getMActor()->getModel()` (which also changes the call).
+	if (isState(6) && ItemHolder(this) != nullptr) {
+		MtxPtr holderMtx = ItemHolder(this)->getTakingMtx();
+		MtxPtr mtx       = getModel()->getAnmMtx(0);
+		MTXCopy(holderMtx, mtx);
 
-	
-	
-	if (isState(STATE_HOLDING) && mHolder != nullptr) {
-		MtxPtr src = mHolder->getTakingMtx();
-		MtxPtr mtx = getModel()->getAnmMtx(0);
-		MTXCopy(src, mtx);
-
+		// The rocket nozzle sits higher on Mario's back than the others.
 		if (isActorType(0x20000022))
 			mtx[1][3] += 50.0f;
 		else
@@ -1298,6 +1453,13 @@ BOOL TNozzleBox::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
+static inline TGCConsole2* TNozzleBoxGetConsole()
+{
+	TMarDirector* director = gpMarDirector;
+	TGCConsole2* console   = director->getConsole();
+	return console;
+}
+
 void TNozzleBox::touchPlayer(THitActor*)
 {
 	if (mContainedNozzleType == TWaterGun::Hover
@@ -1306,11 +1468,11 @@ void TNozzleBox::touchPlayer(THitActor*)
 	    && !TFlagManager::smInstance->getNozzleRight(
 	        gpMarDirector->getCurrentMap(), 1)
 	    && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0x5A, true);
+		TNozzleBoxGetConsole()->startAppearBalloon(0x5A, true);
 		unk166 = true;
 	}
 	if (!unk15C && !unk166) {
-		gpMarDirector->getConsole()->startAppearBalloon(0x59, true);
+		TNozzleBoxGetConsole()->startAppearBalloon(0x59, true);
 		unk166 = true;
 	}
 }
@@ -1343,6 +1505,16 @@ void TNozzleBox::loadAfter()
 	}
 }
 
+static inline J3DModel* NozzleBoxLoadModel(const TNozzleBox* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+// By-value scalar fork over unk154: +4 of low pool, lands strBuf at retail's
+// 0x30.
+static inline f32 NozzleBoxLoadSpeed(const TNozzleBox* p) { return p->unk154; }
+
 void TNozzleBox::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
@@ -1364,7 +1536,7 @@ void TNozzleBox::load(JSUMemoryInputStream& stream)
 		unk15E.r             = 0xFF;
 		unk15E.g             = 0;
 		unk15E.b             = 0;
-		if (TFlagManager::smInstance->getNozzleRight(gpMarDirector->mMap, 0)) {
+		if (SMSGetFlagManagerBound()->getNozzleRight(gpMarDirector->mMap, 0)) {
 			unk15C = true;
 			unk166 = true;
 		}
@@ -1373,7 +1545,7 @@ void TNozzleBox::load(JSUMemoryInputStream& stream)
 		unk15E.r             = 0x5A;
 		unk15E.g             = 0x5A;
 		unk15E.b             = 0x78;
-		if (TFlagManager::smInstance->getNozzleRight(gpMarDirector->mMap, 1)) {
+		if (SMSGetFlagManagerBound()->getNozzleRight(gpMarDirector->mMap, 1)) {
 			unk15C = true;
 			unk166 = true;
 		}
@@ -1382,14 +1554,14 @@ void TNozzleBox::load(JSUMemoryInputStream& stream)
 	stream >> unk150;
 	unk150 *= 0.02f;
 	stream >> unk154;
-	if (unk154 < 0.0f)
+	if (NozzleBoxLoadSpeed(this) < 0.0f)
 		unk154 = 20.0f;
 
-	initPacketMatColor(getModel(), GX_TEVREG1, &unk15E);
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
 	startAnim(3);
-	initPacketMatColor(getModel(), GX_TEVREG1, &unk15E);
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
 	startAnim(2);
-	initPacketMatColor(getModel(), GX_TEVREG1, &unk15E);
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
 	startAnim(0);
 }
 

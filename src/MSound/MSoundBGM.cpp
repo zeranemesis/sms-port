@@ -7,40 +7,48 @@
 MSBgm* MSBgm::smBgmInTrack[3];
 f32 MSBgm::smMainVolume = 0.75f;
 
+// Retail's 0x48 frame is four +8 levers, and the fourth has to be on a class
+// the other three do not touch: naming the `JAIData*`, binding the
+// `JAISoundTable&` and writing the track clears as a loop saturate at 0x40
+// (all 72 combinations of the older trial table did), and the extra level on
+// `JAIBasic::unk0` -- now `JAIBasic::getData()` -- supplies the last 8 bytes.
+// (Binding the accessor's own result inside it is a further +8 and overshoots
+// to 0x50.)
 void MSBgm::init()
 {
-	volatile u8 stackPad[32];
-	(void)stackPad;
-	u16 count = MSGMSound->unk0->mSeTable.mSoundMax[16];
+	JAIData* data        = MSGMSound->getData();
+	JAISoundTable& table = data->mSeTable;
+	u16 count            = table.mSoundMax[16];
 	for (u32 i = 1; i < count; ++i)
 		new MSBgm(i);
 
-	smBgmInTrack[0] = nullptr;
-	smBgmInTrack[1] = nullptr;
-	smBgmInTrack[2] = nullptr;
+	for (u32 j = 0; j < 3; ++j)
+		smBgmInTrack[j] = nullptr;
 }
 
 MS_SCENE_WAVE MSBgm::getSceneNo(u32 param)
 {
 	switch (param) {
-	case MSD_BGM_BIANCO:
+	case MSD_BGM_DOLPIC:
 		return MS_WAVE_DOLPIC;
-	case MSD_BGM_MAMMA:
+	case MSD_BGM_BIANCO:
 		return MS_WAVE_BIANCO;
-	case MSD_BGM_PINNAPACO_SEA:
+	case MSD_BGM_MAMMA:
 		return MS_WAVE_MANMA;
-	case MSD_BGM_PINNAPACO:
+	case MSD_BGM_PINNAPACO_SEA:
 		return MS_WAVE_PINNAPACO_S;
-	case MSD_BGM_MARE_SEA:
+	case MSD_BGM_PINNAPACO:
 		return MS_WAVE_PINNAPACO;
-	case MSD_BGM_MONTEVILLAGE:
+	case MSD_BGM_MARE_SEA:
 		return MS_WAVE_MARE_SEA;
-	case MSD_BGM_SHILENA:
+	case MSD_BGM_MONTEVILLAGE:
 		return MS_WAVE_MONTEVILLAGE;
-	case MSD_BGM_RICCO:
+	case MSD_BGM_SHILENA:
 		return MS_WAVE_SHILENA;
-	case MSD_BGM_GET_SHINE:
+	case MSD_BGM_RICCO:
 		return MS_WAVE_RICO;
+	case MSD_BGM_GET_SHINE:
+		return MS_WAVE_UNK210;
 	case MSD_BGM_CHUBOSS:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_MISS:
@@ -48,55 +56,55 @@ MS_SCENE_WAVE MSBgm::getSceneNo(u32 param)
 	case MSD_BGM_BOSS:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_MAP_SELECT:
-		return MS_WAVE_UNK210;
+		return MS_WAVE_UNK20A;
 	case MSD_BGM_BOSSPAKU_DEMO:
-		return MS_WAVE_UNK20A;
-	case MSD_BGM_MAIN_TITLE:
 		return MS_WAVE_CLEAR;
-	case MSD_BGM_CHUBOSS2:
+	case MSD_BGM_MAIN_TITLE:
 		return MS_WAVE_UNK20A;
-	case MSD_BGM_EXTRA:
+	case MSD_BGM_CHUBOSS2:
 		return MS_WAVE_INVALID;
-	case MSD_BGM_DELFINO:
+	case MSD_BGM_EXTRA:
 		return MS_WAVE_UNK20C;
-	case MSD_BGM_MAREVILLAGE:
+	case MSD_BGM_DELFINO:
 		return MS_WAVE_UNK20D;
-	case MSD_BGM_CORONA:
+	case MSD_BGM_MAREVILLAGE:
 		return MS_WAVE_UNK20E;
-	case MSD_BGM_KAGEMARIO:
+	case MSD_BGM_CORONA:
 		return MS_WAVE_UNK20F;
+	case MSD_BGM_KAGEMARIO:
+		return MS_WAVE_UNK210;
 	case MSD_BGM_CAMERA:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_MONTE_ONSEN:
-		return MS_WAVE_UNK210;
+		return MS_WAVE_MONTEVILLAGE;
 	case MSD_BGM_MECHAKUPPA:
-		return MS_WAVE_MONTEVILLAGE;
-	case MSD_BGM_AIRPORT:
 		return MS_WAVE_UNK211;
-	case MSD_BGM_UNDERGROUND:
+	case MSD_BGM_AIRPORT:
 		return MS_WAVE_UNK212;
-	case MSD_BGM_TITLEBACK:
+	case MSD_BGM_UNDERGROUND:
 		return MS_WAVE_UNK210;
-	case MSD_BGM_MONTE_NIGHT:
+	case MSD_BGM_TITLEBACK:
 		return MS_WAVE_UNK20A;
-	case MSD_BGM_CASINO:
+	case MSD_BGM_MONTE_NIGHT:
 		return MS_WAVE_MONTEVILLAGE;
-	case MSD_BGM_EVENT:
+	case MSD_BGM_CASINO:
 		return MS_WAVE_UNK20D;
+	case MSD_BGM_EVENT:
+		return MS_WAVE_UNK210;
 	case MSD_BGM_TIME_IVENT:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_SKY_AND_SEA:
-		return MS_WAVE_UNK210;
-	case MSD_BGM_MONTE_RESCUE:
 		return MS_WAVE_UNK214;
-	case MSD_BGM_MERRY_GO_ROUND:
+	case MSD_BGM_MONTE_RESCUE:
 		return MS_WAVE_MONTEVILLAGE;
-	case MSD_BGM_SCENARIO_SELECT:
+	case MSD_BGM_MERRY_GO_ROUND:
 		return MS_WAVE_PINNAPACO_S;
-	case MSD_BGM_FANFARE_CASINO:
+	case MSD_BGM_SCENARIO_SELECT:
 		return MS_WAVE_UNK210;
-	case MSD_BGM_FANFARE_RACE:
+	case MSD_BGM_FANFARE_CASINO:
 		return MS_WAVE_UNK20D;
+	case MSD_BGM_FANFARE_RACE:
+		return MS_WAVE_UNK210;
 	case MSD_BGM_CAMERA_KAGE:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_GAMEOVER:
@@ -108,12 +116,10 @@ MS_SCENE_WAVE MSBgm::getSceneNo(u32 param)
 	case MSD_BGM_CHUBOSS_MANTA:
 		return MS_WAVE_UNK210;
 	case MSD_BGM_MONTE_LAST:
-		return MS_WAVE_UNK210;
-	case MSD_BGM_SHINE_APPEAR:
 		return MS_WAVE_MONTEVILLAGE;
-	case MSD_BGM_MONTEMAN_RACE:
+	case MSD_BGM_KUPPA:
 		return MS_WAVE_UNK215;
-	case MSD_STR_SPACEWORLD:
+	case MSD_BGM_MONTEMAN_RACE:
 		return MS_WAVE_UNK210;
 	default:
 		return MS_WAVE_INVALID;
@@ -124,8 +130,8 @@ JAISound* MSBgm::startBGM(u32 param)
 {
 	MSBgm* iVar1 = JALListS<MSBgm, u32>::search(param & JAISoundID_IndexMask);
 	if (iVar1) {
-		if ((param == MSD_BGM_CHUBOSS) || (param == MSD_BGM_BOSS)
-		    || (param == MSD_BGM_BOSSHANA_2ND3RD)) {
+		if ((param == MSD_BGM_GET_SHINE) || (param == MSD_BGM_MISS)
+		    || (param == MSD_BGM_GAMEOVER)) {
 			stopTrackBGMs(3, 0);
 			MSGMSound->demoModeIn(0x16f, false);
 		}

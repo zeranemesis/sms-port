@@ -24,12 +24,10 @@ void TQuestionManager::load(JSUMemoryInputStream& param_1)
 
 bool TQuestionManager::request(JGeometry::TVec3<f32> param_1, f32 param_2)
 {
-	// TODO: inline for horizontal distance?
 	if (unk12 < 0x20) {
-		const f32 xDiff = gpMarioPos->x - param_1.x;
-		const f32 zDiff = gpMarioPos->z - param_1.z;
-		const f32 zDiffSquared = zDiff * zDiff;
-		if (xDiff * xDiff + zDiffSquared < unk14 * unk14) {
+		f32 dx = gpMarioPos->x - param_1.x;
+		f32 dz = gpMarioPos->z - param_1.z;
+		if (dx * dx + dz * dz < unk14 * unk14) {
 			unk1C[unk12].unk0 = param_1;
 			unk1C[unk12].unkC = param_2;
 			++unk12;
@@ -40,33 +38,25 @@ bool TQuestionManager::request(JGeometry::TVec3<f32> param_1, f32 param_2)
 	return false;
 }
 
-#pragma dont_inline on
 void TQuestionManager::makeDL(JDrama::TGraphics* param_1) const
 {
-	for (int i = 0; i < unk12; ++i) {
-		TQuestionRequest& req    = unk1C[i];
-		JGeometry::TVec3<f32> quad[4];
-		JGeometry::TVec3<f32> v2;
-		JGeometry::TVec3<f32> v1 = req.unk0;
-		f32 f                    = req.unkC;
-		v1.y += f;
-		MTXMultVec(param_1->mViewMtx, &v1, &v2);
-		quad[0].set(v2.x - f, v2.y + f, v2.z + f);
-		quad[1].set(v2.x + f, v2.y + f, v2.z + f);
-		quad[2].set(v2.x + f, v2.y - f, v2.z + f);
-		quad[3].set(v2.x - f, v2.y - f, v2.z + f);
-		unk20->request(quad);
+	JGeometry::TVec3<f32> vtx[4];
+
+	for (int i = 0; i < getRequestNum(); ++i) {
+		JGeometry::TVec3<f32> viewPos;
+		TQuestionRequest& req     = unk1C[i];
+		JGeometry::TVec3<f32> pos = req.unk0;
+		f32 size                  = req.unkC;
+		pos.y += size;
+		MTXMultVec(param_1->mViewMtx, &pos, &viewPos);
+		vtx[0].set(viewPos.x - size, viewPos.y + size, viewPos.z + size);
+		vtx[1].set(viewPos.x + size, viewPos.y + size, viewPos.z + size);
+		vtx[2].set(viewPos.x + size, viewPos.y - size, viewPos.z + size);
+		vtx[3].set(viewPos.x - size, viewPos.y - size, viewPos.z + size);
+		unk20->request(vtx);
 	}
 	unk20->setEnd();
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xa8 against 0xa0). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
-#pragma dont_inline off
 
 void TQuestionManager::draw() const
 {
@@ -104,11 +94,9 @@ void TQuestionManager::draw() const
 
 void TQuestionManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	if ((cue & CUE_CALC_VIEW) != 0) {
-		if (gpSilhouetteManager->isUnk48Positive()) {
+		bool silhouetteOn = gpSilhouetteManager->isUnk48Positive();
+		if (silhouetteOn) {
 			unk20->reset();
 			makeDL(graphics);
 			unk10 |= 2;
@@ -118,8 +106,9 @@ void TQuestionManager::perform(u32 cue, JDrama::TGraphics* graphics)
 		unk12 = 0;
 	}
 
-	if ((cue & CUE_DRAW) != 0 && gpSilhouetteManager->isUnk48Positive()
-	    && (unk10 & 2) != 0) {
-		draw();
+	if ((cue & CUE_DRAW) != 0) {
+		bool silhouetteOn = gpSilhouetteManager->isUnk48Positive();
+		if (silhouetteOn && (unk10 & 2) != 0)
+			draw();
 	}
 }

@@ -14,11 +14,7 @@ inline f32 MsRandF() { return rand() * (1.f / (RAND_MAX + 1)); }
 
 // TODO: fake!!! need to analyze a bunch of callsites,
 // smallEnemy kind of implies a random interval class or
-// something like that.
-// Evidence (TDangoHamuKuri::reset): retail evaluates (r-l) BEFORE
-// rand() and keeps it in a saved FP reg across the call; this
-// rand-first spelling does not reproduce that. Possibly TMsRange
-// below, or a different association.
+// something like that
 inline f32 MsRandF(f32 l, f32 r)
 {
 	return rand() * (1.f / (RAND_MAX + 1)) * (r - l) + l;

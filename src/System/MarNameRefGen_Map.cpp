@@ -1,16 +1,13 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
+// Header-emitted strings precede the sun-model paths in the original object.
 #include <M3DUtil/InfectiousStrings.hpp>
-
-
 #include "Camera/SunMgr.hpp"
-#include "Camera/SunModel.hpp"
+#include <Camera/SunModel.hpp>
 #include "Map/BathWaterManager.hpp"
 #include "Map/Map.hpp"
 #include "Map/MapDraw.hpp"
 #include "Map/MarineSnow.hpp"
-#include "Map/PollutionEvent.hpp"
 #include "Map/PollutionManager.hpp"
+#include <Map/PollutionEvent.hpp>
 #include "Map/Shimmer.hpp"
 #include "Map/Sky.hpp"
 #include "Map/StickyStainManager.hpp"
@@ -34,7 +31,7 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef_Map(const char* name) const
 		return new TPollutionManager;
 
 	if (strcmp(name, "PollutionTest") == 0)
-		return new TPollutionTest("落書きテスト");
+		return new TPollutionTest;
 
 	if (strcmp(name, "SunMgr") == 0)
 		return new TSunMgr;

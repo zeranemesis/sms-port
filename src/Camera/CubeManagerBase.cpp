@@ -34,21 +34,14 @@ TCubeManagerBase::TCubeManagerBase(const char* name, u8 param_2)
     , unk14(nullptr)
     , unk18(nullptr)
 {
-	// NOTE: this body is NOT a separate `initializer()` method. There is no such
-	// symbol in marioEU.MAP, and keeping it one inline level deeper stops MWCC
-	// from expanding `TCubeGeneralInfo`'s constructor at the `new` below, which
-	// is expanded out of line in the ROM.
 	unk14 = new TNameRefPtrAryT<TCubeGeneralInfo>;
-	unk14->reserve(unk10);
+	unk14->getChildren().reserve(unk10);
 	for (int i = 0; i < unk10; ++i)
 		unk14->push_back(new TCubeGeneralInfo);
 }
 
 void TCubeManagerBase::load(JSUMemoryInputStream& stream)
 {
-
-	
-	
 	JDrama::TNameRef::load(stream);
 	JDrama::TNameRef* root
 	    = JDrama::TNameRefGen::getInstance()->getRootNameRef();
@@ -59,7 +52,7 @@ void TCubeManagerBase::load(JSUMemoryInputStream& stream)
 		return;
 
 	unk14 = ary;
-	unk10 = unk14->size();
+	unk10 = unk14->getChildren().size();
 }
 
 void TCubeManagerBase::perform(u32 cue, JDrama::TGraphics* graphics) { }
@@ -68,16 +61,16 @@ s32 TCubeManagerBase::getDataNo(s32 i) const
 {
 	u32 result = -1;
 	if (i >= 0 && i < unk10)
-		result = (*unk14)[i].unk34;
+		result = (*unk14)[i]->unk34;
 	return result;
 }
 
 int TCubeManagerBase::getInCubeNo(const Vec& v) const
 {
 	for (u32 i = 0; i < unk10; ++i) {
-		TCubeGeneralInfo& info = (*unk14)[i];
-		if (CLBIsPointInCube(v, info.getUnkC(), info.getUnk18(),
-		                     info.getUnk24()))
+		TCubeGeneralInfo* info = (*unk14)[i];
+		if (CLBIsPointInCube(v, info->getUnkC(), info->getUnk18(),
+		                     info->getUnk24()))
 			return i;
 	}
 
@@ -86,14 +79,30 @@ int TCubeManagerBase::getInCubeNo(const Vec& v) const
 
 bool TCubeManagerBase::isInCube(const Vec& v, s32 i) const
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	bool result = false;
 	if (i >= 0 && i < unk10) {
-		TCubeGeneralInfo& info = (*unk14)[i];
-		if (CLBIsPointInCube(v, info.getUnkC(), info.getUnk18(),
-		                     info.getUnk24()))
+		TCubeGeneralInfo* info = getCubeInfo(i);
+		if (CLBIsPointInCube(v, info->getUnkC(), info->getUnk18(),
+		                     info->getUnk24()))
 			result = true;
+	}
+	return result;
+}
+
+// UNUSED (map size 0x9c, reproduced exactly); dead in the retail image, so the
+// body is reconstructed from the sibling overload plus the name lookup the
+// second argument implies.
+bool TCubeManagerBase::isInCube(const Vec& v, const char* name) const
+{
+	bool result = false;
+	for (u32 i = 0; i < unk10; ++i) {
+		TCubeGeneralInfo* info = getCubeInfo(i);
+		if (strcmp(info->getName(), name) == 0) {
+			if (CLBIsPointInCube(v, info->getUnkC(), info->getUnk18(),
+			                     info->getUnk24()))
+				result = true;
+			break;
+		}
 	}
 	return result;
 }
@@ -102,24 +111,23 @@ void TCubeManagerBase::calcPointInCubeRatio(const Vec& param_1, s32 param_2,
                                             float* param_3, float* param_4,
                                             float* param_5) const
 {
-	TCubeGeneralInfo& info = (*unk14)[param_2];
-	CLBCalcPointInCubeRatio(param_1, info.getUnkC(), info.getUnk18(),
-	                        info.getUnk24(), param_3, param_4, param_5);
+	TCubeGeneralInfo* info = (*unk14)[param_2];
+	CLBCalcPointInCubeRatio(param_1, info->getUnkC(), info->getUnk18(),
+	                        info->getUnk24(), param_3, param_4, param_5);
 }
 
 bool TCubeManagerArea::isInAreaCube(const Vec& pos) const
 {
 	bool result = false;
-	int found = getInCubeNo(pos);
+	int found    = getInCubeNo(pos);
 
 	if (unk1C == found)
 		result = true;
-
 	// Presumably hotel delphino floor transitions?
-	else if (gpMarDirector->getCurrentMap() == 7 && unk1C != -1
+	else if (gpMarDirector->getCurrentMap() == 7 && getInCubeNoSave() != -1
 	         && found != -1) {
-		const char* curName = (*unk14)[unk1C].getName();
-		const char* newName = (*unk14)[found].getName();
+		const char* curName = getCubeInfo(unk1C)->getName();
+		const char* newName = getCubeInfo(found)->getName();
 
 		if (strcmp(curName, "３階") == 0) {
 			if (strcmp(newName, "２階") == 0 || strcmp(newName, "１階") == 0)
@@ -143,12 +151,36 @@ bool TCubeManagerFast::isInOtherCube(const Vec& pos) const
 	return result;
 }
 
+// Binding level worth +8 of low region, landing SMS_IsInOtherFastCube's
+// frame at 0x28 (batch 124).
+static inline bool CubeManagerBaseIsDemoModeNowL0(const TMarDirector* p)
+{
+	bool demoModeNow = p->isDemoModeNow();
+	return demoModeNow;
+}
+
+static inline bool CubeManagerBaseIsDemoModeNow(const TMarDirector* p)
+{
+	bool demoModeNow = CubeManagerBaseIsDemoModeNowL0(p);
+	return demoModeNow;
+}
+
+// TODO: 0x20 against retail's 0x28, every instruction exact. Confirmed to be
+// exactly one two-word object at the very bottom of the body: `u32 scratch[2]`
+// or `f64 scratch` declared last reaches 100% with no instruction change (not
+// committed -- stack padding is prohibited and there is no evidence for what
+// the object was). Ruled out: the carrier is not TCubeManagerFast::isInOtherCube
+// (a dead 8-byte non-trivial local or a getInCubeNoSave() level there is +8 per
+// expansion, so +0x18 over the three); SMSGetMarDirector() over gpMarDirector,
+// a named `bool demo`, a TU-local by-pointer isDemoModeNow wrapper (the
+// header-round-15 binding rule) and `return true/false` are all +0; a named
+// `bool other` for the || chain and three nested `else if`s add instructions.
+// The only inline expanded exactly once here is TMarDirector::isDemoModeNow,
+// which is a shared header.
 bool SMS_IsInOtherFastCube(const Vec& pos)
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	bool result = false;
-	if (!gpMarDirector->isDemoModeNow()
+	if (!CubeManagerBaseIsDemoModeNow(gpMarDirector)
 	    && (gpCubeFastA->isInOtherCube(pos) || gpCubeFastB->isInOtherCube(pos)
 	        || gpCubeFastC->isInOtherCube(pos)))
 		result = true;
@@ -159,7 +191,7 @@ bool SMS_IsInOtherFastCube(const Vec& pos)
 bool SMS_IsInSameCameraCube(const Vec& pos)
 {
 	bool result  = false;
-	Vec marioPos = SMS_GetMarioPos();
+	Vec marioPos = *gpMarioPos;
 	marioPos.y += 75.0f;
 	int uVar7 = gpCubeCamera->getInCubeNo(marioPos);
 	int uVar4 = gpCubeCamera->getInCubeNo(pos);

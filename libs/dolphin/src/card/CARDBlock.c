@@ -125,6 +125,32 @@ s32 __CARDAllocBlock(s32 chan, u32 cBlock, CARDCallback callback)
 	return __CARDUpdateFatBlock(chan, fat, callback);
 }
 
+// UNUSED. __CARDAllocBlock in reverse: walk the file's chain from nBlock,
+// clearing each FAT entry and crediting the free count.
+s32 __CARDFreeBlock(s32 chan, u16 nBlock, CARDCallback callback)
+{
+	CARDControl* card;
+	u16* fat;
+	u16 nextBlock;
+
+	card = &__CARDBlock[chan];
+	if (!card->attached)
+		return CARD_RESULT_NOCARD;
+
+	fat = __CARDGetFatBlock(card);
+	while (nBlock != 0xFFFF) {
+		if (!CARDIsValidBlockNo(card, nBlock))
+			return CARD_RESULT_BROKEN;
+
+		nextBlock   = fat[nBlock];
+		fat[nBlock] = 0;
+		nBlock      = nextBlock;
+		++fat[3];
+	}
+
+	return __CARDUpdateFatBlock(chan, fat, callback);
+}
+
 s32 __CARDUpdateFatBlock(s32 chan, u16* fat, CARDCallback callback)
 {
 	CARDControl* card;

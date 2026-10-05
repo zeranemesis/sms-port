@@ -237,11 +237,17 @@ static OSTick old_time;
 
 f32* TDSPChannel::getHistory() { return (f32*)history; }
 
+// Frame 0x50 is reached by three inline-temporary expansions of the u16
+// accessors: `getCBInterval()` and `getPriorityTime()` each bind their member
+// into a named local, and `decCBInterval()` is spelled as
+// `setCBInterval(getCBInterval() - 1)`, which expands `getCBInterval()` a third
+// time. Worth +0 here (tried, all register- and frame-neutral): bindings in
+// `getStatus()`, `getPriority()`, `onUpdate()`, `DSPBuffer::isFinish()` and a
+// `u16` accessor over `DSPBuffer::endRequested`. A binding inside the static
+// `getHandle(u32)` used for the loop's `&DSPCH[i]` also lands the frame, but it
+// introduces a fourth callee-saved register and pushes `delta` from r29 to r28.
 void TDSPChannel::updateAll()
 {
-
-	
-	
 	DSPInterface::DSPBuffer* dspBuffer;
 	{
 		OSTick time   = OSGetTick();

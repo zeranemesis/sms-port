@@ -1,4 +1,4 @@
-#include <Enemy/beam.hpp>
+#include <Enemy/Beam.hpp>
 #include <dolphin/gx.h>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/JMath.hpp>
@@ -15,7 +15,7 @@ static void coneInPlane(const JGeometry::TVec3<f32>& origin, f32 angle,
 {
 	// Scale perpendicular component by cone opening
 	JGeometry::TVec3<f32> dir = offsetDir;
-	dir.scale(MsSin(angle));
+	dir.scale(JMASin(angle));
 
 	// Add the axis direction to get the final ray direction
 	dir += axis;
@@ -75,13 +75,44 @@ void TConeBeam::drawConeBeamAux(const GXColor& color, bool unk)
 	GXEnd();
 }
 
-// TODO: @non-matching
+// TODO: Recover origin caching in coneInPlane and the remaining stack layout.
+// Preserve the map's 348-byte UNUSED coneInPlane body while testing callers.
+// TODO: 95.6%. The instruction stream is exact apart from two scheduled
+// loads; the residue is the local layout: retail's frame is 0x1c8 against our
+// 0x1b8 and the 16 extra bytes are not appended, they are redistributed --
+// retail's low vectors sit at 0x58/0x64/0x78/0x84 with a 0x38 hole between
+// 0x8c and 0xc4, ours at 0x88/0xa0/0xb8/0xd0 with no hole, so an inlined
+// callee in the middle of the function owns temporaries we do not create.
+// coneInPlane already compiles to the map's 0x15c, so its body is not the
+// cause. Measured but not applied: declaring sinA before cosA in the second
+// loop puts the sine table back in r6 the way retail has it in both loops, but
+// it then schedules the two lfsx in the opposite order, so the score is a
+// wash (95.67 -> 95.65); the register evidence still says the second loop
+// evaluates JMASin first and uses cosA first.
+// The "origin caching" is concrete: retail keeps coneInPlane's three origin
+// (unk00) loads from the dot product live in f5/f6/f0 and reuses them for the
+// final `+= origin`, where we reload all three from 0(r28)/4(r28)/8(r28).
+// c-tp1: naming origin.x/y/z at the top of coneInPlane and adding them back
+// one by one gives the caching here (98.3%) but shrinks the UNUSED
+// out-of-line copy from the map's 0x15c to 0x150 (retail's out-of-line copy
+// reloads them), so it is not the retail spelling; also 96.9% / 0x148 with the
+// numerator dot written out on the named components.
+// cc26: building the result in a coneInPlane-local TVec3 and storing it
+// through outPos = &mVtx[i] (so no address-taken caller local) is still a
+// reload (95.6%, frame unchanged); passing &mVtx[i] with the original body is
+// 94.3%.
+// c-k17: a coneInPlane-local `TVec3 pos = dir; pos.scale(t); pos += origin;
+// *outPos = pos;` with the caller's &local_f8 lands retail's 0x1c8 frame (so
+// retail has one more 12-byte object here) but still reloads origin and adds
+// the pos -> local_f8 copy (93.9%). `*outPos = dir * t + origin` (either
+// operand order, &local_f8 or &mVtx[i]) pushes scale and add out of line
+// (92.8-93.7%); `dir.scale(t); *outPos = dir + origin;` 89.2-90.8%.
 void TConeBeam::calcVertices(int count)
 {
+	JGeometry::TVec3<f32> local_140;
 	JGeometry::TVec3<f32> local_134(0.0f, 1.0f, 0.0f);
 
 	JGeometry::TVec3<f32> local_128 = unk0C;
-	JGeometry::TVec3<f32> local_140;
 
 	mVtxCount = count;
 	local_128.sub(unk00);
@@ -93,37 +124,38 @@ void TConeBeam::calcVertices(int count)
 	} else {
 		local_134.cross(local_140, local_128);
 
-		VECNormalize(&local_140, &local_140);
-		VECNormalize(&local_134, &local_134);
+		PSVECNormalize(&local_140, &local_140);
+		PSVECNormalize(&local_134, &local_134);
 	}
 
 	if (mBGCheckData == nullptr) {
 		for (int i = 0; i <= mVtxCount; i++) {
-			f32 s = mScale * MsSin(i * (360.0f / mVtxCount)) / 2.0f;
-			f32 c = mScale * MsCos(i * (360.0f / mVtxCount)) / 2.0f;
+			f32 s = 0.5f * (mScale * JMASin(i * (360.0f / mVtxCount)));
+			f32 c = 0.5f * (mScale * JMACos(i * (360.0f / mVtxCount)));
 
 			JGeometry::TVec3<f32> local_11c;
 			local_11c.zero();
 
-			local_11c += local_140 * s;
-			local_11c += local_134 * c;
+			local_11c += local_140 * c;
+			local_11c += local_134 * s;
 
 			local_11c += unk0C;
 
 			mVtx[i] = local_11c;
 		}
 	} else {
-		JGeometry::TPartition3<f32> partition(mBGCheckData->getNormal(),
-		                                      mBGCheckData->getPlaneDistance());
-		f32 local_128Len = VECMag(&local_128);
+		JGeometry::TPartition3<f32> partition;
+		partition.mDist = mBGCheckData->getPlaneDistance();
+		partition.mNormal.set(mBGCheckData->getNormal());
+		f32 local_128Len = PSVECMag(&local_128);
 		f32 angle        = matan(local_128Len, mScale)
 		            * (360.0f / 65536.0f); // this is SHORT2DEGANGLE constant
 
-		VECNormalize(&local_128, &local_128);
+		PSVECNormalize(&local_128, &local_128);
 
 		for (int i = 0; i <= mVtxCount; i++) {
-			f32 sinA = MsSin(i * (360.0f / mVtxCount));
-			f32 cosA = MsCos(i * (360.0f / mVtxCount));
+			f32 sinA = JMASin(i * (360.0f / mVtxCount));
+			f32 cosA = JMACos(i * (360.0f / mVtxCount));
 
 			JGeometry::TVec3<f32> local_ec;
 			local_ec.zero();

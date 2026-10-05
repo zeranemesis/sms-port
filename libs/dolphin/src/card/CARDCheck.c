@@ -334,6 +334,20 @@ s32 CARDCheckAsync(s32 chan, CARDCallback callback)
 	return CARDCheckExAsync(chan, &xferBytes, callback);
 }
 
+// UNUSED. CARDCheck is this with a local transfer count, which is why it
+// tests the count's address against NULL.
+s32 CARDCheckEx(s32 chan, s32* xferBytes)
+{
+	s32 result;
+
+	result = CARDCheckExAsync(chan, xferBytes, __CARDSyncCallback);
+
+	if (result < 0 || xferBytes == NULL)
+		return result;
+
+	return __CARDSync(chan);
+}
+
 s32 CARDCheck(s32 channel)
 {
 	s32 result;

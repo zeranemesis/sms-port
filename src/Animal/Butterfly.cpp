@@ -36,7 +36,7 @@ void TButterfly::init()
 	onHitFlag(HIT_FLAG_CANNOT_ATTACK);
 
 	TIdxGroupObj* group
-	    = static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"));
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
 	group->getChildren().push_back(this);
 }
 
@@ -84,8 +84,8 @@ void TButterfloid::init(TLiveManager* manager)
 
 void TButterfloid::initBoids()
 {
-	for (int i = 0; i < unk150->mNumBoids; ++i)
-		unk154[i]->init();
+	for (int i = 0; i < getBoidNum(); ++i)
+		getRealoid(i)->init();
 }
 
 void TButterfloid::receiveMessageFromChild(TButterfly* child)
@@ -93,7 +93,7 @@ void TButterfloid::receiveMessageFromChild(TButterfly* child)
 	child->onFlag(TRealoidActor::FLAG_UNK4);
 	child->onHitFlag(HIT_FLAG_NO_COLLISION);
 
-	if (++mNumEaten == unk150->getBoidNum()) {
+	if (++mNumEaten == getBoidLeader()->getBoidNum()) {
 		TMapObjBase* obj = mItem;
 		if (obj != nullptr) {
 			if (obj->isActorType(0x2000000E))
@@ -113,21 +113,28 @@ void TButterfloid::load(JSUMemoryInputStream& stream)
 	loadDefault(stream, cButterflyMdlNames[mType], 0);
 	loadItem(stream);
 
-	// Making these all setters doesn't yield NEARLY enough stack frame padding
-	// for this to match
-	unk150->mNeighborRadius    = 100.0f;
-	unk150->mBaseSpeed         = 6.0f;
-	unk150->mYawSpeed          = 25.0f;
-	unk150->mPitchSpeed        = 8.0f;
-	unk150->mMaxPitch          = 16.0f;
-	unk150->mAlignmentStrength = 0.7f;
-	unk150->setFleeTarget((THitActor*)gpMarioAddress);
-	unk150->mFleeRadius   = 500.0f;
-	unk150->mFleeStrength = 2.0f;
-	unk150->mFlags |= 2;
+	// TODO: every accessor below is required by the frame, which is 136
+	// bytes of low region short with raw member access and instruction
+	// identical either way. Measured ladder (from 0x80 towards the ROM's
+	// 0x108): the two loops' getRealoid()/getBoidNum() +16 and +24, the
+	// leader accessor on the ten writes below +48, the nine TBoidLeader
+	// setters +40, getMActor() in the setBck loop +8, and the forwarding
+	// TRealoid::getBoidNum() the last +8. A plain u32 read of eventId
+	// through readU32() also buys 8 but costs a reload, so it is not the
+	// ROM's spelling.
+	getBoidLeader()->setNeighborRadius(100.0f);
+	getBoidLeader()->setBaseSpeed(6.0f);
+	getBoidLeader()->setYawSpeed(25.0f);
+	getBoidLeader()->setPitchSpeed(8.0f);
+	getBoidLeader()->setMaxPitch(16.0f);
+	getBoidLeader()->setAlignmentStrength(0.7f);
+	getBoidLeader()->setFleeTarget((THitActor*)gpMarioAddress);
+	getBoidLeader()->setFleeRadius(500.0f);
+	getBoidLeader()->setFleeStrength(2.0f);
+	getBoidLeader()->onFlag(TBoidLeader::FLAG_UNK2);
 
-	for (int i = 0; i < unk150->mNumBoids; ++i)
-		unk154[i]->unk70->setBck("butterfly_fly");
+	for (int i = 0; i < getBoidNum(); ++i)
+		getRealoid(i)->getMActor()->setBck("butterfly_fly");
 
 	initBoids();
 }

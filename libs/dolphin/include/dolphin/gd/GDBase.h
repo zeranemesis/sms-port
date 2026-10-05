@@ -24,7 +24,7 @@ void GDFlushCurrToMem(void);
 void GDPadCurr32(void);
 void GDOverflowed(void);
 void GDSetOverflowCallback(GDOverflowCb callback);
-void GDGetOverflowCallback();
+GDOverflowCb GDGetOverflowCallback(void);
 
 inline void GDSetCurrent(GDLObj* dl) { __GDCurrentDL = dl; }
 

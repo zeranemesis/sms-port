@@ -2,12 +2,11 @@
 #define ENEMY_HAUNT_LEG_HPP
 
 #include <Enemy/WalkerEnemy.hpp>
-#include <Strategic/HitActor.hpp>
+#include <Strategic/Nerve.hpp>
 
-class THauntLeg;
+class J3DNode;
 
-// Hit actor riding along with the leg, registered in the enemy group so that
-// other objects can collide with the leg.
+// An object a haunting leg has possessed. Forwards a kill to its holder.
 class THauntedObject : public THitActor {
 public:
 	THauntedObject(const char* name)
@@ -15,31 +14,24 @@ public:
 	{
 	}
 
+	virtual ~THauntedObject() { }
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 
 	void kill();
 	void checkHit();
 
-public:
-	/* 0x68 */ THauntLeg* unk68;
-};
-
-class THauntLegManager : public TSmallEnemyManager {
-public:
-	THauntLegManager(const char* name = "ハントレッグマネージャー");
-
-	virtual void load(JSUMemoryInputStream& stream);
-	virtual void createModelData();
-	virtual TSmallEnemy* createEnemyInstance();
-	virtual void initSetEnemies();
+	/* 0x68 */ TLiveActor* mHaunter;
 };
 
 class THauntLeg : public TWalkerEnemy {
 public:
-	THauntLeg(const char* name = "ハントレッグ");
+	// UNUSED in the map (0x5c), so it is defined out of line in the .cpp:
+	// an UNUSED symbol is never weak and therefore never an in-class body.
+	THauntLeg(const char* name);
 
+	virtual ~THauntLeg() { }
 	virtual MtxPtr getTakingMtx();
-	virtual void init(TLiveManager* manager);
+	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();
 	virtual const char** getBasNameTable() const;
 	virtual void reset();
@@ -54,15 +46,25 @@ public:
 
 	bool isUseCallBack();
 
-public:
 	/* 0x194 */ THauntedObject* unk194;
 	/* 0x198 */ u8 unk198;
 	/* 0x199 */ u8 unk199;
-	/* 0x19C */ TTakeActor* unk19C;
-	/* 0x1A0 */ JGeometry::TVec3<f32> unk1A0;
-	/* 0x1AC */ f32 unk1AC;
+	/* 0x19C */ THitActor* unk19C;
+	/* 0x1A0 */ JGeometry::TVec3<f32> mJumpVelocity;
+	/* 0x1AC */ f32 mSpinAngle;
 };
 
-DECLARE_NERVE(TNerveHauntLegHaunt, TLiveActor);
+class THauntLegManager : public TSmallEnemyManager {
+public:
+	THauntLegManager(const char* name);
+
+	virtual ~THauntLegManager() { }
+	virtual void load(JSUMemoryInputStream& stream);
+	virtual void createModelData();
+	virtual TSpineEnemy* createEnemyInstance();
+	virtual void initSetEnemies();
+};
+
+DECLARE_NERVE(TNerveHauntLegHaunt, TLiveActor)
 
 #endif

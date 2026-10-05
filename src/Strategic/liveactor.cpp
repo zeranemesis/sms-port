@@ -2,8 +2,8 @@
 #include <Strategic/ObjModel.hpp>
 #include <Strategic/question.hpp>
 #include <Strategic/Spine.hpp>
-#include <Strategic/spcinterp.hpp>
 #include <Strategic/Binder.hpp>
+#include <Strategic/spcinterp.hpp>
 #include <System/MarDirector.hpp>
 #include <MarioUtil/MtxUtil.hpp>
 #include <M3DUtil/MActor.hpp>
@@ -29,9 +29,6 @@ f32 TLiveActor::mVelocityMinY = -40.0f;
 TLiveActor::TLiveActor(const char* name)
     : TTakeActor(name)
 {
-
-	
-	
 	mManager       = nullptr;
 	mMActor        = nullptr;
 	mMActorKeeper  = nullptr;
@@ -40,7 +37,7 @@ TLiveActor::TLiveActor(const char* name)
 	mAnmSoundPath  = nullptr;
 	mBinder        = nullptr;
 	mSpine         = nullptr;
-	mInterp         = nullptr;
+	mSpcInterp     = nullptr;
 
 	mLinearVelocity.setAll(0.0f);
 	mAngularVelocity.setAll(0.0f);
@@ -63,7 +60,7 @@ TLiveActor::TLiveActor(const char* name)
 	mRidePos.zero();
 
 	mGroundPlane = TMap::getIllegalCheckData();
-	if (gpMarDirector->getCurrentMap() != 8)
+	if (SMSGetMarDirector()->getCurrentMap() != 8)
 		mLiveFlag |= LIVE_FLAG_UNK2000;
 }
 
@@ -92,6 +89,21 @@ BOOL TLiveActor::belongToGround() const
 	return false;
 }
 
+// TODO: 99.9%, the MsAngleDiff result lands in f1 and the member in f0
+// (retail f0/f1) before the `+=`'s fadds. Tried (cc37): `m = m + d`,
+// `m = d + m`, named `diff`, getRotation() on either operand, TU-local
+// forks/by-value adders (+8 frame), `f32 v = m; v += d;` (breaks the
+// schedule); `f32 d = diff; d += m; m = d;` fixes operand order but not
+// the colouring.
+// c-k9 regalloc.py: MsAngleDiff's result is the IRO temporary @1565, coloured
+// last; the replay closes when it is coloured before the member load's pcode
+// temporary (or that load after it). An inline result stays an IRO
+// temporary, so only a spelling where the difference is not a forced-load
+// inline result (or the member is a named web) can move it.
+// c-k11: with a named `f32 diff = MsAngleDiff(...)` and `m = m + diff`, or a
+// `TVec3& angVel = mAngularVelocity` reference, the colouring is unchanged and
+// the frame grows by 8; hand-expanding MsAngleDiff around a named rotation
+// loses the f31 home (82.6%).
 void TLiveActor::calcRideMomentum()
 {
 	if (unkE8 == 0)
@@ -117,7 +129,7 @@ void TLiveActor::calcRideMomentum()
 			JGeometry::TVec3<f32> rideVelocity;
 			// mRidePos is from last frame here
 			MTXMultVec(mtx, &mRidePos, &rideVelocity);
-			rideVelocity -= mPosition;
+			rideVelocity -= getPosition();
 			mLinearVelocity += rideVelocity;
 
 			if (unkE8 >= 2) {
@@ -142,24 +154,39 @@ void TLiveActor::initLodAnm(const TLodAnmIndex* param_1, int param_2,
 		unkD0 = new TLodAnm(this, param_1, param_2, param_3);
 }
 
+// TODO (c-k13): TLiveActor::init is instruction-exact at 0x60 only with the
+// two binders below. The header accessors (getActorKeeper(), getManager())
+// or raw members are frame 0x48: the debugger puts all six missing words
+// after initAnmSound's depth-2 objects (retail has twelve words below the
+// MAnmSoundNPC buffer, the honest spelling six), so they are late IRO or
+// deeper-inline words, not the binders' high ECOMMA words.
+static inline TMActorKeeper* LiveactorActorKeeper(const TLiveActor* p)
+{
+	TMActorKeeper* keeper = p->mMActorKeeper;
+	return keeper;
+}
+
+static inline TLiveManager* LiveactorManager(const TLiveActor* p)
+{
+	TLiveManager* manager = p->mManager;
+	return manager;
+}
+
 void TLiveActor::init(TLiveManager* manager)
 {
-
-	
-	
 	if (!manager) {
 		if (TObjChara* chara = (TObjChara*)unk3C) {
 			mMActorKeeper = new TMActorKeeper(nullptr, 1);
 			// TODO: could be TSMSSmplChara instead
-			mMActor = mMActorKeeper->createMActorFromDefaultBmd(
+			mMActor = LiveactorActorKeeper(this)->createMActorFromDefaultBmd(
 			    chara->getFolder(), 0);
 		}
 		gpConductor->registerAloneActor(this);
 	} else {
 		mManager      = manager;
 		mMActorKeeper = new TMActorKeeper(mManager, 1);
-		mManager->manageActor(this);
-		mMActor = mMActorKeeper->createMActorFromNthData(0, 0);
+		LiveactorManager(this)->manageActor(this);
+		mMActor = LiveactorActorKeeper(this)->createMActorFromNthData(0, 0);
 	}
 
 	initHitActor(0, 1, 0, mBodyRadius, mHeadHeight, mBodyRadius, mHeadHeight);
@@ -177,8 +204,7 @@ void TLiveActor::load(JSUMemoryInputStream& stream)
 
 	char buffer[256];
 	stream.readString(buffer, 256);
-	TLiveManager* mgr
-	    = static_cast<TLiveManager*>(JDrama::TNameRefGen::search(buffer));
+	TLiveManager* mgr = JDrama::TNameRefGen::search<TLiveManager>(buffer);
 
 	mGroundPlane = TMap::getIllegalCheckData();
 
@@ -237,19 +263,23 @@ void TLiveActor::bind()
 
 void TLiveActor::control()
 {
-	if (mInterp == nullptr || mInterp->mStepsToDo == 0) {
+	// unk90 is the actor's SPC script interpreter: the guard reads its
+	// mStepsToDo (0x4) and the calls go through its vtable at 0x5c slot 0x10,
+	// which is TSpcInterp::update(). While a script has steps queued it drives
+	// the actor instead of the spine, except that a spine that is not idle
+	// still gets its own update.
+	if (mSpcInterp == nullptr || mSpcInterp->mStepsToDo == 0) {
 		if (mSpine)
 			mSpine->update();
 	} else {
 		if (!mSpine) {
-			if (mInterp != nullptr
-			    && *(s32*)((u8*)mInterp + 4) != 0)
-				mInterp->update();
+			if (mSpcInterp && mSpcInterp->mStepsToDo != 0)
+				mSpcInterp->update();
 		} else if (mSpine->getCurrentNerve() != nullptr
 		           || mSpine->getVertebraeCount() > 0) {
 			mSpine->update();
 		} else {
-			mInterp->update();
+			mSpcInterp->update();
 		}
 	}
 }
@@ -415,11 +445,13 @@ void TLiveActor::performOnlyDraw(u32 param_1, JDrama::TGraphics* param_2)
 	}
 }
 
-void TLiveActor::calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>& param_1,
-                                        f32 speed, f32 gravity) const
+JGeometry::TVec3<f32>
+TLiveActor::calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>& param_1,
+                                   f32 speed, f32 gravity) const
 {
 	JGeometry::TVec3<f32> vec;
 	SMSCalcJumpVelocityXZ(param_1, mPosition, speed, gravity, &vec);
+	return vec;
 }
 
 JGeometry::TVec3<f32>
@@ -438,18 +470,19 @@ BOOL TLiveActor::hasMapCollision() const
 	return mMapCollisionManager ? 1 : 0;
 }
 
+// UNUSED. getJointTransByIndex on the model's joint-name lookup, behind the
+// same null-MActor fallback and -1 result; this reading is 0xec, the map size.
 int TLiveActor::getJointTransByName(const char* name,
-                                    JGeometry::TVec3<f32>* result) const
+                                     JGeometry::TVec3<f32>* out) const
 {
-	const char** basTable = getBasNameTable();
-	if (!basTable)
+	if (mMActor == nullptr) {
+		*out = mPosition;
 		return -1;
-
-	for (int i = 0; basTable[i]; i++) {
-		if (strcmp(basTable[i], name) == 0)
-			return getJointTransByIndex(i, result);
 	}
-	return -1;
+
+	return getJointTransByIndex(
+	    mMActor->getModel()->getModelData()->getJointName()->getIndex(name),
+	    out);
 }
 
 int TLiveActor::getJointTransByIndex(int param_1,
@@ -480,9 +513,34 @@ MtxPtr TLiveActor::getTakingMtx()
 	return mMActor->getModel()->getBaseTRMtx();
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TLiveActor::initAnmSound (batch 127).
+static inline MAnmSound* LiveactorAnmSound(const TLiveActor* p)
+{
+	MAnmSound* anmSound = p->mAnmSound;
+	return anmSound;
+}
+
+// TODO: the MAnmSoundNPC ctor's random-float buffer sits at 0x24, retail
+// 0x2c (frame equal). Tried (cc37): gpMSound/SMSGetMSound forks and binders
+// at either `new` (+0 or frame +8/+0x10), naming/forking the `new`
+// (inlining breaks), a `u32` wrapper over checkActorType (+4 -> 0x28, the
+// only buffer-moving rung found), bool/nested/binder wrappers over it,
+// a nested fork over LiveactorAnmSound (frame +8). Header-side (c-strat):
+// MAnmSoundNPC ctor assigning unk98 in the body, via a named u8, get_uint8
+// with a named f32 are inert (also in init); get_uint8 through get_ufloat
+// is too deep to inline. JAISound::setSeDistancePitch pins get_uint8's body.
+// c-d11 debugger: retail's buffer is the topmost object, so no depth-1 dead
+// word may precede it; raw `mAnmSound` at the test with the binder at the
+// final receiver lands the frame (0x40) with the binder local 4 above the
+// buffer and one word short below: that local must be created at depth > 3.
+// c-k9: iro.py shows the dead set below the buffer as six IRO words (four F,
+// two P from the MAnmSoundNPC ctor's random byte); retail has eight words
+// below it and nothing above, i.e. the binder word moved under the buffer and
+// one more IRO word.
 void TLiveActor::initAnmSound()
 {
-	if (mAnmSound)
+	if (LiveactorAnmSound(this))
 		return;
 
 	if (checkActorType(0x4000000))
@@ -507,12 +565,7 @@ void TLiveActor::updateAnmSound()
 void TLiveActor::setAnmSound(const char* path)
 {
 	if (!mAnmSound)
-#ifdef VERSION_GMSP01
-		// the assert sits 14 lines further down in the GMSP01 source
-		OSPanic(__FILE__, 0x393, "TLiveActor[%s] : mAnmSound == NULL\n", mName);
-#else
-		OSPanic(__FILE__, 0x385, "TLiveActor[%s] : mAnmSound == NULL\n", mName);
-#endif
+		OSPanic(__FILE__, 0x386, "TLiveActor[%s] : mAnmSound == NULL\n", mName);
 
 	mAnmSoundPath = path;
 
@@ -530,8 +583,11 @@ void TLiveActor::setCurAnmSound()
 
 	if (mMActor) {
 		int idx = mMActor->getCurAnmIdx(ANM_TYPE_BCK);
-		if (idx >= 0)
-			name = getBas(idx);
+		if (idx >= 0) {
+			const char** table = getBasNameTable();
+
+			name = !table ? nullptr : table[idx];
+		}
 	}
 
 	setAnmSound(name);

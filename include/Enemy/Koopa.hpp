@@ -1,22 +1,52 @@
 #ifndef ENEMY_KOOPA_HPP
 #define ENEMY_KOOPA_HPP
 
-#include <Strategic/Nerve.hpp>
-#include <Strategic/HitActor.hpp>
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
-#include <M3DUtil/MActor.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <Strategic/HitActor.hpp>
+#include <Strategic/Spine.hpp>
 #include <System/ParamInst.hpp>
 
+// koopa_model.bmd's .bck slots. The names come from koopa_bastable (in
+// Koopa.cpp), whose entries are the matching .bas paths; slots 1 and 13 have no
+// .bas and are filled in alphabetically. TLimitKoopaManager loads the same
+// .bmd, so limitkoopa.cpp indexes the same slots -- note that its .prm names do
+// not line up with the .bas names: its "tumble" nerve plays HIPDROP and its
+// hip-drop start plays FIRE_START.
+enum {
+	KOOPA_ANM_DOWN       = 0,
+	KOOPA_ANM_DOWN_WAIT  = 1,
+	KOOPA_ANM_FALL       = 2,
+	KOOPA_ANM_FIRE_END   = 3,
+	KOOPA_ANM_FIRE_LOOP  = 4,
+	KOOPA_ANM_FIRE_START = 5,
+	KOOPA_ANM_FIRST      = 6,
+	KOOPA_ANM_GETUP      = 7,
+	KOOPA_ANM_HIPDROP    = 8,
+	KOOPA_ANM_STAGGER    = 9,
+	KOOPA_ANM_TURN_L     = 0xA,
+	KOOPA_ANM_TURN_R     = 0xB,
+	KOOPA_ANM_WAIT       = 0xC,
+	KOOPA_ANM_UNK13      = 0xD,
+	KOOPA_ANM_WATERHIT   = 0xE,
+};
+
 class TKoopa;
+class J3DNode;
 
-extern f32 SMSGetAnmFrameRate(); // avoid including Application.hpp
-
+// The Corona Mountain bathtub Bowser. Parameter names come from
+// /enemy/koopa.prm's key strings, which are plain camelCase here rather than
+// the mSL* convention the small-enemy parameter classes use.
+//
+// limitkoopa.prm is a cut-down copy of this file with four extra hip-drop
+// parameters in front, which is why TLimitKoopaParams looks so similar.
 class TKoopaParams : public TSpineEnemyParams {
 public:
-	TKoopaParams(const char* path)
-	    : TSpineEnemyParams(path)
+	// The map has no symbol for this constructor anywhere: it is inlined
+	// whole into TKoopaManager::load, which is why it lives in the class body.
+	TKoopaParams(const char* prm)
+	    : TSpineEnemyParams(prm)
 	    , PARAM_INIT(turnSpeed, 1.6f)
 	    , PARAM_INIT(turnAnim, 3.7f)
 	    , PARAM_INIT(waitStep, 600.0f)
@@ -53,11 +83,11 @@ public:
 		TParams::load(mPrmPath);
 	}
 
-	/* 0xA8 */ TParamRT<f32> turnSpeed;
-	/* 0xBC */ TParamRT<f32> turnAnim;
-	/* 0xD0 */ TParamRT<f32> waitStep;
-	/* 0xE4 */ TParamRT<f32> downStep;
-	/* 0xF8 */ TParamRT<f32> attackRadius;
+	/* 0x0A8 */ TParamRT<f32> turnSpeed;
+	/* 0x0BC */ TParamRT<f32> turnAnim;
+	/* 0x0D0 */ TParamRT<f32> waitStep;
+	/* 0x0E4 */ TParamRT<f32> downStep;
+	/* 0x0F8 */ TParamRT<f32> attackRadius;
 	/* 0x10C */ TParamRT<f32> attackHeight;
 	/* 0x120 */ TParamRT<f32> focusRange;
 	/* 0x134 */ TParamRT<f32> waitRange;
@@ -87,109 +117,86 @@ public:
 	/* 0x314 */ TParamRT<f32> marioEstimationWait;
 };
 
-class TKoopaManager : public TEnemyManager {
-public:
-	TKoopaManager(const char* name);
-
-	virtual void load(JSUMemoryInputStream&);
-	virtual void loadAfter();
-	virtual void createModelData();
-	virtual TSpineEnemy* createEnemyInstance();
-};
-
+// One of Bowser's hit boxes. Unlike TLimitKoopaParts these derive straight
+// from THitActor (the vtable is 0xAC long and carries TActor::load, not
+// TLiveActor's), and the class introduces two virtuals of its own: control()
+// and the pure attack_().
 class TKoopaParts : public THitActor {
 public:
-	TKoopaParts(const char* name, u32 actorType, TKoopa* owner, f32 radius);
+	TKoopaParts(const char* name, u32 actor_type, TKoopa* owner, f32 radius);
+	virtual ~TKoopaParts() { }
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void control() { }
-	virtual void attack_(THitActor* sender) { }
+	virtual void attack_(THitActor*) = 0;
 
-public:
+	void remove();
+	void set(const JGeometry::TVec3<f32>& position, f32 radius, f32 height);
+
 	/* 0x68 */ TKoopa* mOwner;
 };
 
 class TKoopaBody : public TKoopaParts {
 public:
-	TKoopaBody(const char* name, u32 actorType, TKoopa* owner, f32 radius)
-	    : TKoopaParts(name, actorType, owner, radius)
-	{
-	}
+	TKoopaBody(TKoopa* owner);
+	virtual ~TKoopaBody() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void attack_(THitActor* sender);
+	virtual void attack_(THitActor*);
 };
 
 class TKoopaHead : public TKoopaParts {
 public:
-	TKoopaHead(const char* name, u32 actorType, TKoopa* owner, f32 radius)
-	    : TKoopaParts(name, actorType, owner, radius)
-	{
-	}
+	TKoopaHead(TKoopa* owner);
+	virtual ~TKoopaHead() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void attack_(THitActor* sender);
+	virtual void attack_(THitActor*);
 };
 
 class TKoopaHand : public TKoopaParts {
 public:
-	TKoopaHand(const char* name, u32 actorType, TKoopa* owner, f32 radius)
-	    : TKoopaParts(name, actorType, owner, radius)
-	{
-	}
+	TKoopaHand(TKoopa* owner);
+	virtual ~TKoopaHand() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void attack_(THitActor* sender);
+	virtual void attack_(THitActor*);
 };
 
+// One segment of Bowser's fire breath: it walks along mDirection from
+// mStartPos until mLength passes mLengthMax, then removes itself.
 class TKoopaFlame : public TKoopaParts {
 public:
-	TKoopaFlame(const char* name, u32 actorType, TKoopa* owner, f32 radius)
-	    : TKoopaParts(name, actorType, owner, radius)
-	{
-		unk88 = 0.0f;
-		unk8C = 1.0f;
-	}
+	TKoopaFlame(TKoopa* owner);
+	virtual ~TKoopaFlame() { }
 
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void attack_(THitActor* sender);
 	virtual void control();
+	virtual void attack_(THitActor*);
 
-	// fabricated
-	void launch(const JGeometry::TVec3<f32>& pos,
-	            const JGeometry::TVec3<f32>& dir, f32 height, f32 radius,
-	            f32 speed)
-	{
-		mPosition.x = pos.x;
-		mPosition.y = pos.y;
-		mPosition.z = pos.z;
-		unk78.x     = dir.x;
-		unk78.y     = dir.y;
-		unk78.z     = dir.z;
-		unk6C.x     = pos.x;
-		unk6C.y     = pos.y;
-		unk6C.z     = pos.z;
-		unk84       = speed;
-		unk88       = 4000.0f;
-		unk8C       = 0.0f;
-		unk90       = radius;
-		unk94       = height;
-	}
+	void fire(const JGeometry::TVec3<f32>& position,
+	          const JGeometry::TVec3<f32>& direction, f32 speed, f32 length_max,
+	          f32 radius, f32 height);
 
-public:
-	// TODO: names; offsets from control()
-	/* 0x6C */ JGeometry::TVec3<f32> unk6C; // start position
-	/* 0x78 */ JGeometry::TVec3<f32> unk78; // velocity per step
-	/* 0x84 */ f32 unk84;                   // age increment
-	/* 0x88 */ f32 unk88;                   // lifetime
-	/* 0x8C */ f32 unk8C;                   // age
-	/* 0x90 */ f32 unk90;                   // hit radius
-	/* 0x94 */ f32 unk94;                   // hit height
+	// UNUSED in the map, so none of these can be weak: they are defined
+	// out of line in Koopa.cpp at their map positions and inlined from there.
+	void resetFlame();
+	f32 getLength() const;
+	bool isAlive() const;
+
+	/* 0x6C */ JGeometry::TVec3<f32> mStartPos;
+	/* 0x78 */ JGeometry::TVec3<f32> mDirection;
+	/* 0x84 */ f32 mSpeed;
+	/* 0x88 */ f32 mLengthMax;
+	/* 0x8C */ f32 mLength;
+	/* 0x90 */ f32 mRadius;
+	/* 0x94 */ f32 mHeight;
 };
 
 class TKoopa : public TSpineEnemy {
 public:
-	TKoopa(const char* name);
+	TKoopa(const char* name = "クッパ");
+	virtual ~TKoopa() { }
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
@@ -198,123 +205,108 @@ public:
 	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();
 	virtual void updateAnmSound();
-	virtual void reset();
 	virtual const char** getBasNameTable() const;
+	virtual void reset();
 
-	void changeAnm(int, int, f32);
-
-	// fabricated: byte-identical body to changeAnm() below. The ROM expands
-	// changeAnm inline at most call sites but calls it out of line from
-	// TNerveKoopaTurnL/TurnR and TKoopaFlame::attack_, where MWCC's inlining
-	// budget is spent. Marking changeAnm itself #pragma dont_inline and using
-	// this inline for the other sites reproduces both shapes.
-	void changeAnmInline(int bck, int btp, f32 rate)
-	{
-		changeBck(bck);
-		changeBtp(btp);
-		J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
-		ctrl->setRate(0.5f * (rate * SMSGetAnmFrameRate()));
-	}
-
+	int checkMarioWhichSide();
+	MtxPtr getHeadMtx() const;
+	BOOL getAnmEnd() const;
 	void fall();
-	BOOL allowsLaunch() const;
-	f32 getTargetDir(const JGeometry::TVec3<f32>&) const;
-	BOOL effectsTumble() const;
-	f32 getFlameDirRate() const;
-	f32 getFlameDirDegree() const;
-	BOOL isFlaming() const;
+	bool canTumble() const;
+	bool passesAnmFrame(f32 frame) const;
+	f32 getAnmFrameNext() const;
+	f32 getAnmFrame() const;
+	f32 getTargetDir(const JGeometry::TVec3<f32>& target) const;
+	BOOL isTumbling() const;
+	void stagger(bool force);
 	bool getShowered();
-	void stagger(bool);
+	// Both are bool, not BOOL: TBathtub::getNumKillerBurstable and
+	// getNumKillerLaunchable mask the result with clrlwi. after the bl.
+	bool effectsTumble() const;
 	void getDown();
+	bool allowsLaunch() const;
 	f32 getNeckFocus() const;
+	bool isProvoking() const;
+	bool isFlaming() const;
+	f32 getFlameDirRate() const;
+	void setIgnoreMario(long ignore);
+	BOOL ignoresMario() const;
+	bool isBreathing() const;
+	void laugh();
+	BOOL endsAnm() const;
+	int getAnmIndex() const;
+	void changeAnm(int bck_index, int btp_index, f32 rate);
 	void setUpHitActors();
+	void resetFlame_();
+	void breathFlame();
+	void stopFlame();
+	f32 getFlameDirDegree() const;
 
-	// fabricated
-	bool isFlameStart() const
+	// UNUSED, 0xc in the map, so it lives in the .cpp.
+	TKoopaParams* getParam() const;
+
+	// No map symbols: header inlines. The Turn nerves reach turnBody through
+	// KoopaTurn (KoopaNerve.hpp), so getTurnAnim puts
+	// TEnemyManager::getSaveParam() at depth 5 there, where retail `bl`s it;
+	// the clamped turnBody argument needs the extra getTurnStep level for the
+	// same, while the condition's getTurnSpeed read stays inline at depth 4.
+	f32 getTurnAnim() const { return getParam()->turnAnim.get(); }
+	f32 getTurnSpeed() const { return getParam()->turnSpeed.get(); }
+	f32 getTurnStep() const { return getTurnSpeed(); }
+
+	// TNerveKoopaTurnL and TNerveKoopaTurnR both expand this: the redundant
+	// second `delta > 0` test in each of them is the inlined body's own.
+	// The named `dir` is what makes TurnL's frame 8 above TurnR's, as in
+	// retail (0x1a8 vs 0x1a0); without it both are equal.
+	// Frames: see KoopaTurn in KoopaNerve.hpp (the folded arm carries
+	// 0xb0 of the old 0x108). Wait (0x88 short), Flame (0x148), Tumble
+	// (0x10), perform (0x50), init (0x30) and getTargetDir (0x28) are short
+	// too; named results in the wrap, mod and getTurnStep levels add only 8
+	// each and a TVec3 copy of mRotation adds code.
+	bool turnBody(f32 delta)
 	{
-		if (mMActor->getCurAnmIdx(ANM_TYPE_BCK) == 4)
-			return true;
-		if (mMActor->getCurAnmIdx(ANM_TYPE_BCK) == 5
-		    && mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame() >= 85.0f)
-			return true;
-		return false;
+		if (delta > 0.0f)
+			changeAnm(KOOPA_ANM_TURN_R, 0, delta * getTurnAnim());
+		else
+			changeAnm(KOOPA_ANM_TURN_L, 0,
+			          -delta * getTurnAnim());
+		f32 dir = mRotation.y + delta;
+		mRotation.y = WrapDirection(dir, -180.0f, 180.0f);
+		return true;
 	}
 
-	// fabricated
-	bool isFlameEnd() const
-	{
-		if (mMActor->getCurAnmIdx(ANM_TYPE_BCK) == 6) {
-			f32 frame = mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
-			if (68.0f <= frame && frame <= 164.0f)
-				return true;
-		}
-		return false;
-	}
+	/* 0x150 */ f32 mTargetDir;
+	/* 0x154 */ bool mTurnsLeft;
+	/* 0x155 */ bool mLaughPending;
+	/* 0x158 */ JGeometry::TVec3<f32> mAnmSoundPos;
+	/* 0x164 */ TKoopaFlame* mFlames[10];
+	/* 0x18C */ TKoopaParts* mHands[2];
+	/* 0x194 */ TKoopaParts* mHead;
+	/* 0x198 */ TKoopaParts* mBody;
+	/* 0x19C */ int mWaitTimer;
+	/* 0x1A0 */ int mHeadJntIndex;
+	/* 0x1A4 */ int mNeckJntIndex;
+	/* 0x1A8 */ int mAgoJntIndex;
+	// TODO: nothing in this TU reads 0x1AC-0x1B7. setIgnoreMario(long) is a
+	// two-instruction store and ignoresMario() an eight-instruction load, so
+	// one word of the gap is the ignore flag; the class is 0x1BC long
+	// (MarNameRefGen_BossEnemy allocates it), so the other two words exist but
+	// are unidentified.
+	/* 0x1AC */ long mIgnoreMario;
+	/* 0x1B0 */ f32 unk1B0;
+	/* 0x1B4 */ f32 unk1B4;
+	/* 0x1B8 */ f32 mNeckFocus;
+};
 
-	// fabricated
-	void changeBck(int bck)
-	{
-		if (!mMActor->checkCurBckFromIndex(bck)) {
-			mMActor->setBckFromIndex(bck);
-			setAnmSound(getBas(bck));
-		}
-	}
-
-	// fabricated
-	void changeBtp(int btp)
-	{
-		if (btp != mMActor->getCurAnmIdx(ANM_TYPE_BTP))
-			mMActor->setBtpFromIndex(btp);
-	}
-
-	// fabricated
-	TKoopaParams* getParams() const
-	{
-		TEnemyManager* manager = (TEnemyManager*)mManager;
-		return (TKoopaParams*)manager->getSaveParam();
-	}
-
+class TKoopaManager : public TEnemyManager {
 public:
-	/* 0x150 */ f32 unk150;
-	/* 0x154 */ u8 unk154;
-	/* 0x155 */ u8 unk155;
-	/* 0x158 */ JGeometry::TVec3<f32> unk158;
-	/* 0x164 */ TKoopaFlame* unk164[10];
-	/* 0x18C */ TKoopaHand* unk18C[2];
-	/* 0x194 */ TKoopaHead* unk194;
-	/* 0x198 */ TKoopaBody* unk198;
-	/* 0x19C */ s32 unk19C;
-	/* 0x1A0 */ s32 unk1A0; // head joint index
-	/* 0x1A4 */ s32 unk1A4; // neck joint index
-	/* 0x1A8 */ s32 unk1A8; // ago (jaw) joint index
-	/* 0x1AC */ u8 unk1AC[0x1b8 - 0x1ac];
-	/* 0x1B8 */ f32 unk1B8;
+	TKoopaManager(const char* name = "クッパマネージャー");
+	virtual ~TKoopaManager() { }
+
+	virtual void load(JSUMemoryInputStream&);
+	virtual void loadAfter();
+	virtual void createModelData();
+	virtual TSpineEnemy* createEnemyInstance();
 };
-
-class TNerveKoopaTurn : public TNerveBase<TLiveActor> {
-};
-
-// In the retail binary theNerve() is inlined in every user (weak function-local
-// statics), so the accessor is defined in the class.
-//
-// TODO: mario.MAP lists TNerveKoopaTurnL::execute and TNerveKoopaTurnR::execute
-// as *weak*, i.e. they were defined in this header, while every other execute in
-// the TU is a global defined in Koopa.cpp. Defining the two out of line in the
-// header would fix validate-symbol-order.py's linkage check, but it drags the
-// -180.0f / 360.0f literals into koopajr.o (which also includes this header) and
-// shifts its .sdata2 by 8 bytes, breaking every `@sda21` offset there. Left to a
-// human decision.
-#define KOOPA_NERVE(Name, Base)                                                	class Name : public Base {                                                 	public:                                                                    		virtual BOOL execute(TSpineBase<TLiveActor>*) const;                   		static const Name& theNerve()                                          		{                                                                      			static Name nerve;                                                 			return nerve;                                                      		}                                                                      	};
-
-KOOPA_NERVE(TNerveKoopaTurnL, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaTurnR, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaTumble, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaWait, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaFlame, TNerveKoopaTurn);
-KOOPA_NERVE(TNerveKoopaFall, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaStagger, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaGetShowered, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaGetDown, TNerveBase<TLiveActor>);
-KOOPA_NERVE(TNerveKoopaProvoke, TNerveBase<TLiveActor>);
 
 #endif

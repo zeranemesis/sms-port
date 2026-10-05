@@ -7,12 +7,9 @@
 
 void CPolarSubCamera::makeMtxForTalk(const TBaseNPC* param_1)
 {
-
-	
-	
 	killHeightPan_();
 	mCurrentTarget.unk2C = mCurrentTarget.mYaw;
-	mCurrentTarget.mYaw  = *gpMarioAngleY - 0x8000;
+	mCurrentTarget.mYaw  = SMS_GetMarioAngleY() - 0x8000;
 	mSavedModeBeforeTalk = mMode;
 
 	int r31 = CAMERA_MODE_TALK_A;
@@ -37,9 +34,11 @@ void CPolarSubCamera::makeMtxForTalk(const TBaseNPC* param_1)
 
 void CPolarSubCamera::makeMtxForPrevTalk()
 {
+	// Declared but unused on this path; the original reserves their slots.
+	// Their names are inferred from the surrounding camera code, not recovered.
+	JGeometry::TVec3<f32> prevTarget;
+	f32 prevYaw;
 
-	
-	
 	if (isTalkCameraSpecifyMode(mMode)) {
 		mCurrentTarget.mYaw = mCurrentTarget.unk2C;
 
@@ -47,7 +46,7 @@ void CPolarSubCamera::makeMtxForPrevTalk()
 
 		unk120->onNeutralMarioKey();
 
-		JGadget::TVector_pointer<TBaseNPC>& npcList = gpMarDirector->unk88;
+		JGadget::TVector_pointer<TBaseNPC*>& npcList = gpMarDirector->unk88;
 		for (TBaseNPC** it = npcList.begin(); it != npcList.end(); ++it)
 			(*it)->npcTalkOut();
 	}

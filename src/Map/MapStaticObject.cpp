@@ -197,9 +197,15 @@ void TMapStaticObj::calcUnique(JPABaseEmitter* emitter)
 void TMapStaticObj::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_CALC_ANIM) {
-		if (mSoundId != -1)
-			SMSGetMSound()->startSoundActor(mSoundId, &mPosition, 0, nullptr, 0,
-			                                4);
+		// An object with a rand-play index at 0x7c plays through
+		// MSRandPlay instead of the positional SE.
+		if (mSoundId != -1) {
+			if (mRandPlayHandle == -1)
+				gpMSound->startSoundActor(mSoundId, &mPosition, 0, nullptr,
+				                          0, 4);
+			else
+				gpMSound->startSeRandPlay(mSoundId, mRandPlayHandle);
+		}
 
 		JPABaseEmitter* emitter = nullptr;
 		if (mActorData->mParticleType == 1)
@@ -216,7 +222,7 @@ void TMapStaticObj::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if ((cue & CUE_CALC_VIEW)
 	    && (mActorData->mFlags & TActorData::FLAG_IS_INDIRECT)) {
-		Mtx afStack_7c;
+		Mtx44 afStack_7c;
 		SMS_GetLightPerspectiveForEffectMtx(afStack_7c);
 
 		getModelData()
@@ -262,32 +268,68 @@ void TMapStaticObj::perform(u32 cue, JDrama::TGraphics* graphics)
 void TMapStaticObj::initUnique()
 {
 	switch (getActorType()) {
-	case 0x40000024:
-		if (gpMarDirector->getCurrentMap() == 4)
+	case 0x40000024: {
+		u8 map = SMSGetMarDirector()->getCurrentMap();
+		if (map == 4)
 			mEffectCoronaScale = 1.8f;
 		else
 			mEffectCoronaScale = 1.8f;
 		break;
 	}
+	}
 
 	if (strcmp(mActorName, "ReflectSky") == 0) {
-		TSky* sky = static_cast<TSky*>(JDrama::TNameRefGen::search("空"));
+		JDrama::TNameRefGen* gen = JDrama::TNameRefGen::getInstance();
+		TSky* sky                = gen->search<TSky>("空");
 
 		getModelData()->setMaterialTable(gpMapObjManager->getUnk68(),
 		                                 J3DMatCopyFlag_All);
 		mMActor->initDL();
 
-		JDrama::TDrawBufObj* dboOpa = static_cast<JDrama::TDrawBufObj*>(
-		    JDrama::TNameRefGen::search("DrawBuf MirrorSky Opa"));
-		j3dSys.setDrawBuffer(dboOpa->getDrawBuffer(), 0);
-		JDrama::TDrawBufObj* dboXlu = static_cast<JDrama::TDrawBufObj*>(
-		    JDrama::TNameRefGen::search("DrawBuf MirrorSky Xlu"));
-		j3dSys.setDrawBuffer(dboXlu->getDrawBuffer(), 1);
+		j3dSys.setDrawBuffer(
+		    JDrama::TNameRefGen::getInstance()
+		        ->search<JDrama::TDrawBufObj>("DrawBuf MirrorSky Opa")
+		        ->getDrawBuffer(),
+		    0);
+		j3dSys.setDrawBuffer(
+		    JDrama::TNameRefGen::getInstance()
+		        ->search<JDrama::TDrawBufObj>("DrawBuf MirrorSky Xlu")
+		        ->getDrawBuffer(),
+		    1);
 
 		getModel()->calc();
 		getModel()->viewCalc();
 		getModel()->entry();
+	} else if (strcmp(mActorName, "SoundObjRiver") == 0) {
+		if (SMSGetMarDirector()->getCurrentMap() == 13)
+			mSoundId = MSD_SE_OBJ_FOUNTAIN;
+	} else if (strcmp(mActorName, "MareFalls") == 0) {
+		switch (SMSGetMarDirector()->getCurrentMap()) {
+		case 8:
+			switch (SMSGetMarDirector()->getCurrentStage()) {
+			case 0:
+			case 2:
+			case 4:
+			case 6:
+				mSoundId        = MSD_SE_OBJ_MONTE_NIGHT_A1;
+				mRandPlayHandle = 0;
+				break;
+			default:
+				mSoundId        = MSD_SE_OBJ_MONTE_DAY_A1;
+				mRandPlayHandle = 0;
+				break;
+			}
+			break;
+		case 2:
+			mSoundId        = MSD_SE_OBJ_BIRD_BIA_1;
+			mRandPlayHandle = 0;
+			break;
+		}
 	}
+
+	if (mRandPlayHandle == 0)
+		mRandPlayHandle = MSoundSESystem::MSRandPlay::registerTrans(mSoundId,
+		                                                            &mPosition);
 }
 
 void TMapStaticObj::initMapCollision(const char* name)
@@ -300,7 +342,9 @@ void TMapStaticObj::initMapCollision(const char* name)
 	mCollisionManager->setUpUnk8TRS(mPosition, mRotation, mScaling);
 }
 
-#pragma dont_inline on
+// Retail calls this from init: the named `actor` is the fifteenth statement
+// over the depth-1 budget. Measured and rejected: naming either anim-data
+// argument (the buffer moves 4 up, or the loads reorder).
 void TMapStaticObj::initModel(const char* name)
 {
 	char buffer[256];
@@ -325,10 +369,27 @@ void TMapStaticObj::initModel(const char* name)
 		    mActorData->unk24);
 	}
 
-	TMapObjBase::startAllAnim(mMActor, name);
+	MActor* actor = mMActor;
+	TMapObjBase::startAllAnim(actor, name);
 }
-#pragma dont_inline off
 
+// Parked copy of SMS_LoadParticle (System/Particles.hpp) with the flag
+// pointer named: retail keeps it in r29 across the load, which the header's
+// indexed spelling does not (TODO: header item; the same change in the header
+// grows loadParticleMario's frame, see the note there).
+static inline void MapStaticObjLoadParticle(const char* path, u16 id)
+{
+	bool* flag = &gParticleFlagLoaded[id];
+	if (!*flag) {
+		gpResourceManager->load(path, id);
+		*flag = true;
+	}
+}
+
+// The named group keeps its dead slot at the top; the texture search stays
+// unnamed (its getTexture() binding is the word retail has between the
+// push_back pair and insert's iterators), and initMapCollision reads the raw
+// mPosition. The named flag pointer (MapStaticObjLoadParticle) keeps r29.
 void TMapStaticObj::init(const char* name)
 {
 	mActorName = name;
@@ -356,28 +417,27 @@ void TMapStaticObj::init(const char* name)
 		case 0:
 			break;
 		case 1:
-			SMS_LoadParticle(mActorData->mParticlePath,
-			                 mActorData->mParticleId);
+			MapStaticObjLoadParticle(mActorData->mParticlePath,
+			                         mActorData->mParticleId);
 			break;
 		case 2:
 			break;
 		case 3:
-			SMS_LoadParticle(mActorData->mParticlePath,
-			                 mActorData->mParticleId);
+			MapStaticObjLoadParticle(mActorData->mParticlePath,
+			                         mActorData->mParticleId);
 			break;
 		}
 	}
 
 	if (mActorData->mIdxGroupName != nullptr) {
-		TIdxGroupObj* group = static_cast<TIdxGroupObj*>(
-		    JDrama::TNameRefGen::search(mActorData->mIdxGroupName));
+		TIdxGroupObj* group = JDrama::TNameRefGen::search<TIdxGroupObj>(
+		    mActorData->mIdxGroupName);
 		group->getChildren().push_back(this);
 	}
 
 	if (mActorData->mFlags & TActorData::FLAG_IS_INDIRECT) {
-		TScreenTexture* ref = static_cast<TScreenTexture*>(
-		    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
-		const ResTIMG* img = ref->getTexture()->getTexInfo();
+		const ResTIMG* img = JDrama::TNameRefGen::search<TScreenTexture>(
+		    "スクリーンテクスチャ")->getTexture()->getTexInfo();
 		mMActor->getModel()->getModelData()->getTexture()->setResTIMG(1, *img);
 
 		SMS_ChangeTextureAll(mMActor->getModel()->getModelData(),
@@ -408,7 +468,7 @@ TMapStaticObj::TMapStaticObj(const char* name)
     , mMActor(nullptr)
     , mCollisionManager(nullptr)
     , mSoundId(-1)
-    , unk7C(-1)
+    , mRandPlayHandle(-1)
 {
 }
 
@@ -434,20 +494,16 @@ void TMapObjSoundGroup::perform(u32 cue, JDrama::TGraphics* graphics)
 	if (cue & CUE_MOVE) {
 		JGeometry::TVec3<f32> local_c18[0x100];
 		JGeometry::TVec3<f32> local_c24;
-		mGraph->unk0->getPoint(&local_c24);
-
-		JGeometry::TVec3<f32> tmp;
-		JGeometry::TVec3<f32>& camPos = tmp;
+		mGraph->getGraphNode(0).getPoint(&local_c24);
 
 		int count = 0;
-		for (int i = 1; i < mGraph->getNodeNum(); ++i) {
+		for (int i = 1; i < mGraph->getNodeNum(); ++i, ++count) {
 			JGeometry::TVec3<f32> local_c30;
 			mGraph->getGraphNode(i).getPoint(&local_c30);
 
-			camPos.set(gpCamera->unk124);
-
-			JGeometry::TVec3<f32> tmp
-			    = MsPerpendicFootToLineR(local_c24, local_c30, camPos);
+			JGeometry::TVec3<f32> tmp = MsPerpendicFootToLineR(
+			    local_c24, local_c30,
+			    JGeometry::TVec3<f32>(gpCamera->getUnk124Vec()));
 			local_c18[count].set(tmp);
 
 			local_c24 = local_c30;
@@ -457,8 +513,6 @@ void TMapObjSoundGroup::perform(u32 cue, JDrama::TGraphics* graphics)
 				++i;
 				mGraph->getGraphNode(i).getPoint(&local_c24);
 			}
-
-			++count;
 		}
 		mSceneSE->frameLoop(mSoundID, local_c18, count);
 	}

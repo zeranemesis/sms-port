@@ -16,6 +16,13 @@
 #include <dolphin/os.h>
 #include <macros.h>
 
+// UNUSED out of line: every load below expands it.
+void J3DGDSetZCompLoc(u32 compLocEnable)
+{
+	J3DGDWriteBPCmdCheck(0xFE000040);
+	J3DGDWriteBPCmdCheck(compLocEnable << 6 | 0x43 << 24);
+}
+
 void J3DColorBlockLightOff::initialize()
 {
 	mColorChanNum = 0;

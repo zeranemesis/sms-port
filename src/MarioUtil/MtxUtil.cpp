@@ -1,3 +1,5 @@
+#include <System/DummyMactorString.hpp>
+
 #include <MarioUtil/MtxUtil.hpp>
 
 #include <stdio.h>
@@ -9,6 +11,16 @@
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 
+// The leading 12-byte zero object is @1490, dummyMactorStringValue1's string
+// from System/DummyMactorString.hpp; it is dead here, referenced only as the
+// .rodata base by TMultiMtxEffect::setup. Retail carries it *without*
+// SMS_NO_MEMORY_MESSAGE's string, which is what split that header in two. The
+// remaining .rodata objects are @1819/@1820 (TMtxTimeLag::calc's zero Vec and
+// Quaternion) and @1846 (TMtxSwingRZ::calcLocalXY's zero Vec).
+// TODO: retail adds (m00 + m11) + m22 with the partial sum first; the frontend
+// moves the leaf m22 left of the sum. `f32 s = m00 + m11; s = s + m22 + 1.0f;`
+// gets that order but coalesces s into MsSqrtf's parameter (retail copies it
+// with `fmr f5, f0`), 97.7%; `s += m22` then `1.0f + s` is worse (97.0%).
 void MtxToQuat(MtxPtr m, Quaternion* quat)
 {
 	f32 q[4];
@@ -53,12 +65,19 @@ TMtxTimeLag::TDeParams::TDeParams(const char* path)
 	TParams::load(mPrmPath);
 }
 
+// fabricated: the zero vector as an inlined callee's local, which puts its
+// 12 bytes in the low region below the named vectors.
+static inline void MtxUtilClearVec(Vec& dst)
+{
+	Vec v = { 0.0f, 0.0f, 0.0f };
+	dst   = v;
+}
+
 void TMtxTimeLag::calc(MtxPtr mtx)
 {
 	if (checkFlag(2)) {
 		offFlag(2);
-		Vec v = { 0.0f, 0.0f, 0.0f };
-		unk08 = v;
+		MtxUtilClearVec(unk08);
 
 		Vec v2;
 		v2.x  = mtx[0][3];
@@ -73,6 +92,7 @@ void TMtxTimeLag::calc(MtxPtr mtx)
 		unk30 = q;
 	} else {
 		Vec trans;
+		Quaternion tmp;
 
 		trans.x = mtx[0][3];
 		trans.y = mtx[1][3];
@@ -128,8 +148,12 @@ void TMtxTimeLag::calc(MtxPtr mtx)
 		rot[1][2] = mtx[1][2] * inv2;
 		rot[2][2] = mtx[2][2] * inv2;
 
-		Quaternion tmp;
 		MtxToQuat(rot, &tmp);
+		// TODO: the scalarised quaternion takes f5/f4/f6/f0 where retail has
+		// f3-f6 ascending. Tried (cc50): copy-init or assigned newQuat, dot as
+		// a helper either way round, swapped dot operands; also (f2) dot over
+		// tmp before/after newQuat, reversed copy order, parenthesised pairs,
+		// and an unnamed dot (frame -8).
 
 		Quaternion newQuat;
 		newQuat.x = tmp.x;
@@ -189,13 +213,28 @@ int TMtxTimeLagCallBack(J3DNode* node, int param)
 	return 1;
 }
 
+// Binding level worth +8 of low region, landing TMtxSwingRZ::calcLocalXY's
+// frame at 0xa0 (batch 124).
+static inline bool MtxUtilCheckFlag(const TMtxSwingRZ* p, int i)
+{
+	bool flag = p->checkFlag(i);
+	return flag;
+}
+
+// fabricated: calcLocalXY's own copy of the level above (a shared body would
+// share one .rodata zero vector between the two callers).
+static inline void MtxUtilClearSwingVec(Vec& dst)
+{
+	Vec v = { 0.0f, 0.0f, 0.0f };
+	dst   = v;
+}
+
 void TMtxSwingRZ::calcLocalXY(MtxPtr mtx, Vec* vecX, Vec* vecY)
 {
-	if (checkFlag(2)) {
+	if (MtxUtilCheckFlag(this, 2)) {
 		offFlag(2);
 
-		Vec v = { 0.0f, 0.0f, 0.0f };
-		unk14 = v;
+		MtxUtilClearSwingVec(unk14);
 
 		Vec vec;
 		vec.x = mtx[0][3];
@@ -298,6 +337,11 @@ int TMtxSwingRZReverseXZCallBack(J3DNode* node, int param)
 	return 1;
 }
 
+// TODO: 92.6%. The residue is all in the inlined TMtxSwingRZReverseXZ
+// constructor (one level deeper than TMtxSwingRZ's): retail copies mAcc's
+// TVec3(0, -4, 0) into the by-value TParamT argument with inline lwz/stw
+// (through a 0x74 temp), ours calls the user TVec3 copy constructor out of
+// line. Same header-level copy-constructor issue as SMS_MakeJointsToArc.
 void TMultiMtxEffect::setup(J3DModel* model, const char* prmLocation)
 {
 	mModel        = model;
@@ -357,9 +401,33 @@ void TMultiMtxEffect::setUserArea()
 	}
 }
 
-void TMultiMtxEffect::add() { }
+void TMultiMtxEffect::add()
+{
+	for (int i = 0; i < mNumBones; i++) {
+		J3DJoint* joint
+		    = mModel->getModelData()->getJointNodePointer(mBoneIDs[i]);
+		switch (mMtxEffectType[i]) {
+		case TMTX_EFFECT_TIME_LAG:
+			joint->setCallBack(TMtxTimeLagCallBack);
+			break;
+		case TMTX_EFFECT_SWING_RZ:
+			joint->setCallBack(TMtxSwingRZCallBack);
+			break;
+		case TMTX_EFFECT_SWING_RZ_REVERSE_XZ:
+			joint->setCallBack(TMtxSwingRZReverseXZCallBack);
+			break;
+		}
+	}
+}
 
-void TMultiMtxEffect::remove() { }
+void TMultiMtxEffect::remove()
+{
+	for (u16 i = 0; i < mNumBones; i++) {
+		mModel->getModelData()
+		    ->getJointNodePointer(mBoneIDs[i])
+		    ->setCallBack(nullptr);
+	}
+}
 
 void SMS_MakeJointsToArc(J3DModel* model, const JGeometry::TVec3<f32>& start,
                          const JGeometry::TVec3<f32>& upDir,
@@ -374,30 +442,34 @@ void SMS_MakeJointsToArc(J3DModel* model, const JGeometry::TVec3<f32>& start,
 	JGeometry::TVec3<f32> up = upDir;
 	up.normalize();
 
-	int jointNum = model->getModelData()->getJointNum();
+	int jointNum = model->getModelData()->mJointNum;
 	for (u16 i = 0; i < jointNum; ++i) {
 		f32 t = (f32)i / (f32)(jointNum - 1);
 
-		JGeometry::TVec3<f32> a = dir * t;
-		JGeometry::TVec3<f32> b = up * (1.0f - t);
-		JGeometry::TVec3<f32> c = b + a;
+		JGeometry::TVec3<f32> c = JGeometry::TVec3<f32>(up * (1.0f - t)) + dir * t;
 		c.normalize();
-
-		MtxPtr jm = model->getAnmMtx(i);
 
 		f32 dist = (f32)i * (mag / (f32)(jointNum - 1));
 
+		MtxPtr jm = model->getAnmMtx(i);
+
+		// TODO: retail keeps xAxis.y/.z in f29/f30 (x spilled to its slot),
+		// which our TVec3 user copy constructor blocks; removing it from
+		// JGVec3.hpp takes this function 84.6 -> 90.6 on the old body. The
+		// by-value copy of up * (1 - t) above is instruction-exact; the raw
+		// mJointNum read gives retail's 0x1c8 frame (getJointNum() is 8 long).
+		JGeometry::TVec3<f32> xAxis = c;
 		JGeometry::TVec3<f32> zAxis(jm[0][2], jm[1][2], jm[2][2]);
 		JGeometry::TVec3<f32> side;
-		side.cross(zAxis, c);
+		side.cross(zAxis, xAxis);
 		JGeometry::TVec3<f32> fwd;
-		fwd.cross(c, side);
+		fwd.cross(xAxis, side);
 		side.normalize();
 		fwd.normalize();
 
-		jm[0][0] = c.x;
-		jm[1][0] = c.y;
-		jm[2][0] = c.z;
+		jm[0][0] = xAxis.x;
+		jm[1][0] = xAxis.y;
+		jm[2][0] = xAxis.z;
 		jm[0][1] = side.x;
 		jm[1][1] = side.y;
 		jm[2][1] = side.z;
@@ -429,7 +501,6 @@ void SMS_GetLightPerspectiveForEffectMtx(MtxPtr mtx)
 	mtx[3][3] = 1.0f;
 }
 
-TRopePoint::TRopePoint() { }
 
 TRope::TRope(u16 count, const JGeometry::TVec3<f32>& pos, f32 p1, f32 p2,
              f32 p3, f32 p4)
@@ -495,6 +566,12 @@ void TRope::constraintHead(const JGeometry::TVec3<f32>& param)
 	collision();
 }
 
+// Retail tests prev - cur per axis against epsilon and keeps the result as a
+// bool; the header's epsilonEquals (cur - prev, receiver in the other
+// register) and an unnamed condition (83.6) do not give that shape.
+// TODO: instruction-exact; frame 0x18 short (delta sits 0x20 low). Tried
+// (cc50): a loop-body helper either parameter order, sub()/add()/`*=`
+// spellings and swapped declarations; none moves the frame.
 void TRope::constraintTail(const JGeometry::TVec3<f32>& param)
 {
 	mPoints[mNumPoints - 1].unkC = param;
@@ -502,25 +579,32 @@ void TRope::constraintTail(const JGeometry::TVec3<f32>& param)
 		TRopePoint& cur  = mPoints[i];
 		TRopePoint& prev = mPoints[i - 1];
 
-		if (!cur.unkC.epsilonEquals(prev.unkC)) {
+		bool same
+		    = (-JGeometry::TUtil<f32>::epsilon() <= prev.unkC.x - cur.unkC.x
+		       && prev.unkC.x - cur.unkC.x <= JGeometry::TUtil<f32>::epsilon())
+		      && (-JGeometry::TUtil<f32>::epsilon() <= prev.unkC.y - cur.unkC.y
+		          && prev.unkC.y - cur.unkC.y
+		                 <= JGeometry::TUtil<f32>::epsilon())
+		      && (-JGeometry::TUtil<f32>::epsilon() <= prev.unkC.z - cur.unkC.z
+		          && prev.unkC.z - cur.unkC.z
+		                 <= JGeometry::TUtil<f32>::epsilon());
+		if (!same) {
 			JGeometry::TVec3<f32> delta = prev.unkC;
 			delta -= cur.unkC;
 			VECNormalize(&delta, &delta);
 			delta.scale(cur.unk24);
 			prev.unkC = cur.unkC;
 			prev.unkC += delta;
-
-	// Every diff marker of this function is a stack offset sitting 0x18 above
-	// ours (target frame 0x68 against 0x50). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 		}
 	}
 	collision();
 }
 
+// TODO: 93.6%, frame exact with the difference and the scaled step both
+// named. Retail is `(unkC - unk0) * scale` through a reference-returning
+// `operator*` (JGVec3.hpp header note: 99.80 here); with the by-value header
+// operator three stores stay out of place. Refuted here (k5): named `v` with
+// `*=`/`scale()` (scale inlines, 90.7%).
 void TRope::moveHead(const JGeometry::TVec3<f32>& param)
 {
 	for (int i = 0; i < mNumPoints; ++i) {
@@ -530,15 +614,29 @@ void TRope::moveHead(const JGeometry::TVec3<f32>& param)
 	constraintHead(param);
 	for (int i = 0; i < mNumPoints; ++i) {
 		f32 scale               = unk8;
-		JGeometry::TVec3<f32> v = mPoints[i].unkC - mPoints[i].unk0;
-		mPoints[i].unk18        = v * scale;
-		mPoints[i].unk0         = mPoints[i].unkC;
+		JGeometry::TVec3<f32> v      = mPoints[i].unkC - mPoints[i].unk0;
+		JGeometry::TVec3<f32> scaled = v * scale;
+		mPoints[i].unk18             = scaled;
+		mPoints[i].unk0              = mPoints[i].unkC;
 	}
 }
 
-void TRope::moveHeadAndTail(const JGeometry::TVec3<f32>&,
-                            const JGeometry::TVec3<f32>&)
+void TRope::moveHeadAndTail(const JGeometry::TVec3<f32>& head,
+                            const JGeometry::TVec3<f32>& tail)
 {
+	for (int i = 0; i < mNumPoints; ++i) {
+		mPoints[i].unkC.y += unkC;
+		mPoints[i].unkC += mPoints[i].unk18;
+	}
+	constraintHead(head);
+	constraintTail(tail);
+	for (int i = 0; i < mNumPoints; ++i) {
+		f32 scale               = unk8;
+		JGeometry::TVec3<f32> v      = mPoints[i].unkC - mPoints[i].unk0;
+		JGeometry::TVec3<f32> scaled = v * scale;
+		mPoints[i].unk18             = scaled;
+		mPoints[i].unk0              = mPoints[i].unkC;
+	}
 }
 
 void SMS_GetActorMtx(const THitActor& actor, MtxPtr mtx)

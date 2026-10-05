@@ -21,6 +21,8 @@
 #include <System/FlagManager.hpp>
 #include <System/MarioGamePad.hpp>
 #include <System/Resolution.hpp>
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 
 // rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
@@ -46,16 +48,20 @@ TSelectDir::TSelectDir()
 {
 }
 
+// Closure batch 128: exact. The 8 bytes batch 123 could only find as unnamed
+// padding are one binding level over the gamepad member -- the shape a
+// `TMarioGamePad* TSelectDir::getGamePad()` accessor that binds its result
+// would have. Parked TU-local below; header batch item. (A binding level over
+// the `JKRFileLoader::getVolume` cast closes it identically, so the byte is
+// certain and its owner is not; the gamepad accessor is the spelling the rest
+// of the tree uses.)
 TSelectDir::~TSelectDir()
 {
-
-	
-	
 	JKRMemArchive* arc = (JKRMemArchive*)JKRFileLoader::getVolume("select");
 	if (arc)
 		arc->unmountFixed();
 
-	unk18->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
+	getGamePad()->offFlag(1);
 }
 
 void TSelectDir::setup(JDrama::TDisplay* display, TMarioGamePad* gamePad,
@@ -78,11 +84,75 @@ void* TSelectDir::setupThreadFunc(void* param_1)
 
 int TSelectDir::rsetup()
 {
-	static const char* selectNames[] = {
-	    "/data/select_en.arc", "/data/select_ge.arc", "/data/select_fr.arc",
-	    "/data/select_sp.arc", "/data/select_it.arc"};
-	void* arcData = SMSLoadArchive(
-	    selectNames[TFlagManager::smInstance->getFlag(0xA0001)], 0, 0, 0);
+	// TODO: 99.6% with 370 operand-only markers and *no* structural marker;
+	// GMSE01 frame is 0x610 against retail's 0x648, with list/constructor
+	// temporary offsets and LookAtCamera vector ordering/register differences
+	// remaining. Closure batch 128 classified the residue: of the 233 markers
+	// that carry exactly one `r1` displacement on each side, the retail-minus-
+	// ours delta is *not* uniform -- 40 bytes at 61 slots, 56 at 59, 52 at 46,
+	// 48 at 33, 36 at 11, 44 at 9, 32 at 7, 64 at 4, 28 at 2 and one slot 56
+	// *lower*. So this is not one dead carrier under everything (contrast
+	// `direct()`, where every slot shifts by the same 0x80) but several
+	// separately misplaced objects inside a 0x600-byte local area, and the
+	// total gap is only 56 bytes. A per-object slot map (grouping the deltas
+	// by the source construct each slot belongs to) is the prerequisite for
+	// any lever work here; do not spend lever trials on it before that.
+	// Closure re-pass (batch 161) built that map and the residue is the
+	// known-open JGadget pool word.  Sorting the 233 single-displacement
+	// markers by *our* offset, the delta rises monotonically in 4-byte steps
+	// through the low pool -- our slots run 0x204/0x208, 0x20c-0x21c,
+	// 0x220-0x230, 0x234-0x244, 0x248-0x258, 0x25c... at a stride of 0x14,
+	// where retail's run 0x220/0x224, 0x22c-0x23c, 0x244-0x254, 0x25c-0x26c,
+	// 0x274-0x284, 0x28c... at a stride of 0x18.  Each group is one
+	// `getChildren().push_back()` expansion: the iterator/insert pair stores
+	// five words on both sides, but retail reserves six (0x14 rounded up to
+	// 8), so every expansion costs us four bytes.  The `.28`/`.32` cluster of
+	// deltas is just how many expansions precede a slot; the remaining bands
+	// (0x34 and 0x38 near the top) are the same accumulation after the last
+	// expansion.  RULES.md lists this as the JGadget pool-word class, so no
+	// lever trials here until that class is solved for the tree.
+	// Closure 217 rebuilt the slot map per instruction (all 1096 align, 0
+	// structural markers) and split the 0x38 into three pieces: +28 below
+	// our first referenced pool slot (0x204 against retail's 0x220), +20 of
+	// pad inside the pool (retail's five `+4` steps, one per expansion
+	// sub-block, ours contiguous), and +8 between the pool top and the
+	// second temp block, whose stride is 0x14 on both sides but whose
+	// retail groups alternate 0x10/0x14.  So it is not one knob.
+	// Research 211's receiver knob was then tried in the inverse direction
+	// it predicts, and every spelling is worse: dropping `root` for
+	// `((TViewObjPtrListT<TViewObj>*)unk10)->getChildren().push_back(x)` at
+	// the four root sites is +9 instructions (97.3%, the member is reloaded
+	// per site) and still leaves the pool contiguous; a TU-local binder
+	// returning the cast is the same +9 at frame 0x630; `root->insert(x)`
+	// at the four root sites rewrites the whole map (frame 0x5a8, pool
+	// [60]); `insert` at all twenty sites is 85.1% and +107 instructions;
+	// and keeping `root` but initialising it from `unk10` after the member
+	// store costs one reload for frame 0x608.  The pool stays [48]
+	// contiguous in every packing variant, so retail's five pad words are
+	// not the receiver's naming here -- the padded sub-blocks are the first
+	// five expansions only, and whatever distinguishes them is upstream of
+	// the call site.
+	// cc42: a TU-local named-reference `getChildren()` binder at the first
+	// five push sites (the four root pushes and group2D's) lands frame 0x648
+	// exactly, but the per-expansion stride of the last six expansions is
+	// untouched (their low blocks still 4 short each, their upper blocks 4
+	// long each); descent over binder/pointer/pointer-then-reference/named-
+	// group forks at all twenty sites finds nothing better. Not applied.
+	// c-k31 (dbg slot map): retail's three depth-1 words between the
+	// seventh and eighth push are the getGamePad()/getSelectMenu() reads of
+	// the gamepad stores, and the TLookAtCamera vectors are created in
+	// position/up/target order (see JDRCamera.hpp): gap 34 -> 14, webs 2 -> 0,
+	// frame 0x638. The rest is the `stageDisp->getUnk14()->getChildren()`
+	// site: retail binds the list's getChildren() one level below the
+	// TDStageDisp receiver (one word moves from depth 2 to depth 3 at all
+	// five screen pushes). A TDStageDisp accessor returning
+	// `((TViewObjPtrListT<TViewObj>*)unk14)->getChildren()` lands it (gap 4,
+	// 263 markers) and moves the same boundary in MenuDir, MovieDirector and
+	// GCLogoDir, but GCLogoDir::setup then drops 29 -> 62 markers; parked
+	// for the owner (docs/catalog/frame-gaps.md, closure c-k31). Still open
+	// after it: one word above group3D, one depth-2 word between the
+	// seventh and eighth push, two depth-2 words after the last push.
+	void* arcData = SMSLoadArchive("/data/select.arc", 0, 0, 0);
 
 	JKRMemArchive* archive = new JKRMemArchive;
 	if (!archive->mountFixed(arcData, MBF_0))
@@ -118,8 +188,8 @@ int TSelectDir::rsetup()
 	group3D->getChildren().push_back(unk28);
 	groupGrad->getChildren().push_back(unk24);
 
-	unk18->mFlags   = TMarioGamePad::PAD_FLAG_MENU_INPUT;
-	unk20->mGamePad = unk18;
+	getGamePad()->mFlags      = 1;
+	getSelectMenu()->mGamePad = getGamePad();
 
 	JPAResourceManager* resourceManager2D = new JPAResourceManager(9, 0x200, 0);
 	JPAResourceManager* resourceManager3D = new JPAResourceManager(9, 0x200, 0);
@@ -143,7 +213,7 @@ int TSelectDir::rsetup()
 	TEmitterViewObj* emitterView3D = new TEmitterViewObj(unk34);
 	group2DParticle->getChildren().push_back(emitterView3D);
 
-	JDrama::TDStageDisp* stageDisp = new JDrama::TDStageDisp("<DStageDisp>");
+	JDrama::TDStageDisp* stageDisp = new JDrama::TDStageDisp("<DStageDisp>", 0);
 	unk14->getChildren().push_back(stageDisp);
 
 	JDrama::TRect rect(0, 0, SMSGetTitleRenderWidth(),
@@ -151,7 +221,7 @@ int TSelectDir::rsetup()
 	stageDisp->getEfbCtrlDisp()->TEfbCtrl::setSrcRect(rect);
 
 	JDrama::TOrthoProj* gradCamera
-	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 16.0f, 464.0f, 0.0f, 600.0f);
+	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 0.0f, 16.0f, 464.0f, 600.0f);
 	groupGrad->getChildren().push_back(gradCamera);
 
 	JDrama::TScreen* gradScreen = new JDrama::TScreen(rect, "Screen Grad");
@@ -160,7 +230,7 @@ int TSelectDir::rsetup()
 	gradScreen->assignViewObj(groupGrad);
 
 	JDrama::TOrthoProj* screen2DCamera
-	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 16.0f, 464.0f, 0.0f, 600.0f);
+	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 0.0f, 16.0f, 464.0f, 600.0f);
 	group2D->getChildren().push_back(screen2DCamera);
 
 	JDrama::TScreen* screen2D = new JDrama::TScreen(rect, "Screen 2D");
@@ -171,8 +241,8 @@ int TSelectDir::rsetup()
 
 	JDrama::TLookAtCamera* camera3D = new JDrama::TLookAtCamera(
 	    JGeometry::TVec3<f32>(300.0f, 240.0f, 1300.0f),
-	    JGeometry::TVec3<f32>(300.0f, 240.0f, 0.0f),
-	    JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f), 30.0f, 1.3333334f,
+	    JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f),
+	    JGeometry::TVec3<f32>(300.0f, 240.0f, 0.0f), 30.0f, 1.3333334f,
 	    "<TLookAtCamera>");
 	group3D->getChildren().push_back(camera3D);
 
@@ -182,7 +252,7 @@ int TSelectDir::rsetup()
 	screen3D->assignViewObj(group3D);
 
 	JDrama::TOrthoProj* screen2DCamera2
-	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 16.0f, 464.0f, 0.0f, 600.0f);
+	    = new JDrama::TOrthoProj(-100.0f, 100.0f, 0.0f, 16.0f, 464.0f, 600.0f);
 	group2D->getChildren().push_back(screen2DCamera2);
 
 	JDrama::TScreen* screen2D2 = new JDrama::TScreen(rect, "Screen 2D");
@@ -192,7 +262,7 @@ int TSelectDir::rsetup()
 	unk44 = screen2D2;
 
 	JDrama::TOrthoProj* particleCamera
-	    = new JDrama::TOrthoProj(-500.0f, 500.0f, 16.0f, 464.0f, 0.0f, 600.0f);
+	    = new JDrama::TOrthoProj(-500.0f, 500.0f, 0.0f, 16.0f, 464.0f, 600.0f);
 	group2DParticle->getChildren().push_back(particleCamera);
 
 	JDrama::TScreen* particleScreen = new JDrama::TScreen(rect, "Screen Grad");
@@ -212,8 +282,16 @@ void TSelectDir::changeOrder()
 	unk48->unkC.off(CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW);
 }
 
+// The carriers the batch-128/cc32 ladders counterfeited with TU-local levels
+// are accessor levels (research c-r29): the binder-shaped
+// TApplication::getFader() at the fader sites and getSelectMenu() at six of
+// the seven menu reads. The last two named words are a result local declared
+// first (MenuDir's direct has the same `DEFAULT` result) and the fader status
+// named for the switch (c-k24).
 int TSelectDir::direct()
 {
+	int ret = TApplication::APP_STATE_DEFAULT;
+
 	if (!unk38) {
 		if (!OSIsThreadTerminated(&gSetupThread))
 			return TApplication::APP_STATE_WAIT;
@@ -224,9 +302,9 @@ int TSelectDir::direct()
 			return TApplication::APP_STATE_GAMEPLAY;
 
 		unk38 = true;
-		unk20->initData(unk40, unk2C, unk28, this);
-		unk20->startMove();
-		unk20->startOpenWindow();
+		getSelectMenu()->initData(unk40, unk2C, unk28, this);
+		getSelectMenu()->startMove();
+		getSelectMenu()->startOpenWindow();
 
 		SMSGetApplication()->getFader()->startWipe(0xe, 0.4f, 0.0f);
 		SMSGetApplication()->getFader()->setColor(
@@ -238,15 +316,16 @@ int TSelectDir::direct()
 
 	JDrama::TDirector::direct();
 
-	switch (SMSGetApplication()->getFader()->mFadeStatus) {
+	int status = SMSGetApplication()->getFader()->mFadeStatus;
+	switch (status) {
 	case TSMSFader::FADE_STATUS_FULLY_FADED_IN:
 	case TSMSFader::FADE_STATUS_FADING_IN:
-		if (unk20->unk14B)
+		if (getSelectMenu()->unk14B)
 			return TApplication::APP_STATE_DONE;
 
 		if (unk20->mCloseMenu) {
-			SMSGetApplication()->mNextArea.unk1 = unk20->mSelectedShine;
-			TFlagManager::smInstance->setFlag(0x40003, unk20->mSelectedShine);
+			SMSGetApplication()->mNextArea.unk1 = getSelectMenu()->mSelectedShine;
+			TFlagManager::smInstance->setFlag(0x40003, getSelectMenu()->mSelectedShine);
 			SMSGetApplication()->getFader()->startWipe(0xf, 1.0f, 0.0f);
 			SMSGetApplication()->getFader()->setColor(
 			    JUtility::TColor(0xff, 0xff, 0xff, 0xff));
@@ -271,5 +350,5 @@ int TSelectDir::direct()
 			return TApplication::APP_STATE_GAMEPLAY;
 	}
 
-	return TApplication::APP_STATE_DEFAULT;
+	return ret;
 }

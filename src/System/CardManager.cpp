@@ -9,94 +9,106 @@
 static u8 sDetach[2];
 const char CardFileName[0x20] = "super_mario_sunshine\0\0\0\0\0\0\0\0\0\0\0";
 
+// The US disc carries five languages (English, German, French, Spanish,
+// Italian); the title is the same English string for all five and `-str reuse`
+// folds them into a single @1632.
 const char* titles[] = {
-	"スーパーマリオサンシャイン", "Super Mario Sunshine",
-	"Super Mario Sunshine",       "Super Mario Sunshine",
-#ifdef VERSION_GMSJ01
-	"Super Mario Sunshine",       "Super Mario Sunshine",
-	"Super Mario Sunshine",
-#else
-	"Super Mario Sunshine",
-#endif
+	"Super Mario Sunshine", "Super Mario Sunshine", "Super Mario Sunshine",
+	"Super Mario Sunshine", "Super Mario Sunshine",
 };
 
 const char* comments[] = {
-	"%d月%d日のセーブデータです", "Last saved on %d/%d", "Last saved on %d/%d",
-#ifdef VERSION_GMSJ01
-	"Last saved on %d/%d",        "Last saved on %d/%d", "Last saved on %d/%d",
-	"Last saved on %d/%d",
-#else
-	"Last saved on %d/%d",        "Last saved on %d/%d",
-#endif
+	"%d/%d Save Data",
+	"Gespeichert am: %d.%d.",
+	"Dern. sauvegarde le %d/%d",
+	"Datos: %d/%d.",
+	"Ultimo salvataggio %d/%d",
 };
 
 static u32 CalcCheckSum(const void* data, u32 size)
 {
 	u16* ptr = (u16*)data;
 	u32 top, bottom;
-	u32 i;
-	for (top = bottom = 0, i = 0; i < size / 2; ++i, ++ptr) {
+	top = bottom = 0;
+	for (u32 i = 0; i < size / 2; ++i, ++ptr) {
 		top += ptr[0];
 		bottom += ~ptr[0];
 	}
 	return (top << 16) | bottom & 0xffff;
 }
 
-struct HeaderData {
-	/* 0x04 */ char mTitle[0x20];
-	/* 0x24 */ char mComment[0x20];
-	/* 0x40 */ char mBanner[0xE00];
-	/* 0xE40 */ char mIcons[0xA00];
-};
-
-struct TCardSector {
-	void clearData();
-	void setCheckSum(u32 write_count);
-	bool isCheckSumValid() const
-	{
-		return !(CalcCheckSum(this, 0x1FFC) - mCheckSum);
-	}
-	s32 read(CARDFileInfo* file, s32 index, TCardManager::TCriteria* criteria);
-
-	// fabricated
-	HeaderData* getHeader() { return &mHeader; }
-	void* getData() { return &mHeader; }
-	size_t getDataSize() const
-	{
-		return sizeof(mHeader) + sizeof(mOptionBlock);
-	}
-	s32 getWriteCount() const { return mWriteCount; }
-
-public:
-	/* 0x0 */ s32 mWriteCount;
-	/* 0x4 */ HeaderData mHeader;
-	/* 0x1844 */ char mOptionBlock[0x7B8];
-	/* 0x1FFC */ s32 mCheckSum;
-};
-
 void TCardSector::clearData()
 {
 	memset(&mHeader, 0, sizeof(mHeader) + sizeof(mOptionBlock));
 }
 
+// UNUSED, 0x50 in the map.
+//
+// TODO: the real body is almost certainly
+//     mWriteCount = write_count;
+//     mCheckSum   = CalcCheckSum(this, 0x1FFC);
+// which compiles to exactly the map's 0x50 (CalcCheckSum expands inside it)
+// and gives cmdLoop's expansion retail's `bl CalcCheckSum` (96.70 -> 99.21),
+// closing the unit's only data defect (the cmdLoop jump table, 56.41 -> 100).
+// It is not in place because MWCC then also calls CalcCheckSum in
+// writeOptionBlock_ (100 -> 84.25), writeBlock_ (99.93 -> 85.84), readBlock_
+// (99.13 -> 88.31) and filledInitData_ (96.43 -> 82.22), where retail expands
+// the loop instead. The split is a depth one: cmdLoop reaches setCheckSum
+// through an inlined readOptionBlock_, so CalcCheckSum sits at depth 3 (budget
+// 6) there and at depth 2 (budget 9) in the other four, which means our
+// CalcCheckSum body costs more than 9 statements. Shaving the pointer bump out
+// of the loop increment (`ptr[i]`) is one statement cheaper but breaks
+// CalcCheckSum itself (100 -> 24.94) without flipping either decision. The
+// loop below is the four-site shape and is kept until the cost can be cut
+// without changing CalcCheckSum's own codegen.
+// c-sys2: `u32 i; for (i = 0, top = bottom = 0; ...)` (or a comma-joined loop
+// body) is cheap enough and keeps CalcCheckSum exact: writeOptionBlock_,
+// writeBlock_ and filledInitData_ expand it again, but then read() expands it
+// too, where retail calls it (readBlock_ 98.4 -> 53, getBookmarkInfos_ 100 ->
+// ~60). Retail's read is 0xc8 and calls both CalcCheckSum and set even out of
+// line, so read reaches CalcCheckSum through at least one more inline level
+// than setCheckSum does. One TU-local level (`!(CalcCheckSum(s, 0x1FFC) -
+// s->mCheckSum)` in a helper) gives cmdLoop every instruction and its 0x58
+// frame, but read-inlining callers gain +8/+0x10 frame; read and set are the
+// next thing to fix.
+// c-h18: that level spelled in read as `criteria->set(Ok(this) ? VALID : BAD, ...)`
+// (no named `eq`) compiles read to the map's 0xc8 and keeps getBookmarkInfos_
+// exact, with setCheckSum = the two-line body above (0x50) and the cheap loop.
+// Every slot then matches except a missing low-region object per setCheckSum
+// expansion (writeOptionBlock_/readBlock_ +2 words, writeBlock_/filledInitData_
+// +4, cmdLoop +1): a named sum, a size-typed argument or an extra level are inert.
+// clearData through getData()/getDataSize() adds cmdLoop's word (0x58) but
+// costs getWriteStream/getOptionWriteStream ~7.
 void TCardSector::setCheckSum(u32 write_count)
 {
 	mWriteCount = write_count;
-	mCheckSum   = CalcCheckSum(this, 0x1FFC);
+	u16* ptr    = (u16*)this;
+	u32 top, bottom;
+	top = bottom = 0;
+	for (u32 i = 0; i < 0x1FFC / 2; ++i, ++ptr) {
+		top += ptr[0];
+		bottom += ~ptr[0];
+	}
+	mCheckSum = (top << 16) | bottom & 0xffff;
 }
 
 // TODO: incorrect
+// writeCount/data declared before the read: closes getBookmarkInfos_ and
+// lifts filledInitData_/cmdLoop, but readBlock_'s last two inlined reads stop
+// sharing result's register (99.19 -> 98.39); open (2026-09-23).
 s32 TCardSector::read(CARDFileInfo* file, s32 index,
                       TCardManager::TCriteria* criteria)
 {
+	s32 writeCount;
+	const void* data;
 	s32 errc = CARDRead(file, this, sizeof(TCardSector),
 	                    index * sizeof(TCardSector));
 	if (errc == CARD_RESULT_READY) {
-		s32 writeCount   = mWriteCount;
-		const void* data = &mHeader;
-		criteria->set(isCheckSumValid()
-		                  ? TCardManager::TCriteria::STATE_VALID
-		                  : TCardManager::TCriteria::STATE_CHECKSUM_BAD,
+		writeCount = mWriteCount;
+		data       = &mHeader;
+		bool eq          = !(CalcCheckSum(this, 0x1FFC) - mCheckSum);
+		criteria->set(eq ? TCardManager::TCriteria::STATE_VALID
+		                 : TCardManager::TCriteria::STATE_CHECKSUM_BAD,
 		              writeCount, data);
 	}
 	return errc;
@@ -105,26 +117,28 @@ s32 TCardSector::read(CARDFileInfo* file, s32 index,
 void TCardManager::TCriteria::set(TCardManager::TCriteria::TEBlockStat state,
                                   u32 write_count, const void* sector_data)
 {
-	(void)0;
-	(void)0;
 	mState = state;
 	if (mState == STATE_VALID) {
 		mWriteCount = write_count;
 		memcpy(&mPreviewBytes, sector_data, sizeof(mPreviewBytes));
-	} else {
-		setEmpty();
-	}
-}
-
-void TCardManager::TCriteria::setEmpty()
-{
-	if (mState == STATE_EMPTY) {
+	} else if (mState == STATE_EMPTY) {
 		mWriteCount = 0;
 		memset(mPreviewBytes, 0, sizeof(mPreviewBytes));
 	}
 }
 
-#pragma dont_inline on
+void TCardManager::TCriteria::setEmpty()
+{
+	mState      = STATE_EMPTY;
+	mWriteCount = 0;
+	memset(mPreviewBytes, 0, sizeof(mPreviewBytes));
+}
+
+// Retail calls this from copyTo and readBlock_: the single-exit result chain
+// (one assignment and one `else` per arm) and the two named write counts are
+// what take the body over the depth-1 budget. The newer-sector arm is a
+// ternary, which joins through r0 as retail does; without the named counts
+// it inlines into both callers.
 s32 TCardManager::decideUseSector(TCardManager::TCriteria* criteria)
 {
 	s32 result;
@@ -138,12 +152,12 @@ s32 TCardManager::decideUseSector(TCardManager::TCriteria* criteria)
 	} else if (criteria[1].getState() == TCriteria::STATE_CHECKSUM_BAD) {
 		result = 0;
 	} else {
-		result = criteria[0].getWriteCount() >= criteria[1].getWriteCount() ? 0
-		                                                                    : 1;
+		u32 count0 = criteria[0].getWriteCount();
+		u32 count1 = criteria[1].getWriteCount();
+		result = count0 >= count1 ? 0 : 1;
 	}
 	return result;
 }
-#pragma dont_inline off
 
 // TODO: what is this?
 s32 TCardManager::getLoadIndex(TCardManager::TCriteria* criteria) { }
@@ -163,6 +177,11 @@ s32 TCardManager::getWriteCount(TCardManager::TCriteria* criteria)
 	return count;
 }
 
+// TODO: instructions exact, frame 0xa0 vs retail 0x98. Retail's two u64
+// reads share one slot at 0x60 and the u32/u16 temps sit low (0x30-0x38).
+// One named u64 read twice through read() drops 21 -> 16 markers but lands
+// 0x78; two named u64s 0x80; mixing with readU64 0x90. operator>> reads
+// lose the copies.
 void TCardManager::copyTo(TCardManager::TCriteria* param_1,
                           TCardBookmarkInfo* param_2)
 {
@@ -420,9 +439,9 @@ s32 TCardManager::format_()
 		result = CARDFormat(mChannel);
 		if (result == CARD_RESULT_READY)
 			mFsCheckedOk = true;
-		if (result == CARD_RESULT_IOERROR)
-			unmount_();
 	}
+	if (result == CARD_RESULT_IOERROR)
+		unmount_();
 	return result;
 }
 
@@ -467,11 +486,13 @@ s32 TCardManager::filledInitData_(CARDFileInfo* file)
 	sector->setCheckSum(0);
 
 	for (int i = 1; i < ARRAY_COUNT(mSectorCriteria); ++i) {
-		if (mSectorCriteria[i].getState() == TCriteria::STATE_EMPTY) {
-			s32 errc = writeCardSector_(file, i, sector, &mSectorCriteria[i]);
-			if (errc != 0)
-				return errc;
-		}
+		if (mSectorCriteria[i].getState() != TCriteria::STATE_EMPTY)
+			continue;
+
+		s32 errc = writeCardSector_(file, i, sector, &mSectorCriteria[i]);
+
+		if (errc != 0)
+			return errc;
 	}
 
 	return setCardStat_(file);
@@ -507,18 +528,18 @@ s32 TCardManager::setCardStat_(CARDFileInfo* file)
 
 void TCardManager::buildHeader_(HeaderData* header)
 {
-	// unsigned: the target tests the flag with `cmplwi r30, 0 / bne`, i.e. the
-	// local is compared as unsigned, not as int.
-	u32 iVar8 = TFlagManager::getInstance()->getFlag(0xA0001);
+	// 0xA0001 is the live language option flag (0..4); language 0 (English)
+	// prints the date month-first, the European ones day-first.
+	u32 language = TFlagManager::getInstance()->getFlag(0xA0001);
 
-	snprintf(header->mTitle, 0x20, titles[iVar8]);
+	snprintf(header->mTitle, 0x20, titles[language]);
 	OSCalendarTime auStack_54;
 	OSTicksToCalendarTime(OSGetTime(), &auStack_54);
-	if (iVar8 == 0) {
-		snprintf(header->mComment, 0x20, comments[iVar8], auStack_54.mon + 1,
-		         auStack_54.mday);
+	if (language == 0) {
+		snprintf(header->mComment, 0x20, comments[language],
+		         auStack_54.mon + 1, auStack_54.mday);
 	} else {
-		snprintf(header->mComment, 0x20, comments[iVar8], auStack_54.mday,
+		snprintf(header->mComment, 0x20, comments[language], auStack_54.mday,
 		         auStack_54.mon + 1);
 	}
 	memcpy(header->mBanner, mBanner, sizeof(header->mBanner));
@@ -565,6 +586,24 @@ s32 TCardManager::open_(CARDFileInfo* file)
 	return result;
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TCardManager::writeOptionBlock_ (batch 127) and readBlock_. In writeBlock_
+// it is +0x10 of the +0x18 retail needs, so that site keeps the raw member.
+static inline void* CardManagerSector(const TCardManager* p)
+{
+	void* sector = p->mSector;
+	return sector;
+}
+
+// TODO: retail keeps the inlined TCardSector::read's CARDRead result in its
+// own register (r30) and copies it into result with `mr.`; ours coalesces the
+// two. Declaring read's writeCount and data before errc (`s32 writeCount;
+// const void* data; s32 errc = CARDRead(...);`, assigned inside the if)
+// closes this function and lifts filledInitData_ 96.4 -> 97.2 and cmdLoop
+// 96.7 -> 96.9, and readBlock_'s first expansion matches, but its second and
+// third expansions then stop coalescing errc into result (99.2 -> 98.4).
+// Inert under that spelling: fusing readBlock_'s second guard, naming the
+// sector index, `&a[i]` vs `a + i`. All 24 C-style declaration orders scored.
 s32 TCardManager::getBookmarkInfos_()
 {
 	s32 result = mount_(true);
@@ -585,12 +624,11 @@ s32 TCardManager::getBookmarkInfos_()
 		if (result == CARD_RESULT_READY) {
 			if (!mNeedsInit) {
 				for (u32 i = 1; i < ARRAY_COUNT(mSectorCriteria); ++i) {
-					if (mSectorCriteria[i].getState()
-					    != TCriteria::STATE_UNREAD)
+					if (mSectorCriteria[i].mState != TCriteria::STATE_UNREAD)
 						continue;
 
-					result = ((TCardSector*)mSector)
-					             ->read(&info, i, &mSectorCriteria[i]);
+					TCardSector* sector = (TCardSector*)mSector;
+					result = sector->read(&info, i, &mSectorCriteria[i]);
 					if (result != CARD_RESULT_READY)
 						break;
 				}
@@ -618,7 +656,7 @@ s32 TCardManager::readBlock_(u32 index)
 	if (result != CARD_RESULT_READY)
 		return result;
 
-	TCardSector* sector = (TCardSector*)mSector;
+	TCardSector* sector = (TCardSector*)CardManagerSector(this);
 
 	u32 crit_idx = index * 2 + 1;
 
@@ -656,7 +694,6 @@ s32 TCardManager::readOptionBlock_()
 	s32 result = open_(&info);
 	if (result == CARD_RESULT_READY) {
 		TCardSector* sector = (TCardSector*)mSector;
-
 		if (mSectorCriteria[0].mState == TCriteria::STATE_EMPTY) {
 			sector->clearData();
 			sector->setCheckSum(0);
@@ -671,6 +708,8 @@ s32 TCardManager::readOptionBlock_()
 	return result;
 }
 
+// The criteria reads go through TCriteria's binder-shaped getState() and
+// getWriteCount(); their words were the frame's missing 0x18 (research c-r30).
 s32 TCardManager::writeBlock_(u32 index)
 {
 	s32 crit_idx = index * 2 + 1;
@@ -710,7 +749,7 @@ s32 TCardManager::writeOptionBlock_()
 	if (result != CARD_RESULT_READY)
 		return result;
 
-	TCardSector* sector = (TCardSector*)mSector;
+	TCardSector* sector = (TCardSector*)CardManagerSector(this);
 
 	sector->setCheckSum(0);
 
@@ -740,9 +779,7 @@ s32 TCardManager::writeCardSector_(CARDFileInfo* file, s32 index,
 	if (errc != CARD_RESULT_READY)
 		return errc;
 
-	errc = sector->read(file, index, criteria);
-
-	return errc;
+	return sector->read(file, index, criteria);
 }
 
 s32 TCardManager::cmdLoop()

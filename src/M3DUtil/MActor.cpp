@@ -11,8 +11,15 @@
 #include <Camera/CubeManagerBase.hpp>
 #include <Map/MapData.hpp>
 
+// As in setModel, the sub-animation iterators are declared at function scope
+// (their block-scope initialisation adds copy temporaries below the loop's
+// comparison pair). The four animations that need a key-pointer setup call
+// name their `new` result, each worth 4 bytes of named block below the pair.
 MActor::MActor(MActorAnmData* anm_data)
 {
+	JGadget::TList<MActorSubAnmInfo>::iterator it;
+	JGadget::TList<MActorSubAnmInfo>::iterator e;
+
 	mAnmData   = nullptr;
 	mModel     = nullptr;
 	unk8       = nullptr;
@@ -45,33 +52,37 @@ MActor::MActor(MActorAnmData* anm_data)
 
 	if (anm_data->getUnk2C()) {
 		mAnmBck = new MActorAnmBck;
-		mAnmBck->setUnk1C(anm_data->getUnk2C());
-		mAnmByType[ANM_TYPE_BCK] = mAnmBck;
+		getAnmBck()->setUnk1C(anm_data->getUnk2C());
+		mAnmByType[ANM_TYPE_BCK] = getAnmBck();
 	}
 
 	if (anm_data->getUnk30()) {
-		mAnmBpk = new MActorAnmBpk;
+		MActorAnmBpk* bpk = new MActorAnmBpk;
+		mAnmBpk = bpk;
 		mAnmBpk->setUnk1C(anm_data->getUnk30());
 		mAnmBpk->setMatColorAnmKeyPtr();
 		mAnmByType[ANM_TYPE_BPK] = mAnmBpk;
 	}
 
 	if (anm_data->getUnk34()) {
-		mAnmBtp = new MActorAnmBtp;
+		MActorAnmBtp* btp = new MActorAnmBtp;
+		mAnmBtp = btp;
 		mAnmBtp->setUnk1C(anm_data->getUnk34());
 		mAnmBtp->setTexNoAnmFullPtr();
 		mAnmByType[ANM_TYPE_BTP] = mAnmBtp;
 	}
 
 	if (anm_data->getUnk38()) {
-		mAnmBtk = new MActorAnmBtk;
+		MActorAnmBtk* btk = new MActorAnmBtk;
+		mAnmBtk = btk;
 		mAnmBtk->setUnk1C(anm_data->getUnk38());
 		mAnmBtk->setTexMtxAnmKeyPtr();
 		mAnmByType[ANM_TYPE_BTK] = mAnmBtk;
 	}
 
 	if (anm_data->getUnk3C()) {
-		mAnmBrk = new MActorAnmBrk;
+		MActorAnmBrk* brk = new MActorAnmBrk;
+		mAnmBrk = brk;
 		mAnmBrk->setUnk1C(anm_data->getUnk3C());
 		mAnmBrk->setTevColorAnmKeyPtr();
 		mAnmBrk->setTevKColorAnmKeyPtr();
@@ -84,11 +95,11 @@ MActor::MActor(MActorAnmData* anm_data)
 		mAnmByType[ANM_TYPE_BLK] = mAnmBlk;
 	}
 
-	if (anm_data->getUnk0() > 0) {
-		unk10 = new MActorAnmBck*[anm_data->getUnk0()];
+	if (anm_data->unk0 > 0) {
+		unk10 = new MActorAnmBck*[anm_data->unk0];
 
-		JGadget::TList<MActorSubAnmInfo>::iterator it = mAnmData->unk1C.begin();
-		JGadget::TList<MActorSubAnmInfo>::iterator e  = mAnmData->unk1C.end();
+		it = mAnmData->unk1C.begin();
+		e  = mAnmData->unk1C.end();
 
 		for (int i = 0; it != e; ++it, ++i) {
 			unk10[i] = new MActorAnmBck;
@@ -96,16 +107,33 @@ MActor::MActor(MActorAnmData* anm_data)
 			unk10[i]->unk28 = it->unk0;
 		}
 	}
-
-	// Dummy to match original stack frame (MWCC: last declared gets low offsets)
-	char dummy[8];
-	(void)dummy;
 }
 
 void MActor::setMActorAnmData(MActorAnmData* anm_data) { mAnmData = anm_data; }
 
+// TODO: MActor::mAnmData wants an accessor in MActor.hpp; parked here as a
+// TU-local until a header batch adds it.
+static inline MActorAnmData* MActorGetAnmData(const MActor* p)
+{
+	return p->mAnmData;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// MActor::calc (frame ladder 271); MActor::setModel binds it at two sites.
+static inline J3DModel* MActorModelL0(const MActor* p)
+{
+	J3DModel* model = p->mModel;
+	return model;
+}
+
+// The sub-animation iterators are declared at function scope and assigned
+// later: initialising them at their block drops two copy temporaries into the
+// pool and leaves the pair 8 bytes low. The two `MActorModelL0` binders then
+// restore the pool below the loop's comparison temporaries.
 void MActor::setModel(J3DModel* param_1, u32 param_2)
 {
+	JGadget::TList<MActorSubAnmInfo>::iterator it;
+	JGadget::TList<MActorSubAnmInfo>::iterator e;
 	mModel       = param_1;
 	mMaterialNum = param_1->getModelData()->getMaterialNum();
 	unk2C        = new u16[mMaterialNum];
@@ -113,9 +141,9 @@ void MActor::setModel(J3DModel* param_1, u32 param_2)
 	if ((~param_2 & 0x10000) != 0)
 		onMakeDL();
 
-	unk8 = mModel->getModelData()->getJointNodePointer(0)->getMtxCalc();
+	unk8 = MActorModelL0(this)->getModelData()->getJointNodePointer(0)->getMtxCalc();
 	for (u16 i = 0; i < mMaterialNum; ++i) {
-		J3DMaterial* mat = mModel->getModelData()->getMaterialNodePointer(i);
+		J3DMaterial* mat = getModel()->getModelData()->getMaterialNodePointer(i);
 		unk30[i]         = 0x32;
 		unk2C[i]         = 0x32;
 		for (u8 j = 0; j < mat->getTexGenBlock()->getTexGenNum(); ++j) {
@@ -128,21 +156,21 @@ void MActor::setModel(J3DModel* param_1, u32 param_2)
 
 	for (int i = 0; i < 6; ++i) {
 		if (mAnmByType[i]) {
-			mAnmByType[i]->setModel(mModel);
+			mAnmByType[i]->setModel(MActorModelL0(this));
 			mAnmByType[i]->checkUseMaterialIDInit(unk2C);
 		}
 	}
 
-	if (mAnmData->getUnk0() > 0) {
-		JGadget::TList<MActorSubAnmInfo>::iterator it = mAnmData->unk1C.begin();
-		JGadget::TList<MActorSubAnmInfo>::iterator e  = mAnmData->unk1C.end();
+	if (MActorGetAnmData(this)->getUnk0() > 0) {
+		it = MActorGetAnmData(this)->unk1C.begin();
+		e = MActorGetAnmData(this)->unk1C.end();
 		for (int i = 0; it != e; ++it, ++i) {
-			unk10[i]->setModel(mModel);
+			unk10[i]->setModel(getModel());
 		}
 	}
 
 	for (u16 i = 0; i < mMaterialNum; ++i) {
-		J3DMaterial* mat    = mModel->getModelData()->getMaterialNodePointer(i);
+		J3DMaterial* mat    = getModel()->getModelData()->getMaterialNodePointer(i);
 		J3DMaterialAnm* anm = mat->getMaterialAnm();
 
 		if (anm == nullptr && (unk2C[i] != 0x32 || unk30[i] != 0x32)) {
@@ -155,28 +183,28 @@ void MActor::setModel(J3DModel* param_1, u32 param_2)
 
 	initDL();
 
-	if (!mAnmData->getUnk48())
-		mAnmData->createSampleModelData(mModel->getModelData());
+	if (!MActorGetAnmData(this)->getUnk48())
+		MActorGetAnmData(this)->createSampleModelData(getModel()->getModelData());
+}
+
+// Binding level worth +8 of low region, landing MActor::isCurAnmAlreadyEnd's
+// frame at 0x38 (batch 121).
+static inline s16 MActorGetEnd(const J3DFrameCtrl* p)
+{
+	s16 end = p->getEnd();
+	return end;
 }
 
 bool MActor::isCurAnmAlreadyEnd(int type)
 {
-
-	
-	
 	bool result = true;
 
 	J3DFrameCtrl* ctrl = getFrameCtrl(type);
 	if (ctrl) {
 		result = ctrl->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE)
 		         || ctrl->checkState(J3DFrameCtrl::STATE_LOOPED_ONCE)
-		         || ctrl->getFrame() + 0.1f >= ctrl->getEnd();
+		         || ctrl->getFrame() + 0.1f >= MActorGetEnd(ctrl);
 	}
-
-
-	// Dummy to match original stack frame
-	char dummy[8];
-	(void)dummy;
 
 	return result;
 }
@@ -316,13 +344,11 @@ void MActor::updateOutSubBck()
 
 void MActor::calcAnm()
 {
-
-	
-	
 	frameUpdate();
 
 	updateIn();
-	mModel->calc();
+	J3DModel* model = getModel();
+	model->calc();
 	updateOut();
 }
 
@@ -332,12 +358,8 @@ void MActor::calc()
 		return;
 
 	updateIn();
-	mModel->calc();
+	MActorModelL0(this)->calc();
 	updateOut();
-
-	// Dummy to match original stack frame
-	char dummy[16];
-	(void)dummy;
 }
 
 void MActor::viewCalc()
@@ -354,15 +376,18 @@ void MActor::setLightID(s16 light_id)
 	mLightId = light_id;
 }
 
+// Binding level over TBGCheckData::getNormal() at the three component
+// reads, landing MActor::setLightData's frame at 0x68.
+static inline const JGeometry::TVec3<f32>&
+MActorGetNormal(const TBGCheckData* p)
+{
+	const JGeometry::TVec3<f32>& n = p->getNormal();
+	return n;
+}
+
 void MActor::setLightData(const TBGCheckData* param_1,
                           const JGeometry::TVec3<f32>& param_2)
 {
-	// Force float spill to match original stack frame
-	f32 tmp = 0.0f;
-	f32 groundY = 0.0f;
-	(void)tmp;
-	(void)groundY;
-
 	if (!unk40)
 		return;
 
@@ -377,19 +402,20 @@ void MActor::setLightData(const TBGCheckData* param_1,
 	mLightId = 0;
 #ifdef VERSION_GMSP01
 	if (param_1->isShadow()) {
-		tmp = param_2.x * param_1->mNormal.x
+		f32 tmp = param_2.x * param_1->mNormal.x
 		          + param_2.z * param_1->mNormal.z + param_1->mPlaneDistance;
-		groundY = -tmp / param_1->mNormal.y;
+		f32 groundY = -tmp / param_1->mNormal.y;
 		if (groundY + 200.0f > param_2.y)
 			setLightID(param_1->getData());
 	}
 #else
 	if (param_1->isShadow()) {
-		const JGeometry::TVec3<f32>& normal = param_1->getNormal();
-		f32 planeY = -(param_2.x * normal.x + param_2.z * normal.z
-		               + param_1->getPlaneDistance())
-		             / normal.y;
-		if (planeY + 0.5f > param_2.y)
+		f32 dist = param_2.x * MActorGetNormal(param_1).x
+		    + param_2.z * MActorGetNormal(param_1).z
+		    + param_1->getPlaneDistance();
+		f32 planeY = -dist / MActorGetNormal(param_1).y;
+
+		if (200.0f + planeY > param_2.y)
 			setLightID(param_1->getData());
 	}
 #endif
@@ -403,11 +429,17 @@ void MActor::setLightType(int light_type)
 
 void MActor::update() { }
 
+// Binding level worth +8 of low region, landing MActor::entry's frame at
+// 0x50 (batch 124).
+static inline TLightWithDBSet*
+MActorGetLightSet(TLightWithDBSetManager* p, int i)
+{
+	TLightWithDBSet* lightSet = p->getLightSet(i);
+	return lightSet;
+}
+
 void MActor::entry()
 {
-
-	
-	
 	if (!unk39)
 		return;
 
@@ -416,7 +448,8 @@ void MActor::entry()
 		if (mLightId < 0)
 			mLightId = 0;
 
-		gpLightManager->getLightSet(unk44)->changeLightDrawBuffer(mLightId);
+		MActorGetLightSet(gpLightManager, unk44)
+		    ->changeLightDrawBuffer(mLightId);
 
 		shouldResetLightDrawBuf = true;
 	}
@@ -427,10 +460,14 @@ void MActor::entry()
 
 	if (shouldResetLightDrawBuf)
 		gpLightManager->getLightSet(unk44)->resetLightDrawBuffer();
+}
 
-	// Dummy to match original stack frame
-	char dummy[8];
-	(void)dummy;
+// Binding level worth +8 of low region, landing MActor::frameUpdate's frame
+// at 0x50 (batch 121).
+static inline s32 MActorGetUnk0(MActorAnmData* p)
+{
+	s32 unk0 = p->getUnk0();
+	return unk0;
 }
 
 void MActor::frameUpdate()
@@ -440,7 +477,7 @@ void MActor::frameUpdate()
 			mAnmByType[i]->getFrameCtrl()->update();
 
 	if (unk10)
-		for (int i = 0; i < mAnmData->getUnk0(); ++i)
+		for (int i = 0; i < MActorGetUnk0(mAnmData); ++i)
 			if (unk10[i]->getCurIdx() >= 0)
 				unk10[i]->getFrameCtrl()->update();
 }
@@ -454,9 +491,6 @@ void MActor::matAnmFrameUpdate()
 
 void MActor::perform(u32 cue, JDrama::TGraphics*)
 {
-
-	
-	
 	if (cue & CUE_CALC_ANIM)
 		calcAnm();
 
@@ -478,7 +512,7 @@ BOOL MActor::checkCurAnm(const char* name, int type)
 	return false;
 }
 
-bool MActor::checkCurAnmFromIndex(int index, int type)
+BOOL MActor::checkCurAnmFromIndex(int index, int type)
 {
 	if (!mAnmByType[type])
 		return false;
@@ -656,9 +690,18 @@ void MActor::setBrkFromIndex(int index)
 	resetDL();
 }
 
+// Binding level over the animation-table element, worth +8 of low region in
+// MActor::updateIn, updateOut and perform (frame ladder 271).
+static inline MActorAnmBase* MActorAnmAt(const MActor* p, int type)
+{
+	MActorAnmBase* anm = p->mAnmByType[type];
+	return anm;
+}
+
 void MActor::updateIn()
 {
-	if (mAnmByType[ANM_TYPE_BCK] && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
+	if (MActorAnmAt(this, ANM_TYPE_BCK)
+	    && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
 		mAnmByType[ANM_TYPE_BCK]->updateIn();
 
 	updateInSubBck();
@@ -669,7 +712,8 @@ void MActor::updateIn()
 
 void MActor::updateOut()
 {
-	if (mAnmByType[ANM_TYPE_BCK] && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
+	if (MActorAnmAt(this, ANM_TYPE_BCK)
+	    && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
 		mAnmByType[ANM_TYPE_BCK]->updateOut();
 
 	updateOutSubBck();
@@ -694,17 +738,10 @@ void MActor::entryOut()
 
 void MActor::updateMatAnm()
 {
-
-	
-	
-	j3dSys.setTexture(mModel->getModelData()->getTexture());
+	j3dSys.setTexture(getModel()->getModelData()->getTexture());
 	for (u16 i = 0; i < mMaterialNum; ++i)
 		if (unk30[i] != 0x32 || unk2C[i] != 0x32)
-			SMS_CalcMatAnmAndMakeDL(mModel, i);
-
-	// Dummy to match original stack frame
-	char dummy[8];
-	(void)dummy;
+			SMS_CalcMatAnmAndMakeDL(getModel(), i);
 }
 
 void MActor::dumpReport() { }

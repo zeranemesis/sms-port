@@ -44,13 +44,44 @@ public:
 	                       const JGeometry::TVec3<f32>& velocity);
 	virtual TSpineEnemyParams* getSaveParam() const;
 	virtual f32 getPhaseShift() const { return 0.0f; }
+	// The copy-and-subtract distance helper. The map has no symbol for it,
+	// so retail had it as an inline that expanded everywhere; it is kept in
+	// class here because the only site is an in-class virtual. It is the
+	// level that reaches the map's out-of-line `TVec3<f32>::sub`, `::dot`
+	// and `TUtil<f32>::sqrt` at a copy-and-subtract distance test, which
+	// `TVec3::distance()` cannot do (`isReachedToGoal` 67.46 -> 99.74,
+	// TFishoid's weak copy 98.79 -> 99.93 in header round 22; writing the
+	// three statements into `isReachedToGoal` itself instead loses the level
+	// and scores 60.80). AnimalNerve's two graph-walk tests call it too.
+	// Near-twins stay TU-local because this body costs them (research batch
+	// c-sh1): emario's `EMarioCalcDist` (perform 98.18 -> 73.48), the named
+	// copy `T d = a; d.sub(b); return d.length();` of walkerEnemy,
+	// fireWanwan and riccohook (8 bytes of frame each), elecNokonoko's
+	// `ElecDistTo` and TabePuku's `TabePukuLength`; see the note on
+	// `TVec3::distance()` in JGVec3.hpp for why that member cannot carry it.
+	static f32 calcDist(JGeometry::TVec3<f32> a,
+	                    const JGeometry::TVec3<f32>& b)
+	{
+		a.sub(b);
+		return JGeometry::TUtil<f32>::sqrt(a.squared());
+	}
+
+	// The named goal reference is retail's: without it the by-value copy of
+	// `a` lands 4 bytes high (0x24 instead of 0x20 in an otherwise exact 0x30
+	// frame) -- a consumed reference binding is 4 bytes of low region, which
+	// is exactly what frame-gaps.md batch 142's two-region ladder predicts,
+	// and it is the spelling AnimalNerve.cpp's two `calcDist` sites already
+	// use for the same body (`const TVec3<f32>& goalPos = ...getPoint();`).
+	// Header round 26: fishoid's weak copy 99.74 -> 100. Measured as +0 or
+	// worse: a named `f32 dist` or `f32 length`/`f32 sq` result (+8, the copy
+	// stays high), an explicit `TVec3<f32> d = a;` with both parameters by
+	// reference (+8 more), `b` by pointer, the by-value parameter declared
+	// second, `a.dot(a)` for `a.squared()`, a non-static `calcDist(TVec3)`
+	// against `mPosition`, and `100.0f > calcDist(...)`.
 	virtual BOOL isReachedToGoal() const
 	{
-		// operator- takes its left operand BY VALUE, so the delta is
-		// materialised as a 12-byte stack temporary; distance()/squared(other)
-		// recompute each difference in registers and never spill.
-		return (unk104.getPoint() - mPosition).length() < 100.0f ? TRUE
-		                                                       : FALSE;
+		const JGeometry::TVec3<f32>& goal = unk104.getPoint();
+		return calcDist(goal, mPosition) < 100.0f ? TRUE : FALSE;
 	}
 
 	void calcEnemyRootMatrix();
@@ -88,17 +119,40 @@ public:
 	f32 getWallRadius() const { return mBodyScale * mWallRadius; }
 	f32 getBodyRadius() const { return mBodyScale * mBodyRadius; }
 	f32 getBodyScale() const { return mBodyScale; }
-	// return type verified against the binary: marioEU.dol emits
-	// `clrlwi rD, rS, 24` whenever this value reaches an int-typed context
-	// (e.g. `clrlwi r0, r4, 24` in TFireWanwan::updateHitPoint's clamp,
-	// `clrlwi r3, r0, 24` before the `divw` in TEffectEnemy::perform), but
-	// nothing at all when it is assigned straight to mHitPoints (u8 = u8).
-	// Both are only true if the return type is u8.
+	// u8, not int: TStayPakkun::setBehavior divides by it with divwu,
+	// PakkunRootCallback compares against it after a clrlwi and
+	// TEffectEnemy::perform divides by it, all of which need the narrowed
+	// return type -- an `int` return costs those three their exact match
+	// (effectEnemy unlinks) for the same bosstelesa gain this spelling gets
+	// for free (header round 38).
+	// The constant is a plain `1`, not `(u8)1`: that makes the ternary an
+	// int expression which MWCC narrows once on the way out, and that single
+	// post-merge `clrlwi` is what the sites reading the result into a `u8`
+	// local want -- TNerveBossTelesaFreeze::execute 98.5 -> 99.7,
+	// TNerveBossTelesaHideWait +1.1, TNerveBossTelesaPrepareSlot +0.3, with
+	// TFireWanwan::receiveMessage, TStayPakkun::setBehavior,
+	// PakkunRootCallback and TEffectEnemy::perform all still exact.
+	// Priced: TFireWanwan::moveObject 76.2 -> 75.6 and TBossManta::init
+	// 99.07 -> 99.01, both already nonmatching, both wanting the narrowing
+	// one statement later than we put it.
 	u8 getMaxHitPoints() const
 	{
 		return getSaveParam() ? getSaveParam()->mSLHitPointMax.get() : 1;
 	}
 
+	// fabricated TODO: remove
+	// The Mario pointer is bound into a named local rather than cast inside
+	// the argument: that pointer binding is worth 4 bytes of low region (see
+	// frame-gaps.md, batch 142's return-type table) and is what seven callers
+	// tree-wide want -- TGesso::behaveToFindMario, TNerveHaneHamuKuriUpWait,
+	// TPakkun::load, TNervePakkunShoot, TNerveFireWanwanAttack,
+	// TNerveBombHeiAttack and TNervePopoWait all go byte-exact with it and 4
+	// short without it (header round 28).
+	void setGoalPathMario()
+	{
+		THitActor* mario = (THitActor*)gpMarioAddress;
+		setGoalPath(mario);
+	}
 	void setGoalPath(const TPathNode& point)
 	{
 		unkF4  = point;
@@ -106,10 +160,20 @@ public:
 
 		unk114.clear();
 	}
+	// The popped node is bound to a const reference, not assigned straight
+	// out of the call: that consumed reference binding is 4 bytes of low
+	// region (frame-gaps.md, header round 26), which is what
+	// TNerveBPFlyPivot::execute wants (99.77 -> 100). The by-value form
+	// (`TPathNode next = unk114.pop();`) is far worse -- it adds the whole
+	// 16-byte copy and costs five functions including this one's beneficiary
+	// (BPFlyPivot 99.77 -> 81.16, TNerveWalkerEscape 99.86 -> 90.77) -- and
+	// the unbound form leaves BPFlyPivot 4 short. Header round 29.
 	void switchNextGoalPath()
 	{
-		if (!unk114.empty())
-			unkF4 = unk114.pop();
+		if (!unk114.empty()) {
+			const TPathNode& next = unk114.pop();
+			unkF4                 = next;
+		}
 	}
 
 	void decHitPoints()

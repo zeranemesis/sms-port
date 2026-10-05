@@ -1,5 +1,7 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
+// DummyStrings.hpp must precede Camera/SunModel.hpp: retail's .rodata opens
+// with this pair's twelve zero bytes and the 20-byte Shift-JIS message, ahead
+// of SunModel.hpp's "/scene/sun" and "/scene/sunset" literals.
+#include <System/DummyMactorString.hpp>
 #include <System/DummyStrings.hpp>
 
 #include <Camera/SunModel.hpp>
@@ -18,7 +20,6 @@
 #include <System/Resolution.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <stdio.h>
-
 
 TSunModel* gpSunModel;
 
@@ -52,20 +53,32 @@ TSunModel::TSunModel(bool param_1, const char* name)
 	gpSunModel = this;
 	if (param_1) {
 		unk1AC |= 0x4;
-		unk80 = 48;
+		unk80 = 48;   // retail `li r0, 0x30`, not 0
 	}
 
 	JGeometry::TVec2<s16>* it1 = unkB4;
 	JGeometry::TVec2<f32>* it2 = unkF8;
 	bool* it3                  = unk180;
-	for (int i = 17; i != 0; --i) {
+	// The three pointer increments belong in the for-increment clause, not in
+	// the body: with them in the body MWCC unrolls this loop eight times
+	// (`li r0, 2; mtctr` plus an extra offset induction variable, 51 extra
+	// instructions), while retail keeps the single 9-instruction body and
+	// `li r0, 0x11`.  Every other 17-iteration loop in this file carries a
+	// call or a branch and so was never unrollable, which is why this is the
+	// only place it shows.
+	for (int i = 0; i < 17; ++i, ++it1, ++it2, ++it3) {
 		it1->x = it1->y = -1;
-		++it1;
 		it2->x = it2->y = 10000.0f;
-		++it2;
-		*it3 = false;
-		++it3;
+		*it3            = false;
 	}
+}
+
+// Binding level worth +8 of low region, landing TSunModel::load's frame at
+// 0x1f8 (batch 121).
+static inline s16 SunmodelGetFrameMax(const J3DAnmTextureSRTKey* p)
+{
+	s16 frameMax = p->getFrameMax();
+	return frameMax;
 }
 
 void TSunModel::load(JSUMemoryInputStream& param_1)
@@ -106,7 +119,7 @@ void TSunModel::load(JSUMemoryInputStream& param_1)
 
 	unk9C = unkA4 = (f32)unk68;
 	unkA0 = unkA8 = (f32)unk74;
-	unk50.init(unk4C->getFrameMax());
+	unk50.init(SunmodelGetFrameMax(unk4C));
 	unk50.setRate(SMSGetAnmFrameRate());
 	unk50.setAttribute(J3DFrameCtrl::ATTR_LOOP);
 
@@ -118,8 +131,8 @@ void TSunModel::load(JSUMemoryInputStream& param_1)
 	unk64->mScaling  = mScaling;
 
 	JDrama::TViewObjPtrListT<JDrama::TViewObj>* mirrorScene
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("鏡シーン"));
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >("鏡シーン");
 	mirrorScene->getChildren().push_back(unk64);
 }
 
@@ -146,21 +159,39 @@ void TSunModel::calcOtherFPosFromCenterAndRadius_(
 	param_1[7].y = param_2.y + fVar1;
 }
 
-// TODO(fabricated): the ROM calls the cameralib `CLBScreenFPosToSPos` inline
-// out of line here (hence the weak out-of-line copy this TU emits), which only
-// happens when the call sits one inline level below the emitted function. A
-// plain direct call at that level IS expanded by MWCC 1.2.5, so this trivial
-// forwarding layer exists only to supply the missing level. There is no
-// UNUSED symbol in the map for sunmodel.cpp, so the real original helper (if
-// there was one) is unrecoverable -- promote this back if it is ever found.
-static inline void toScreenPos(JGeometry::TVec2<s16>* out,
-                               const JGeometry::TVec2<f32>& in)
+// The screen-position loop is an inline *level*, not a convenience: the map
+// carries CLBScreenFPosToSPos as a (func,weak) body of its own in this object
+// (0x114 at 0x29a50), i.e. retail `bl`s it from calcDispRatioAndScreenPos_
+// instead of expanding it.  A namespace-scope `inline` is unlimited at depth 1
+// and the loop sits directly in calcDispRatioAndScreenPos_'s body, so one
+// level has to separate them; with it the callee is at depth 2, its ~10
+// statements exceed the 9-statement allowance, and the `bl` appears.  That
+// lands calcDispRatioAndScreenPos_ byte-exact, which is the evidence that the
+// level is real -- only its name and receiver form are guesses, so it is
+// parked TU-local rather than added to the shared header.
+// The three declarations are in retail's order, not ours: callee-saved GPRs go
+// out r31 downward in reverse declaration order, and retail's r31/r30/r29 hold
+// i / it2 / it1, so `it1` must be declared first.
+static inline void SunModelCalcScreenPos(TSunModel* p)
 {
-	CLBScreenFPosToSPos(out, in);
+	JGeometry::TVec2<s16>* it1;
+	JGeometry::TVec2<f32>* it2;
+	int i;
+
+	it1 = p->unkB4;
+	it2 = p->unkF8;
+	for (i = 0; i < 17; ++i) {
+		CLBScreenFPosToSPos(it1, *it2);
+		++it1;
+		++it2;
+	}
 }
 
-// TODO: mark as inline or even move to the header maybe?
-void TSunModel::calcDispRatioAndScreenPos_()
+// `inline` is load-bearing: the map has this as (func,weak), which for a
+// member defined in the .cpp means the `inline` keyword, and retail `bl`s it
+// from perform (the call is in perform's relocation list).  See moveSun_ for
+// why that call survives.
+inline void TSunModel::calcDispRatioAndScreenPos_()
 {
 	unk191   = 0;
 	bool* it = unk180;
@@ -178,17 +209,112 @@ void TSunModel::calcDispRatioAndScreenPos_()
 	radius /= 2.0f;
 	calcOtherFPosFromCenterAndRadius_(&unkF8[9], unkF8[0], radius);
 
-	int i;
-	JGeometry::TVec2<f32>* it2;
-	JGeometry::TVec2<s16>* it1;
+	SunModelCalcScreenPos(this);
+}
 
-	it1 = unkB4;
-	it2 = unkF8;
-	for (i = 0; i < 17; ++i) {
-		toScreenPos(it1, *it2);
-		++it1;
-		++it2;
+// Fabricated: retail's name for the CUE_MOVE body is unknown and it leaves no
+// symbol, because an inline that is expanded at every call site is emitted
+// nowhere.  What is known is that *some* level wraps this block: retail `bl`s
+// the weak calcDispRatioAndScreenPos_, and a weak body is unlimited at depth 1,
+// so the call cannot be a statement of perform itself.  One level puts it at
+// depth 2, where its ~22 statements are far over the 9-statement allowance,
+// and the `bl` appears; without this wrapper the body is expanded into perform
+// instead (perform 95.1% -> 70.8%, no out-of-line copy, and CLBScreenFPosToSPos
+// then takes perform's own depth-2 slot).  Splitting the block at exactly the
+// `if (cue & CUE_MOVE)` boundary is the smallest shape that does it.
+inline void TSunModel::moveSun_()
+{
+	unkA4 = CLBLinearInbetween<f32>((f32)unk68, 255.0f, unk194);
+	unkA8 = CLBEaseOutInbetween<f32>((f32)unk74, 255.0f, unk194);
+
+	f32 chase1;
+	if (unk9C < unkA4)
+		chase1 = unk6C;
+	else
+		chase1 = unk70;
+	CLBChaseDecrease(&unk9C, unkA4, chase1, 0.0f);
+	unk8C.color.a = (s16)unk9C;
+
+	f32 chase2;
+	if (unkA0 < unkA8)
+		chase2 = unk78;
+	else
+		chase2 = unk7C;
+	CLBChaseDecrease(&unkA0, unkA8, chase2, 0.0f);
+	unk94.color.a = (s16)unkA0;
+
+	if (gpCameraMario->isMarioIndoor()) {
+		unkB0 = 0.0f;
+	} else {
+		f32 dist = unkF8[0].squared();
+		if (dist > 2.0f) {
+			unkB0 = 0.0f;
+		} else {
+			dist  = 0.5f * (2.0f - dist) * unk194;
+			unkB0 = CLBLinearInbetween<f32>(0.0f, (f32)unk80, dist);
+		}
 	}
+
+	f32 chase3;
+	if (unkAC < unkB0)
+		chase3 = unk84;
+	else
+		chase3 = unk88;
+	CLBChaseGeneralConstantSpecifySpeed<f32>(&unkAC, unkB0, chase3);
+
+	// Retail loads all six operands before storing any component, which
+	// `dir.sub(mPosition, camPos)` cannot do (it stores each component as
+	// soon as it is computed): the three differences are arguments of
+	// `set`, so they are all evaluated before the body runs.
+	JGeometry::TVec3<f32> dir;
+	dir.set(mPosition.x - SMSGetCamera()->getUnk124().x,
+	    mPosition.y - SMSGetCamera()->getUnk124().y,
+	    mPosition.z - SMSGetCamera()->getUnk124().z);
+	MsVECNormalize(&dir, &dir);
+
+	// Header round 30 closed this: the out-of-line `set(const Vec&)` is the
+	// *implicit* conversion at scaleAdd's `const TVec3<f32>&` parameter.
+	// `getUnk124Vec()` is typed `const Vec&`, so the argument takes the
+	// converting constructor `TVec3(const Vec&)`, which puts `set` at inline
+	// depth 4 (moveSun_ 1, scaleAdd 2, the constructor 3) - the depth at
+	// which a 3-statement in-class member stops expanding - and the
+	// constructor's stack temporary is the copy retail reads the three
+	// fmadds addends out of.  Everything from the `lfsu` through the last
+	// `stfs` is instruction-exact; only the displacements differ.
+	// The overload is the whole point: a `const TVec3<f32>&` binds directly
+	// (no temporary, no call) and `.set()` on a named local picks the
+	// `set<TY>` member template, which is why header round 24's forwarder
+	// chains never reached the `bl` (see the trial list in JGVec3.hpp).
+	// Slot order (batch cc17): every named scalar of this inlined body that
+	// is not a register-only temporary costs a 4-byte slot at the bottom of
+	// its block, between `dir` and calcAnim_'s `mtx`, where retail has none.
+	// A named `rate` for CLBLinearInbetween's third argument and a named
+	// `CPolarSubCamera* camera` were each one such slot.  Reusing `dist`
+	// for the rate keeps retail's schedule (the product is evaluated before
+	// the `unk80` conversion) without a second local, and each
+	// `SMSGetCamera()` read is +4 of low pool, so the three dir operands
+	// through it and the scaleAdd argument through `gpCamera` land `mtx`
+	// at 0x78 directly under `dir`.
+	unk198.scaleAdd(250000.0f, dir, gpCamera->getUnk124Vec());
+
+	if (unk64)
+		unk64->mPosition = unk198;
+
+	calcDispRatioAndScreenPos_();
+}
+
+// Fabricated, like moveSun_: retail leaves no symbol for it, but `mtx` sits
+// *below* moveSun_'s expansion in retail's frame (0x78 against dir's 0xa8),
+// and an inlined callee's class-object locals always rank above the caller's
+// own named locals (research batch 207), so the Mtx block cannot be a local of
+// perform itself -- it has to be the local of a second inlined callee.
+inline void TSunModel::calcAnim_()
+{
+	Mtx mtx;
+	MsMtxSetTRS(mtx, unk198.x, unk198.y, unk198.z, mRotation.x, mRotation.y,
+	            mRotation.z, mScaling.x, mScaling.y, mScaling.z);
+	unk48->setBaseTRMtx(mtx);
+	unk48->calc();
 }
 
 void TSunModel::perform(u32 cue, JDrama::TGraphics*)
@@ -197,81 +323,21 @@ void TSunModel::perform(u32 cue, JDrama::TGraphics*)
 	if (gpCameraMario->isMarioIndoor()) {
 		sunInBounds = false;
 	} else {
-		sunInBounds = sunPosInBounds(unkF8[0], unk1A8);
+		f32 bounds = unk1A8;
+		sunInBounds = -bounds <= unkF8[0].x && unkF8[0].x <= bounds
+		              && -bounds <= unkF8[0].y && unkF8[0].y <= bounds
+		                  ? true
+		                  : false;
 	}
 
 	if (cue & CUE_MOVE) {
-		unkA4 = CLBLinearInbetween<f32>((f32)unk68, 255.0f, unk194);
-		unkA8 = CLBEaseOutInbetween<f32>((f32)unk74, 255.0f, unk194);
-
-		f32 chase1;
-		if (unk9C < unkA4)
-			chase1 = unk6C;
-		else
-			chase1 = unk70;
-		CLBChaseDecrease(&unk9C, unkA4, chase1, 0.0f);
-		unk8C.color.a = (s16)unk9C;
-
-		f32 chase2;
-		if (unkA0 < unkA8)
-			chase2 = unk78;
-		else
-			chase2 = unk7C;
-		CLBChaseDecrease(&unkA0, unkA8, chase2, 0.0f);
-		unk94.color.a = (s16)unkA0;
-
-		if (gpCameraMario->isMarioIndoor()) {
-			unkB0 = 0.0f;
-		} else {
-			f32 distSq = unkF8[0].squared();
-			if (unkF8[0].squared() > 2.0f) {
-				unkB0 = 0.0f;
-			} else {
-				unkB0 = CLBLinearInbetween<f32>(
-				    0.0f, (f32)unk80, 0.5f * (2.0f - distSq) * unk194);
-			}
-		}
-
-		f32 chase3;
-		if (unkAC < unkB0)
-			chase3 = unk84;
-		else
-			chase3 = unk88;
-		CLBChaseGeneralConstantSpecifySpeed<f32>(&unkAC, unkB0, chase3);
-
-		JGeometry::TVec3<f32> dir;
-		dir.sub(mPosition, gpCamera->getUnk124());
-		MsVECNormalize(&dir, &dir);
-
-		JGeometry::TVec3<f32> camPos;
-		// TODO: the ROM calls the weak header inline
-		// JGeometry::TVec3<f32>::set(const Vec&) OUT OF LINE here (0x8002EE50),
-		// so `camPos` really lives in memory and is re-read by the inlined
-		// scaleAdd. MWCC 1.2.5 expands it at every depth we can reach from
-		// game-side source (forwarders get folded, extra inlined code does not
-		// change the decision), so `camPos` gets scalarised into f3/f0/f1 here
-		// and the whole block reorders. This is the same blocker as the three
-		// missing 0x1C-byte weak symbols in Camera/lensflare; it needs a
-		// libs/JSystem/JGVec3.hpp change.
-		camPos.set(gpCamera->getUnk124());
-		unk198.scaleAdd(250000.0f, camPos, dir);
-
-		if (unk64)
-			unk64->mPosition = unk198;
-
-		calcDispRatioAndScreenPos_();
+		moveSun_();
 	}
 
 	if (cue & CUE_CALC_ANIM) {
 		unk50.update();
-		if (sunInBounds) {
-			Mtx mtx;
-			MsMtxSetTRS(mtx, unk198.x, unk198.y, unk198.z, mRotation.x,
-			            mRotation.y, mRotation.z, mScaling.x, mScaling.y,
-			            mScaling.z);
-			unk48->setBaseTRMtx(mtx);
-			unk48->calc();
-		}
+		if (sunInBounds)
+			calcAnim_();
 	}
 
 	if (cue & CUE_ENTRY && sunInBounds) {

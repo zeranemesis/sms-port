@@ -6,8 +6,6 @@
 #include <Map/MapData.hpp>
 #include <Camera/cameralib.hpp>
 
-template <> f32 CLBCalcRatio<s16>(s16, s16, s16);
-
 TCameraMarioData* gpCameraMario;
 
 TCameraMarioData::TCameraMarioData()
@@ -24,8 +22,6 @@ TCameraMarioData::TCameraMarioData()
 
 void TCameraMarioData::calcAndSetMarioData()
 {
-	volatile u8 stackPad[8];
-	(void)stackPad;
 	int status = SMS_GetMarioStatus();
 	switch (status) {
 	case MARIO_STATUS_HANGING:
@@ -37,8 +33,13 @@ void TCameraMarioData::calcAndSetMarioData()
 	default:
 		JGeometry::TVec3<f32> offset;
 		offset.sub(SMS_GetMarioPos(), gpMarioOriginal->getPrevPosition());
-		mFrameMoveDistHorizontal = offset.x * offset.x + offset.z * offset.z;
-		mFrameMoveDistVertical   = offset.y * offset.y;
+		// The two named distances are the last 8 bytes of the frame; storing
+		// the expressions straight into the members is otherwise identical.
+		f32 distHorizontal = offset.x * offset.x + offset.z * offset.z;
+		f32 distVertical   = offset.y * offset.y;
+
+		mFrameMoveDistHorizontal = distHorizontal;
+		mFrameMoveDistVertical   = distVertical;
 		if (mFrameMoveDistHorizontal > 100.0f)
 			mFrameMoveDistHorizontal = 100.0f;
 		if (mFrameMoveDistVertical > 100.0f)
@@ -108,6 +109,12 @@ bool TCameraMarioData::isMarioLeanMirror() const
 	}
 	return result;
 }
+
+bool TCameraMarioData::isMarioBathtub() const { }
+
+bool TCameraMarioData::isMarioDoorDemoStart() const { }
+
+bool TCameraMarioData::isMarioDoorDemoEnd() const { }
 
 bool TCameraMarioData::isMarioClimb(u32 status) const
 {

@@ -62,6 +62,14 @@ static void __init_cpp()
 	}
 }
 
+static void __fini_cpp()
+{
+	voidfunctionptr* destructor;
+	for (destructor = _dtors; *destructor; destructor++) {
+		(*destructor)();
+	}
+}
+
 void _ExitProcess(void) { PPCHalt(); }
 
 #ifdef __cplusplus

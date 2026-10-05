@@ -5,8 +5,8 @@
 
 class TPollutionTest : public JDrama::TViewObj {
 public:
-	TPollutionTest(const char* name)
-	    : TViewObj(name)
+	TPollutionTest(const char* name = "落書きテスト")
+	    : JDrama::TViewObj(name)
 	{
 	}
 
@@ -18,11 +18,13 @@ public:
 
 class TPollutionEventModelStampMario {
 public:
+	virtual ~TPollutionEventModelStampMario();
 	void perform(u32 cue, JDrama::TGraphics* graphics);
 };
 
 class TPollutionEventModelStamp {
 public:
+	virtual ~TPollutionEventModelStamp();
 	TPollutionEventModelStamp(const char*);
 
 	void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -31,6 +33,7 @@ public:
 
 class TPollutionEventMaze {
 public:
+	virtual ~TPollutionEventMaze();
 	TPollutionEventMaze(const char*);
 
 	void perform(u32 cue, JDrama::TGraphics* graphics);
@@ -39,6 +42,7 @@ public:
 
 class TPollutionEventAreaObj {
 public:
+	virtual ~TPollutionEventAreaObj();
 	TPollutionEventAreaObj(const char*);
 
 	void perform(u32 cue, JDrama::TGraphics* graphics);

@@ -14,15 +14,17 @@ TStrategy::TStrategy(const char* name)
     : JDrama::TViewObj(name)
     , unk50(0)
 {
-	for (s32 i = 0; i < ARRAY_COUNT(unk10); ++i)
+	for (s32 i = 0; i < 16; ++i)
 		unk10[i] = nullptr;
 }
 
 void TStrategy::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TViewObj::load(stream);
-
-	TObjHitCheck* hitCheck = new TObjHitCheck();
+	// The constructor registers the instance in gpObjHitCheck; naming the
+	// result here is what reserves the otherwise unused stack slot the ROM's
+	// frame has.
+	TObjHitCheck* objHitCheck = new TObjHitCheck();
 
 	int count = stream.readU32();
 	for (int i = 0; i < count; ++i) {

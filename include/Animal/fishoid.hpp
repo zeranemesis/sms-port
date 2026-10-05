@@ -1,6 +1,7 @@
 #ifndef ANIMAL_FISHOID_HPP
 #define ANIMAL_FISHOID_HPP
 
+#include <Animal/boid.hpp>
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <Strategic/TakeActor.hpp>
@@ -24,6 +25,13 @@ public:
 
 	TRealoidActor* getRealoid(int idx) { return unk154[idx]; }
 
+	// Fabricated names. getBoidNum() forwards to the leader rather than being
+	// spelled out at the call sites: that third level is the last 8 bytes of
+	// TButterfloid::load's frame.
+	TBoidLeader* getBoidLeader() { return unk150; }
+	int getBoidNum() { return getBoidLeader()->getBoidNum(); }
+	TBoid* getBoid(int idx) { return getBoidLeader()->getBoid(idx); }
+
 public:
 	/* 0x150 */ TBoidLeader* unk150;
 	/* 0x154 */ TRealoidActor** unk154;
@@ -39,7 +47,12 @@ public:
 
 	void checkHitActors();
 	void calcRootMatrix(TBoid*);
+	void calcRootMatrixOnTaking();
 
+	// Fabricated name; worth 8 bytes of TButterfloid::load's frame.
+	MActor* getMActor() { return unk70; }
+
+	bool checkFlag(int flag) const { return mFlags & flag; }
 	void onFlag(int flag) { mFlags |= flag; }
 	void offFlag(int flag) { mFlags &= ~flag; }
 
@@ -75,6 +88,9 @@ public:
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual TRealoidActor* createRealoidActor(MActor*);
 
+	void initBoids();
+	void performItem(u32, JDrama::TGraphics*);
+	void loadItem(JSUMemoryInputStream&);
 
 public:
 	/* 0x158 */ int mType;
@@ -85,7 +101,9 @@ class TFishoidManager : public TEnemyManager {
 public:
 	TFishoidManager(const char* name = "回遊魚マネージャー");
 
-	virtual ~TFishoidManager();
+	// The map has __dt__15TFishoidManagerFv (weak)
+	// with no ~TFishoidManager() of its own, so it is the implicit
+	// destructor; declaring one would make it global.
 	virtual void createModelData();
 };
 

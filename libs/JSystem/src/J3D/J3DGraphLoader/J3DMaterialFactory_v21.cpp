@@ -314,6 +314,15 @@ J3DTevSwapModeTable J3DMaterialFactory_v21::newTevSwapModeTable(int idx,
 		return J3DTevSwapModeTable(j3dDefaultTevSwapModeTable);
 }
 
+// UNUSED (map size 0x1c). The `new*` family all resolve the init data with
+// this expression; retail kept an out-of-line copy here, between
+// `newTevSwapModeTable` and `newFog`.
+J3DMaterialInitData_v21*
+J3DMaterialFactory_v21::getMaterialInitData_v21(u16 idx) const
+{
+	return &mpMaterialInitData[getMaterialID(idx)];
+}
+
 J3DFog* J3DMaterialFactory_v21::newFog(int idx) const
 {
 	J3DFog* ret                       = nullptr;
@@ -374,12 +383,31 @@ u8 J3DMaterialFactory_v21::newDither(int idx) const
 		return 0xff;
 }
 
+// TODO: parked TU-local lever. The 8 bytes of low region `newNBTScale` needs
+// over the plain sibling spelling are one binding expansion on the **u16**
+// material-id read (header round 23's rule), and retail almost certainly spelt
+// it by binding inside `getMaterialID` itself:
+//
+//   u16 getMaterialID(int idx) const { u16 id = mpMaterialID[idx]; return id; }
+//
+// That form makes this function byte-exact with the plain
+// `&mpMaterialInitData[getMaterialID(idx)]` body, but the sibling
+// `J3DMaterialFactory.hpp` change of the same shape breaks two linked
+// `J3DModelLoader_v26` functions, so the binding is parked here instead, where
+// it costs the same +8.
+static inline u16
+J3DMaterialFactoryv21MaterialID(const J3DMaterialFactory_v21* factory, int idx)
+{
+	u16 id = factory->getMaterialID(idx);
+	return id;
+}
+
 J3DNBTScale J3DMaterialFactory_v21::newNBTScale(int idx) const
 {
 	J3DNBTScale defaultNbtScale;
 
-
-	J3DMaterialInitData_v21* initData = &mpMaterialInitData[mpMaterialID[idx]];
+	J3DMaterialInitData_v21* initData
+	    = &mpMaterialInitData[J3DMaterialFactoryv21MaterialID(this, idx)];
 
 	if (initData->mNBTScaleIdx != 0xFFFF)
 		return J3DNBTScale(mpNBTScaleInfo[initData->mNBTScaleIdx]);

@@ -6,10 +6,9 @@
 #include <System/EmitterViewObj.hpp>
 #include <System/FlagManager.hpp>
 #include <MSound/MSound.hpp>
-#include <MSound/MSSetSound.hpp>
-#include <MSound/MSoundBGM.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
 #include <MarioUtil/PacketUtil.hpp>
 #include <MarioUtil/RumbleMgr.hpp>
 #include <Camera/CameraShake.hpp>
@@ -26,6 +25,8 @@
 
 // rogue includes needed for matching sinit & rodata
 #include <M3DUtil/InfectiousStrings.hpp>
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
 #include <macros.h>
 
 // TMonumentShine
@@ -65,17 +66,16 @@ void TMonumentShine::initMapObj()
 
 void TMonumentShine::hitByWater(THitActor* actor)
 {
+	JGeometry::TVec3<f32> waterDir = actor->getPosition();
 
-	JGeometry::TVec3<f32> waterDir = actor->mPosition;
-
-	waterDir -= mPosition;
+	waterDir.sub(mPosition);
 	waterDir.y = 0.0f;
 
 	if (waterDir.squared() <= JGeometry::TUtil<f32>::epsilon())
 		return;
 
 	JGeometry::TVec3<f32> marioDir = SMS_GetMarioPos();
-	marioDir -= mPosition;
+	marioDir.sub(mPosition);
 	marioDir.y = 0.0f;
 
 	if (marioDir.squared() <= JGeometry::TUtil<f32>::epsilon())
@@ -83,8 +83,34 @@ void TMonumentShine::hitByWater(THitActor* actor)
 
 	static JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
 
+	// TODO: 99.7%, every instruction and register exact; the named vectors
+	// sit 4 bytes low (waterDir 0x50/marioDir 0x44/cross 0x38 against
+	// 0x54/0x48/0x3c, frame 0x60 on both), i.e. retail has one more 4-byte
+	// dead object below them.
+	// Closure c-k4 (debugger): with `cross.cross(up, marioDir)` the header's
+	// `_x`/`_y` locals are depth-1 inline objects, coloured before the IR
+	// CSE temporaries of mPosition and waterDir, so they take f4/f5 and
+	// push mPosition.x to f5 (retail f7) and waterDir.y/z to f6/f7 (f5/f6).
+	// Written out component by component, `cross` is scalar-replaced into IR
+	// temporaries coloured last, which is retail's order (98.4 -> 99.7); the
+	// inline's `_z` was the dead word that kept the slots right before.
+	// Inert or worse for the missing word: the header's cross2() or set()
+	// (98.2, the set() bindings are coloured first again), a TU-local
+	// helper in the no-temporaries, one- or two-temporary shapes (99.3-99.4),
+	// the vector built by its constructor (98.2), z first, `cross` declared
+	// second, a named dot, and the accessor levers (getPosition() at either
+	// subtraction 92.3; raw `*gpMarioPos` or `actor->mPosition` are -8).
+	// Older notes: raw `mPosition` at both subtractions shares the loads; the
+	// pair `actor->getPosition()` (+8) with the dot unnamed (-8) lands the
+	// slots; `waterDir.dot(cross)`, `-=`, isZero() and the three-argument
+	// sub() were inert on the colouring.
+	// c-k30: condition-only names are not homed here (named `squared()` of
+	// either vector, a named dot), and scalar cross components drop the frame
+	// to 0x50, so the missing word is not cross's components either.
 	JGeometry::TVec3<f32> cross;
-	cross.cross(up, marioDir);
+	cross.x = up.y * marioDir.z - up.z * marioDir.y;
+	cross.y = up.z * marioDir.x - up.x * marioDir.z;
+	cross.z = up.x * marioDir.y - up.y * marioDir.x;
 
 	if (cross.dot(waterDir) > 0.0f) {
 		unk140 += 0.004f;
@@ -95,9 +121,6 @@ void TMonumentShine::hitByWater(THitActor* actor)
 
 BOOL TMonumentShine::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	if (sender->isActorType(0x01000001)) {
 		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
 		                             0, nullptr);
@@ -113,7 +136,7 @@ BOOL TMonumentShine::receiveMessage(THitActor* sender, u32 message)
 		unk138.a = (u8)(unk13C * 100 / 1000);
 
 		if (unk13C == 0) {
-			gpItemManager->makeShineAppearWithDemo(
+			SMSGetItemManagerBound()->makeShineAppearWithDemo(
 			    "シャイン（モニュメントシャイン用）",
 			    "モニュメントシャインカメラ", mPosition.x, mPosition.y,
 			    mPosition.z);
@@ -173,10 +196,8 @@ void TMonumentShine::control()
 				}
 			} else {
 				mAngularVelocity.y -= 0.1f;
-				f32 step = 360.0f;
-				f32 zero = 0.0f;
-				while (mRotation.y + mAngularVelocity.y < zero) {
-					mRotation.y += step;
+				while (mRotation.y + mAngularVelocity.y < 0.0f) {
+					mRotation.y += 360.0f;
 					unk144++;
 				}
 			}
@@ -186,8 +207,7 @@ void TMonumentShine::control()
 		f32 limit = 360.0f;
 		while (rot >= limit)
 			rot -= limit;
-		f32 zero = 0.0f;
-		while (rot < zero)
+		while (rot < 0.0f)
 			rot += limit;
 		mRotation.y = rot;
 	}
@@ -235,10 +255,17 @@ void TBellDolpic::calcRootMatrix()
 	TMapObjBase::calcRootMatrix();
 	J3DModel* model = getModel();
 	Mtx temp;
-	MTXRotAxisRad(temp, &unk140, DEG_TO_RAD(unk14C));
-	MTXConcat(model->getBaseTRMtx(), temp, model->getBaseTRMtx());
+	PSMTXRotAxisRad(temp, &unk140, 0.017453292f * unk14C);
+	PSMTXConcat(model->getBaseTRMtx(), temp, model->getBaseTRMtx());
 }
 
+// TODO: 99.4%, instruction-exact, frame exact (0x48). The rand() chain is
+// `f32 tmp = MsRandF();` (cc36: the inlined helper's product lands in
+// retail's f1/f0 chain; research 171's "no source handle" was wrong here).
+// Left: the cross2/normalise block rotates f4-f7 by one (retail f4-f7 =
+// diff.y, up.z, up.y, diff.x; ours diff.x takes f4). Tried (cc36): cross()
+// (97.8), a spelled-out set() with every operand order, cross2(diff, up)
+// plus negate(), diff.sub()/component subtraction/copy-ctor forms (inert).
 void TBellDolpic::ring(const JGeometry::TVec3<f32>& pos)
 {
 	if (fabsf(unk150) > 0.01f)
@@ -259,18 +286,19 @@ void TBellDolpic::ring(const JGeometry::TVec3<f32>& pos)
 
 	unk150 -= 0.5f;
 
-	f32 tmp = (f32)rand() * 0.000030517578f;
+	f32 tmp = MsRandF();
 	unk158  = (int)(tmp * 14400.0f) + 0x5460;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x48 against 0x40). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
 void TBellDolpic::touchPlayer(THitActor* actor) { ring(actor->mPosition); }
+
+// Binding level over a raw member read, worth +8 of low region in
+// TBellDolpic::receiveMessage (batch 127).
+static inline int MapObjDolpicUnk154(const TBellDolpic* p)
+{
+	int v154 = p->unk154;
+	return v154;
+}
 
 BOOL TBellDolpic::receiveMessage(THitActor* sender, u32 message)
 {
@@ -282,7 +310,7 @@ BOOL TBellDolpic::receiveMessage(THitActor* sender, u32 message)
 		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
 		                             0, nullptr);
 
-		if (unk154 == 0)
+		if (MapObjDolpicUnk154(this) == 0)
 			return 1;
 
 		unk154 = unk154 - 1;
@@ -312,6 +340,34 @@ BOOL TBellDolpic::receiveMessage(THitActor* sender, u32 message)
 	return 0;
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TBellDolpic::control (batch 127).
+static inline f32 MapObjDolpicUnk14C(const TBellDolpic* p)
+{
+	f32 v14C = p->unk14C;
+	return v14C;
+}
+
+// Binding level over a raw member read: a register lever in
+// TBellDolpic::control at an unchanged frame (batch 127).
+static inline s8 MapObjDolpicUnk15C(const TBellDolpic* p)
+{
+	s8 v15C = p->unk15C;
+	return v15C;
+}
+
+// TODO: frame 0x48 vs retail's 0x58; every instruction is exact. The four
+// sound sites sit in mutually exclusive branches and need +0x10 between them,
+// i.e. 4 bytes each, and nothing measured pays 4. Header round 16 refuted the
+// "member wrapper that names the handle saturates per function" idea: a
+// TBellDolpic member `JAISound* startBellSound_(u32 id)` holding
+// `JAISound* sound = SMSGetMSound()->startSoundActor(id, &mPosition, 0,
+// nullptr, 0, 4); return sound;` and called at all four sites pays +8 per
+// expansion exactly like the two-argument overload (frame 0x68, +0x20), and
+// the same wrapper returning the call directly, with no named local, pays +0.
+// So a member's binding is not cheaper than a free function's, and the
+// carrier has to be a +4-per-site lever (a global-accessor level, per closure
+// batch 87) rather than a bound local.
 void TBellDolpic::control()
 {
 	JGeometry::TVec3<f32> pos;
@@ -328,7 +384,7 @@ void TBellDolpic::control()
 
 	TMapObjBase::control();
 
-	f32 sinVal = -MsSin(unk14C);
+	f32 sinVal = -JMASin(MapObjDolpicUnk14C(this));
 	unk150     = 0.01f * sinVal + unk150;
 
 	unk14C = unk14C + unk150;
@@ -337,7 +393,7 @@ void TBellDolpic::control()
 		unk150 = -unk150;
 
 		if (unk154 == 0) {
-			if (unk15C) {
+			if (MapObjDolpicUnk15C(this)) {
 				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_DOL_BEL_GS4,
 				                                &mPosition, 0, nullptr, 0, 4);
 
@@ -346,7 +402,7 @@ void TBellDolpic::control()
 				                                &mPosition, 0, nullptr, 0, 4);
 			}
 		} else {
-			if (unk15C) {
+			if (MapObjDolpicUnk15C(this)) {
 				SMSGetMSound()->startSoundActor(MSD_SE_OBJ_DOL_BEL_GS4_K,
 				                                &mPosition, 0, nullptr, 0, 4);
 			} else {
@@ -365,12 +421,8 @@ void TBellDolpic::control()
 
 void TDptMonteFence::touchPlayer(THitActor* actor)
 {
-
-	
-	
 	if (SMS_IsMarioStatusThrownDown()) {
-		SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition);
 		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_GLASS_BREAK, &mPosition, 0,
 		                                nullptr, 0, 4);
 
@@ -402,14 +454,11 @@ void TMapObjSmoke::load(JSUMemoryInputStream& in)
 
 void TMareGate::control()
 {
-
-	
-	
 	TMapObjBase::control();
 
 	MSound* sound = SMSGetMSound();
-	sound->startSoundActor(MSD_SE_OBJ_MAHRE_GATE_LIGHT, &mPosition, 0,
-	                       &sound->unk7C, 0, 4);
+	sound->startSoundActor(MSD_SE_OBJ_MAHRE_GATE_LIGHT, &mPosition,
+	                       &sound->unk7C);
 }
 
 void TMareGate::loadAfter()
@@ -419,6 +468,10 @@ void TMareGate::loadAfter()
 		makeObjDead();
 	}
 }
+
+// TWeathercock
+
+void TWeathercock::control() { TMapObjTurn::control(); }
 
 // TDemoCannon
 
@@ -436,8 +489,8 @@ void TDemoCannon::initMapObj()
 {
 	TMapObjBase::initMapObj();
 
-	mMActor->setBck("democannon_dpt");
-	J3DFrameCtrl* frameCtrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+	getMActor()->setBck("democannon_dpt");
+	J3DFrameCtrl* frameCtrl = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	frameCtrl->setFrame(frameCtrl->getEnd());
 
 	void* res
@@ -445,17 +498,18 @@ void TDemoCannon::initMapObj()
 	SDLModelData* sdlData = new SDLModelData(J3DModelLoaderDataBase::load(
 	    res, J3DMLF_MaterialPEFull | (5 << J3DMLF_TevStageNumShift)));
 
-	JUTNameTab* jointName = mMActor->getModel()->getModelData()->getJointName();
+	JUTNameTab* jointName
+	    = getMActor()->getModel()->getModelData()->getJointName();
 
 	TSharedParts* parts = new TSharedParts(this, jointName->getIndex("nullA"),
 	                                       sdlData, 3, "<TSharedParts>");
 	unk138              = parts;
 
-	res = JKRFileLoader::getGlbResource("/scene/mapObj/demoCannon_mario.bmd");
-	SDLModelData* sdlData2 = new SDLModelData(J3DModelLoaderDataBase::load(
+	res     = JKRFileLoader::getGlbResource("/scene/mapObj/demoCannon_mario.bmd");
+	sdlData = new SDLModelData(J3DModelLoaderDataBase::load(
 	    res, J3DMLF_MaterialPEFull | (1 << J3DMLF_TevStageNumShift)));
 
-	parts  = new TSharedParts(this, 0, sdlData2, 3, "<TSharedParts>");
+	parts  = new TSharedParts(this, 0, sdlData, 3, "<TSharedParts>");
 	unk13C = parts;
 }
 
@@ -483,13 +537,12 @@ void TDemoCannon::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	J3DFrameCtrl* frameCtrl = unk13C->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	if (frameCtrl->getFrame() < 174.0f) {
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_CANNON_MOVE, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_CANNON_MOVE, &mPosition);
 	}
 
 	frameCtrl = unk13C->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	if (frameCtrl->checkPass(174.0f)) {
-		gpCameraShake->startShake(CAM_SHAKE_MODE_UNK24, 1.0f);
+		gpCameraShake->startShake(CAM_SHAKE_MODE_CANNON_DEMO, 1.0f);
 		SMSRumbleMgr->start(21, 10, (f32*)nullptr);
 
 		MtxPtr mtx = unk138->getMActor()->getModel()->getAnmMtx(0);
@@ -500,16 +553,23 @@ void TDemoCannon::perform(u32 cue, JDrama::TGraphics* graphics)
 		gpMarioParticleManager->emitAndBindToMtxPtr(235, mtx, 0, nullptr);
 		gpMarioParticleManager->emitAndBindToMtxPtr(236, mtx, 0, nullptr);
 
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_CANNON_FIRE_MARIO, &mPosition,
-		                                0, nullptr, 0, 4);
-		SMSGetMSound()->startSoundActor(MSD_SE_DM_FLY_TO_PINNNA, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_CANNON_FIRE_MARIO, &mPosition);
+		SMSGetMSound()->startSoundActor(MSD_SE_DM_FLY_TO_PINNNA, &mPosition);
 	}
 
 	frameCtrl = unk13C->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	if (frameCtrl->getFrame() > 175.0f) {
 		MtxPtr mtx = unk13C->getMActor()->getModel()->getAnmMtx(0);
 		gpMarioParticleManager->emitAndBindToMtxPtr(358, mtx, 1, this);
+
+		frameCtrl = unk13C->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
+		if (frameCtrl->checkPass(204.0f)) {
+			SMSGetMSound()->startMarioVoice(30911, SMS_GetMarioHP(), 0);
+
+			JAISound* voice = gpMSound->checkMarioVoicePlaying(0);
+			if (voice)
+				voice->setVolume(0.0f, 60, 0);
+		}
 	}
 }
 
@@ -518,17 +578,13 @@ void TDemoCannon::perform(u32 cue, JDrama::TGraphics* graphics)
 void TTurboNozzleDoor::loadAfter()
 {
 	if (strcmp("空港ドアＡ０", getName()) == 0) {
-		unk144 = static_cast<TLiveActor*>(
-		    JDrama::TNameRefGen::search("空港ドアＡ１"));
+		unk144 = JDrama::TNameRefGen::search<TMapObjBase>("空港ドアＡ１");
 	} else if (strcmp("空港ドアＡ１", getName()) == 0) {
-		unk144 = static_cast<TLiveActor*>(
-		    JDrama::TNameRefGen::search("空港ドアＡ０"));
+		unk144 = JDrama::TNameRefGen::search<TMapObjBase>("空港ドアＡ０");
 	} else if (strcmp("空港ドアＢ０", getName()) == 0) {
-		unk144 = static_cast<TLiveActor*>(
-		    JDrama::TNameRefGen::search("空港ドアＢ１"));
+		unk144 = JDrama::TNameRefGen::search<TMapObjBase>("空港ドアＢ１");
 	} else if (strcmp("空港ドアＢ１", getName()) == 0) {
-		unk144 = static_cast<TLiveActor*>(
-		    JDrama::TNameRefGen::search("空港ドアＢ０"));
+		unk144 = JDrama::TNameRefGen::search<TMapObjBase>("空港ドアＢ０");
 	}
 }
 
@@ -537,11 +593,11 @@ void TTurboNozzleDoor::touchPlayer(THitActor* player)
 	if (!SMS_IsMarioDashing())
 		return;
 
-	if (gpMarDirector->mMap == 1) {
+	if (SMSGetMarDirector()->getCurrentMap() == 1) {
 		startBck("nozzledoor");
 	} else {
 		makeObjDead();
-		((TMapObjBase*)unk144)->makeObjDead();
+		unk144->makeObjDead();
 	}
 
 	SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition, 0,
@@ -549,9 +605,14 @@ void TTurboNozzleDoor::touchPlayer(THitActor* player)
 	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_GLASS_BREAK, &mPosition, 0,
 	                                nullptr, 0, 4);
 
+	// The last 8 bytes of frame were the map read: `getCurrentMap()` over
+	// the raw `mMap` field plus the `SMSGetMarDirector()` fork close it.
+	// A three-argument `scale` constructor and three unnamed scale
+	// temporaries are worth nothing here, and `&getPosition()` for either
+	// sound call hoists the address out of the call.
 	JGeometry::TVec3<f32> scale(1.3f);
 
-	unk138.set(mPosition.x, mPosition.y + 100.0f, mPosition.z);
+	unk138.set(getPosition().x, getPosition().y + 100.0f, getPosition().z);
 
 	emitAndScale(24, 0, &unk138, scale);
 	emitAndScale(25, 0, &unk138, scale);

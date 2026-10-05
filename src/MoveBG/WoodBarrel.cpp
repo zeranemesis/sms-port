@@ -54,32 +54,27 @@ void TWoodBarrel::kill()
 {
 	TMapObjGeneral::kill();
 	JGeometry::TVec3<f32> vec = mPosition;
+	// The emit direction is left at the .prm default. The ROM reserves its
+	// twelve bytes just below `vec` (`vec` sits at 0x1c, not 0x10, with
+	// identical instructions), so the original declared it here and never
+	// wrote it -- the same leftover as TRocket::setDeadAnm's dead `dir`.
+	JGeometry::TVec3<f32> dir;
 	vec.y += 100.0f;
 	unk148->mPos.value = vec;
 	gpModelWaterManager->emitRequest(*unk148);
 	if (mHolder) {
 		mHolder->receiveMessage(this, HIT_MESSAGE_UNK8);
 		mHolder = nullptr;
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x30 against 0x28). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 }
 
 void TWoodBarrel::appeared()
 {
-
-	
-	
 	TMapObjGeneral::appeared();
 	if (SMS_IsMarioStatusHipDrop()) {
-		setDamageHeight(mMapObjData->mHit->unkC->unkC + 90.0f);
+		setDamageHeight(getMapObjData()->mHit->unkC->unkC + 90.0f);
 	} else {
-		setDamageHeight(mMapObjData->mHit->unkC->unkC);
+		setDamageHeight(getMapObjData()->mHit->unkC->unkC);
 	}
 
 	mGroundHeight = gpMap->checkGround(mPosition, &mGroundPlane);
@@ -89,14 +84,10 @@ void TWoodBarrel::appeared()
 
 void TWoodBarrel::appear()
 {
-
-	
-	
 	makeObjAppeared();
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_A_W,
 	                                            &mPosition, 0, nullptr);
-	SMSGetMSound()->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition, 0, nullptr,
-	                                0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition);
 }
 
 void TWoodBarrel::touchWall(JGeometry::TVec3<f32>*, TBGWallCheckRecord*)

@@ -30,11 +30,12 @@ BOOL TMario::barWait()
 		return changePlayerStatus(MARIO_STATUS_WALL_JUMP, 0, false);
 	}
 
-	mPosition.x = mHolder->mPosition.x;
-	mPosition.y = mHolder->mPosition.y + mHolderHeightDiff;
-	mPosition.z = mHolder->mPosition.z;
+	mPosition.x = getHolder()->mPosition.x;
+	f32 hy      = getHolder()->mPosition.y;
+	mPosition.y = hy + mHolderHeightDiff;
+	mPosition.z = getHolder()->mPosition.z;
 
-	if ((mInput & 0x8000) || mHolderHeightDiff > 100.0f) {
+	if ((mInput & 0x8000) || mHolderHeightDiff <= 100.0f) {
 		setPlayerVelocity(-2.0f);
 		mPosition.x -= 200.0f * JMASSin(mFaceAngle.y);
 		mPosition.z -= 200.0f * JMASCos(mFaceAngle.y);
@@ -45,35 +46,35 @@ BOOL TMario::barWait()
 		return changePlayerStatus(MARIO_STATUS_BAR_CLIMB, 0, false);
 
 	if (unk108->mStickV < -16.0f) {
-		mVel.y += unk108->mStickV * 0.001953125f;
+		mVel.y += unk108->mStickV / 512.0f;
 		mPosition.y += mVel.y;
-		mHolderHeightDiff = mPosition.y - mHolder->mPosition.y;
+		mHolderHeightDiff = mPosition.y - getHolder()->mPosition.y;
 		treeSlipEffect();
 		SMSGetMSound()->startSoundActor(MSD_SE_MA_SLIP_TREE, &mPosition, 0,
 		                                nullptr, 0, 4);
 	}
 
-	if (mHolder->getActorType() == 0x400000bb) {
+	if (getHolder()->getActorType() == 0x400000bb) {
 		if (unk108->mStickV <= 0.0f) {
 			mPosition.y -= 2.0f;
-			mHolderHeightDiff = mPosition.y - mHolder->mPosition.y;
+			mHolderHeightDiff = mPosition.y - getHolder()->mPosition.y;
 		}
 
-		if (mPosition.y < mHolder->mPosition.y + 200.0f) {
+		if (mPosition.y < getHolder()->mPosition.y + 200.0f) {
 			mPosition.y       = mHolder->mPosition.y + 200.0f;
 			mHolderHeightDiff = mPosition.y - mHolder->mPosition.y;
 		}
 	}
 
-	if (mHolder->getActorType() == 0x40000039) {
+	if (getHolder()->getActorType() == 0x40000039) {
 		if (mHolderHeightDiff > 500.0f) {
 			mHolderHeightDiff = 500.0f;
 			mPosition.y       = mHolder->mPosition.y + mHolderHeightDiff;
 		}
 	}
 
-	if (mHolder->getActorType() == 0x40000246) {
-		u8 map = gpMarDirector->getCurrentMap();
+	if (getHolder()->getActorType() == 0x40000246) {
+		u8 map = SMSGetMarDirector()->getCurrentMap();
 		if (map == 8) {
 			if (mHolderHeightDiff > 750.0f) {
 				mHolderHeightDiff = 750.0f;
@@ -110,9 +111,6 @@ BOOL TMario::barWait()
 
 BOOL TMario::barClimb()
 {
-
-	
-	
 	if (mHolder == nullptr)
 		return changePlayerStatus(MARIO_STATUS_LAND_SAFE_DOWN, 0, false);
 
@@ -123,16 +121,17 @@ BOOL TMario::barClimb()
 		return changePlayerStatus(MARIO_STATUS_WALL_JUMP, 0, false);
 	}
 
-	mPosition.x = mHolder->mPosition.x;
-	mPosition.y = mHolder->mPosition.y + mHolderHeightDiff;
-	mPosition.z = mHolder->mPosition.z;
+	mPosition.x = getHolder()->mPosition.x;
+	f32 hy      = getHolder()->mPosition.y;
+	mPosition.y = hy + mHolderHeightDiff;
+	mPosition.z = getHolder()->mPosition.z;
 
 	if (unk108->mStickV < 8.0f)
 		return changePlayerStatus(MARIO_STATUS_BAR_WAIT, 0, false);
 
 	mVel.y = 0.0f;
 	mPosition.y += unk108->mStickV * mBarParams.mClimbSp.get();
-	mHolderHeightDiff = mPosition.y - mHolder->mPosition.y;
+	mHolderHeightDiff = mPosition.y - getHolder()->mPosition.y;
 
 	if (mPosition.y > mHolder->mPosition.y + mHolder->getDamageHeight()) {
 		setPlayerVelocity(0.0f);
@@ -147,15 +146,15 @@ BOOL TMario::barClimb()
 		setAnimation(ANIM_TREE_CLIMB, v * rate + 1.0f);
 	}
 
-	if (mHolder->getActorType() == 0x40000039) {
+	if (getHolder()->getActorType() == 0x40000039) {
 		if (mHolderHeightDiff > 500.0f) {
 			mHolderHeightDiff = 500.0f;
 			mPosition.y       = mHolder->mPosition.y + mHolderHeightDiff;
 		}
 	}
 
-	if (mHolder->getActorType() == 0x40000246) {
-		u8 state = gpMarDirector->mMap;
+	if (getHolder()->getActorType() == 0x40000246) {
+		u8 state = SMSGetMarDirector()->getCurrentMap();
 		if (state == 8) {
 			if (mHolderHeightDiff > 750.0f) {
 				mHolderHeightDiff = 750.0f;
@@ -256,7 +255,7 @@ int TMario::doRoofMovingProcess()
 	mVel.z     = mSlideVelZ;
 
 	JGeometry::TVec3<f32> newPos;
-	newPos.x = mPosition.x - mVel.x * mRoofPlane->getNormal().y;
+	newPos.x = getPosition().x - mVel.x * mRoofPlane->getNormal().y;
 	newPos.z = mPosition.z - mVel.z * mRoofPlane->getNormal().y;
 	newPos.y = mPosition.y;
 
@@ -279,16 +278,21 @@ void TMario::doRoofWaitingProcess()
 	mVel.zero();
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TMario::roofCommonEvents (batch 127).
+static inline u32 MarioSpecialInput(const TMario* p)
+{
+	u32 input = p->mInput;
+	return input;
+}
+
 BOOL TMario::roofCommonEvents()
 {
-
-	
-	
 	if (mInput & 0x8000) {
 		mInput &= ~0x8000;
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
 	}
-	if (mInput & 0x2) {
+	if (MarioSpecialInput(this) & 0x2) {
 		const TLiveActor* actor = mRoofPlane->mActor;
 		if (actor != nullptr) {
 			((THitActor*)actor)->receiveMessage(this, 3);
@@ -353,21 +357,15 @@ BOOL TMario::moveRoof()
 		case 3:
 			changePlayerStatus(MARIO_STATUS_FENCE_CATCH, 0, false);
 			break;
-
-	// Every diff marker of this function is a stack offset sitting 0x18 above
-	// ours (target frame 0x68 against 0x50). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 		}
 	}
 
 	if (mInput & 0x20)
 		return changePlayerStatus(MARIO_STATUS_WAIT_ROOF, mStatusArg, false);
 
-	f32 dist = JGeometry::TVec3<f32>(mPosition - mPrevPosition).length();
-	dist *= mHangRoofParams.mAnmMult.get();
+	f32 dist = JGeometry::TVec3<f32>(getPosition() - getPrevPosition()).length();
+	f32 mult = mHangRoofParams.mAnmMult.get();
+	dist *= mult;
 	if (mStatusArg & 1)
 		setAnimation(ANIM_LADDER_HANG_MOVE_L, dist);
 	else
@@ -439,10 +437,44 @@ BOOL TMario::startHangLanding(u32 status)
 	return changePlayerStatus(status, 0, false);
 }
 
-void TMario::hangingCommon(int, int) { }
+void TMario::hangingCommon(int anim, int status)
+{
+	waitProcess();
+	setAnimation(anim, 1.0f);
+	if (isLast1AnimeFrame())
+		changePlayerStatus(status, 0, false);
+}
 
-void TMario::findNearestWall(const TBGWallCheckRecord&) { }
+TBGCheckData* TMario::findNearestWall(const TBGWallCheckRecord& record)
+{
+	TBGCheckData* found = nullptr;
+	for (int i = 0; i < record.mResultWallsNum; i++) {
+		TBGCheckData* w = record.mResultWalls[i];
+		s16 ang = matan(w->mNormal.z, w->mNormal.x) - (mFaceAngle.y + 0x8000);
+		if (ang > -0x2000 && ang < 0x2000) {
+			JGeometry::TVec3<f32> pos = mPosition;
+			f32 d = w->mNormal.dot(pos) + w->mPlaneDistance;
+			if (d < 50.0f)
+				found = record.mResultWalls[i];
+		}
+	}
+	return found;
+}
 
+// Retail reuses one record for the side-step probe and the corner probe (one
+// slot, gpMap loaded after the stores), the second filled through set(); with
+// that the first probe's centre y is `10.0f + newPos.y` (fadds of @4950).
+// TODO: every instruction matches; frame 0x1d8 against retail's 0x278. The
+// first record sits at 0x16c (retail 0x210) and the inlined findNearestWall's
+// `pos` at 0xdc (retail 0x16c); hangingCommon(int, int) (UNUSED, 0x78) is
+// likely a missing level -- the pulledUp animation block as a helper emits
+// 160 bytes, so that is not its body. c-k15: findNearestWall's distance as
+// `mNormal.dot(pos)` is +0x10; through getNormal()/getPlaneDistance() it is
+// +0x40 with every instruction still in place but more slots off (99.5 ->
+// 99.4, not landed). c-hs8: getNormal() at the four side-step wall reads and
+// getPrevPosition() at both anmRate reads bring the frame to 0x200; also
+// reading mIntendedMag through getIntendedMag() (never used in this file)
+// is another +0x10.
 BOOL TMario::hanging()
 {
 	BOOL pulledUp = FALSE;
@@ -474,17 +506,7 @@ BOOL TMario::hanging()
 	                          30.0f, 4, 0);
 	gpMap->isTouchedWallsAndMoveXZ(&record);
 
-	for (int i = 0; i < record.mResultWallsNum; i++) {
-		TBGCheckData* w = record.mResultWalls[i];
-		s16 ang = matan(w->mNormal.z, w->mNormal.x) - (mFaceAngle.y + 0x8000);
-		if (ang > -0x2000 && ang < 0x2000) {
-			JGeometry::TVec3<f32> pos = mPosition;
-			f32 d = w->mNormal.x * pos.x + w->mNormal.y * pos.y
-			        + w->mNormal.z * pos.z + w->mPlaneDistance;
-			if (d < 50.0f)
-				foundWall = record.mResultWalls[i];
-		}
-	}
+	foundWall = findNearestWall(record);
 
 	if (foundWall == nullptr)
 		changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
@@ -513,50 +535,40 @@ BOOL TMario::hanging()
 		if (mStatusTimer < mHangingParams.mRapidTime.get()
 		    && record.mResultWallsNum > 0) {
 			f32 moveSp = mHangingParams.mMoveSp.get();
-			JGeometry::TVec3<f32> newPos;
+			Vec newPos;
 			if (yawDiff > 0x400 && yawDiff < 0x71c7) {
 				newPos.x = mPosition.x
-				           - moveSp * (mIntendedMag * foundWall->mNormal.z);
+				           - moveSp * (mIntendedMag * foundWall->getNormal().z);
 				newPos.y = mPosition.y;
 				newPos.z = mPosition.z
-				           + moveSp * (mIntendedMag * foundWall->mNormal.x);
+				           + moveSp * (mIntendedMag * foundWall->getNormal().x);
 			}
 			if (yawDiff > -0x71c7 && yawDiff < -0x400) {
 				newPos.x = mPosition.x
-				           + moveSp * (mIntendedMag * foundWall->mNormal.z);
+				           + moveSp * (mIntendedMag * foundWall->getNormal().z);
 				newPos.y = mPosition.y;
 				newPos.z = mPosition.z
-				           - moveSp * (mIntendedMag * foundWall->mNormal.x);
+				           - moveSp * (mIntendedMag * foundWall->getNormal().x);
 			}
 
 			TBGCheckData* foundWall2 = nullptr;
-			TBGWallCheckRecord record3(newPos.x, newPos.y, newPos.z, 50.0f, 1,
-			                           0);
-			gpMap->isTouchedWallsAndMoveXZ(&record3);
-			newPos = record3.mCenter;
+			TBGWallCheckRecord wallRec(newPos.x, 10.0f + newPos.y, newPos.z,
+			                           50.0f, 1, 0);
+			gpMap->isTouchedWallsAndMoveXZ(&wallRec);
+			newPos = wallRec.mCenter;
 
 			const TBGCheckData* groundDummy;
 			f32 groundY = gpMap->checkGround(newPos.x, 50.0f + newPos.y,
 			                                 newPos.z, &groundDummy);
 			if (mPosition.y - 100.0f < groundY
 			    && groundY < 50.0f + mPosition.y) {
-				TBGWallCheckRecord record4(
-				    newPos.x - 30.0f * JMASSin(mFaceAngle.y), groundY - 20.0f,
-				    newPos.z - 30.0f * JMASCos(mFaceAngle.y), 30.0f, 4, 0);
-				gpMap->isTouchedWallsAndMoveXZ(&record4);
+				wallRec.set(newPos.x - 30.0f * JMASSin(mFaceAngle.y),
+				            groundY - 20.0f,
+				            newPos.z - 30.0f * JMASCos(mFaceAngle.y), 30.0f, 4,
+				            0);
+				gpMap->isTouchedWallsAndMoveXZ(&wallRec);
 
-				for (int j = 0; j < record4.mResultWallsNum; j++) {
-					TBGCheckData* w = record4.mResultWalls[j];
-					s16 ang         = matan(w->mNormal.z, w->mNormal.x)
-					          - (mFaceAngle.y + 0x8000);
-					if (ang > -0x2000 && ang < 0x2000) {
-						JGeometry::TVec3<f32> pos = mPosition;
-						f32 d = w->mNormal.x * pos.x + w->mNormal.y * pos.y
-						        + w->mNormal.z * pos.z + w->mPlaneDistance;
-						if (d < 50.0f)
-							foundWall2 = record4.mResultWalls[j];
-					}
-				}
+				foundWall2 = findNearestWall(wallRec);
 
 				if (foundWall2 != nullptr
 				    && mDeParams.mHangWallMovableAngle.get()
@@ -571,9 +583,9 @@ BOOL TMario::hanging()
 					                     foundWall2->getNormal().x)
 					               + 0x8000;
 					mPosition.x
-					    = record4.mCenter.x - 40.0f * foundWall2->getNormal().x;
+					    = wallRec.mCenter.x - 40.0f * foundWall2->getNormal().x;
 					mPosition.z
-					    = record4.mCenter.z - 40.0f * foundWall2->getNormal().z;
+					    = wallRec.mCenter.z - 40.0f * foundWall2->getNormal().z;
 					const TBGCheckData* dummy2;
 					mPosition.y
 					    = gpMap->checkGround(mPosition.x, 160.0f + mPosition.y,
@@ -599,8 +611,8 @@ BOOL TMario::hanging()
 	mModelFaceAngle = mFaceAngle.y;
 
 	if (pulledUp == TRUE) {
-		f32 dx = mPosition.x - mPrevPosition.x;
-		f32 dz = mPosition.z - mPrevPosition.z;
+		f32 dx = mPosition.x - getPrevPosition().x;
+		f32 dz = mPosition.z - getPrevPosition().z;
 		f32 anmRate
 		    = MsSqrtf(dx * dx + dz * dz) * mHangingParams.mAnmRate.get();
 		if (yawDiff < 0)
@@ -619,10 +631,7 @@ BOOL TMario::ascend()
 {
 	if (mInput & 0x4)
 		return startHangLanding(MARIO_STATUS_LAND_SAFE_DOWN);
-	waitProcess();
-	setAnimation(ANIM_HGUP, 1.0f);
-	if (isLast1AnimeFrame())
-		changePlayerStatus(MARIO_STATUS_WAIT, 0, false);
+	hangingCommon(ANIM_HGUP, MARIO_STATUS_WAIT);
 	return 0;
 }
 
@@ -630,10 +639,7 @@ BOOL TMario::descend()
 {
 	if (mInput & 0x4)
 		return startHangLanding(MARIO_STATUS_LAND_SAFE_DOWN);
-	waitProcess();
-	setAnimation(ANIM_HGDWN, 1.0f);
-	if (isLast1AnimeFrame())
-		changePlayerStatus(MARIO_STATUS_HANGING, 0, false);
+	hangingCommon(ANIM_HGDWN, MARIO_STATUS_HANGING);
 	return 0;
 }
 
@@ -641,10 +647,7 @@ BOOL TMario::hangJumping()
 {
 	if (mInput & 0x4)
 		return startHangLanding(MARIO_STATUS_LAND_SAFE_DOWN);
-	waitProcess();
-	setAnimation(ANIM_HGJMP, 1.0f);
-	if (isLast1AnimeFrame())
-		changePlayerStatus(MARIO_STATUS_WAIT, 0, false);
+	hangingCommon(ANIM_HGJMP, MARIO_STATUS_WAIT);
 	return 0;
 }
 
@@ -660,13 +663,57 @@ BOOL TMario::taken()
 	return 0;
 }
 
+// Where this body is *inlined* -- wireWait, wireSWait, wireHanging and
+// wireRolling all inline it -- retail `bl`s JGVec3.hpp's copy constructor
+// (off the one named `dir`) and operator*=(f32), while the emitted copy of
+// this function inlines both and `bl`s only `scale`. A level above the
+// statement or above getOnWirePosAngle pushes `add`/`sub` or the whole body
+// out of line, so the levels sit on the scaled direction alone: a forwarder
+// over a helper that copies and scales in its own body. Spelling the helper
+// as `dir * ratio` (operator*'s by-value parameter copies at the forwarder's
+// depth) keeps the copy constructor inline in the callers; the explicit copy
+// one level down is what sends it out with operator*= (wireSWait 93.1 ->
+// 99.7, wireWait 96.6 -> 99.8, wireHanging 95.9 -> 99.9, wireRolling 97.6
+// -> 99.5; the emitted copy stays 99.5). Keeping a separate `dirCopy` for
+// matan() under this shape costs every caller 2-3 points.
+// TODO: every instruction now matches in the four callers; only the stack
+// layout differs. Retail places the operator-/operator+ by-value temporaries
+// low (0x34/0x28 in wireSWait) and leaves a 12-byte hole between `start` and
+// `dir`; ours puts those temporaries above the named block and is 8 bytes
+// short (wireSWait 0x140 vs 0x148, emitted copy 0x150 vs 0x148). Naming
+// `end` fills the hole and lands wireWait/wireHanging's frames (wireSWait
+// and the emitted copy now overshoot by 8/0x18); the temporaries stay high.
+// Retail's own names for the two helper levels are unrecoverable (inlined).
+// c-k16, statement mode (codegen-tells.md c-r24/c-k14): a named class
+// initialiser `TVec3 scaled = <helper>(dir, ratio); *outPos = start +
+// scaled;` brings the emitted copy's frame to 0x150 (with `end`) but puts
+// the body over the four callers' budget (all `bl` it, 54.7-76.0%); without
+// `end` the callers expand it with six extra copy instructions each
+// (forwarder 96.9-98.5, direct helper or `dir * ratio` 90.4-95.0). `*outPos
+// = start; *outPos += <helper>(...)` also pushes it out (74.0 here). So
+// retail did not name the scaled vector.
+// fabricated
+static inline JGeometry::TVec3<f32>
+MarioWireScaledCopy(const JGeometry::TVec3<f32>& dir, f32 ratio)
+{
+	JGeometry::TVec3<f32> t(dir);
+	t *= ratio;
+	return t;
+}
+
+static inline JGeometry::TVec3<f32>
+MarioWireScaleDir(const JGeometry::TVec3<f32>& dir, f32 ratio)
+{
+	return MarioWireScaledCopy(dir, ratio);
+}
+
 void TMario::getOnWirePosAngle(JGeometry::TVec3<f32>* outPos, s16* outAngle)
 {
-	JGeometry::TVec3<f32> start   = mWireStartPos;
-	JGeometry::TVec3<f32> dir     = mWireEndPos - start;
-	JGeometry::TVec3<f32> dirCopy = dir;
+	JGeometry::TVec3<f32> start = mWireStartPos;
+	JGeometry::TVec3<f32> end   = mWireEndPos;
+	JGeometry::TVec3<f32> dir   = end - start;
 
-	*outPos = start + dir * mWirePosRatio;
+	*outPos = start + MarioWireScaleDir(dir, mWirePosRatio);
 	outPos->y -= 160.0f;
 
 	Mtx rotA;
@@ -676,40 +723,59 @@ void TMario::getOnWirePosAngle(JGeometry::TVec3<f32>* outPos, s16* outAngle)
 	Mtx concat;
 	MTXConcat(rotB, rotA, concat);
 
-	JGeometry::TVec3<f32> sagVec(0.0f, -mWireSag * 1.0f, 0.0f);
+	JGeometry::TVec3<f32> sagVec(0.0f,
+	                             -mWireSag * JGeometry::TUtil<f32>::one(),
+	                             0.0f);
 	MTXMultVec(concat, &sagVec, &sagVec);
 
 	outPos->x += sagVec.x;
 	outPos->y += sagVec.y;
 	outPos->z += sagVec.z;
 
-	*outAngle = matan(dirCopy.z, dirCopy.x);
+	*outAngle = matan(dir.z, dir.x);
 }
 
-#pragma dont_inline on
+// Retail calls this out of line from all four wire nerves, so the body has to
+// cost at least 15 statements at depth one: splitting length() into its
+// squared() and sqrt() halves is the fifteenth (a separate `f32 limit = 1.0f -
+// margin;` also reaches 15 but reverses the compare's two operands, 94.1
+// against this shape's 97.1, and spelling the subtraction as `dir = mWireEndPos;
+// dir.sub(start);` scores 53.9). Before this, wireWait/wireRolling/wireHanging
+// expanded the whole body inline and sat at 69.2/68.7/58.5.
+// TODO: the one instruction left is the squared() contraction -- retail loads
+// y and z first and fuses `x * x` into the first `fadds` as an `fmadds`, which
+// needs x to become available last; ours materialises all three products.
+// Naming `end` lands the 0x68 frame (retail keeps its 12-byte slot between
+// start and dir) and naming the first bound test's sum places the named
+// block; the operator- temp still sits 8 high (0x20, retail 0x18). Inert: end
+// declared first, dir(end - start), split dir declaration.
 BOOL TMario::wireMove(f32 param_1)
 {
 	JGeometry::TVec3<f32> start = mWireStartPos;
-	JGeometry::TVec3<f32> dir   = mWireEndPos - start;
-	f32 len                     = dir.length();
+	JGeometry::TVec3<f32> end   = mWireEndPos;
+	JGeometry::TVec3<f32> dir   = end - start;
+	f32 lenSq                   = dir.squared();
+	f32 len                     = JGeometry::TUtil<f32>::sqrt(lenSq);
 	f32 delta                   = param_1 / len;
 	f32 margin                  = 100.0f / len;
 
-	BOOL clean = true;
-	if (mWirePosRatio + delta > 1.0f - margin) {
+	BOOL clean = TRUE;
+	f32 next = mWirePosRatio + delta;
+	if (next > 1.0f - margin) {
 		mWirePosRatio = 1.0f - margin;
-		clean         = false;
+		clean         = FALSE;
 	}
 	if (mWirePosRatio + delta < margin) {
 		mWirePosRatio = margin;
-		clean         = false;
+		clean         = FALSE;
 	}
-	if (clean)
+	if (clean == TRUE)
 		mWirePosRatio += delta;
 	return clean;
 }
-#pragma dont_inline off
 
+// TODO: the rest is the inlined getOnWirePosAngle's stack layout; see its
+// TODO.
 BOOL TMario::wireWait()
 {
 	s16 wireAngle;
@@ -835,6 +901,17 @@ BOOL TMario::wireWaitToSWaitL()
 	return 0;
 }
 
+// specMain inlines this endpoint swap. Written as a plain three-statement
+// swap its temporary lands below 20 bytes of other inline locals (0x7c vs
+// retail 0x68); as a one-level inline helper it takes retail's slot, closing
+// specMain.
+static inline void swapVec(JGeometry::TVec3<f32>& a, JGeometry::TVec3<f32>& b)
+{
+	JGeometry::TVec3<f32> t = a;
+	a                       = b;
+	b                       = t;
+}
+
 BOOL TMario::wireWaitToSWaitR()
 {
 	getOnWirePosAngle(&mPosition, &mModelFaceAngle);
@@ -842,24 +919,20 @@ BOOL TMario::wireWaitToSWaitR()
 	setAnimation(ANIM_ROPE_WTOSW_R, 1.0f);
 	if (isLast1AnimeFrame()) {
 		changePlayerStatus(MARIO_STATUS_WIRE_S_WAIT, 0, false);
-		JGeometry::TVec3<f32> tmp = mWireStartPos;
-		mWireStartPos             = mWireEndPos;
-		mWireEndPos               = tmp;
+		swapVec(mWireStartPos, mWireEndPos);
 		mWirePosRatio             = 1.0f - mWirePosRatio;
 	}
 	return 0;
 }
 
-void TMario::changeWireHanging()
+BOOL TMario::changeWireHanging()
 {
 	bool ok = false;
 	if (mHeldObject == nullptr && !onYoshi())
 		ok = true;
-	if (ok) {
-		changePlayerStatus(MARIO_STATUS_WIRE_HANGING, 0, false);
-	} else {
-		changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
-	}
+	if (ok)
+		return changePlayerStatus(MARIO_STATUS_WIRE_HANGING, 0, false);
+	return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
 }
 
 BOOL TMario::wireWaitToHang()
@@ -868,12 +941,7 @@ BOOL TMario::wireWaitToHang()
 	mFaceAngle.y = mModelFaceAngle + 0x4000;
 	setAnimation(ANIM_ROPE_WHG, 1.0f);
 	if (isLast1AnimeFrame()) {
-		BOOL noHold = FALSE;
-		if (mHeldObject == nullptr && !onYoshi())
-			noHold = TRUE;
-		if (noHold)
-			return changePlayerStatus(MARIO_STATUS_WIRE_HANGING, 0, false);
-		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
+		return changeWireHanging();
 	}
 	return 0;
 }
@@ -884,12 +952,7 @@ BOOL TMario::wireSWaitToHang()
 	mModelFaceAngle = mFaceAngle.y;
 	setAnimation(ANIM_ROPE_SWHG, 1.0f);
 	if (isLast1AnimeFrame()) {
-		BOOL noHold = FALSE;
-		if (mHeldObject == nullptr && !onYoshi())
-			noHold = TRUE;
-		if (noHold)
-			return changePlayerStatus(MARIO_STATUS_WIRE_HANGING, 0, false);
-		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
+		return changeWireHanging();
 	}
 	return 0;
 }
@@ -951,65 +1014,54 @@ BOOL TMario::wireHanging()
 
 		if (diff >= 0x3555 && diff <= 0x4aaa)
 			startHangLanding(MARIO_STATUS_WIRE_HANG_LAND_SAFE_DOWN);
-
-		return 0;
-	}
-
-	if (mUpperState == UPPER_STATE_PUMPING && mWaterGun != nullptr
-	    && mWaterGun->canSpray()) {
-		s16 rotSp;
-		if (mWaterGun == nullptr) {
-			rotSp = 0;
-		} else {
-			switch (mWaterGun->mCurrentNozzle) {
-			case 1:
-				rotSp = mWireParams.mRotSpeedTrgRocket.get();
-				break;
-			case 4:
-				rotSp = mWireParams.mRotSpeedTrgHover.get();
-				break;
-			case 5:
-				rotSp = mWireParams.mRotSpeedTrgTurbo.get();
-				break;
-			default:
-				rotSp = mWireParams.mRotSpeed.get();
-				break;
-			}
-		}
+	} else if (mUpperState == UPPER_STATE_PUMPING && mWaterGun != nullptr
+	    && mWaterGun->isEmitting()) {
+		s16 rotSp = getNozzleEmitVX();
 		if (rotSp > 0)
 			unkF6 += 2 * mWireParams.mRotStop.get();
 		else
 			unkF6 -= 2 * mWireParams.mRotStop.get();
 
-		s16 rotSp2;
-		if (mWaterGun == nullptr) {
-			rotSp2 = 0;
-		} else {
-			switch (mWaterGun->mCurrentNozzle) {
-			case 1:
-				rotSp2 = mWireParams.mRotSpeedTrgRocket.get();
-				break;
-			case 4:
-				rotSp2 = mWireParams.mRotSpeedTrgHover.get();
-				break;
-			case 5:
-				rotSp2 = mWireParams.mRotSpeedTrgTurbo.get();
-				break;
-			default:
-				rotSp2 = mWireParams.mRotSpeed.get();
-				break;
-			}
-		}
-		unkF6 += rotSp2;
+		unkF6 += getNozzleEmitVX();
 		return changePlayerStatus(MARIO_STATUS_WIRE_ROLLING, 0, false);
+	} else {
+		setAnimation(ANIM_ROPE_HGWAT, 1.0f);
 	}
 
-	setAnimation(ANIM_ROPE_HGWAT, 1.0f);
 	return 0;
 }
 
-s16 TMario::getNozzleEmitVX() { }
+// UNUSED (0x64); wireHanging and wireRolling inline it. The `int` local is
+// what puts retail's extsh at the switch join, after the `return 0` path.
+s16 TMario::getNozzleEmitVX()
+{
+	if (mWaterGun == nullptr)
+		return 0;
 
+	int speed;
+	switch (mWaterGun->mCurrentNozzle) {
+	case 1:
+		speed = mWireParams.mRotSpeedTrgRocket.get();
+		break;
+	case 4:
+		speed = mWireParams.mRotSpeedTrgHover.get();
+		break;
+	case 5:
+		speed = mWireParams.mRotSpeedTrgTurbo.get();
+		break;
+	case 0:
+	default:
+		speed = mWireParams.mRotSpeed.get();
+		break;
+	}
+	return speed;
+}
+
+// TODO: frame exact (0x1a0) with the input read through getInput(); 45 slot
+// operands still differ. The stop test ends in
+// changeWireHanging(), whose `ok` flag shares its zero with the
+// mFaceAngle.x/unkF6 stores (c-k15: the written-out copy materialised its own
+// zero; 99.6 -> 99.9).
 BOOL TMario::wireRolling()
 {
 	s16 initialAngle = mFaceAngle.x;
@@ -1017,7 +1069,7 @@ BOOL TMario::wireRolling()
 	s16 wireAngle;
 	getOnWirePosAngle(&mPosition, &wireAngle);
 
-	if (mInput & 0x2)
+	if (getInput() & 0x2)
 		mStatusState |= 1;
 
 	s16 rotSpeedMax = mWireParams.mRotSpeedMax.get();
@@ -1033,7 +1085,7 @@ BOOL TMario::wireRolling()
 			return changePlayerStatus(MARIO_STATUS_WIRE_ROLL_JUMP, 1, false);
 	}
 
-	if (mInput & 0x1) {
+	if (getInput() & 0x1) {
 		s16 diff = wireAngle - mIntendedYaw;
 		if (diff > -0x2000 && diff < 0x3555)
 			wireMove(3.0f);
@@ -1042,32 +1094,14 @@ BOOL TMario::wireRolling()
 	}
 
 	if (mUpperState == UPPER_STATE_PUMPING && mWaterGun != nullptr
-	    && mWaterGun->canSpray()) {
-		s16 rotSp;
-		if (mWaterGun == nullptr) {
-			rotSp = 0;
-		} else {
-			switch (mWaterGun->mCurrentNozzle) {
-			case 1:
-				rotSp = mWireParams.mRotSpeedTrgRocket.get();
-				break;
-			case 4:
-				rotSp = mWireParams.mRotSpeedTrgHover.get();
-				break;
-			case 5:
-				rotSp = mWireParams.mRotSpeedTrgTurbo.get();
-				break;
-			default:
-				rotSp = mWireParams.mRotSpeed.get();
-				break;
-			}
-		}
+	    && mWaterGun->isEmitting()) {
+		s16 rotSp = getNozzleEmitVX();
 		unkF6 += rotSp;
 	}
 
 	unkF6 -= (s16)((f32)mWireParams.mRotGravity.get() * JMASSin(mFaceAngle.x));
 
-	if ((mInput & 0x4000) ? true : false)
+	if ((getInput() & 0x4000) ? true : false)
 		unkF6 = (s16)((f32)unkF6 * mWireParams.mRotBrake.get());
 
 	if (unkF6 < -rotSpeedMax)
@@ -1146,12 +1180,7 @@ BOOL TMario::wireRolling()
 			unkF6          = 0;
 			mWireBounceVel = 0.0f;
 			mWireSag       = 0.0f;
-			BOOL noHold    = FALSE;
-			if (mHeldObject == nullptr && !onYoshi())
-				noHold = TRUE;
-			if (noHold)
-				return changePlayerStatus(MARIO_STATUS_WIRE_HANGING, 0, false);
-			return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
+			return changeWireHanging();
 		}
 	}
 
@@ -1210,7 +1239,19 @@ void TMario::getCurrentPullParams(f32* outV, f32* outH)
 	}
 }
 
-void TMario::setPullingAnm(const JGeometry::TVec3<f32>&, f32) { }
+void TMario::setPullingAnm(const JGeometry::TVec3<f32>& delta, f32 animRate)
+{
+	s16 ang  = matan(delta.z, delta.x);
+	s16 adff = ang - mFaceAngle.y;
+	if (adff >= -0x2000 && adff <= 0x2000)
+		setAnimation(ANIM_HOLD_DRAG, animRate);
+	if (adff <= -0x6000 || adff >= 0x6000)
+		setAnimation(ANIM_HOLD_BACK, animRate);
+	if (adff > -0x6000 && adff < -0x2000)
+		setAnimation(ANIM_HOLD_MOVE_R, animRate);
+	if (adff > 0x2000 && adff < 0x6000)
+		setAnimation(ANIM_HOLD_MOVE_L, animRate);
+}
 
 BOOL TMario::pulling()
 {
@@ -1221,11 +1262,11 @@ BOOL TMario::pulling()
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
 	}
 
-	if (!(unk108->mInput & 0x400)) {
+	if (!(unk108->mInput & 0x200)) {
 		((THitActor*)mHeldObject)->receiveMessage(this, 8);
 		mHeldObject = nullptr;
 		startVoice(MSD_SE_MV30_FRIGHT_01);
-		return changePlayerStatus(0xc0022f, 0, false);
+		return changePlayerStatus(0x0C00022F, 0, false);
 	}
 
 	if (mInput & 0x2) {
@@ -1242,7 +1283,7 @@ BOOL TMario::pulling()
 
 	JGeometry::TVec3<f32> pos = mPosition;
 	s16 backAngle             = mFaceAngle.y + 0x8000;
-	s16 diff                  = mIntendedYaw - backAngle;
+	s16 diff                  = backAngle - mIntendedYaw;
 	f32 cosF                  = JMASCos(diff);
 	if (cosF < 0.0f)
 		cosF = 0.0f;
@@ -1254,12 +1295,12 @@ BOOL TMario::pulling()
 	f32 rateV, rateH;
 	getCurrentPullParams(&rateV, &rateH);
 
-	pos.x += cosF * rateH * JMASSin(backAngle)
-	         - sinF * rateV * JMASCos(backAngle);
-	pos.z += cosF * rateH * JMASCos(backAngle)
-	         + sinF * rateV * JMASSin(backAngle);
+	pos.x += rateV * (cosF * JMASSin(backAngle))
+	         - rateH * (sinF * JMASCos(backAngle));
+	pos.z += rateV * (cosF * JMASCos(backAngle))
+	         + rateH * (sinF * JMASSin(backAngle));
 
-	if (((THitActor*)mHeldObject)->receiveMessage(this, 0xa) == 1) {
+	if (mHeldObject->moveRequest(pos) == 1) {
 		mPosition = pos;
 	}
 
@@ -1278,8 +1319,14 @@ BOOL TMario::pulling()
 
 	default:
 		JGeometry::TVec3<f32> delta;
-		if ((mHeldObject->getActorType() == 0x8000006 ? true : false)
-		    || (mHeldObject->getActorType() == 0x8000008 ? true : false)) {
+		// The mixed spelling is the lever pair that reloads mActorType through
+		// one held pointer at retail's frame: two getHeldObject() sites alone
+		// are +8, two isActorType() sites -8, a named held pointer -0x10.
+		// TODO: animRate gets f31 (retail f30, sinF's register; spelling
+		// inert) and length()'s squared() contraction (see wireMove; the
+		// explicit sum, squared()+sqrt and dot(delta) spellings are inert).
+		if (getHeldObject()->isActorType(0x8000006)
+		    || (getHeldObject()->getActorType() == 0x8000008 ? true : false)) {
 			delta = pos - mPrevPosition;
 		} else {
 			delta = mPosition - mPrevPosition;
@@ -1289,16 +1336,7 @@ BOOL TMario::pulling()
 		if (len < 1.0f) {
 			setAnimation(ANIM_HOLD_WAIT, animRate);
 		} else {
-			s16 ang  = matan(delta.z, delta.x);
-			s16 adff = ang - mFaceAngle.y;
-			if (adff >= -0x2000 && adff <= 0x2000)
-				setAnimation(ANIM_HOLD_DRAG, animRate);
-			if (adff <= -0x6000 || adff >= 0x6000)
-				setAnimation(ANIM_HOLD_BACK, animRate);
-			if (adff > -0x6000 && adff < -0x2000)
-				setAnimation(ANIM_HOLD_MOVE_R, animRate);
-			if (adff > 0x2000 && adff < 0x6000)
-				setAnimation(ANIM_HOLD_MOVE_L, animRate);
+			setPullingAnm(delta, animRate);
 		}
 		break;
 	}
@@ -1346,6 +1384,9 @@ BOOL TMario::fenceJumpCatch()
 	return 0;
 }
 
+// TODO: instructions and registers match; frame 0x1a8 vs retail 0x1b8.
+// Naming both SMSGetCamera() and mIntendedMag reaches 0x1b0 (each alone is
+// inert), not taken as two lone named values (c-hs6).
 BOOL TMario::fenceMove()
 {
 	JGeometry::TVec3<f32> frontPos = mPosition;
@@ -1356,22 +1397,26 @@ BOOL TMario::fenceMove()
 	if (wall != nullptr) {
 		if (mInput & 0x1) {
 			JGeometry::TVec3<f32> newPos = mPosition;
-			newPos.y
-			    += 0.015625f * unk108->mStickV * mJumpParams.mFenceSpeed.get();
+			f32 fenceSp = mJumpParams.mFenceSpeed.get();
+			TMarioControllerWork* work = unk108;
+			newPos.y += 0.015625f * work->mStickV * fenceSp;
 
-			s16 camDelta = mFaceAngle.y - gpCamera->unk258;
+			s16 camDelta = mFaceAngle.y - SMSGetCamera()->unk258;
 			f32 normX, normZ;
 			if (camDelta > -0x4000 && camDelta < 0x4000) {
-				normZ = wall->mNormal.z;
-				normX = -wall->mNormal.x;
+				normX = -wall->getNormal().z;
+				normZ = wall->getNormal().x;
 			} else {
-				normX = wall->mNormal.x;
-				normZ = -wall->mNormal.z;
+				normZ = -wall->getNormal().x;
+				normX = wall->getNormal().z;
 			}
 
-			f32 stickH = 0.015625f * unk108->mStickH;
-			newPos.x += normX * stickH * mJumpParams.mFenceSpeed.get();
-			newPos.z += normZ * stickH * mJumpParams.mFenceSpeed.get();
+			f32 stickH = 0.015625f * work->mStickH;
+			// Named: retail's fmadds reads the product before fenceSp.
+			f32 dx = normX * stickH;
+			f32 dz = normZ * stickH;
+			newPos.x += dx * fenceSp;
+			newPos.z += dz * fenceSp;
 
 			JGeometry::TVec3<f32> sideFront = newPos;
 			sideFront.x += 0.5f * (50.0f * JMASSin(mFaceAngle.y));
@@ -1393,7 +1438,7 @@ BOOL TMario::fenceMove()
 			changePlayerStatus(MARIO_STATUS_FENCE_MOVE, 0, false);
 		}
 
-		mFaceAngle.y = matan(wall->mNormal.z, wall->mNormal.x) + 0x8000;
+		mFaceAngle.y = matan(wall->getNormal().z, wall->getNormal().x) + 0x8000;
 	} else {
 		mFaceAngle.y += 0x8000;
 		mModelFaceAngle = mFaceAngle.y;
@@ -1446,15 +1491,32 @@ BOOL TMario::fenceMove()
 			f32 hDot, vDiff, dist;
 			if (unk2C0 == nullptr) {
 				vDiff    = mPosition.y - mPrevPosition.y;
-				f32 sinY = JMASSin(mFaceAngle.y);
+				// jmaCosTable goes into f31 and jmaSinTable into f29 in
+				// the ROM, and the cosine is the factor on diff.x: the two
+				// were swapped here (and declared the other way round)
+				// before structural pass 168.
+				// The sideways component is diff dotted with up x facing:
+				// retail's surviving `0.0f * sin`, `0.0f * cos` and
+				// `1.0f * cos` products are TVec3::cross's constant-folded
+				// terms.
+				// TODO: every instruction matches; the frame is 0x20 short
+				// (0x198 vs 0x1b8) with the named block uniformly low and
+				// `diff` 0xc low, so retail has an inline level (likely
+				// around the cross product) whose temporaries this
+				// spelling does not reserve.
 				f32 cosY = JMASCos(mFaceAngle.y);
+				f32 sinY = JMASSin(mFaceAngle.y);
 
 				JGeometry::TVec3<f32> diff = mPosition - mPrevPosition;
 
-				hDot = -cosY * diff.z + sinY * diff.x;
+				JGeometry::TVec3<f32> up(0.0f, 1.0f, 0.0f);
+				JGeometry::TVec3<f32> face(sinY, 0.0f, cosY);
+				JGeometry::TVec3<f32> side;
+				side.cross(up, face);
+				hDot = side.dot(diff);
 				dist = diff.length();
 			} else {
-				vDiff = unk300.y - unk2F4.y;
+				vDiff = unk2F4.y - unk300.y;
 				hDot  = unk2F4.x - unk300.x;
 				if ((s16)((182.04445f * unk30C) - (f32)mFaceAngle.y) != 0)
 					hDot = -hDot;
@@ -1518,7 +1580,7 @@ BOOL TMario::fencePunch()
 		if (unk2C0 != nullptr) {
 			((THitActor*)unk2C0)->receiveMessage(this, 3);
 			startVoice(MSD_SE_MV15_EXERT_INST_02);
-			if (unk2C0->mActorType == 0x4000006a) {
+			if (unk2C0->getActorTypeID() == 0x4000006a) {
 				f32 x = unk2F4.x;
 				f32 z = unk2F4.y;
 				if (x < -120.0f)
@@ -1533,7 +1595,7 @@ BOOL TMario::fencePunch()
 				unk2F4.y = z;
 				Mtx mtx;
 				getRidingMtx(mtx);
-				MTXMultVec(mtx, &unk2F4, &mPosition);
+				PSMTXMultVec(mtx, &unk2F4, &mPosition);
 			}
 		}
 	}

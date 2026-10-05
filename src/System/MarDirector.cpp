@@ -11,6 +11,17 @@ static void dummy(Vec* v) { *v = (Vec) { 0.0f, 0.0f, 0.0f }; }
 void* gpSceneCmnDat;
 int gpSceneCmnDatSize;
 
+// The `TAllocator<void*>()` default-argument temporary of
+// `JGadget::TVector_pointer`'s constructor is built by this caller, one inline
+// level shallower than a bare `TVector_pointer() { }` would put it, and so
+// lands on retail's 0x34 slot instead of 0x20 (frame 0x60 either way).
+// Ruled out here: dropping the declared ctor for the implicit one (no change),
+// `unk88()` written first, last or in member order in the initialiser list (no
+// change), `new TPerformList()`, moving `unk88.reserve(100)` after
+// `initLoadParticle()` (-1.5), an uninitialised body local. Declaring unk88 as
+// a bare `TVector_pointer_void` also puts the temporary at 0x34, which is what
+// identified the depth as the lever, but the map's UNUSED
+// `__dt__Q27JGadget27TVector_pointer<P8TBaseNPC>Fv` pins the real type.
 TMarDirector::TMarDirector()
     : unk18(nullptr)
     , mPerformListGX(nullptr)
@@ -25,10 +36,10 @@ TMarDirector::TMarDirector()
     , unk40(new TPerformList)
     , mShinePfLstMov(nullptr)
     , mShinePfLstAnm(nullptr)
-    , mFlags(0)
-    , mDemoFlags(0)
-    , mTransitionFlags(0)
-    , mPendingSimulationTime(0)
+    , unk4C(0)
+    , unk4E(0)
+    , unk50(0)
+    , unk54(0)
     , unk68(0)
     , unk6C(120.0f)
     , unk80(nullptr)
@@ -40,16 +51,16 @@ TMarDirector::TMarDirector()
     , unkD8(0)
     , unkDC(nullptr)
     , unk128(0)
-    , mDemoQueueTail(0)
-    , mDemoQueueHead(0)
+    , unk24C(0)
+    , unk24D(0)
     , unk250(0)
     , unk25C(nullptr)
-    , mSetupDone(false)
+    , unk260(0)
 {
-	gpMarDirector  = this;
-	mMoveTickCount = 0;
-	mTickCount     = 0;
-	mState         = STATE_UNK0;
+	gpMarDirector = this;
+	unk58         = 0;
+	unk5C         = 0;
+	mState        = STATE_UNK0;
 	unk88.reserve(100);
 	initLoadParticle();
 	unk126 = 0;
@@ -81,6 +92,5 @@ u32 TMarDirector::setup(JDrama::TDisplay* param_1, TMarioGamePad** param_2,
 
 void TMarDirector::registerEventWatcher(TEventWatcher* param_1)
 {
-	TEventWatcher* watcher = param_1;
-	unk80->insert(watcher);
+	unk80->insert(param_1);
 }

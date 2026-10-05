@@ -44,7 +44,7 @@ struct TPollutionLayerInfo {
 	/* 0x20 */ u16 mLog2Width;
 	/* 0x22 */ u16 mLog2Height;
 	/* 0x24 */ u32 unk24;
-	/* 0x28 */ u8* mHeightMap;
+	/* 0x28 */ PTR32(u8) mHeightMap;
 };
 
 /**
@@ -59,15 +59,9 @@ class TPollutionLayer : public TJointModel {
 public:
 	TPollutionLayer();
 
-	virtual TJointObj* newJointObj() const { return new TPollutionObj; }
 	virtual void initJointModel(TJointModelManager*, const char*,
 	                            MActorAnmData*);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
-	virtual u32 getJ3DModelDataFlag() const
-	{
-		return J3DMLF_MaterialPEFull | J3DMLF_MaterialUseIndirect
-		       | J3DMLF_UseUniqueMaterials | (2 << J3DMLF_TevStageNumShift);
-	}
 	virtual int getPlaneType() const { return 0; }
 	virtual int getTexPosS(f32 param_1) const
 	{
@@ -81,6 +75,12 @@ public:
 	virtual ResTIMG* getTexResource(const char*)
 	{
 		return getModelData()->getTexture()->getResTIMG(0);
+	}
+	virtual TJointObj* newJointObj() const { return new TPollutionObj; }
+	virtual u32 getJ3DModelDataFlag() const
+	{
+		return J3DMLF_MaterialPEFull | J3DMLF_MaterialUseIndirect
+		       | J3DMLF_UseUniqueMaterials | (2 << J3DMLF_TevStageNumShift);
 	}
 	virtual void stamp(u16, f32 x, f32 y, f32 z, f32 range);
 	virtual void stampModel(J3DModel*);
@@ -98,6 +98,12 @@ public:
 		return true;
 	}
 	void action();
+	// fabricated. The inline level makeWorldToPollutionMtx's two arguments
+	// need: with the raw members calcViewMtx's frame is 8 short, with these
+	// (plus getCounterNum()) it is exact. drawJointObjStamp's frame is
+	// already exact and does not want them.
+	f32 getMinX() const { return mMinX; }
+	f32 getMinZ() const { return mMinZ; }
 	void fire();
 	void glassWall();
 	void electric();
@@ -121,7 +127,9 @@ public:
 	static f32 mFireArea;
 	static s32 mFireEffectWaitTime;
 	static f32 mThunderArea;
+	static u32 mThunderScaleRate;
 	static f32 mGlassWallArea;
+	static u32 mGlassWallScaleRate;
 	static s32 mGlassWallEffectTime;
 	static int mEffectTime;
 

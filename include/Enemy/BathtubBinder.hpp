@@ -2,43 +2,44 @@
 #define ENEMY_BATHTUB_BINDER_HPP
 
 #include <Strategic/Binder.hpp>
-#include <dolphin/types.h>
+#include <Map/BathWaterManager.hpp>
+#include <MoveBG/MapObjCorona.hpp>
+#include <JSystem/JGeometry.hpp>
 
 class TLiveActor;
-class TBathtub;
-class TBathWaterManager;
 
-// NOTE: no reference to TBathtubBinder exists anywhere else in the codebase
-// (no allocation site was found), so the object's total size could not be
-// confirmed from a `li r3, sizeof` call site. Field layout below is derived
-// purely from offsets accessed in TBathtubBinder's own member functions.
+// Floats an actor on the bathtub's water. bind() samples the water ahead of
+// and behind the actor and drives its height and pitch from the difference.
 class TBathtubBinder : public TBinder {
 public:
 	TBathtubBinder();
 	virtual ~TBathtubBinder();
-
-	bool init(f32, f32, f32, f32, f32);
 	virtual void bind(TLiveActor*);
 
-	// TODO: not yet decompiled (see BathtubBinder.cpp) - needs two joint/name
-	// string literals recovered byte-for-byte before it can be written.
+	bool init(f32 front_dist, f32 front_margin, f32 back_dist, f32 back_margin,
+	          f32 height_offset);
 	void float_(TLiveActor*);
 
+	// UNUSED in the map at 0x164, inlined at all three float_ sites. It takes
+	// the point by reference: that is what lets the third site share one tub
+	// centre between the circle clamp and the floor clamp on y, and at the
+	// first two sites the y clamp is dead-code-eliminated because nothing
+	// reads the sampled point's y.
+	void constrain_(JGeometry::TVec3<f32>& pos, f32 margin);
+
+	// Fabricated. The accessor level is the last 8 bytes of float_'s
+	// 0x178 frame.
+	f32 getFrontMargin() const { return mFrontMargin; }
+
 public:
-	// set to nullptr in the ctor; populated in init() via a
-	// TNameRefGen::search() lookup whose result is stored verbatim (the map
-	// has no `new TBathtubBinder` site, so the ctor was most likely called
-	// on an already-allocated TBathtubBinder). unk4 is the "バスタブ"
-	// bathtub object and unk8 the "バスタブの水" water manager; both are
-	// cleared back to 0 in init() when unk4 is null.
-	/* 0x04 */ TBathtub* unk4;
-	/* 0x08 */ TBathWaterManager* unk8;
-	/* 0x0c */ f32 unkC;
-	/* 0x10 */ f32 unk10;
-	/* 0x14 */ f32 unk14;
-	/* 0x18 */ f32 unk18;
-	/* 0x1c */ f32 unk1C; // = unk18 / (unk18 + unk14)
-	/* 0x20 */ f32 unk20;
+	/* 0x04 */ TBathtub* mBathtub;        // "バスタブ"
+	/* 0x08 */ TBathWaterManager* mWater; // "バスタブの水"
+	/* 0x0C */ f32 mFrontDist;
+	/* 0x10 */ f32 mFrontMargin;
+	/* 0x14 */ f32 mBackDist;
+	/* 0x18 */ f32 mBackMargin;
+	/* 0x1C */ f32 mBackRatio;
+	/* 0x20 */ f32 mHeightOffset;
 };
 
-#endif // ENEMY_BATHTUB_BINDER_HPP
+#endif

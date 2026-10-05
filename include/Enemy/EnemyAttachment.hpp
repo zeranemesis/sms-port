@@ -29,15 +29,14 @@ public:
 	virtual void behaveToHitGround();
 	virtual void behaveToHitWall(const TBGCheckData*);
 	virtual void forceKill();
-	virtual void setBehavior();
+	virtual void setBehavior() { }
 	virtual void recoverScale();
 	virtual f32 getNowGravity() { return mGravity; }
 
-	// Fabricated
-	bool isState(int check) const { return unk150 == check ? true : false; }
+	bool isUnk150Zero() const { return unk150 == 0 ? true : false; }
 
 public:
-	/* 0x150 */ int unk150; // mState? 0 = hide, 1 = visible, pakkun has more
+	/* 0x150 */ int unk150;
 	/* 0x154 */ u32 unk154;
 	/* 0x158 */ int unk158;
 	/* 0x15C */ char unk15C[4];

@@ -22,16 +22,45 @@
 #include <M3DUtil/InfectiousStrings.hpp>
 
 // TODO: should be in a header and violate ODR
+// Defined in both NpcAnm and NpcParts, as retail keeps the string in both; the
+// linker keeps the first. A PC build must give it internal or weak linkage.
 const char* cNpcPartsNameRootJoint = "__ROOT_JOINT__";
 
-void CalcJumpVelocityY(f32, f32) { }
+f32 CalcJumpVelocityY(f32 height, f32 gravity)
+{
+	f32 velocity = 0.0f;
+	if (gravity > 0.0f) {
+		velocity = gravity * 0.5f
+		           * (MsSqrtf(height * (1.0f / gravity) * 8.0f + 1.0f) + 1.0f);
+	}
+	return velocity;
+}
 
-void TBaseNPC::isNowMotionBlend() const { }
+bool TBaseNPC::isNowMotionBlend() const
+{
+	bool result = false;
+	if (!(mActorType < 0x400001E && mActorType >= 0x400001C)) {
+		if (mInbetweenCtrl->isMotionBlending())
+			result = true;
+	}
+	return result;
+}
 
-void TBaseNPC::offStopMotionBlend() { }
+void TBaseNPC::offStopMotionBlend() { mInbetweenCtrl->stopMotionBlend(); }
 
-void TBaseNPC::onStopMotionBlend() { }
+void TBaseNPC::onStopMotionBlend() { mInbetweenCtrl->startMotionBlend(); }
 
+// TODO: 0x20 short; this in r29 vs retail r31, blend param inverted.
+// c-k11 tells: the 0x4000015 case's two zeroed indices share one zero
+// (`li r26, 0; addi r28, r26, 0`), the c-k5 inliner-object shape, so that
+// case body was an inline level in retail; the other four parts sites test
+// getPartsMActor's result in r3 (`cmplwi r3, 0`) and copy it to a saved
+// register only after the index switch, so there the part actor is an
+// inline temporary, not a named local. A pass-through level over
+// `getPartsMActor(i, 0)` gives retail's `this` in r31 and the cmplwi, but
+// the copy is scheduled early and the frame is 0x58; the three case bodies
+// as TU-local inline levels (every subset) keep the 0x40 frame. MActor::setBck
+// and on/offStopMotionBlend are inert.
 void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
                           EnumNpcStopMotionBlendOnOff param_2)
 {
@@ -81,7 +110,8 @@ void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
 		switch (mActorType) {
 		case 0x4000018: {
 			bool bVar8 = checkUnk1D8(UNK1D8_FLAG_UNK1);
-			if (MActor* mactor = unk168->getPartsMActor(0, 0)) {
+			MActor* mactor = unk168->getPartsMActor(0, 0);
+			if (mactor != nullptr) {
 				int iVar7;
 				switch (param_1) {
 				case NPC_ANM_KIND_UNK5:
@@ -102,7 +132,8 @@ void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
 					mactor->setBckFromIndex(iVar7);
 			}
 
-			if (MActor* mactor = unk168->getPartsMActor(3, 0)) {
+			mactor = unk168->getPartsMActor(3, 0);
+			if (mactor != nullptr) {
 				int iVar7;
 
 				switch (param_1) {
@@ -133,7 +164,8 @@ void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
 					mactor->setBckFromIndex(iVar7);
 			}
 
-			if (MActor* mactor = unk168->getPartsMActor(4, 0)) {
+			mactor = unk168->getPartsMActor(4, 0);
+			if (mactor != nullptr) {
 				int iVar7;
 				switch (param_1) {
 				case NPC_ANM_KIND_UNK5:
@@ -195,6 +227,10 @@ void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
 	setCurAnmSound();
 }
 
+// TODO: keep() puts mKeepAnmCtrl in r6 and converts blend in r3; retail
+// reuses dead `this` (lwz r3, 0x190(r3); neg r5, r5). A TU-local keep
+// wrapper is inert. Closed by `mBlendOn = blend;` (implicit conversion) in
+// TNpcKeepAnm::keep in the shared NpcBase.hpp, parked for its owner.
 void TBaseNPC::requestNpcAnm_(EnumNpcAnmKind param_1,
                               EnumNpcStopMotionBlendOnOff param_2)
 {
@@ -257,10 +293,29 @@ void TBaseNPC::randomizeBckAndBtpFrame_()
 	}
 }
 
+// Two inline levels the frame and registers ask for (c-k9, MWCC debugger):
+// retail's MsSqrtf volatile sits at 0x7c, below the depth-1 parameter
+// bindings, so the square root is expanded one level down; and retail's
+// blend flag shares the `1` of isMotionBlending's result (`mr r0, r3`), which
+// only an inliner-object flag gives. `getColNum()` as a bare test drops the
+// u16 forced load that `!= 0` leaves (the last word below the volatile).
+static inline bool NpcAnmIsBlending(const TBaseNPC* npc)
+{
+	bool result = true;
+	if (!npc->mInbetweenCtrl->isMotionBlending()
+	    && !npc->mInbetweenCtrl->isForcedBlendRatio())
+		result = false;
+	return result;
+}
+
+static inline f32 NpcAnmSpeedXZ(const JGeometry::TVec3<f32>& v)
+{
+	return MsSqrtf(v.x * v.x + v.z * v.z);
+}
+
 void TBaseNPC::walkAnmRateChange_()
 {
-	f32 dVar13 = MsSqrtf(mLinearVelocity.x * mLinearVelocity.x
-	                     + mLinearVelocity.z * mLinearVelocity.z);
+	f32 dVar13 = NpcAnmSpeedXZ(mLinearVelocity);
 	if (dVar13 < 0.001f) {
 		switch (unkD0->getCurrentAnmKind()) {
 		case NPC_ANM_KIND_WALK:
@@ -278,12 +333,7 @@ void TBaseNPC::walkAnmRateChange_()
 				unk1CC = 0;
 				unk1D0 = 0.0f;
 
-				bool bVar3 = true;
-				if (!mInbetweenCtrl->isMotionBlending()
-				    && !mInbetweenCtrl->isForcedBlendRatio())
-					bVar3 = false;
-
-				if (!bVar3)
+				if (!NpcAnmIsBlending(this))
 					npcWaitIn();
 				else if (!mInbetweenCtrl->isMotionBlending())
 					mMActor->setFrameRate(unk1D0, ANM_TYPE_BCK);
@@ -331,7 +381,7 @@ void TBaseNPC::walkAnmRateChange_()
 
 			f32 dVar132 = CLBLinearInbetween(fVar1, dVar12, dVar131);
 
-			if (mColCount != 0)
+			if (getColNum())
 				dVar132 = dVar12;
 
 			CLBChaseDecrease(&unk1D0, dVar132,
@@ -368,11 +418,14 @@ EnumNpcAnmKind TBaseNPC::getNpcWaitAnmBase_()
 	return result;
 }
 
+static inline TGraphTracer* NpcAnmWaitTracer(const TBaseNPC* p)
+{
+	TGraphTracer* tracer = p->unk124;
+	return tracer;
+}
+
 void TBaseNPC::npcWaitIn()
 {
-
-	
-	
 	EnumNpcAnmKind kind = NPC_ANM_KIND_UNK1;
 
 	if (!checkActionFlag(NPC_ACTION_UNK400)) {
@@ -388,8 +441,8 @@ void TBaseNPC::npcWaitIn()
 				kind = NPC_ANM_KIND_UNK12;
 			}
 		} else {
-			if (!unk124->unk0->isDummy()) {
-				if (mSpine->getLatestNerve()
+			if (!NpcAnmWaitTracer(this)->getGraph()->isDummy()) {
+				if (getSpine()->getLatestNerve()
 				    == &TNerveNPCGraphWait::theNerve()) {
 					if (!gpMarDirector->isThing())
 						kind = getNpcWaitAnmBase_();
@@ -412,25 +465,19 @@ void TBaseNPC::npcFallIn()
 
 bool TBaseNPC::npcRecoverFromSinking()
 {
-	if (!checkLiveFlag(LIVE_FLAG_UNK8000000)) {
-		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(32.0f)) {
-			onLiveFlag(LIVE_FLAG_UNK8000000);
-			f32 dVar6 = getGravityY();
-			f32 fVar1 = 0.0f;
-			f32 tmp   = unk1C4 - mPosition.y + 150.0f;
-			if (dVar6 > 0.0f) {
-				fVar1 = dVar6 * 0.5f
-				        * (MsSqrtf(tmp * (1.0f / dVar6) * 8.0f + 1.0f) + 1.0f);
-			}
+	bool result = false;
 
-			mVelocity.y = fVar1;
+	if (!checkLiveFlag(LIVE_FLAG_UNK8000000)) {
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(32.0f)) {
+			onLiveFlag(LIVE_FLAG_UNK8000000);
+			mVelocity.y = CalcJumpVelocityY(unk1C4 - getPosition().y + 150.0f,
+			                                getGravityY());
 			if (mVelocity.y < 5.0f)
 				mVelocity.y = 5.0f;
 		}
 	}
 
-	bool result = false;
-	if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+	if (getMActor()->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
 		result = true;
 		offLiveFlag(LIVE_FLAG_AIRBORNE);
 		mVelocity.set(0.0f, 0.0f, 0.0f);
@@ -463,15 +510,20 @@ void TBaseNPC::npcStepIn()
 	resetToWait_();
 }
 
+static inline int NpcAnmActorType(const TBaseNPC* p)
+{
+	int actorType = p->mActorType;
+	return actorType;
+}
+
 void TBaseNPC::npcTalkIn()
 {
-
-	
-	
 	onLiveFlag(LIVE_FLAG_UNK80000);
-	if (mActorType != 0x400001C && mActorType != 0x400001D) {
+	if (NpcAnmActorType(this) != 0x400001C
+	    && NpcAnmActorType(this) != 0x400001D) {
 		if (!isSunflowerReviving()) {
-			if (isPeachTired()) {
+			bool tired = isPeachTired();
+			if (tired) {
 				requestNpcAnm_(NPC_ANM_KIND_UNK1A, NPC_STOP_MOTION_BLEND_ON);
 			} else {
 				requestTalkAnm_();
@@ -482,11 +534,24 @@ void TBaseNPC::npcTalkIn()
 	resetToWait_();
 }
 
+// Binding level worth +16 of low region, landing TBaseNPC::npcTalking's
+// frame at 0x50 (batch 121).
+static inline int NpcAnmGetCurrentAnmKind(const TLodAnm* p)
+{
+	int currentAnmKind = p->getCurrentAnmKind();
+	return currentAnmKind;
+}
+
+// Binding level worth +16 of low region, landing TBaseNPC::npcTalking's
+// frame at 0x50 (batch 121).
+static inline const TGraphWeb* NpcAnmGetGraph(const TGraphTracer* p)
+{
+	const TGraphWeb* graph = p->getGraph();
+	return graph;
+}
+
 void TBaseNPC::npcTalking()
 {
-
-	
-	
 	if (isSunflowerReviving()) {
 		sunflowerReviving();
 		return;
@@ -495,7 +560,7 @@ void TBaseNPC::npcTalking()
 	if (isTurnToMarioWhenTalk()) {
 		SMS_GoRotate(mPosition, SMS_GetMarioPos(), getTurnSpeed(),
 		             &mRotation.y);
-		if (!unk124->getGraph()->isDummy())
+		if (!NpcAnmGetGraph(unk124)->isDummy())
 			onUnk1DA(UNK1DA_FLAG_UNK1);
 	}
 
@@ -503,10 +568,18 @@ void TBaseNPC::npcTalking()
 	if (mActorType == 0x4000018 && checkUnk1D8(UNK1D8_FLAG_UNK2))
 		bVar1 = true;
 
-	if (bVar1 && unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK1A
+	if (bVar1 && NpcAnmGetCurrentAnmKind(unkD0) == NPC_ANM_KIND_UNK1A
 	    && mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
 		peachTiredOut_();
 	}
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TBaseNPC::npcTalkOut (batch 127).
+static inline TNpcThrow* NpcAnmThrowCtrl(const TBaseNPC* p)
+{
+	TNpcThrow* throwCtrl = p->mThrowCtrl;
+	return throwCtrl;
 }
 
 void TBaseNPC::npcTalkOut()
@@ -527,9 +600,9 @@ void TBaseNPC::npcTalkOut()
 			}
 		}
 
-		offLiveFlag(LIVE_FLAG_UNK8000);
+		offLiveFlag(LIVE_FLAG_UNK80000);
 		changeNerveFromTalk_();
-		if (mThrowCtrl == nullptr && mActorType == 0x4000006)
+		if (NpcAnmThrowCtrl(this) == nullptr && getActorTypeID() == 0x4000006)
 			requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_ON);
 	}
 }
@@ -557,9 +630,6 @@ void TBaseNPC::npcHappyIn(u8 param_1)
 
 void TBaseNPC::npcWetIn()
 {
-
-	
-	
 	if (!isSunflowerReviving()) {
 		EnumNpcAnmKind EVar7              = NPC_ANM_KIND_UNK5;
 		EnumNpcStopMotionBlendOnOff EVar6 = NPC_STOP_MOTION_BLEND_ON;
@@ -572,7 +642,7 @@ void TBaseNPC::npcWetIn()
 				if (isNormalMonte())
 					EVar6 = NPC_STOP_MOTION_BLEND_OFF;
 			} else {
-				if (isNormalMonte() || mActorType == 0x400000D) {
+				if (isNormalMonte() || getActorType() == 0x400000D) {
 					if (!checkLiveFlag(LIVE_FLAG_UNK4000000)
 					    && MsRandF() < 0.5f)
 						EVar7 = NPC_ANM_KIND_UNKB;
@@ -582,7 +652,7 @@ void TBaseNPC::npcWetIn()
 					if (isNormalMare() || mActorType == 0x4000011) {
 						if (MsRandF() < 0.5f)
 							EVar7 = NPC_ANM_KIND_UNKB;
-					} else if (!(mActorType < 0x4000018
+					} else if (!(getActorTypeID() < 0x4000018
 					             && mActorType >= 0x4000016)) {
 						(void)mActorType; // TODO: uh, inlining maybe?
 					} else if (!checkLiveFlag(LIVE_FLAG_UNK4000000)) {
@@ -599,6 +669,12 @@ void TBaseNPC::npcWetIn()
 	resetToTurn_();
 }
 
+// TODO: frame exact (0x160) since npcWetOut reads its spine and actor type
+// through the header accessors (+0x50 over its nine expansions) and the
+// default arm names its animation kind (+0x10). Remaining: the sunflower
+// predicate's bool is r29 vs retail r28, and the 0x4000016 switch's kind is r4
+// vs retail r3. A named int kind there (+8 frame), `(int)` on the switch value
+// and hoisting the default arm's kind out of its if are inert or worse.
 bool TBaseNPC::npcWetting()
 {
 	bool result = false;
@@ -705,7 +781,7 @@ bool TBaseNPC::npcWetting()
 								break;
 
 							case NPC_ANM_KIND_UNK7:
-							case NPC_ANM_KIND_UNK10:
+							case NPC_ANM_KIND_MAD:
 							case NPC_ANM_KIND_UNK18:
 								npcWetOut();
 								result = true;
@@ -716,7 +792,8 @@ bool TBaseNPC::npcWetting()
 
 					default:
 						if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
-							switch (unkD0->getCurrentAnmKind()) {
+							int kind = unkD0->getCurrentAnmKind();
+							switch (kind) {
 							case NPC_ANM_KIND_UNK5:
 							case NPC_ANM_KIND_UNKB:
 							case NPC_ANM_KIND_UNK14:
@@ -739,9 +816,9 @@ void TBaseNPC::npcWetOut()
 {
 	offLiveFlag(LIVE_FLAG_UNK2000000);
 	offLiveFlag(LIVE_FLAG_UNK4000000);
-	if (mSpine->getTop() == &TNerveNPCTalk::theNerve())
+	if (getSpine()->getTop() == &TNerveNPCTalk::theNerve())
 		requestTalkAnm_();
-	else if (mActorType == 0x4000006)
+	else if (getActorType() == 0x4000006)
 		requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_ON);
 }
 
@@ -799,6 +876,12 @@ void TBaseNPC::npcMadIn()
 	npcStepIn();
 }
 
+static inline TNpcSaveIndividual* NpcAnmMadParams(const TBaseNPC* p)
+{
+	TNpcSaveIndividual* params = p->mIndividualParams;
+	return params;
+}
+
 bool TBaseNPC::npcMadding()
 {
 	bool result = false;
@@ -806,27 +889,34 @@ bool TBaseNPC::npcMadding()
 	if (!checkLiveFlag(LIVE_FLAG_UNK2000000)) {
 		result = true;
 	} else {
-		switch (unkD0->getCurrentAnmKind()) {
+		switch (NpcAnmGetCurrentAnmKind(unkD0)) {
 		case NPC_ANM_KIND_UNK4: {
 			SMS_GoRotate(mPosition, SMS_GetMarioPos(),
-			             mIndividualParams->mMadTurnSpeed.get(), &mRotation.y);
-			JGeometry::TVec3<f32> axis = SMS_GetMarioPos();
-			axis -= mPosition;
-			JGeometry::TVec3<f32> copy  = axis;
+			             NpcAnmMadParams(this)->mMadTurnSpeed.get(), &mRotation.y);
+			// TODO: frame exact, but retail ranks the three vectors the
+			// other way round (axis lowest at 0x68, copy 0x88, copy2 0x98),
+			// so retail's `axis` is an inlined callee's object, not a local
+			// of this body. The named marioPos reference (c-t5's lever)
+			// only lands copy on retail's 0x88 (c-t6, 23 -> 17 markers).
+			const JGeometry::TVec3<f32>& marioPos = SMS_GetMarioPos();
+			JGeometry::TVec3<f32> axis = marioPos;
+			axis -= getPosition();
+			JGeometry::TVec3<f32> copy;
+			copy = axis;
 			JGeometry::TVec3<f32> copy2 = copy;
 			JGeometry::TVec3<f32> copy3;
 			copy3.set(copy2);
-			f32 fVar1 = MsWrap(abs(mRotation.y - MsGetRotFromZaxisY(copy3)),
-			                   0.0f, 360.0f);
+			f32 rotZ  = MsGetRotFromZaxisY(copy3);
+			f32 fVar1 = MsWrap(abs(mRotation.y - rotZ), 0.0f, 360.0f);
 			if (fVar1 < 0.001f)
 				requestNpcAnm_(NPC_ANM_KIND_MAD, NPC_STOP_MOTION_BLEND_OFF);
-			if (!unk124->getGraph()->isDummy())
+			if (!NpcAnmWaitTracer(this)->getGraph()->isDummy())
 				onUnk1DA(UNK1DA_FLAG_UNK1);
 		} break;
 
 		case NPC_ANM_KIND_MAD:
 		case NPC_ANM_KIND_UNKB:
-			if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+			if (getMActor()->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
 				result = true;
 				offLiveFlag(LIVE_FLAG_UNK2000000);
 			}
@@ -853,12 +943,15 @@ bool TBaseNPC::npcBlowning()
 	return result;
 }
 
+static inline int NpcAnmMareStandKind(const TLodAnm* p)
+{
+	int currentAnmKind = p->getCurrentAnmKind();
+	return currentAnmKind;
+}
+
 void TBaseNPC::npcMareStandIn()
 {
-
-	
-	
-	switch (unkD0->getCurrentAnmKind()) {
+	switch (NpcAnmMareStandKind(unkD0)) {
 	case NPC_ANM_KIND_UNKE:
 	case NPC_ANM_KIND_UNK5:
 		unk22C->doThing3(240, 360);
@@ -985,20 +1078,19 @@ void TBaseNPC::sunflowerReviveIn()
 
 bool TBaseNPC::sunflowerReviving()
 {
-
-	
-	
 	bool result = false;
-	if (checkUnk1D8(UNK1D8_FLAG_UNK2)
-	    && unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK1A) {
-		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
-			offUnk1D8(UNK1D8_FLAG_UNK2);
-			if (checkLiveFlag(LIVE_FLAG_UNK80000)) {
-				requestTalkAnm_();
-			} else {
-				npcWaitIn();
+	if (checkUnk1D8(UNK1D8_FLAG_UNK2)) {
+		int kind = unkD0->getCurrentAnmKind();
+		if (kind == NPC_ANM_KIND_UNK1A) {
+			if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+				offUnk1D8(UNK1D8_FLAG_UNK2);
+				if (checkLiveFlag(LIVE_FLAG_UNK80000)) {
+					requestTalkAnm_();
+				} else {
+					npcWaitIn();
+				}
+				result = true;
 			}
-			result = true;
 		}
 	}
 	return result;

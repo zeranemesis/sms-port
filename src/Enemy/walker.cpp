@@ -6,6 +6,22 @@
 #include <Strategic/LiveActor.hpp>
 #include <Map/MapData.hpp>
 
+// TODO: every instruction matches; frame 0x58 vs 0x70. Slot triage: retail's
+// `volatile f32` result slot is at 0x34 and `diffs` at 0x48, ours at 0x30 and
+// 0x34 -- so retail has 4 more dead bytes below the scalar and a 16-byte hole
+// between the scalar and the array, i.e. one unreferenced 16-byte local declared
+// between them. The `volatile` round-trip itself is still the unexplained
+// "frsqrte with no Newton step" idiom (same shape as THitActor::calcEntryRadius).
+// Measured since: an uninitialised `TVec3` declared after `diffs` is +16 (12
+// plus 8-byte alignment) and lands the hole, and each `getPoint1()`-style
+// accessor expansion is +4 of low region (all six expansions are +24 and give
+// frame 0x70 with every vector 4 bytes high, so they fill the wrong region).
+// 100% comes out of exactly one combination -- the dead `TVec3` plus the two
+// `getPoint1()` expansions of the first `set` only -- which is asymmetric
+// enough to be an accounting coincidence rather than retail's source, so it is
+// not committed. Also measured: two dead vectors or a dead `TVec3[2]` reach
+// 0x70 from above the pool and leave the vectors 8 high; binding each point to
+// a `const TVec3&` first reorders the loads (99.0%).
 static f32 calcFarthestVertex(const TBGCheckData* param_1,
                               const JGeometry::TVec3<f32>& param_2,
                               const JGeometry::TVec3<f32>& param_3)
@@ -66,6 +82,13 @@ void TWalker::reset()
 	unk4.clear();
 }
 
+// TODO: 98.0%. Every instruction but 12 matches; frame 0x330 vs 0x360.
+// (1) Both TPathNode blocks: retail copies the `operator-` result through its
+//     own return slot before the `+` receiver copy (the `<` runs at 0xa8c and
+//     0xc04), the batch-119 by-value-return geometry of JGVec3.hpp. A
+//     functional-cast copy is elided and a named local regresses.
+// (2) The cross product reloads `normal.x` for z after the x/y stores; that
+//     is the aliasing shape documented at TVec3::cross, a header property.
 void TWalker::bind(TLiveActor* param_1)
 {
 	if (unk28 == 1 && unk2C != nullptr) {
@@ -109,11 +132,11 @@ void TWalker::bind(TLiveActor* param_1)
 				const TBGCheckData* local_44;
 				if (enemy->checkLiveFlag(LIVE_FLAG_UNK1000)) {
 					dVar16 = gpMap->checkGroundIgnoreWaterSurface(
-					    local_30.x, local_30.y + enemy->getHeadHeight(),
+					    local_30.x, enemy->mPosition.y + enemy->getHeadHeight(),
 					    local_30.z, &local_44);
 				} else {
 					dVar16 = gpMap->checkGround(
-					    local_30.x, local_30.y + enemy->getHeadHeight(),
+					    local_30.x, enemy->mPosition.y + enemy->getHeadHeight(),
 					    local_30.z, &local_44);
 				}
 				dVar16 += 1.0f;
@@ -137,7 +160,7 @@ void TWalker::bind(TLiveActor* param_1)
 			unk20 = 30;
 		}
 
-		if (fVar1 + 0.05f <= local_30.y
+		if (local_30.y <= fVar1 + 0.05f
 		    && !local_40->checkFlag(BG_CHECK_FLAG_ILLEGAL)
 		    && !local_40->isEnemyThrough()) {
 			local_30.y       = fVar1;
@@ -182,10 +205,12 @@ void TWalker::bind(TLiveActor* param_1)
 			JGeometry::TVec3<f32> normal = pTVar14->getNormal();
 			JGeometry::TVec3<f32> local_94;
 			local_94.cross(normal, JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f));
+			local_94.y = 0.0f;
 			local_94.normalize();
 			if (unk14 == 0) {
-				JGeometry::TVec3<f32> lv = enemy->mLinearVelocity;
-				if (lv.dot(local_94) > 0.0f) {
+				JGeometry::TVec3<f32> local_a0 = lv;
+				local_a0.y = 0.0f;
+				if (local_a0.dot(local_94) > 0.0f) {
 					unk14 = 2;
 				} else {
 					local_94.negate();
@@ -194,7 +219,7 @@ void TWalker::bind(TLiveActor* param_1)
 
 				f32 dVar18
 				    = calcFarthestVertex(pTVar14, enemy->mPosition, local_94);
-				JGeometry::TVec3<f32> local_a0
+				local_a0
 				    = enemy->mPosition
 				      + local_94 * (enemy->getWallRadius() * 2.0f + dVar18);
 
@@ -225,31 +250,23 @@ void TWalker::bind(TLiveActor* param_1)
 			    = calcFarthestVertex(pTVar14, enemy->mPosition, local_94);
 			f32 fVar4 = (enemy->getWallRadius()) * 2.0f + dVar18;
 			if (enemy->unk114.empty()) {
-				JGeometry::TVec3<f32> local_130 = local_94 * fVar4;
-				JGeometry::TVec3<f32> local_124
-				    = pTVar14->getNormal() * enemy->getWallRadius();
-
-				JGeometry::TVec3<f32> local_254 = enemy->mPosition - local_124;
-				JGeometry::TVec3<f32> local_13c = local_254 + local_130;
+				TPathNode node(enemy->mPosition
+				               - normal * enemy->getWallRadius()
+				               + local_94 * fVar4);
 				enemy->unk114.push(enemy->unkF4);
-				enemy->unkF4.unk0 = nullptr;
-				enemy->unkF4.unk4 = local_13c;
+				enemy->unkF4 = node;
 			} else {
-				JGeometry::TVec3<f32> tmp2 = local_94 * fVar4;
-				JGeometry::TVec3<f32> tmp1
-				    = pTVar14->getNormal() * enemy->getWallRadius();
-				JGeometry::TVec3<f32> thing     = enemy->mPosition - tmp1;
-				JGeometry::TVec3<f32> local_278 = thing + tmp2;
-
-				enemy->unkF4.unk0 = nullptr;
-				enemy->unkF4.unk4 = local_278;
+				TPathNode node(enemy->mPosition
+				               - normal * enemy->getWallRadius()
+				               + local_94 * fVar4);
+				enemy->unkF4 = node;
 			}
 		}
 	}
 
-	JGeometry::TVec3<f32> local_218 = local_70.mCenter;
-	local_218.y                     = local_30.y;
-	enemy->mLinearVelocity          = local_218 - enemy->mPosition;
+	local_30.x             = local_70.mCenter.x;
+	local_30.z             = local_70.mCenter.z;
+	enemy->mLinearVelocity = local_30 - enemy->mPosition;
 }
 
 void TWalker::setMode(int param_1)

@@ -113,6 +113,13 @@ public:
 
 class JPADraw {
 public:
+	// The map's UNUSED 0x40 __dt__7JPADrawFv sits in JPAEmitter.cpp between
+	// the JSUList and JSULink member destructors the emitter constructor
+	// emits for cleanup. MWCC emits it there only when JPADraw has a
+	// user-declared constructor as well as the destructor; both are empty.
+	JPADraw() { }
+	~JPADraw() { }
+
 	/* 0x00 */ JPADrawExecEmitterVisitor* mpExecEmtrVis[1];
 	/* 0x04 */ JPADrawExecEmitterVisitor* mpExecEmtrPVis[5];
 	/* 0x18 */ JPADrawExecEmitterVisitor* mpExecEmtrCVis[3];
@@ -159,6 +166,7 @@ public:
 	void initParticle(JPABaseParticle*);
 	void initChild(JPABaseParticle*, JPABaseParticle*);
 	const ResTIMG* swapImage(const ResTIMG*, s16);
+	BOOL loadTexture(u8, GXTexMapID);
 	void setDrawExecVisitorsBeforeCB(const JPADraw::JPADrawVisitorDefFlags&);
 	void setDrawExecVisitorsAfterCB(const JPADraw::JPADrawVisitorDefFlags&);
 	void setDrawCalcVisitors(const JPADraw::JPADrawVisitorDefFlags&);
@@ -170,6 +178,9 @@ public:
 	void zDrawParticle();
 	void zDrawChild();
 	s16 getMainTextureID(u8);
+	s16 getIndTextureID();
+	s16 getIndSubTextureID();
+	s16 getSecondTextureID();
 	void loadYBBMtx(MtxPtr);
 };
 

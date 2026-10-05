@@ -57,10 +57,7 @@ public:
 
 class THinokuri2Manager : public TEnemyManager {
 public:
-	THinokuri2Manager(const char* name = "ヒノクリ２マネージャ")
-	    : TEnemyManager(name)
-	{
-	}
+	THinokuri2Manager(const char* name = "ヒノクリ２マネージャ");
 
 	virtual void load(JSUMemoryInputStream&);
 	void createModelData();
@@ -163,28 +160,28 @@ public:
 	BOOL receiveMessageLv1(THitActor*, u32);
 	BOOL receiveMessageLv2(THitActor*, u32);
 
-	// fabricated
-	THino2Params* getSaveParam() const
-	{
-		return (THino2Params*)TSpineEnemy::getSaveParam();
-	}
+	// THinokuri2 must not override the virtual TSpineEnemy::getSaveParam
+	// slot: the map has no getSaveParam__10THinokuri2CFv and retail's
+	// vtable keeps TSpineEnemy's word at 0x108. A downcasting wrapper is
+	// not an option either -- it spends an inline level the params
+	// `.get()` calls need -- so every use spells the cast out.
 
 	// fabricated
 	u8 calcHitPoints()
 	{
 		switch (mLevel) {
 		case 0:
-			return getSaveParam()->mSLHitPointMaxLv0.get();
+			return ((THino2Params*)getSaveParam())->mSLHitPointMaxLv0.get();
 			break;
 		case 1:
-			return getSaveParam()->mSLHitPointMaxLv1.get();
+			return ((THino2Params*)getSaveParam())->mSLHitPointMaxLv1.get();
 			break;
 		case 2:
-			return getSaveParam()->mSLHitPointMaxLv2.get();
+			return ((THino2Params*)getSaveParam())->mSLHitPointMaxLv2.get();
 			break;
 		default:
 			if (getSaveParam())
-				return getSaveParam()->mSLHitPointMax.get();
+				return ((THino2Params*)getSaveParam())->mSLHitPointMax.get();
 			break;
 		}
 

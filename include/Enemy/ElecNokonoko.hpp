@@ -1,15 +1,27 @@
-#ifndef ENEMY_ELEC_NOKONOKO_HPP
-#define ENEMY_ELEC_NOKONOKO_HPP
+#ifndef ENEMY_ELECNOKONOKO_HPP
+#define ENEMY_ELECNOKONOKO_HPP
 
-#include <Enemy/WalkerEnemy.hpp>
 #include <Enemy/EnemyAttachment.hpp>
+#include <Enemy/WalkerEnemy.hpp>
+#include <Strategic/Nerve.hpp>
 
-class J3DMaterialTable;
+class TLiveActor;
 class TElecNokonoko;
+class J3DMaterialTable;
 
+// Names and defaults are the ones PARAM_INIT stringified into .rodata and the
+// constants the constructor stores into each TParamRT.
 class TElecNokonokoSaveLoadParams : public TWalkerEnemyParams {
 public:
-	TElecNokonokoSaveLoadParams(const char* path);
+	TElecNokonokoSaveLoadParams(const char* prm);
+
+	s32 getSLReadyTime() const { return mSLReadyTime.get(); }
+	f32 getSLCarapaceGravity() const { return mSLCarapaceGravity.get(); }
+	f32 getSLCarapaceSpeed() const { return mSLCarapaceSpeed.get(); }
+	f32 getSLCarapaceTurnSpeed() const { return mSLCarapaceTurnSpeed.get(); }
+	f32 getSLCarapaceSpinSpeed() const { return mSLCarapaceSpinSpeed.get(); }
+	f32 getSLCarapaceShootRange() const { return mSLCarapaceShootRange.get(); }
+	f32 getSLCarapaceFlyDist() const { return mSLCarapaceFlyDist.get(); }
 
 	/* 0x32C */ TParamRT<s32> mSLReadyTime;
 	/* 0x340 */ TParamRT<f32> mSLCarapaceGravity;
@@ -20,55 +32,75 @@ public:
 	/* 0x3A4 */ TParamRT<f32> mSLCarapaceFlyDist;
 };
 
-// The electric shell an elec nokonoko shoots at mario and then collects back.
+// The electric shell the koopa throws. It is an attachment, so the koopa owns
+// it and drives it through its own spine: it spins about Y while it flies, is
+// reflected off walls and off anything that hits it, and eventually comes
+// home to be picked up again.
 class TElecCarapace : public TEnemyAttachment {
 public:
 	TElecCarapace(const char* name);
 
+	// Declared in vtable order; shoot() is a new slot past TEnemyAttachment.
+	virtual ~TElecCarapace() { }
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	virtual void calcRootMatrix();
 	virtual void bind();
 	virtual void kill();
-	virtual f32 getPhaseShift() const { return unk174 ? 0.0f : 180.0f; }
-	virtual void loadInit(TSpineEnemy*, const char*);
+	virtual f32 getPhaseShift() const
+	{
+		return mSpinReverse ? 0.0f : 180.0f;
+	}
+	virtual void loadInit(TSpineEnemy* host, const char* model);
 	virtual void appear();
 	virtual void rebirth() { }
 	virtual void sendMessage();
 	virtual void behaveToHitGround();
-	virtual void behaveToHitWall(const TBGCheckData*);
+	virtual void behaveToHitWall(const TBGCheckData* wall);
 	virtual void setBehavior();
 	virtual void recoverScale() { }
 	virtual f32 getNowGravity();
 	virtual void shoot();
 
-	bool isMove();
-	void move();
-	void reflect(THitActor*);
+	void reflect(THitActor* other);
 	void setZigParameter();
+	void move();
+	bool isMove();
 
-public:
-	/* 0x16C */ TElecNokonoko* mOwner;
-	/* 0x170 */ THitActor* unk170; // last actor we got reflected by
-	/* 0x174 */ bool unk174;
-	/* 0x175 */ u8 unk175;
-	/* 0x176 */ u8 unk176;
-	/* 0x178 */ f32 unk178; // zigzag cycle
-	/* 0x17C */ f32 unk17C; // zigzag angle
-	/* 0x180 */ int unk180; // wall reflection cooldown
-	/* 0x184 */ u8 unk184;
-	/* 0x188 */ f32 unk188; // spin angle
-	/* 0x18C */ JGeometry::TVec3<f32> unk18C; // return velocity
+	// fabricated
+	TElecNokonoko* getNokonoko() { return mNokonoko; }
+
+	/* 0x16C */ TElecNokonoko* mNokonoko;
+	// Whatever last bounced the shell, so one collision only reflects once.
+	/* 0x170 */ THitActor* mReflector;
+	// Which way round the shell spins; getPhaseShift turns it into the half
+	// cycle the two shells of a pair are apart.
+	/* 0x174 */ u8 mSpinReverse;
+	// Set while the shell must fly straight instead of zigzagging.
+	/* 0x175 */ u8 mStraight;
+	/* 0x176 */ u8 mFlying;
+	/* 0x178 */ f32 mZigzagCycle;
+	/* 0x17C */ f32 mZigzagAngle;
+	// Counts 1..5 after a wall bounce so the shell cannot bounce again at once.
+	/* 0x180 */ int mReflectTimer;
+	/* 0x184 */ u8 mLanded;
+	/* 0x188 */ f32 mSpinAngle;
+	// Per-frame step home, a sixty-fourth of the distance to the koopa.
+	/* 0x18C */ JGeometry::TVec3<f32> mReturnStep;
 	/* 0x198 */ f32 unk198;
 };
 
+// 電気ノコノコ, the Noki Bay koopa that throws its electrified shell at Mario
+// and walks over to pick it up again.
 class TElecNokonoko : public TWalkerEnemy {
 public:
-	TElecNokonoko(const char* name = "電気ノコノコ");
+	TElecNokonoko(const char* name);
 
-	virtual void load(JSUMemoryInputStream& stream);
+	// Declared in vtable order; rest() is a new slot past TWalkerEnemy.
+	virtual ~TElecNokonoko() { }
+	virtual void load(JSUMemoryInputStream&);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
-	virtual void init(TLiveManager* manager);
+	virtual void init(TLiveManager*);
 	virtual void calcRootMatrix();
 	virtual void moveObject();
 	virtual const char** getBasNameTable() const;
@@ -94,43 +126,66 @@ public:
 	void shootIn();
 	void catchIn();
 
-	static bool mReflectSw;
+	// fabricated
+	TElecCarapace* getCarapace() { return mCarapace; }
+	TElecNokonokoSaveLoadParams* getSaveParams() const { return mSaveParams; }
+	// The explicit if/return form is what the retail object materialises at
+	// every call site; `return mHasCarapace == 0;` folds into a bare compare.
+	bool hasCarapace() const
+	{
+		if (mHasCarapace == 0)
+			return true;
+		return false;
+	}
+
+	// When cleared the shell passes through everything instead of bouncing.
+	static u8 mReflectSw;
+	// UNUSED in the map, so nothing in the retail object reads it.
 	static u8 mCarapaceJntIndex;
 
-public:
 	/* 0x194 */ TElecCarapace* mCarapace;
 	/* 0x198 */ int unk198;
-	/* 0x19C */ int unk19C;
-	/* 0x1A0 */ TElecNokonokoSaveLoadParams* mParams;
-	/* 0x1A4 */ int unk1A4; // 0 = shell is on the back, 1 = shell was shot
-	/* 0x1A8 */ JGeometry::TVec3<f32> unk1A8;
+	// Counts down from a random part of mSLReadyTime before the koopa is
+	// willing to throw again.
+	/* 0x19C */ int mReadyTimer;
+	/* 0x1A0 */ TElecNokonokoSaveLoadParams* mSaveParams;
+	// 0 while the koopa still wears its shell, 1 once it has been thrown.
+	/* 0x1A4 */ int mHasCarapace;
+	/* 0x1A8 */ JGeometry::TVec3<f32> mEffectPos;
 };
 
 class TElecNokonokoManager : public TSmallEnemyManager {
 public:
-	TElecNokonokoManager(const char* name = "電気ノコノコマネージャー");
+	TElecNokonokoManager(const char* name);
 
-	virtual void load(JSUMemoryInputStream& stream);
+	// Declared in vtable order; initSetEnemies overrides TSmallEnemyManager's.
+	virtual ~TElecNokonokoManager() { }
+	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void createModelData();
 	virtual TSpineEnemy* createEnemyInstance();
-	virtual void clipEnemies(JDrama::TGraphics* graphics);
+	virtual void clipEnemies(JDrama::TGraphics*);
 	virtual void initSetEnemies();
 
-public:
-	/* 0x60 */ J3DMaterialTable* unk60;
+	// fabricated
+	TElecNokonokoSaveLoadParams* getSaveParams() const
+	{
+		return (TElecNokonokoSaveLoadParams*)unk38;
+	}
+	TElecNokonoko* getObj(int i) { return (TElecNokonoko*)unk18[i]; }
+	J3DMaterialTable* getMaterialTable() { return mMaterialTable; }
+
+	/* 0x60 */ J3DMaterialTable* mMaterialTable;
 };
 
-void createNokonokoThunder(JGeometry::TVec3<f32>);
-
-DECLARE_NERVE(TNerveElecCarapaceReturn, TLiveActor);
-DECLARE_NERVE(TNerveElecCarapaceWait, TLiveActor);
-DECLARE_NERVE(TNerveElecCarapaceMove, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoAttack, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoRebirth, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoFreeze, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoTurn, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoCollect, TLiveActor);
-DECLARE_NERVE(TNerveElecNokonokoShoot, TLiveActor);
+DECLARE_NERVE(TNerveElecCarapaceMove, TLiveActor)
+DECLARE_NERVE(TNerveElecCarapaceReturn, TLiveActor)
+DECLARE_NERVE(TNerveElecCarapaceWait, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoAttack, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoCollect, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoFreeze, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoRebirth, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoShoot, TLiveActor)
+DECLARE_NERVE(TNerveElecNokonokoTurn, TLiveActor)
 
 #endif

@@ -126,12 +126,6 @@ static void cbForStateReadingFST(u32 intType)
 	}
 }
 
-inline static void stateError(u32 error)
-{
-	__DVDStoreErrorCode(error);
-	DVDLowStopMotor(cbForStateError);
-}
-
 static void cbForStateError(u32 intType)
 {
 	DVDCommandBlock* finished;
@@ -158,6 +152,12 @@ static void cbForStateError(u32 intType)
 	stateReady();
 
 	return;
+}
+
+static void stateError(u32 error)
+{
+	__DVDStoreErrorCode(error);
+	DVDLowStopMotor(cbForStateError);
 }
 
 static void stateTimeout()
@@ -202,7 +202,7 @@ static u32 CategorizeError(u32 error)
 	}
 }
 
-inline static BOOL CheckCancel(u32 resume)
+static BOOL CheckCancel(u32 resume)
 {
 	DVDCommandBlock* finished;
 
@@ -989,6 +989,8 @@ void DVDReset(void)
 	ResumeFromHere = 0;
 }
 
+BOOL DVDResetRequired(void) { return ResetRequired; }
+
 s32 DVDGetCommandBlockStatus(DVDCommandBlock* block)
 {
 	BOOL enabled;
@@ -1202,7 +1204,7 @@ static void cbForCancelSync(s32 result, DVDCommandBlock* block)
 	OSWakeupThread(&__DVDThreadQueue);
 }
 
-inline BOOL DVDCancelAllAsync(DVDCBCallback callback)
+BOOL DVDCancelAllAsync(DVDCBCallback callback)
 {
 	BOOL enabled;
 	DVDCommandBlock* p;

@@ -1,10 +1,11 @@
-#include <Enemy/BossHanachanChangeSaveParams.hpp>
+#include <Enemy/BossHanachan.hpp>
 
-static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
-static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
+// Shared literals present before the parameter names in the original object.
+#include <System/DummyMactorString.hpp>
+#include <System/DummyStrings.hpp>
 
-TBossHanachanCommonSaveParams::TBossHanachanCommonSaveParams(const char* path)
-    : TParams(path)
+TBossHanachanCommonSaveParams::TBossHanachanCommonSaveParams(const char* prm)
+    : TParams(prm)
     , PARAM_INIT(mSLViewClipFar, 25000.0f)
     , PARAM_INIT(mSLViewClipRadius, 3500.0f)
     , PARAM_INIT(mSLHeadHitOffsetY, 400.0f)
@@ -35,11 +36,11 @@ TBossHanachanCommonSaveParams::TBossHanachanCommonSaveParams(const char* path)
     , PARAM_INIT(mSLCamShakeMaxDist, 500.0f)
     , PARAM_INIT(mSLMotionBlendFrames, 20)
 {
-	load(mPrmPath);
+	TParams::load(mPrmPath);
 }
 
-TBossHanachanChangeSaveParams::TBossHanachanChangeSaveParams(const char* path)
-    : TParams(path)
+TBossHanachanChangeSaveParams::TBossHanachanChangeSaveParams(const char* prm)
+    : TParams(prm)
     , PARAM_INIT(mSLWalkBckRateMagnif, 0.1f)
     , PARAM_INIT(mSLWalkBckRateMin, 0.3f)
     , PARAM_INIT(mSLWalkAnmMarchSpeed, 10.0f)
@@ -75,5 +76,5 @@ TBossHanachanChangeSaveParams::TBossHanachanChangeSaveParams(const char* path)
     , PARAM_INIT(mSLThrowMoveDirPower, 20.0f)
     , PARAM_INIT(mSLThrowVecY, 150.0f)
 {
-	load(mPrmPath);
+	TParams::load(mPrmPath);
 }

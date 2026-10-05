@@ -1,37 +1,29 @@
-#include <Enemy/Yumbo.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
+#include <Enemy/Yunbo.hpp>
+#include <Enemy/Enemy.hpp>
+#include <Strategic/LiveActor.hpp>
 #include <Strategic/Spine.hpp>
-#include <Strategic/ObjModel.hpp>
 #include <Strategic/Strategy.hpp>
-#include <Map/Map.hpp>
+#include <Strategic/ObjModel.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
 #include <Player/MarioAccess.hpp>
+#include <Map/Map.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <JSystem/JGeometry/JGQuat4.hpp>
+#include <System/Particles.hpp>
+#include <System/EmitterViewObj.hpp>
 #include <MSound/MSound.hpp>
 #include <MSound/MSoundSE.hpp>
 #include <MSound/SoundEffects.hpp>
-#include <System/EmitterViewObj.hpp>
-#include <System/Particles.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <JSystem/JGeometry.hpp>
-#include <JSystem/JGeometry/JGQuat4.hpp>
-#include <JSystem/JKernel/JKRFileLoader.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
-#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
-#include <JSystem/JUtility/JUTNameTab.hpp>
-#include <JSystem/JParticle/JPAEmitter.hpp>
-#include <stdlib.h>
 
 // rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-
-extern f32 SMSGetAnmFrameRate();
-
-// This TU is -inline deferred: the definition order below is the reverse of
-// the .text layout in marioEU.MAP.
 
 static const char* sambohead_bastable[] = {
 	"/scene/sambohead/bas/flower_shoot.bas",
@@ -49,78 +41,95 @@ static const char* sambohead_bastable[] = {
 	nullptr,
 };
 
-TYumboSeed::TYumboSeed(MActor* actor, const TYumbo& owner)
+TYumboSeed::TYumboSeed(MActor* actor, const TYumbo& yumbo)
     : THitActor("ユンボ種")
-    , mOwner(&owner)
+    , mYumbo(&yumbo)
     , mActor(actor)
-    , mSeedFlags(SEED_FLAG_UNUSED)
+    , mSeedFlags(SEED_FLAG_SPENT)
 {
 }
 
 void TYumboSeed::init()
 {
-	initHitActor(0x1000002A, 1, 0x80000000, 30.0f, 30.0f, 0.0f, 0.0f);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
-	    ->getChildren()
-	    .push_back(this);
+	initHitActor(0x1000002A, 1, ACTOR_TYPE_PLAYER, 30.0f, 30.0f, 0.0f, 0.0f);
+
+	TIdxGroupObj* group
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
+	group->getChildren().push_back(this);
 }
 
+// TODO: instruction-identical, but `mtx` sits 4 bytes low: one 4-byte object
+// of ours is ordered above it where the retail frame has none. Frame total and
+// every instruction already agree.
 void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (mSeedFlags & SEED_FLAG_UNUSED)
+	if (mSeedFlags & SEED_FLAG_SPENT)
 		return;
 
 	if (cue & CUE_CALC_ANIM) {
-		TPosition3f mtx;
-		mtx.identity33();
-		mtx.setTrans(mPosition);
+		Mtx mtx;
+		mtx[0][0] = 1.0f;
+		mtx[1][0] = 0.0f;
+		mtx[2][0] = 0.0f;
+		mtx[0][1] = 0.0f;
+		mtx[1][1] = 1.0f;
+		mtx[2][1] = 0.0f;
+		mtx[0][2] = 0.0f;
+		mtx[1][2] = 0.0f;
+		mtx[2][2] = 1.0f;
+		mtx[0][3] = getPosition().x;
+		mtx[1][3] = mPosition.y;
+		mtx[2][3] = mPosition.z;
+
 		mActor->getModel()->setBaseScale(mScaling);
 		MTXCopy(mtx, mActor->getModel()->getBaseTRMtx());
 		mActor->getModel()->calc();
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 	}
 
 	if (cue & CUE_MOVE) {
-		mVelocity.y -= mOwner->getSaveLoadParam()->mSeedGravityY.get();
-		mPosition += mVelocity;
-		mVelocity.scale(mOwner->getSaveLoadParam()->mSeedAirFric.get());
+		// Reading the TParamRT directly rather than through the getters:
+		// the extra inline level the getters add costs 8 bytes of frame the
+		// retail object does not have.
+		mVelocity.y -= mYumbo->getSaveParams()->mSeedGravityY.get();
+		mPosition.add(mVelocity);
+		mVelocity.scale(mYumbo->getSaveParams()->mSeedAirFric.get());
+
 		checkHitActors();
-		if (--mLife == 0) {
-			mSeedFlags |= SEED_FLAG_UNUSED;
+
+		if (--mLifeTimer == 0) {
+			mSeedFlags |= SEED_FLAG_SPENT;
 			onHitFlag(HIT_FLAG_NO_COLLISION);
 		}
 	}
 
-	if (!(mSeedFlags & SEED_FLAG_UNK4))
+	if (!(mSeedFlags & SEED_FLAG_HIDDEN))
 		mActor->perform(cue, graphics);
 }
 
 void TYumboSeed::checkHitActors()
 {
-	THitActor** end = mCollisions + mColCount;
-	for (THitActor** it = mCollisions; it != end; ++it) {
-		switch ((*it)->mActorType) {
+	THitActor** end;
+	THitActor** it;
+
+	it  = mCollisions;
+	end = mCollisions + mColCount;
+	for (; it != end; ++it) {
+		switch ((*it)->getActorType()) {
 		case 0x80000001:
-			SMS_SendMessageToMario(this, 0xE);
-			mSeedFlags |= SEED_FLAG_UNUSED;
+			SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
+			mSeedFlags |= SEED_FLAG_SPENT;
 			break;
 		}
 	}
 }
 
 void TYumboSeed::startToMove(const JGeometry::TVec3<f32>& pos,
-                             const JGeometry::TVec3<f32>& velocity, int life)
+                             const JGeometry::TVec3<f32>& vel, int life)
 {
-	mSeedFlags &= ~SEED_FLAG_UNUSED;
-	mPosition = pos;
-	mVelocity = velocity;
-	mLife     = life;
+	mSeedFlags &= ~SEED_FLAG_SPENT;
+	mPosition  = pos;
+	mVelocity  = vel;
+	mLifeTimer = life;
 	mScaling.set(2.0f, 2.0f, 2.0f);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	onHitFlag(HIT_FLAG_CANNOT_GET_HIT);
@@ -132,49 +141,73 @@ TYumbo::TYumbo(const char* name)
 	onLiveFlag(LIVE_FLAG_UNK10);
 }
 
+// Binding levels, +0x20 of low region in TYumbo::init together with the named
+// keeper in initMActorAndKeeper.
+static inline JUTNameTab* YunboInitJointName(TYumbo* y)
+{
+	J3DModelData* data = y->getModel()->getModelData();
+	JUTNameTab* tab    = data->getJointName();
+	return tab;
+}
+
+static inline TMActorKeeper* YunboInitKeeper(TYumbo* y)
+{
+	TMActorKeeper* keeper = y->mMActorKeeper;
+	return keeper;
+}
+
 void TYumbo::init(TLiveManager* manager)
 {
 	mManager = manager;
 	mManager->manageActor(this);
+
 	initMActorAndKeeper();
+
 	mSpine->initWith(&TNerveYumboDancing::theNerve());
 
-	TYumboSeed** end = mSeeds + 16;
-	for (TYumboSeed** it = mSeeds; it != end; ++it) {
-		*it = new TYumboSeed(mMActorKeeper->createMActor("samboSeed.bmd", 3),
-		                     *this);
-		(*it)->init();
+	TYumboSeed** end = &mSeeds[16];
+	for (TYumboSeed** seed = &mSeeds[0]; seed != end; ++seed) {
+		*seed = new TYumboSeed(
+		    YunboInitKeeper(this)->createMActor("samboSeed.bmd", 3), *this);
+		(*seed)->init();
 	}
 
 	initCollision();
+
 	initAnmSound();
-	mCenterJointIndex
-	    = getModel()->getModelData()->getJointName()->getIndex("center");
+
+	mCenterJntIndex
+	    = YunboInitJointName(this)->getIndex("center");
 }
 
 void TYumbo::reset() { }
 
 void TYumbo::initMActorAndKeeper()
 {
-	mMActorKeeper  = new TMActorKeeper(mManager, 0x12);
-	MActor* yumbo  = mMActorKeeper->createMActor("yumbo.bmd", 0);
-	MActor* flower = mMActorKeeper->createMActor("flower.bmd", 0);
+	TMActorKeeper* newKeeper = new TMActorKeeper(mManager, 0x12);
+	mMActorKeeper = newKeeper;
+
+	MActor* yumbo = mMActorKeeper->createMActor("yumbo.bmd", 0);
+	TMActorKeeper* keeper = mMActorKeeper;
+	MActor* flower = keeper->createMActor("flower.bmd", 0);
 	setMaterialToMActor(flower,
-	                    ((TYumboManager*)mManager)->mFlowerMaterialTable);
+	                    ((TYumboManager*)mManager)->mMaterialTable);
+
 	mMActor = yumbo;
 }
 
 void TYumbo::setMaterialToMActor(MActor* actor, J3DMaterialTable* table)
 {
-	actor->getModel()->getModelData()->setMaterialTable(
-	    table, (J3DMaterialCopyFlag)3);
+	actor->getModel()->getModelData()->setMaterialTable(table,
+	                                                    J3DMatCopyFlag_All);
 	actor->initDL();
 	actor->getModel()->lock();
 }
 
 void TYumbo::initCollision()
 {
-	initHitActor(0x1000002A, 1, 0x80000000, 97.5f, 225.0f, 90.0f, 225.0f);
+	initHitActor(0x1000002A, 1, ACTOR_TYPE_PLAYER, 97.5f, 225.0f, 90.0f,
+	             225.0f);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 	mGroundHeight = gpMap->checkGround(
 	    mPosition.x, mPosition.y + mHeadHeight, mPosition.z, &mGroundPlane);
@@ -182,9 +215,18 @@ void TYumbo::initCollision()
 	mScaling.set(1.5f, 1.5f, 1.5f);
 }
 
+// Binding level worth +8 of low region, landing TYumbo::receiveMessage's
+// frame at 0x30 (batch 124).
+static inline bool YunboCheckLiveFlag(const TYumbo* p, u32 i)
+{
+	bool liveFlag = p->checkLiveFlag(i);
+	return liveFlag;
+}
+
+// TODO: instruction-identical, 8 bytes of frame short.
 BOOL TYumbo::receiveMessage(THitActor* sender, u32 message)
 {
-	if (checkLiveFlag(LIVE_FLAG_DEAD))
+	if (YunboCheckLiveFlag(this, LIVE_FLAG_DEAD))
 		return FALSE;
 
 	switch (message) {
@@ -194,15 +236,18 @@ BOOL TYumbo::receiveMessage(THitActor* sender, u32 message)
 			return FALSE;
 		behaveHitAttack();
 		return TRUE;
-	}
 
-	return TSmallEnemy::receiveMessage(sender, message);
+	default:
+		return TSmallEnemy::receiveMessage(sender, message);
+	}
 }
 
+// TODO: instruction-identical, 0x10 bytes of frame short. updateEffect and
+// updateCollision are both size-exact against the map, so the missing stack is
+// inline-boundary temporaries, not a wrong body.
 void TYumbo::moveObject()
 {
-	if (!isChangedBlock())
-		updateEffect();
+	updateEffect();
 	updateCollision();
 	updateSquareToMario();
 	TSmallEnemy::moveObject();
@@ -211,9 +256,10 @@ void TYumbo::moveObject()
 void TYumbo::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TSmallEnemy::perform(cue, graphics);
-	TYumboSeed** end = mSeeds + 16;
-	for (TYumboSeed** it = mSeeds; it != end; ++it)
-		(*it)->perform(cue, graphics);
+
+	TYumboSeed** end = &mSeeds[16];
+	for (TYumboSeed** seed = &mSeeds[0]; seed != end; ++seed)
+		(*seed)->perform(cue, graphics);
 }
 
 void TYumbo::behaveToWater(THitActor*)
@@ -240,101 +286,116 @@ void TYumbo::updateCollision()
 
 void TYumbo::updateEffect()
 {
+	if (isChangedBlock())
+		return;
+
 	if (isFreeze()) {
-		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
+		JPABaseEmitter* emitter
+		    = SMSGetParticleManagerBound()->emitAndBindToPosPtr(
 		    PARTICLE_MS_POI_KIZETSU, &mPosition, 1, this);
 		if (emitter)
 			emitter->setGlobalScale(mScaling);
 	}
 
-	if (mMActor->checkCurAnm("sambohead_dance", 0))
-		gpMarioParticleManager->emitAndBindToMtxPtr(
-		    PARTICLE_MS_YNB_ONPU, getModel()->getAnmMtx(mCenterJointIndex), 1,
+	if (mMActor->checkCurAnm("sambohead_dance", 0)) {
+		SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
+		    PARTICLE_MS_YNB_ONPU, getModel()->getAnmMtx(mCenterJntIndex), 1,
 		    this);
+	}
 }
 
 bool TYumbo::isFindOutMario() const
 {
-	if (fabsf(gpMarioPos->y - mPosition.y)
-	    < getSaveLoadParam()->mSLSearchHeight.get()) {
-		JGeometry::TVec3<f32> target(gpMarioPos->x, mPosition.y,
-		                             gpMarioPos->z);
-		f32 length = getSaveLoadParam()->mSLSearchLength.get();
-		f32 angle  = getSaveLoadParam()->mSLSearchAngle.get();
-		f32 aware  = getSaveLoadParam()->mSLSearchAware.get();
-		if (isInSight(target, length, angle, aware))
-			return true;
-		return false;
+	f32 searchHeight = getSaveParams()->getSLSearchHeight();
+	if (fabsf(gpMarioPos->y - mPosition.y) < searchHeight) {
+		JGeometry::TVec3<f32> pos(gpMarioPos->x, mPosition.y,
+		                          gpMarioPos->z);
+		f32 searchLength = getSaveParams()->getSLSearchLength();
+		f32 searchAngle  = getSaveParams()->getSLSearchAngle();
+		return isInSight(pos, searchLength, searchAngle,
+		                 getSaveParams()->getSLSearchAware())
+		    ? true
+		    : false;
 	}
 	return false;
 }
 
 bool TYumbo::isWantToAppear() const
 {
-	f32 giveUpHeight = getSaveLoadParam()->mSLGiveUpHeight.get();
-	if (giveUpHeight <= fabsf(gpMarioPos->y - mPosition.y))
+	if (getSaveParams()->getSLGiveUpHeight()
+	    <= fabsf(gpMarioPos->y - mPosition.y))
 		return true;
 
-	JGeometry::TVec3<f32> diff = SMS_GetMarioPos();
-	diff -= mPosition;
-	diff.y      = 0.0f;
-	f32 giveUp = getSaveLoadParam()->mSLGiveUpLength.get();
-	return giveUp * giveUp < diff.squared();
+	f32 giveUp;
+	JGeometry::TVec3<f32> toMario = *gpMarioPos;
+	toMario.x -= mPosition.x;
+	toMario.y -= mPosition.y;
+	toMario.z -= mPosition.z;
+	toMario.y = 0.0f;
+
+	giveUp = getSaveParams()->getSLGiveUpLength();
+	return giveUp * giveUp < toMario.squared();
 }
 
 bool TYumbo::isAllSeedBroken() const
 {
-	TYumboSeed* const* end = mSeeds + 16;
-	for (TYumboSeed* const* it = mSeeds; it != end; ++it)
-		if (!((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED))
+	for (TYumboSeed* const* seed = &mSeeds[0]; seed != &mSeeds[16]; ++seed)
+		if (!((*seed)->mSeedFlags & TYumboSeed::SEED_FLAG_SPENT))
 			return false;
+
 	return true;
 }
 
 bool TYumbo::isChangedBlock() const
 {
-	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
-	return nerve == &TNerveSmallEnemyChange::theNerve();
+	return mSpine->getLatestNerve() == &TNerveSmallEnemyChange::theNerve();
 }
 
-// TODO: the quaternion part is a rough guess and does not match yet
+// TODO: 96.4%, frame 0x10 short (0x148 vs 0x158). Retail's only stack
+// vector is dir at 0x110: both rotates write it and startToMove (inlined)
+// reads it, and dir.z stays in f31 from MsGetRotFromZaxisY into the first
+// rotate where ours reloads it. A third quaternion (`TQuat4 rot;
+// rot.mul(roll, pitch); rot.rotate(dir, dir);`) lands every slot and the
+// frame but not the f31 reuse (94.7%); a separate output vector for the
+// second rotate gets the f31 reuse and the frame (98.4%) but not retail's
+// slots (it writes 0xd0, retail 0x110), so neither was committed.
 void TYumbo::shotSeeds()
 {
 	TYumboSeed* seed = getUnusedSeed();
-	if (seed == nullptr)
+	if (!seed)
 		return;
 
-	MActor* actor = mMActor;
-	actor->setBck(0);
+	mMActor->setBck(0);
 	setCurAnmSound();
 
-	JGeometry::TVec3<f32> velocity = *gpMarioPos;
-	velocity -= mPosition;
-	velocity.y += 200.0f * (0.5f + MsRandF());
-	velocity.setLength(getSaveLoadParam()->mShootSpeed.get());
+	JGeometry::TVec3<f32> dir = *gpMarioPos;
+	dir.x -= mPosition.x;
+	dir.y -= mPosition.y;
+	dir.z -= mPosition.z;
+	dir.y += 200.0f * (0.5f + MsRandF());
+	dir.setLength(getSaveParams()->getSLShootSpeed());
 
-	f32 angleY = MsGetRotFromZaxisY(velocity);
-	JGeometry::TQuat4<f32> yaw;
-	yaw.setEulerY(-(0.017453294f * angleY));
-	yaw.rotate(velocity, velocity);
+	f32 yawRad = -(0.017453294f * MsGetRotFromZaxisY(dir));
+	JGeometry::TQuat4<f32> q;
+	q.setEulerY(yawRad);
+	q.rotate(dir, dir);
 
-	JGeometry::TQuat4<f32> spin;
-	spin.setEulerZ(6.2831855f * MsRandF());
-	JGeometry::TQuat4<f32> tilt;
-	tilt.setEulerX(-3.1415927f * getSaveLoadParam()->mShootAngleX.get());
-	JGeometry::TQuat4<f32> rot;
-	rot.mul(spin, tilt);
-	rot.rotate(velocity, velocity);
+	JGeometry::TQuat4<f32> roll;
+	roll.setEulerY(6.2831855f * MsRandF());
+	JGeometry::TQuat4<f32> pitch;
+	pitch.setEulerX(-3.1415927f * getSaveParams()->getSLShootAngleX());
+	roll.mul(pitch);
+	roll.rotate(dir, dir);
 
-	seed->startToMove(mPosition, velocity,
-	                  getSaveLoadParam()->mSeedLife.get());
+	seed->startToMove(mPosition, dir, getSaveParams()->getSLSeedLife());
 }
 
 void TYumbo::lookatMario()
 {
-	JGeometry::TVec3<f32> diff = *gpMarioPos;
-	diff -= mPosition;
-	mRotation.y = MsGetRotFromZaxisY(diff);
+	JGeometry::TVec3<f32> toMario = *gpMarioPos;
+	toMario.sub(mPosition);
+	f32 yaw     = MsGetRotFromZaxisY(toMario);
+	mRotation.y = yaw;
 }
 
 void TYumbo::changeToFlower()
@@ -350,30 +411,29 @@ void TYumbo::changeToYumbo()
 bool TYumbo::isWaterproof() const
 {
 	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
-	return nerve == &TNerveYumboFreeze::theNerve()
-	       || nerve == &TNerveSmallEnemyDie::theNerve()
-	       || nerve == &TNerveYumboHiding::theNerve()
-	       || nerve == &TNerveYumboAttack::theNerve();
+	return ((nerve == &TNerveYumboFreeze::theNerve()
+	         || nerve == &TNerveSmallEnemyDie::theNerve())
+	        || nerve == &TNerveYumboHiding::theNerve())
+	    || nerve == &TNerveYumboAttack::theNerve();
 }
 
 bool TYumbo::isFreeze() const
 {
-	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
-	return nerve == &TNerveYumboFreeze::theNerve();
+	return mSpine->getLatestNerve() == &TNerveYumboFreeze::theNerve();
 }
 
 bool TYumbo::isDead() const
 {
-	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
-	return nerve == &TNerveSmallEnemyDie::theNerve();
+	return mSpine->getLatestNerve() == &TNerveSmallEnemyDie::theNerve();
 }
 
 TYumboSeed* TYumbo::getUnusedSeed()
 {
-	TYumboSeed** end = mSeeds + 16;
-	for (TYumboSeed** it = mSeeds; it != end; ++it)
-		if ((*it)->mSeedFlags & TYumboSeed::SEED_FLAG_UNUSED)
-			return *it;
+	TYumboSeed** end = &mSeeds[16];
+	for (TYumboSeed** seed = &mSeeds[0]; seed != end; ++seed)
+		if ((*seed)->mSeedFlags & TYumboSeed::SEED_FLAG_SPENT)
+			return *seed;
+
 	return nullptr;
 }
 
@@ -387,8 +447,8 @@ void TYumbo::attackToMario()
 		sendAttackMsgToMario();
 }
 
-TYumboParams::TYumboParams(const char* path)
-    : TSmallEnemyParams(path)
+TYumboParams::TYumboParams(const char* prm)
+    : TSmallEnemyParams(prm)
     , PARAM_INIT(mRecoverTimer, 600)
     , PARAM_INIT(mShootSpeed, 55.0f)
     , PARAM_INIT(mShootAngleX, 0.2f)
@@ -401,7 +461,7 @@ TYumboParams::TYumboParams(const char* path)
 
 TYumboManager::TYumboManager(const char* name)
     : TSmallEnemyManager(name)
-    , mFlowerMaterialTable(nullptr)
+    , mMaterialTable(nullptr)
 {
 }
 
@@ -409,13 +469,15 @@ void TYumboManager::load(JSUMemoryInputStream& stream)
 {
 	TYumboParams* params = new TYumboParams("/enemy/Yumbo.prm");
 	unk38                = params;
+
 	TSmallEnemyManager::load(stream);
+
 	params->mSLAttackRadius.set(97);
 	params->mSLAttackHeight.set(225);
 	params->mSLDamageRadius.set(90);
 	params->mSLDamageHeight.set(225);
-	loadMaterialTable(&mFlowerMaterialTable,
-	                  "/scene/samboHead/flower_blue.bmt");
+
+	loadMaterialTable(&mMaterialTable, "/scene/samboHead/flower_blue.bmt");
 }
 
 void TYumboManager::createModelData()
@@ -423,7 +485,7 @@ void TYumboManager::createModelData()
 	static const TModelDataLoadEntry entry[] = {
 		{ "yumbo.bmd", 0x10210000, 0 },
 		{ "flower.bmd", 0x10210000, 0 },
-		{ 0 },
+		{ nullptr, 0, 0 },
 	};
 	createModelDataArray(entry);
 }
@@ -437,45 +499,79 @@ void TYumboManager::loadMaterialTable(J3DMaterialTable** table,
 
 const char** TYumbo::getBasNameTable() const { return sambohead_bastable; }
 
+// Binding level over the spine's body, +8 of low region in
+// TNerveYumboDancing::execute.
+static inline TYumbo* YunboDanceBody(TSpineBase<TLiveActor>* s)
+{
+	TYumbo* y = (TYumbo*)s->getBody();
+	return y;
+}
+
+// TODO: instruction-identical and frame-exact; isFindOutMario's inlined `pos`
+// sits at 0x70 against retail's 0x74. Its 16-byte block always leaves a 4-byte
+// hole below `toMario` that retail does not have. Tried without closing it:
+// fork/two-local/`TLiveActor*` body binders, fork or bool binder over
+// isFindOutMario, a u32 wrapper, getTime() forks, SMS_GetMarioPos() at every
+// subset of the four mario-position reads (Dancing and isFindOutMario), naming
+// or un-naming isFindOutMario's search values, `toMario` and `yaw` declared at
+// the top, and `pos` as a reference-bound or copy-initialised temporary.
+// c-d22 (debugger): the object between `toMario` and `pos` is the
+// SMS_GetMarioPos() result (with `*gpMarioPos`, the copy constructor's argument
+// binding); retail has none there and two more words created after `pos`.
+// `*gpMarioPos` plus `yumbo->getPosition()` in the sub gives the frame but puts
+// both bindings between them (pos 0x6c); the two-argument `sub(a, b)` changes
+// the code.
+// c-k6, inert or worse: `toMario(SMS_GetMarioPos()); toMario -= pos` (same
+// 4 markers), `*gpMarioPos` with `-=` or assigned after a default
+// construction (frame 0xa8), `set(*gpMarioPos)` then `sub` (88.5),
+// `SMS_GetMarioPos() - pos` (92.3, frame 0xc8).
 DEFINE_NERVE(TNerveYumboDancing, TLiveActor)
 {
-	TYumbo* self = (TYumbo*)spine->getBody();
-	if (spine->getTime() == 0)
-		self->setBckAnm(2);
+	TYumbo* yumbo = YunboDanceBody(spine);
 
-	// TODO: the target inlines MsGetRotFromZaxisY through lookatMario here, we
-	// hit the inline depth limit instead. Spelling the lookatMario body out
-	// here matches (99.6%), which hints at a different inline structure.
-	self->lookatMario();
-	if (self->isFindOutMario()) {
+	if (spine->getTime() == 0)
+		yumbo->setBckAnm(2);
+
+	// TODO: this is TYumbo::lookatMario() spelled out. Calling the method
+	// instead puts MsGetRotFromZaxisY at inline depth 2, where MWCC stops
+	// expanding it and emits a weak out-of-line copy the retail object does
+	// not have -- so the original cannot have gone through the method here.
+	JGeometry::TVec3<f32> toMario = SMS_GetMarioPos();
+	toMario.sub(yumbo->mPosition);
+	yumbo->mRotation.y = MsGetRotFromZaxisY(toMario);
+
+	if (yumbo->isFindOutMario()) {
 		spine->pushAfterCurrent(&TNerveYumboHiding::theNerve());
 		return TRUE;
 	}
 	return FALSE;
 }
 
+// TODO: instruction-identical, 8 bytes of frame short.
 DEFINE_NERVE(TNerveYumboHiding, TLiveActor)
 {
-	TYumbo* self = (TYumbo*)spine->getBody();
+	TYumbo* yumbo = (TYumbo*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setBckAnm(4);
-		self->getMActor()->getFrameCtrl(0)->setRate(3.0f
-		                                            * SMSGetAnmFrameRate());
-		self->mHideEffectDone = false;
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_YUMBO_SINK, &self->mPosition,
-		                                0, nullptr, 0, 4);
+		yumbo->setBckAnm(4);
+		yumbo->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setRate(
+		    3.0f * SMSGetAnmFrameRate());
+		yumbo->mHideEffectDone = false;
+		if (SMSGetMSoundBound()->gateCheck(MSD_SE_EN_YUMBO_SINK))
+			MSoundSESystem::MSoundSE::startSoundActor(
+			    MSD_SE_EN_YUMBO_SINK, &yumbo->mPosition, 0, nullptr, 0, 4);
 	}
 
-	if (!self->mHideEffectDone
-	    && self->getMActor()->getFrameCtrl(0)->checkPass(34.0f)) {
-		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_ROCK, &self->mPosition,
-		                             0, nullptr);
+	if (!yumbo->mHideEffectDone
+	    && yumbo->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(34.0f)) {
+		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_ROCK,
+		                             &yumbo->mPosition, 0, nullptr);
 		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_SMOKE,
-		                             &self->mPosition, 0, nullptr);
-		self->mHideEffectDone = true;
+		                             &yumbo->mPosition, 0, nullptr);
+		yumbo->mHideEffectDone = true;
 	}
 
-	if (self->checkCurAnmEnd(0)) {
+	if (yumbo->checkCurAnmEnd(0)) {
 		spine->pushAfterCurrent(&TNerveYumboAttack::theNerve());
 		return TRUE;
 	}
@@ -484,18 +580,25 @@ DEFINE_NERVE(TNerveYumboHiding, TLiveActor)
 
 DEFINE_NERVE(TNerveYumboAppearing, TLiveActor)
 {
-	TYumbo* self = (TYumbo*)spine->getBody();
+	TYumbo* yumbo = (TYumbo*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->changeToYumbo();
-		self->setBckAnm(10);
-		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_ROCK, &self->mPosition,
-		                             0, nullptr);
+		yumbo->changeToYumbo();
+		yumbo->setBckAnm(10);
+		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_ROCK,
+		                             &yumbo->mPosition, 0, nullptr);
 		gpMarioParticleManager->emit(PARTICLE_MS_SMB_AP_SMOKE,
-		                             &self->mPosition, 0, nullptr);
+		                             &yumbo->mPosition, 0, nullptr);
 	}
 
-	self->lookatMario();
-	if (self->checkCurAnmEnd(0)) {
+	// TODO: see TNerveYumboDancing -- lookatMario() spelled out so that
+	// MsGetRotFromZaxisY still expands inline.
+	JGeometry::TVec3<f32> toMario = SMS_GetMarioPos();
+	toMario.sub(yumbo->getPosition());
+	f32 yaw            = MsGetRotFromZaxisY(toMario);
+	yumbo->mRotation.y = yaw;
+
+	if (yumbo->checkCurAnmEnd(0)) {
 		spine->pushAfterCurrent(&TNerveYumboDancing::theNerve());
 		return TRUE;
 	}
@@ -504,18 +607,20 @@ DEFINE_NERVE(TNerveYumboAppearing, TLiveActor)
 
 DEFINE_NERVE(TNerveYumboAttack, TLiveActor)
 {
-	TYumbo* self = (TYumbo*)spine->getBody();
+	TYumbo* yumbo = (TYumbo*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->changeToFlower();
-		self->shotSeeds();
+		yumbo->changeToFlower();
+		yumbo->shotSeeds();
 	}
 
-	if (self->isWantToAppear()) {
+	if (yumbo->isWantToAppear()) {
 		spine->pushAfterCurrent(&TNerveYumboAppearing::theNerve());
 		return TRUE;
 	}
 
-	if (self->getSaveLoadParam()->mSeedLife.get() / 16 < spine->getTime()) {
+	s32 seedLife = yumbo->getSaveParams()->getSLSeedLife();
+	if (seedLife / 16 < spine->getTime()) {
 		spine->pushAfterCurrent(this);
 		return TRUE;
 	}
@@ -524,14 +629,18 @@ DEFINE_NERVE(TNerveYumboAttack, TLiveActor)
 
 DEFINE_NERVE(TNerveYumboFreeze, TLiveActor)
 {
-	TYumbo* self = (TYumbo*)spine->getBody();
+	TYumbo* yumbo = (TYumbo*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setBckAnm(11);
-		SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_TWINKLE,
-		                                &self->mPosition, 0, nullptr, 0, 4);
+		yumbo->setBckAnm(11);
+		if (gpMSound->gateCheck(MSD_SE_EN_COMMON_TWINKLE))
+			MSoundSESystem::MSoundSE::startSoundActor(
+			    MSD_SE_EN_COMMON_TWINKLE, &yumbo->mPosition, 0, nullptr, 0,
+			    4);
 	}
 
-	if (self->getSaveLoadParam()->mRecoverTimer.get() < spine->getTime()) {
+	s32 recoverTimer = yumbo->getSaveParams()->getSLRecoverTimer();
+	if (recoverTimer < spine->getTime()) {
 		spine->pushAfterCurrent(&TNerveYumboDancing::theNerve());
 		return TRUE;
 	}

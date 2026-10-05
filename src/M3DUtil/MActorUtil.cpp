@@ -5,6 +5,8 @@
 #include <JSystem/JKernel/JKRFileLoader.hpp>
 #include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
 
+void SMS_DumpMActor(MActor*) { }
+
 MActor* SMS_MakeMActorFromSDLModelData(SDLModelData* model_data,
                                        MActorAnmData* anm_data, u32 flags)
 {
@@ -59,9 +61,8 @@ MActor* SMS_MakeMActorWithAnmData(const char* model_path,
 	return actors[0];
 }
 
-inline MActor** SMS_MakeMActors(const char* anm_folder,
-                                const char* model_path, int count,
-                                u32 model_flags, u32 loader_flags)
+MActor** SMS_MakeMActors(const char* anm_folder, const char* model_path,
+                         int count, u32 model_flags, u32 loader_flags)
 {
 	JUT_ASSERT(anm_folder);
 	JUT_ASSERT(model_path);

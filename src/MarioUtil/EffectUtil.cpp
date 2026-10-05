@@ -53,40 +53,71 @@ bool SMS_EmitRippleSea(MtxPtr arg0, void* arg1)
 	return ret;
 }
 
+static inline void EffectUtilCross(JGeometry::TVec3<f32>& dst,
+                                   const JGeometry::TVec3<f32>& a,
+                                   const JGeometry::TVec3<f32>& b)
+{
+	f32 z;
+	f32 y;
+	f32 x;
+
+	x = a.y * b.z - a.z * b.y;
+	y = a.z * b.x - a.x * b.z;
+	z = a.x * b.y - a.y * b.x;
+
+	dst.x = x;
+	dst.y = y;
+	dst.z = z;
+}
+
 void SMS_EmitSinkInPollutionEffect(const JGeometry::TVec3<float>& arg0,
                                    const JGeometry::TVec3<float>& arg1,
                                    bool arg2)
 {
-	if ((gpMarDirector->mMoveTickCount % 20) != 0)
+	if ((SMSGetMarDirector()->unk58 % 20) != 0)
 		return;
 
 	using namespace JGeometry;
 
-	const TVec3<f32> fwd(1.0f, 0.0f, 0.0f);
+	const TVec3<f32> fwd(1.f, 0.0f, 0.0f);
+
 	TVec3<f32> B;
-	B.cross(fwd, arg1);
+	EffectUtilCross(B, fwd, arg1);
 
 	TPosition3f matrix;
 
 	TVec3<f32> C;
-	C.cross(arg1, B);
+	EffectUtilCross(C, arg1, B);
 	C.normalize();
 	B.normalize();
 
-	matrix.setXYZDir(C, arg1, B);
-	matrix.setTrans(arg0);
+	matrix.mMtx[0][0] = C.x;
+	matrix.mMtx[1][0] = C.y;
+	matrix.mMtx[2][0] = C.z;
+	matrix.mMtx[0][1] = arg1.x;
+	matrix.mMtx[1][1] = arg1.y;
+	matrix.mMtx[2][1] = arg1.z;
+	matrix.mMtx[0][2] = B.x;
+	matrix.mMtx[1][2] = B.y;
+	matrix.mMtx[2][2] = B.z;
+	matrix.mMtx[0][3] = arg0.x;
+	matrix.mMtx[1][3] = arg0.y;
+	matrix.mMtx[2][3] = arg0.z;
 
-	if (arg2)
-		gpMarioParticleManager->emitAndBindToMtx(PARTICLE_MS_MARI_RAKUBALL,
-		                                         matrix.mMtx, 2U, nullptr);
-
-	gpMarioParticleManager->emitAndBindToMtx(PARTICLE_MS_MARI_RAKUHAMON,
-	                                         matrix.mMtx, 2U, nullptr);
-
-	// Every diff marker of this function is a stack offset sitting 0x10 above
-	// ours (target frame 0xd8 against 0xc8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+	if (arg2) {
+		SMSGetParticleManagerBound()->emitAndBindToMtx(0x1D8, matrix.mMtx,
+		                                                 2U, nullptr);
+	}
+	SMSGetParticleManagerBound()->emitAndBindToMtx(0x1D9, matrix.mMtx, 2U,
+	                                                 nullptr);
 }
+
+// Declared locally rather than by including <Player/MarioAccess.hpp>, which
+// would perturb this TU's string pool; MarioAccess.hpp has the real
+// declaration and the map lists that function UNUSED as well.
+void SMS_GetMarioJumpIntoWaterModelData();
+
+// UNUSED (map size 0x20): the last link of the JumpIntoWater model-data
+// chain (TMarioEffect 0x10 -> TMario 0x24 -> SMS_GetMario... 0x24 -> this).
+// Eight instructions is exactly a call-forwarding frame.
+void SMS_GetJumpIntoWaterModelData() { SMS_GetMarioJumpIntoWaterModelData(); }

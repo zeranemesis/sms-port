@@ -1,4 +1,5 @@
 #include <JSystem/JUtility/JUTRect.hpp>
+#include <JSystem/JUtility/JUTPoint.hpp>
 
 void JUTRect::set(int _x1, int _y1, int _x2, int _y2)
 {
@@ -14,6 +15,14 @@ void JUTRect::copy(const JUTRect& rRect)
 	y1 = rRect.y1;
 	x2 = rRect.x2;
 	y2 = rRect.y2;
+}
+
+void JUTRect::add(const JUTPoint& point)
+{
+	x1 += point.x;
+	x2 += point.x;
+	y1 += point.y;
+	y2 += point.y;
 }
 
 void JUTRect::add(int a1, int a2)
@@ -40,6 +49,18 @@ bool JUTRect::intersect(const JUTRect& rRect)
 
 	bool ret = !isEmpty();
 	return ret;
+}
+
+void JUTRect::move(const JUTPoint& point)
+{
+	int width  = x2 - x1;
+	int height = y2 - y1;
+
+	x1 = point.x;
+	y1 = point.y;
+
+	x2 = x1 + width;
+	y2 = y1 + height;
 }
 
 void JUTRect::move(int a1, int a2)

@@ -1,41 +1,140 @@
 #include <Enemy/ElecNokonoko.hpp>
 #include <Enemy/Conductor.hpp>
-#include <Camera/Camera.hpp>
-#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
-#include <JSystem/JKernel/JKRFileLoader.hpp>
-#include <System/Particles.hpp>
-#include <System/MarDirector.hpp>
+#include <Enemy/EnemyManager.hpp>
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/Spine.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/Strategy.hpp>
+#include <M3DUtil/MActor.hpp>
 #include <MarioUtil/DrawUtil.hpp>
 #include <MarioUtil/MathUtil.hpp>
 #include <MarioUtil/RandomUtil.hpp>
 #include <MarioUtil/ShadowUtil.hpp>
-#include <Strategic/ObjModel.hpp>
-#include <Strategic/Spine.hpp>
-#include <Strategic/Strategy.hpp>
-#include <M3DUtil/MActor.hpp>
-#include <M3DUtil/SDLModel.hpp>
-#include <MSound/MSound.hpp>
-#include <MSound/MSoundSE.hpp>
-#include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <MoveBG/ItemManager.hpp>
 #include <MoveBG/MapObjBase.hpp>
+#include <Camera/Camera.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
 #include <Player/MarioAccess.hpp>
-#include <stdlib.h>
-#include <math.h>
+#include <System/EmitterViewObj.hpp>
+#include <System/Particles.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
 
 // rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
 
-// TODO: this translation unit is freshly scaffolded from mario.MAP. Class
-// layouts only contain the fields verified from the ctors and the functions
-// decompiled so far.
+// Parked here, not in a header: the map has no symbol for it, so retail had
+// it as a file-scope `inline`. It is the level that reaches the map's
+// out-of-line JGeometry::TVec3<f32>::sub, ::dot and TUtil<f32>::sqrt at the
+// copy-and-subtract distance sites (the same shape as emario's
+// EMarioCalcDist and AnimalNerve's calcDist); `distance()` gives the sqrt
+// call but expands the other two.
+// Retail copies the difference into a fresh slot before `bl PSVECMag`, which
+// is a by-value hand-off, and that extra level is also what reaches the map's
+// out-of-line JGeometry::TVec3<f32>::sub at the same site.
+static inline f32 ElecVecMag(JGeometry::TVec3<f32> v) { return VECMag(v); }
 
-// TODO: particle ids 0xCA and 0x17A-0x17F are not named in Particles.hpp yet
-// (probably ms_dennoko_* effects).
+static inline f32 ElecDistTo(const JGeometry::TVec3<f32>& a,
+                             const JGeometry::TVec3<f32>& b)
+{
+	return ElecVecMag(a - b);
+}
+
+static inline f32 ElecLength(const JGeometry::TVec3<f32>& v)
+{
+	return v.length();
+}
+
+static inline f32 ElecCalcDist(const JGeometry::TVec3<f32>& a,
+                               const JGeometry::TVec3<f32>& b)
+{
+	return ElecLength(a - b);
+}
+
+// Parked here, not in a header: the map has no symbol for it either. The
+// retail object materialises the whole two-term test into a byte before
+// branching on it, so both terms belong to one inline predicate with an
+// explicit if/return.
+static inline bool ElecIsShockedNearCarapace(TElecNokonoko* nokonoko)
+{
+	if (nokonoko->mSpine->getCurrentNerve()
+	        == &TNerveElecNokonokoFreeze::theNerve()
+	    && ElecDistTo(nokonoko->getPosition(), nokonoko->mCarapace->mPosition)
+	           < 200.0f)
+		return true;
+	return false;
+}
+
+// Parked here, not in a header: the map has no symbol for it. The retail
+// object materialises this test into a byte (`li 1`/`li 0`/`clrlwi.`) instead
+// of branching on the compare, which is what an inline predicate with an
+// explicit if/return does -- the same shape TElecNokonoko::hasCarapace() has
+// at its call sites -- and it is also what stops the koopa pointer being
+// shared with the block the test guards.
+static inline bool ElecIsNerve(const TSpineBase<TLiveActor>* spine,
+                               TSpineBase<TLiveActor>::Nerve nerve)
+{
+	if (spine->getCurrentNerve() == nerve)
+		return true;
+	return false;
+}
+
+// The != polarity of ElecIsNerve: retail lays the false (`li 0`) arm first.
+static inline bool ElecIsNotNerve(const TSpineBase<TLiveActor>* spine,
+                                  TSpineBase<TLiveActor>::Nerve nerve)
+{
+	if (spine->getCurrentNerve() == nerve)
+		return false;
+	return true;
+}
+
+// The copy-and-subtract distance, the shape AnimalNerve.cpp's file-scope
+// `calcDist` and emario's `EMarioCalcDist` already park, and the second
+// spelling the tree needs beside TVec3::distance(): the by-value first
+// argument is the copy retail stores into its own slot before subtracting
+// component by component, and taking TUtil<f32>::sqrt here rather than through
+// TVec3::length() is what keeps the sqrt out of line.
+static inline f32 ElecSubDist(JGeometry::TVec3<f32> a,
+                              const JGeometry::TVec3<f32>& b)
+{
+	a.sub(b);
+	return JGeometry::TUtil<f32>::sqrt(a.squared());
+}
+
+// dennoko_bastable names ten of the model's eighteen .bck slots. The rest are
+// recovered from the call sites and from the alphabetical order of the .bck
+// files: the turn1_end/loop/start triple at 14..16 and the run1_loop/start
+// pair at 10/11 both line up with the animation each nerve asks for, and 17 is
+// the wait the idle nerve plays.
+// TODO: 4, 5, 8 and 9 have no .bas file and no name; what they are is only a
+// guess from where they get played.
+enum {
+	DENNOKO_ANM_CATCH1        = 0,  // "dennoko_catch1"
+	DENNOKO_ANM_DOWN1         = 1,  // "dennoko_down1"
+	DENNOKO_ANM_ELEC_DOWN1    = 2,  // "dennoko_elec_down1"
+	DENNOKO_ANM_HIT1          = 3,  // "dennoko_hit1"
+	DENNOKO_ANM_UNK4          = 4,
+	DENNOKO_ANM_MOGAKI_BARE   = 5,  // struggling with no shell on
+	DENNOKO_ANM_MOGAKI1_LOOP  = 6,  // "dennoko_mogaki1_loop"
+	DENNOKO_ANM_MOGAKI1_START = 7,  // "dennoko_mogaki1_start"
+	DENNOKO_ANM_COLLECT       = 8,  // walking over to the thrown shell
+	DENNOKO_ANM_READY         = 9,  // winding up before the throw
+	DENNOKO_ANM_RUN1_LOOP     = 10, // "dennoko_run1_loop"
+	DENNOKO_ANM_RUN1_START    = 11,
+	DENNOKO_ANM_SHOOT1        = 12, // "dennoko_shoot1"
+	DENNOKO_ANM_SUPPLY1       = 13, // "dennoko_supply1"
+	DENNOKO_ANM_TURN1_END     = 14,
+	DENNOKO_ANM_TURN1_LOOP    = 15, // "dennoko_turn1_loop"
+	DENNOKO_ANM_TURN1_START   = 16,
+	DENNOKO_ANM_WAIT1         = 17,
+};
 
 static const char* dennoko_bastable[] = {
 	"/scene/dennoko/bas/dennoko_catch1.bas",
@@ -58,31 +157,22 @@ static const char* dennoko_bastable[] = {
 	nullptr,
 };
 
-bool TElecNokonoko::mReflectSw = true;
-u8 TElecNokonoko::mCarapaceJntIndex;
+u8 TElecNokonoko::mReflectSw      = true;
+u8 TElecNokonoko::mCarapaceJntIndex = 0;
 
-// fabricated
-static inline bool isCarapaceOn(const TElecNokonoko* self)
+// UNUSED, 0x60 in the map, and nothing references it: the koopa emits the
+// shock particle at its own position instead of going through a helper.
+// TODO: incorrect size.
+static void createNokonokoThunder(JGeometry::TVec3<f32> pos)
 {
-	return self->unk1A4 == 0 ? true : false;
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_DNK_SHIBIRE_B,
+	                                            &pos, 0, nullptr);
 }
 
-// fabricated
-static inline void setMaterial(MActor* actor, J3DMaterialTable* table)
-{
-	J3DModel* model = actor->getModel();
-	model->getModelData()->setMaterialTable(table, J3DMatCopyFlag_All);
-	actor->initDL();
-	actor->getModel()->lock();
-}
-
-void createNokonokoThunder(JGeometry::TVec3<f32>)
-{
-	// TODO: UNUSED in the map (size 0x60), contents unknown
-}
-
-TElecNokonokoSaveLoadParams::TElecNokonokoSaveLoadParams(const char* path)
-    : TWalkerEnemyParams(path)
+// UNUSED, 0x1b8 in the map: inlined into TElecNokonokoManager::load, which is
+// its only caller.
+TElecNokonokoSaveLoadParams::TElecNokonokoSaveLoadParams(const char* prm)
+    : TWalkerEnemyParams(prm)
     , PARAM_INIT(mSLReadyTime, 300)
     , PARAM_INIT(mSLCarapaceGravity, 0.01f)
     , PARAM_INIT(mSLCarapaceSpeed, 5.0f)
@@ -102,16 +192,18 @@ TElecNokonokoManager::TElecNokonokoManager(const char* name)
 void TElecNokonokoManager::load(JSUMemoryInputStream& stream)
 {
 	TSmallEnemyManager::load(stream);
+
 	unk38 = new TElecNokonokoSaveLoadParams("/enemy/elecNokonoko.prm");
-	unk60 = J3DModelLoaderDataBase::loadMaterialTable(
-	    JKRGetResource("/scene/dennoko/dennoko_model1.bmt"));
+
+	mMaterialTable = J3DModelLoaderDataBase::loadMaterialTable(
+	    JKRFileLoader::getGlbResource("/scene/dennoko/dennoko_model1.bmt"));
 }
 
 void TElecNokonokoManager::initSetEnemies() { }
 
 TSpineEnemy* TElecNokonokoManager::createEnemyInstance()
 {
-	return new TElecNokonoko;
+	return new TElecNokonoko("電気ノコノコ");
 }
 
 void TElecNokonokoManager::createModelData()
@@ -125,33 +217,35 @@ void TElecNokonokoManager::createModelData()
 
 void TElecNokonokoManager::clipEnemies(JDrama::TGraphics* graphics)
 {
-	f32 radius;
-	f32 far;
+	f32 clipRadius;
+	f32 farClip;
 	if (unk38 == nullptr) {
-		far    = gpConductor->getCondParams().mEnemyFarClip.get();
-		radius = 300.0f;
+		clipRadius = 300.0f;
+		farClip    = gpConductor->getCondParams().getEnemyFarClip();
 	} else {
-		far    = unk38->mSLFarClip.get();
-		radius = unk38->mSLClipRadius.get();
+		farClip    = unk38->mSLFarClip.get();
+		clipRadius = unk38->mSLClipRadius.get();
 	}
 
-	SetViewFrustumClipCheckPerspective(
-	    gpCamera->getFovy(), gpCamera->getAspect(), graphics->mNearPlane, far);
+	SetViewFrustumClipCheckPerspective(gpCamera->getFovy(),
+	                                   gpCamera->getAspect(),
+	                                   graphics->mNearPlane, farClip);
 
 	for (int i = 0; i < mObjNum; ++i) {
-		TElecNokonoko* noko = (TElecNokonoko*)unk18[i];
+		TElecNokonoko* nokonoko = (TElecNokonoko*)unk18[i];
 
-		if (ViewFrustumClipCheck(graphics, &noko->mPosition, radius))
-			noko->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		if (ViewFrustumClipCheck(graphics, &nokonoko->mPosition, clipRadius))
+			nokonoko->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 		else
-			noko->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+			nokonoko->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 
-		if (!noko->mCarapace->isState(0)) {
-			if (ViewFrustumClipCheck(graphics, &noko->mCarapace->mPosition,
-			                         radius))
-				noko->mCarapace->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+		// The shell has its own clip state, but only once it has been thrown.
+		if (!nokonoko->getCarapace()->isUnk150Zero()) {
+			if (ViewFrustumClipCheck(
+			        graphics, &nokonoko->getCarapace()->mPosition, clipRadius))
+				nokonoko->getCarapace()->offLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 			else
-				noko->mCarapace->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
+				nokonoko->getCarapace()->onLiveFlag(LIVE_FLAG_CLIPPED_OUT);
 		}
 	}
 }
@@ -159,39 +253,41 @@ void TElecNokonokoManager::clipEnemies(JDrama::TGraphics* graphics)
 void TElecNokonokoManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TEnemyManager::perform(cue, graphics);
+
 	for (int i = 0; i < getActiveObjNum(); ++i)
-		((TElecNokonoko*)getObj(i))->mCarapace->perform(cue, graphics);
+		getObj(i)->getCarapace()->perform(cue, graphics);
 }
 
 TElecNokonoko::TElecNokonoko(const char* name)
     : TWalkerEnemy(name)
     , mCarapace(nullptr)
     , unk198(0)
-    , unk1A4(0)
+    , mHasCarapace(0)
 {
 }
 
-void TElecNokonoko::init(TLiveManager* manager)
+void TElecNokonoko::init(TLiveManager* live_manager)
 {
-	TWalkerEnemy::init(manager);
-	mActorType = 0x1000000A;
-	unk150     = 0x11;
-	mParams    = (TElecNokonokoSaveLoadParams*)getSaveParam();
-	mCarapace  = new TElecCarapace("ノコノコ甲羅");
+	TWalkerEnemy::init(live_manager);
+
+	mActorType  = 0x1000000A;
+	unk150      = DENNOKO_ANM_WAIT1;
+	mSaveParams = (TElecNokonokoSaveLoadParams*)getSaveParam();
+
+	mCarapace = new TElecCarapace("ノコノコ甲羅");
 	mSpine->initWith(&TNerveWalkerGraphWander::theNerve());
 	mCarapace->loadInit(this, "koura_model1.bmd");
 
-	setMaterial(mCarapace->mMActor, ((TElecNokonokoManager*)mManager)->unk60);
+	MActor* carapaceActor            = getCarapace()->getMActor();
+	TElecNokonokoManager* manager    = (TElecNokonokoManager*)mManager;
+	carapaceActor->getModel()->getModelData()->setMaterialTable(
+	    manager->mMaterialTable, (J3DMaterialCopyFlag)3);
+	carapaceActor->initDL();
+	carapaceActor->getModel()->lock();
 
-	unk19C = TMsRange<s32>(0, 300).rand();
+	mReadyTimer = TMsRange<s32>(0, 300).rand();
+
 	offHitFlag(HIT_FLAG_NO_COLLISION);
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
 void TElecNokonoko::rest()
@@ -211,73 +307,93 @@ void TElecNokonoko::setMActorAndKeeper()
 	mMActorKeeper = new TMActorKeeper(mManager, 1);
 	mMActor       = mMActorKeeper->createMActor("dennoko_model1.bmd", 3);
 
-	setMaterial(mMActor, ((TElecNokonokoManager*)mManager)->unk60);
+	MActor* actor = mMActor;
+	actor->getModel()->getModelData()->setMaterialTable(
+	    ((TElecNokonokoManager*)mManager)->getMaterialTable(),
+	    (J3DMaterialCopyFlag)3);
+	actor->initDL();
+	actor->getModel()->lock();
 }
 
 void TElecNokonoko::moveObject()
 {
 	TWalkerEnemy::moveObject();
-	if (isBckAnm(11) && checkCurAnmEnd(0))
-		setBckAnm(10);
+
+	if (isBckAnm(DENNOKO_ANM_RUN1_START) && checkCurAnmEnd(0))
+		setBckAnm(DENNOKO_ANM_RUN1_LOOP);
 }
 
 void TElecNokonoko::attackToMario()
 {
-	if (mSpine->getCurrentNerve() != &TNerveSmallEnemyDie::theNerve()) {
-		TSmallEnemy::attackToMario();
-		if (mSpine->getCurrentNerve() != &TNerveElecNokonokoAttack::theNerve()
-		    && mSpine->getCurrentNerve()
-		           != &TNerveElecNokonokoCollect::theNerve()
-		    && mSpine->getCurrentNerve() != &TNerveElecNokonokoShoot::theNerve()
-		    && isCarapaceOn(this))
-			mSpine->pushNerve(&TNerveElecNokonokoAttack::theNerve());
-	}
+	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve())
+		return;
+
+	TSmallEnemy::attackToMario();
+
+	if (mSpine->getCurrentNerve() != &TNerveElecNokonokoAttack::theNerve()
+	    && mSpine->getCurrentNerve()
+	           != &TNerveElecNokonokoCollect::theNerve()
+	    && mSpine->getCurrentNerve() != &TNerveElecNokonokoShoot::theNerve()
+	    && hasCarapace())
+		mSpine->pushNerve(&TNerveElecNokonokoAttack::theNerve());
 }
 
 void TElecNokonoko::calcRootMatrix()
 {
 	TSpineEnemy::calcRootMatrix();
-	if (isCarapaceOn(this)) {
-		const TNerveBase<TLiveActor>* nerve;
-		if ((nerve = mSpine->getCurrentNerve()) != &TNerveElecNokonokoFreeze::theNerve()
-		    && nerve != &TNerveSmallEnemyDie::theNerve()) {
-			if (mSpine->getCurrentNerve()
-			    != &TNerveElecNokonokoCollect::theNerve()) {
-				SMSGetMSound()->startSoundActor(MSD_SE_EN_DENNOKO_SPARK1,
-				                                &mPosition, 0, nullptr, 0, 4);
-				if (JPABaseEmitter* emitter
-				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17A, getMActor()->getModel()->getAnmMtx(7), 1, this))
-					emitter->setGlobalScale(mScaling);
-				if (JPABaseEmitter* emitter
-				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17B, getMActor()->getModel()->getAnmMtx(7), 1, this))
-					emitter->setGlobalScale(mScaling);
-				if (JPABaseEmitter* emitter
-				    = gpMarioParticleManager->emitAndBindToMtxPtr(
-				        0x17C, getMActor()->getModel()->getAnmMtx(7), 1, this))
-					emitter->setGlobalScale(mScaling);
-			}
+
+	if (hasCarapace()) {
+		// Sparks crawl over the shell on the koopa's back whenever it is
+		// wearing it and not being shaken about.
+		if (mSpine->getCurrentNerve()
+		        != &TNerveElecNokonokoFreeze::theNerve()
+		    && mSpine->getCurrentNerve() != &TNerveSmallEnemyDie::theNerve()
+		    && mSpine->getCurrentNerve()
+		           != &TNerveElecNokonokoCollect::theNerve()) {
+			gpMSound->startSoundActor(MSD_SE_EN_DENNOKO_SPARK1, &mPosition);
+
+			JPABaseEmitter* emitter
+			    = gpMarioParticleManager->emitAndBindToMtxPtr(
+			        PARTICLE_MS_DNK_BIRI, getMActor()->getModel()->getAnmMtx(7),
+			        1, this);
+			if (emitter)
+				emitter->setGlobalScale(mScaling);
+
+			emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+			    PARTICLE_MS_DNK_SPARK_L, getMActor()->getModel()->getAnmMtx(7), 1,
+			    this);
+			if (emitter)
+				emitter->setGlobalScale(mScaling);
+
+			emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+			    PARTICLE_MS_DNK_SPARK_R, getMActor()->getModel()->getAnmMtx(7), 1,
+			    this);
+			if (emitter)
+				emitter->setGlobalScale(mScaling);
 		}
 	}
 
-	if (mCurrentBckAnm == 2) {
-		if (JPABaseEmitter* emitter
-		    = gpMarioParticleManager->emitAndBindToMtxPtr(
-		        0x17D, getMActor()->getModel()->getAnmMtx(0), 1, this))
+	// Compared in place, not through isBckAnm(): the ROM branches straight
+	// off the `cmpwi 2` where the helper would materialise a bool first.
+	if (mCurrentBckAnm == DENNOKO_ANM_ELEC_DOWN1) {
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    PARTICLE_MS_DNK_SHIBIRE_A, getMActor()->getModel()->getAnmMtx(0),
+		    1, this);
+		if (emitter)
 			emitter->setGlobalScale(mScaling);
 
-		MtxPtr mtx = getMActor()->getModel()->getAnmMtx(8);
-		unk1A8.set(mtx[0][3], mtx[1][3], mtx[2][3]);
-		if (JPABaseEmitter* emitter
-		    = gpMarioParticleManager->emitAndBindToPosPtr(0x17E, &unk1A8, 1,
-		                                                  this))
+		MtxPtr head = getMActor()->getModel()->getAnmMtx(8);
+		mEffectPos.set(head[0][3], head[1][3], head[2][3]);
+
+		emitter = gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_DNK_HIBANA, &mEffectPos, 1, this);
+		if (emitter)
 			emitter->setGlobalScale(mScaling);
 
-		if (getMActor()->getFrameCtrl(0)->checkPass(72.0f)) {
-			if (JPABaseEmitter* emitter
-			    = gpMarioParticleManager->emitAndBindToPosPtr(0x17F, &unk1A8,
-			                                                  1, this))
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(72.0f)) {
+			emitter = gpMarioParticleManager->emitAndBindToPosPtr(
+			    PARTICLE_MS_BOMB_LIMIT, &mEffectPos, 1, this);
+			if (emitter)
 				emitter->setGlobalScale(mScaling);
 		}
 	}
@@ -285,9 +401,8 @@ void TElecNokonoko::calcRootMatrix()
 
 void TElecNokonoko::sendAttackMsgToMario()
 {
-	// TODO: message 9 is the electric shock, not named in THitMessageType yet
-	if (unk1A4 == 0)
-		SMS_SendMessageToMario(this, 9);
+	if (mHasCarapace == 0)
+		SMS_SendMessageToMario(this, HIT_MESSAGE_ELECTRIC_SHOCK);
 	else
 		SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 }
@@ -297,28 +412,30 @@ BOOL TElecNokonoko::receiveMessage(THitActor* sender, u32 message)
 	if (message == HIT_MESSAGE_UNKD || message == HIT_MESSAGE_UNKB) {
 		onLiveFlag(LIVE_FLAG_DEAD);
 		kill();
-		mCarapace->kill();
+		getCarapace()->kill();
 	}
 
-	if (message == HIT_MESSAGE_TAKE && mHolder == nullptr) {
+	if (message == HIT_MESSAGE_TAKE && getHolder() == nullptr) {
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		mHolder = (TTakeActor*)sender;
 		return TRUE;
 	}
 
 	if ((message == HIT_MESSAGE_PUT || message == HIT_MESSAGE_THROWN)
-	    && mHolder == sender) {
+	    && getHolder() == sender) {
 		mHolder = nullptr;
 		return TRUE;
 	}
 
 	if (message == HIT_MESSAGE_TRAMPLE) {
-		if (unk1A4 == 1) {
+		// Stomped: with the shell on, the shock still gets Mario; without it
+		// the koopa goes down.
+		if (mHasCarapace == 1) {
 			mHitPoints = 1;
 			kill();
 			return TRUE;
 		}
-		SMS_SendMessageToMario(this, 9);
+		SMS_SendMessageToMario(this, HIT_MESSAGE_ELECTRIC_SHOCK);
 		return FALSE;
 	}
 
@@ -326,7 +443,7 @@ BOOL TElecNokonoko::receiveMessage(THitActor* sender, u32 message)
 		if (!changeByJuice())
 			behaveToWater(sender);
 		else
-			mCarapace->kill();
+			getCarapace()->kill();
 		return TRUE;
 	}
 
@@ -335,14 +452,35 @@ BOOL TElecNokonoko::receiveMessage(THitActor* sender, u32 message)
 
 bool TElecNokonoko::isResignationAttack()
 {
-	f32 range = mParams->mSLCarapaceShootRange.get();
+	f32 range = getSaveParams()->mSLCarapaceShootRange.value;
+
 	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
-		if ((unk104.getPoint() - mPosition).length() < range) {
+		// TODO: 82.5%. The retail object copies the goal point into a local,
+		// subtracts mPosition into it component by component and only then
+		// squares and calls TUtil<f32>::sqrt. Spelling that out (`TVec3 d =
+		// point; d -= mPosition; d.length()`) reproduces the stores but
+		// expands sqrt, while distance() keeps the `bl sqrt` and drops the
+		// stores; no spelling found so far gives both.
+		if (ElecSubDist(unk104.getPoint(), mPosition) < range) {
 			mSpine->pushAfterCurrent(&TNerveElecNokonokoShoot::theNerve());
 			return true;
 		}
 	}
+
 	return false;
+}
+
+// Parked here, not in a header: a bare-return fork over the Mario actor
+// pointer is the +4 of low pool that lands setGoalPath's TPathNode on
+// retail's slot (the same lever WalkerEnemyMario uses).
+static inline THitActor* ElecMario() { return (THitActor*)gpMarioAddress; }
+
+// Binding level worth +8 of low region, landing
+// TNerveElecNokonokoFreeze::execute's frame at 0x70 (batch 121).
+static inline MActor* ElecNokonokoGetMActor(const TElecNokonoko* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
 }
 
 void TElecNokonoko::behaveToFindMario()
@@ -350,75 +488,76 @@ void TElecNokonoko::behaveToFindMario()
 	mSpine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
 	mSpine->pushAfterCurrent(&TNerveWalkerAttack::theNerve());
 	mSpine->pushAfterCurrent(&TNerveElecNokonokoTurn::theNerve());
-	setGoalPath(TPathNode((THitActor*)gpMarioAddress));
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+	setGoalPath(ElecMario());
 }
 
-void TElecNokonoko::behaveToWater(THitActor*)
+void TElecNokonoko::behaveToWater(THitActor* water)
 {
-	if ((!isBckAnm(12) || !(getCurAnmFrameNo(0) > 58.0f))
-	    && mSpine->getCurrentNerve() != &TNerveSmallEnemyDie::theNerve()) {
-		if (isBckAnm(0) && unk1A4 == 0)
-			return;
+	if ((isBckAnm(DENNOKO_ANM_SHOOT1) && getCurAnmFrameNo(0) > 58.0f)
+	    || mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve()
+	    || (isBckAnm(DENNOKO_ANM_CATCH1) && mHasCarapace == 0))
+		return;
 
-		unk165                   = true;
-		mSprayedByWaterCooldown = 0;
-		if (mSpine->getCurrentNerve()
-		    != &TNerveElecNokonokoFreeze::theNerve())
-			mSpine->pushNerve(&TNerveElecNokonokoFreeze::theNerve());
-	}
+	unk165                  = true;
+	mSprayedByWaterCooldown = 0;
+
+	if (mSpine->getCurrentNerve() != &TNerveElecNokonokoFreeze::theNerve())
+		mSpine->pushNerve(&TNerveElecNokonokoFreeze::theNerve());
 }
 
+// UNUSED, 0x50 in the map: pasted into TNerveElecCarapaceMove, whose
+// setNext() site calls the TNerveBase constructor one level deeper than its
+// other theNerve() guards. Ours is 0x90: the standalone copy expands
+// theNerve() where retail's called it.
+// TODO: incorrect size.
 void TElecNokonoko::catchIn()
 {
-	// TODO: UNUSED in the map (size 0x50), contents unknown
+	mSpine->setNext(&TNerveElecNokonokoCollect::theNerve());
 }
 
+// UNUSED, 0x44 in the map: pushing the shoot nerve, which
+// isResignationAttack does inline instead.
+// TODO: incorrect size.
 void TElecNokonoko::shootIn()
 {
-	// TODO: UNUSED in the map (size 0x44), contents unknown
+	mSpine->pushAfterCurrent(&TNerveElecNokonokoShoot::theNerve());
 }
 
-const char** TElecNokonoko::getBasNameTable() const
-{
-	return dennoko_bastable;
-}
+const char** TElecNokonoko::getBasNameTable() const { return dennoko_bastable; }
 
 void TElecNokonoko::setWaitAnm()
 {
 	unk198 = 0;
-	setBckAnm(17);
+	setBckAnm(DENNOKO_ANM_WAIT1);
 }
 
 void TElecNokonoko::setWalkAnm()
 {
-	if (!isBckAnm(10))
-		setBckAnm(11);
+	if (!isBckAnm(DENNOKO_ANM_RUN1_LOOP))
+		setBckAnm(DENNOKO_ANM_RUN1_START);
 }
 
 void TElecNokonoko::setRunAnm()
 {
-	if (!isBckAnm(10))
-		setBckAnm(11);
+	if (!isBckAnm(DENNOKO_ANM_RUN1_LOOP))
+		setBckAnm(DENNOKO_ANM_RUN1_START);
 }
 
-void TElecNokonoko::setDeadAnm() { setBckAnm(1); }
+void TElecNokonoko::setDeadAnm() { setBckAnm(DENNOKO_ANM_DOWN1); }
 
 void TElecNokonoko::setMeltAnm()
 {
-	setBckAnm(2);
+	setBckAnm(DENNOKO_ANM_ELEC_DOWN1);
 	onLiveFlag(LIVE_FLAG_UNK8);
-	JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
-	unk18C               = 3;
-	mCarapace->mVelocity = zero;
-	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0xCA, getMActor()->getModel()->getAnmMtx(0), 0, nullptr))
+
+	JGeometry::TVec3<f32> stop(0.0f, 0.0f, 0.0f);
+	unk18C            = 3;
+	mCarapace->mVelocity = stop;
+
+	J3DModel* model         = getMActor()->getModel();
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    PARTICLE_MS_DNK_SHIBIRE_B, model->getAnmMtx(0), 0, nullptr);
+	if (emitter)
 		emitter->setGlobalScale(mScaling);
 }
 
@@ -428,134 +567,180 @@ void TElecNokonoko::genRandomItem()
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
 	                                            &mPosition, 0, nullptr);
 	TSmallEnemy::genRandomItem();
-	if (checkLiveFlag(LIVE_FLAG_UNK10000)) {
-		if (TMapObjBase* obj = gpItemManager->makeObjAppear(
-		        mCarapace->mPosition.x, mCarapace->mPosition.y,
-		        mCarapace->mPosition.z, 0x2000000E, true)) {
-			obj->mVelocity.set(0.0f, 20.0f, 0.0f);
-			obj->offLiveFlag(LIVE_FLAG_UNK10);
-		}
+
+	// A koopa killed while it still had a shine's worth of juice left drops
+	// its coin where the shell landed, not where it died.
+	if (checkLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH)) {
+		TMapObjBase* coin = gpItemManager->makeObjAppear(
+		    mCarapace->mPosition.x, mCarapace->mPosition.y,
+		    mCarapace->mPosition.z, 0x2000000E, true);
+		if (coin)
+			coin->setVelocityAndFlag10(0.0f, 20.0f, 0.0f);
 	}
 }
 
+// UNUSED, 0x6c in the map: inlined into attackToMario.
 bool TElecNokonoko::isShootReady()
 {
-	// TODO: UNUSED in the map (size 0x6c), contents unknown
-	return false;
+	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoShoot::theNerve())
+		return false;
+	return true;
 }
 
+// UNUSED, 0x8c in the map: inlined into calcRootMatrix.
 bool TElecNokonoko::isCatchReady()
 {
-	return mSpine->getCurrentNerve() == &TNerveElecNokonokoCollect::theNerve()
-	           ? true
-	           : false;
+	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoFreeze::theNerve())
+		return false;
+	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve())
+		return false;
+	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoCollect::theNerve())
+		return false;
+	return true;
 }
 
+// UNUSED, 0x15c in the map, and nothing references it: it would have made the
+// koopa drop whatever it was doing and go and fetch the shell.
+// TODO: incorrect size.
 void TElecNokonoko::forceCatchReady()
 {
 	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve())
 		return;
-	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoFreeze::theNerve())
-		return;
+
 	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoCollect::theNerve())
 		return;
+
+	mSpine->reset();
 	mSpine->setNext(&TNerveElecNokonokoCollect::theNerve());
+	setGoalPath(mCarapace->getPosition());
 }
 
+// UNUSED, 0xe0 in the map, and nothing references it.
+// TODO: incorrect size.
 bool TElecNokonoko::isDeadByThunder()
 {
-	if (mSpine->getCurrentNerve() == &TNerveElecNokonokoFreeze::theNerve()) {
-		JGeometry::TVec3<f32> diff = mPosition - mCarapace->mPosition;
-		if (VECMag(&diff) < 200.0f)
-			return true;
-	}
-	return false;
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return false;
+
+	if (mSpine->getCurrentNerve() != &TNerveElecNokonokoFreeze::theNerve())
+		return false;
+
+	if (!isBckAnm(DENNOKO_ANM_ELEC_DOWN1))
+		return false;
+
+	return true;
 }
 
+// UNUSED, 0x124 in the map, and nothing references it: the collect nerve does
+// the same work inline.
+// TODO: incorrect size.
 void TElecNokonoko::recoverCarapace()
 {
-	// TODO: UNUSED in the map (size 0x124), contents unknown
+	mHasCarapace = 0;
+	mCarapace->kill();
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
+	                                            &mCarapace->mPosition, 0,
+	                                            nullptr);
+	setBckAnm(DENNOKO_ANM_CATCH1);
 }
 
 TElecCarapace::TElecCarapace(const char* name)
     : TEnemyAttachment(name)
-    , mOwner(nullptr)
-    , unk170(nullptr)
-    , unk174(true)
-    , unk175(0)
-    , unk176(0)
-    , unk178(0.0f)
-    , unk17C(0.0f)
-    , unk180(0)
-    , unk184(0)
-    , unk188(0.0f)
+    , mNokonoko(nullptr)
+    , mReflector(nullptr)
+    , mSpinReverse(true)
+    , mStraight(false)
+    , mFlying(false)
+    , mZigzagCycle(0.0f)
+    , mZigzagAngle(0.0f)
+    , mReflectTimer(0)
+    , mLanded(false)
+    , mSpinAngle(0.0f)
     , unk198(0.0f)
 {
 }
 
-void TElecCarapace::loadInit(TSpineEnemy* owner, const char* name)
+void TElecCarapace::loadInit(TSpineEnemy* host, const char* model)
 {
-	TEnemyAttachment::loadInit(owner, name);
-	mOwner = (TElecNokonoko*)unk160;
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
-	    ->getChildren()
-	    .push_back(this);
+	TEnemyAttachment::loadInit(host, model);
+
+	mNokonoko = (TElecNokonoko*)unk160;
+
+	TIdxGroupObj* group
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ");
+	group->getChildren().push_back(this);
 
 	initHitActor(0x1000000B, 3, 0x98000000, 80.0f, 80.0f, 60.0f, 60.0f);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
+
 	unk150 = 0;
 	mSpine->initWith(&TNerveElecCarapaceMove::theNerve());
-	if (TMsRange<s32>(0, 300).rand() < 150)
-		unk174 = false;
+
+	// Half the shells spin the other way, so a pair thrown together crosses
+	// over instead of travelling side by side.
+	s32 r = TMsRange<s32>(0, 300).rand();
+	if (r < 150)
+		mSpinReverse = false;
+
 	mHeadHeight = 80.0f;
 }
 
 void TElecCarapace::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	TEnemyAttachment::perform(cue, graphics);
-	if (cue & CUE_MOVE) {
-		if (unk180 != 0) {
-			++unk180;
-			if (unk180 > 5)
-				unk180 = 0;
+
+	if (cue & 1) {
+		if (mReflectTimer != 0) {
+			mReflectTimer++;
+			if (mReflectTimer > 5)
+				mReflectTimer = 0;
 		}
 	}
 
-	if (cue & CUE_ENTRY) {
-		if (!isState(0) && !mOwner->checkLiveFlag(LIVE_FLAG_DEAD)) {
-			if (mLiveFlag & (LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN))
-				return;
+	if (cue & 0x200) {
+		if (isUnk150Zero() || mNokonoko->checkLiveFlag(LIVE_FLAG_DEAD)
+		    || checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN))
+			return;
 
-			TCircleShadowRequest request;
-			request.mPosition = mPosition;
-			if (!isAirborne()) {
-				request.mPosition.y       = mGroundHeight;
-				request.mNeedsGroundCheck = 0;
-			}
-			request.mRadiusX = request.mRadiusZ = mOwner->mScaledBodyRadius;
-			request.mRotationY                  = mRotation.y;
-			gpBindShadowManager->request(request, getActorType());
+		TCircleShadowRequest request;
+		request.mPosition = getPosition();
+
+		if (!isAirborne()) {
+			request.mPosition.y       = mGroundHeight;
+			request.mNeedsGroundCheck = 0;
 		}
+
+		request.mRadiusX = request.mRadiusZ = mNokonoko->mScaledBodyRadius;
+		request.mRotationY                  = getRotation().y;
+
+		gpBindShadowManager->request(request, getActorType());
 	}
 }
 
 void TElecCarapace::setBehavior()
 {
-	if (mOwner->checkLiveFlag(LIVE_FLAG_DEAD))
+	if (mNokonoko->checkLiveFlag(LIVE_FLAG_DEAD))
 		kill();
+
+	// The flag setBehavior reads is TEnemyAttachment's own landing flag at
+	// 0x168, not TElecCarapace::mLanded at 0x184: retail's lbz/stb pair here
+	// addresses the base member while every other site in this TU uses 0x184.
 	if (unk168)
 		mPosition.y = mGroundHeight;
-	unk168 = 0;
+
+	unk168 = false;
 }
 
 void TElecCarapace::behaveToHitGround()
 {
-	if (unk176)
-		unk184 = 1;
+	if (mFlying)
+		mLanded = true;
+
 	if (mGroundPlane->isWaterSurface())
 		kill();
-	unk176 = 0;
-	unk168 = 1;
+
+	mFlying = false;
+	unk168  = 1;
 	offLiveFlag(LIVE_FLAG_AIRBORNE);
 	mVelocity.set(0.0f, 0.0f, 0.0f);
 }
@@ -564,74 +749,109 @@ void TElecCarapace::kill() { TEnemyAttachment::kill(); }
 
 void TElecCarapace::behaveToHitWall(const TBGCheckData* wall)
 {
-	if (unk180 <= 0 && TElecNokonoko::mReflectSw) {
-		unk180 = 1;
-		unk184 = 0;
-		unk176 = 1;
-		unk175 = 1;
-		f32 t  = -1.5f * mLinearVelocity.dot(wall->getNormal());
-		mVelocity.x = t * wall->getNormal().x;
-		mVelocity.y = 3.0f;
-		mVelocity.z = t * wall->getNormal().z;
-		mPosition.y = 2.0f + mGroundHeight;
-		setGoalPath(TPathNode(mOwner->mPosition));
-	}
+	if (mReflectTimer > 0)
+		return;
+
+	if (!TElecNokonoko::mReflectSw)
+		return;
+
+	mReflectTimer = 1;
+	mLanded       = false;
+	mFlying       = true;
+	mStraight     = true;
+
+	f32 along = -1.5f * mLinearVelocity.dot(wall->getNormal());
+
+	mVelocity.x = along * wall->getNormal().x;
+	mVelocity.y = 3.0f;
+	mVelocity.z = along * wall->getNormal().z;
+	mPosition.y = 2.0f + mGroundHeight;
+
+	setGoalPath(mNokonoko->mPosition);
 }
 
 f32 TElecCarapace::getNowGravity()
 {
-	return ((TElecNokonokoSaveLoadParams*)mOwner->getSaveParam())
-	    ->mSLCarapaceGravity.get();
+	return ((TElecNokonokoSaveLoadParams*)mNokonoko->getSaveParam())
+	    ->getSLCarapaceGravity();
 }
 
 void TElecCarapace::appear()
 {
-	if (unk150 == 0) {
-		unk150    = 1;
-		mPosition = mOwner->mPosition;
-		f32 scale = mOwner->mScaling.x;
-		unk164    = scale;
-		mScaling.x = mScaling.y = mScaling.z = scale;
-		mBodyRadius                          = 50.0f;
-		unk170                               = nullptr;
-		onHitFlag(HIT_FLAG_NO_COLLISION);
-	}
+	if (unk150 != 0)
+		return;
+
+	unk150    = 1;
+	mPosition = mNokonoko->mPosition;
+
+	f32 scale  = mNokonoko->mScaling.x;
+	unk164     = scale;
+	mScaling.z = scale;
+	mScaling.y = scale;
+	mScaling.x = scale;
+
+	mBodyRadius = 50.0f;
+	mReflector  = nullptr;
+	onHitFlag(HIT_FLAG_NO_COLLISION);
 }
 
 void TElecCarapace::shoot()
 {
-	unk180 = 0;
-	if (unk150 != 2) {
-		JGeometry::TVec3<f32> target = *gpMarioPos - mPosition;
-		MsVECNormalize(&target, &target);
-		f32 flyDist = mOwner->mParams->mSLCarapaceFlyDist.get();
-		target.x *= flyDist;
-		target.y *= mPosition.y;
-		target.z *= flyDist;
-		target.x += mPosition.x;
-		target.y += mPosition.y;
-		target.z += mPosition.z;
+	mReflectTimer = 0;
 
-		unk174 = !unk174;
-		unk188 = 0.0f;
-		unk150 = 2;
-		unk176 = 0;
-		unk168 = 0;
-		unk184 = 0;
-		unk175 = 0;
-		offHitFlag(HIT_FLAG_NO_COLLISION);
-		mSpine->initWith(&TNerveElecCarapaceMove::theNerve());
-		setGoalPath(TPathNode(target));
-		setZigParameter();
-	}
+	if (unk150 == 2)
+		return;
+
+	JGeometry::TVec3<f32> goal = *gpMarioPos - mPosition;
+	MsVECNormalize((Vec*)&goal, (Vec*)&goal);
+
+	f32 flyDist = mNokonoko->getSaveParams()->getSLCarapaceFlyDist();
+	goal.x *= flyDist;
+	goal.y *= mPosition.y;
+	goal.z *= flyDist;
+	goal.x += mPosition.x;
+	goal.y += mPosition.y;
+	goal.z += mPosition.z;
+
+	mSpinReverse  = !mSpinReverse;
+	mSpinAngle    = 0.0f;
+	unk150        = 2;
+	mFlying       = false;
+	unk168        = 0;
+	mLanded       = false;
+	mStraight     = false;
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+
+	mSpine->initWith(&TNerveElecCarapaceMove::theNerve());
+	setGoalPath(goal);
+
+	// The path point is spelled as the raw two-way choice: getPoint()'s
+	// early-return form hoists &unk104.unk4 into a saved register.
+	// TODO: every instruction matches; only the temporaries' slots differ
+	// (retail sub 0x5c, ranges 0x68/0x74, node copy 0x8c; ours 0x94, 0x7c,
+	// 0x84). Inert: an assign-later `goal`, a direct-init `goal`, named
+	// TMsRange locals; SMS_GetMarioPos() and a copy-then-sub are worse.
+	f32 cycle    = TMsRange<f32>(3.0f, 5.0f).rand();
+	mZigzagCycle = cycle
+	             * ElecCalcDist(unk104.unk0 ? unk104.unk0->mPosition
+	                                        : unk104.unk4,
+	                            mPosition);
+	mZigzagAngle = TMsRange<f32>(20.0f, 30.0f).rand();
 }
 
+// UNUSED, 0x160 in the map (this body is 0x160).
+// TODO: shoot() inlines this in retail. Calling it there keeps every
+// instruction but leaves shoot's frame 0xc8 against 0xd0 and moves the
+// sub temporary high (retail 0x5c, below the ranges; ours 0x90), so shoot
+// still carries the block written out.
 void TElecCarapace::setZigParameter()
 {
-	f32 cycle = TMsRange<f32>(3.0f, 5.0f).rand();
-	// TODO: the target calls TVec3::dot out of line here, unknown why
-	unk178 = cycle * (unk104.getPoint() - mPosition).length();
-	unk17C = TMsRange<f32>(20.0f, 30.0f).rand();
+	f32 cycle    = TMsRange<f32>(3.0f, 5.0f).rand();
+	mZigzagCycle = cycle
+	             * ElecLength((unk104.unk0 ? unk104.unk0->mPosition
+	                                       : unk104.unk4)
+	                          - mPosition);
+	mZigzagAngle = TMsRange<f32>(20.0f, 30.0f).rand();
 }
 
 void TElecCarapace::bind()
@@ -642,47 +862,67 @@ void TElecCarapace::bind()
 
 void TElecCarapace::calcRootMatrix()
 {
-	MsMtxSetXYZRPH(getMActor()->getModel()->getBaseTRMtx(), mPosition.x, mPosition.y,
-	               mPosition.z, mRotation.x, mRotation.y + unk188,
-	               mRotation.z);
+	MsMtxSetXYZRPH(getMActor()->getModel()->getBaseTRMtx(), mPosition.x,
+	               mPosition.y, mPosition.z, mRotation.x,
+	               mRotation.y + mSpinAngle, mRotation.z);
 	getMActor()->getModel()->setBaseScale(mScaling);
-	SMSGetMSound()->startSoundActor(MSD_SE_EN_DENNOKO_SPARK2, &mPosition, 0,
-	                                nullptr, 0, 4);
-	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17A, getMActor()->getModel()->getAnmMtx(2), 1, this))
-		emitter->setGlobalScale(mOwner->mScaling);
-	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17B, getMActor()->getModel()->getAnmMtx(2), 1, this))
-		emitter->setGlobalScale(mOwner->mScaling);
-	if (JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
-	        0x17C, getMActor()->getModel()->getAnmMtx(2), 1, this))
-		emitter->setGlobalScale(mOwner->mScaling);
+
+	gpMSound->startSoundActor(MSD_SE_EN_DENNOKO_SPARK2, &mPosition);
+
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    PARTICLE_MS_DNK_BIRI, getMActor()->getModel()->getAnmMtx(2), 1, this);
+	if (emitter)
+		emitter->setGlobalScale(mNokonoko->mScaling);
+
+	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    PARTICLE_MS_DNK_SPARK_L, getMActor()->getModel()->getAnmMtx(2), 1, this);
+	if (emitter)
+		emitter->setGlobalScale(mNokonoko->mScaling);
+
+	emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    PARTICLE_MS_DNK_SPARK_R, getMActor()->getModel()->getAnmMtx(2), 1, this);
+	if (emitter)
+		emitter->setGlobalScale(mNokonoko->mScaling);
+}
+
+// The splash-angle draws below as their own level: the loop counter then
+// shares the callee-saved zero the spread's minimum is stored from (retail
+// r24).
+// The spread's slot and the 0xa0 frame come from sendMessage reading the
+// raw collision count and the raw collision array at its last two tests.
+static inline void ElecDrawSplashAngles()
+{
+	TMsRange<s32> spread(0, 360);
+	for (int j = 0; j < 5; j++) {
+		s32 yaw   = spread.rand();
+		s32 pitch = spread.rand();
+		s32 roll  = spread.rand();
+	}
 }
 
 void TElecCarapace::sendMessage()
 {
-	for (int i = 0; i < getColNum(); ++i) {
-		THitActor* hit = getCollision(i);
-		if (hit->isActorType(0x80000001)) {
-			if (SMS_SendMessageToMario(this, 9)) {
+	for (int i = 0; i < mColCount; i++) {
+		if (getCollision(i)->isActorType(0x80000001)) {
+			// Mario: shock him and then sit still for a second.
+			if (SMS_SendMessageToMario(this, HIT_MESSAGE_ELECTRIC_SHOCK)) {
 				onHitFlag(HIT_FLAG_NO_COLLISION);
 				if (mSpine->getCurrentNerve()
 				    != &TNerveElecCarapaceWait::theNerve())
 					mSpine->pushNerve(&TNerveElecCarapaceWait::theNerve());
 			}
-		} else if (hit == mOwner) {
+		} else if (mCollisions[i] == mNokonoko) {
 			offHitFlag(HIT_FLAG_NO_COLLISION);
-		} else if (hit->isActorType(0x1000001)) {
-			// TODO: the results of these rand() calls are discarded, probably
-			// an effect that got commented out
-			TMsRange<s32> range(0, 360);
-			for (int j = 0; j < 5; ++j) {
-				rand();
-				rand();
-				rand();
-			}
+		} else if (mCollisions[i]->isActorType(0x01000001)) {
+			// Mario's water jet. The retail object draws three angles out of
+			// a 0..360 range five times over and uses none of them, so the
+			// five splashes those angles aimed are gone and only the draws
+			// are left.
+			// TODO: what the three angles fed is not recoverable from the
+			// retail object.
+			ElecDrawSplashAngles();
 		} else if (TElecNokonoko::mReflectSw) {
-			reflect(hit);
+			reflect(getCollision(i));
 		}
 	}
 }
@@ -696,7 +936,7 @@ BOOL TElecCarapace::receiveMessage(THitActor* sender, u32 message)
 	}
 
 	if (message == HIT_MESSAGE_TRAMPLE)
-		SMS_SendMessageToMario(this, 9);
+		SMS_SendMessageToMario(this, HIT_MESSAGE_ELECTRIC_SHOCK);
 
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER)
 		return TRUE;
@@ -704,84 +944,102 @@ BOOL TElecCarapace::receiveMessage(THitActor* sender, u32 message)
 	return FALSE;
 }
 
-void TElecCarapace::reflect(THitActor* actor)
+// The snap axis is a vector whose dot with `away` gives the bounce speed.
+void TElecCarapace::reflect(THitActor* other)
 {
-	if (unk170 != actor) {
-		unk184 = 0;
-		unk170 = actor;
-		unk176 = 1;
-		unk175 = 0;
+	if (mReflector == other)
+		return;
 
-		JGeometry::TVec3<f32> dir(actor->mPosition.x - mPosition.x, 0.0f,
-		                          actor->mPosition.z - mPosition.z);
-		if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-			dir.x += 1.0f;
-		MsVECNormalize(&dir, &dir);
+	mLanded    = false;
+	mReflector = other;
+	mFlying    = true;
+	mStraight  = false;
 
-		JGeometry::TVec3<f32> normal(0.0f, 0.0f, 0.0f);
-		if (fabsf(dir.z / dir.x) > 1.0f) {
-			if (actor->mPosition.z > mPosition.z)
-				normal.z = 1.0f;
-			else
-				normal.z = -1.0f;
-		} else {
-			if (actor->mPosition.x > mPosition.x)
-				normal.x = 1.0f;
-			else
-				normal.x = -1.0f;
-		}
+	JGeometry::TVec3<f32> away(other->mPosition.x - mPosition.x, 0.0f,
+	                           other->mPosition.z - mPosition.z);
+	if (away.x == 0.0f && away.y == 0.0f && away.z == 0.0f)
+		away.x += 1.0f;
+	MsVECNormalize((Vec*)&away, (Vec*)&away);
 
-		f32 t = -7.0f * dir.dot(normal);
-		mVelocity.x = dir.x * t;
-		mVelocity.y = 2.0f;
-		mVelocity.z = dir.z * t;
-		mPosition.y = 2.0f + mGroundHeight;
-
-		unk174 = false;
-		if ((mVelocity.x > 0.0f && mVelocity.z > 0.0f)
-		    || (mVelocity.x < 0.0f && mVelocity.z < 0.0f))
-			unk174 = true;
-
-		setGoalPath(TPathNode(mOwner->mPosition));
+	// Snap the bounce onto whichever world axis the hit came from.
+	JGeometry::TVec3<f32> axis(0.0f, 0.0f, 0.0f);
+	if (fabsf(away.z / away.x) > 1.0f) {
+		if (other->mPosition.z > mPosition.z)
+			axis.z = 1.0f;
+		else
+			axis.z = -1.0f;
+	} else if (other->mPosition.x > mPosition.x) {
+		axis.x = 1.0f;
+	} else {
+		axis.x = -1.0f;
 	}
+
+	f32 along = -7.0f * (away.x * axis.x + away.y * axis.y + away.z * axis.z);
+	mVelocity.x = away.x * along;
+	mVelocity.y = 2.0f;
+	mVelocity.z = away.z * along;
+	mPosition.y = 2.0f + mGroundHeight;
+
+	mSpinReverse = false;
+	if ((mVelocity.x > 0.0f && mVelocity.z > 0.0f)
+	    || (mVelocity.x < 0.0f && mVelocity.z < 0.0f))
+		mSpinReverse = true;
+
+	setGoalPath(mNokonoko->mPosition);
 }
 
+// UNUSED, 0x94 in the map (this body is 0x94): the shell's step and spin,
+// inlined into the move nerve.
 void TElecCarapace::move()
 {
-	// TODO: UNUSED in the map (size 0x94), contents unknown
+	f32 spinSpeed = getNokonoko()->getSaveParams()->mSLCarapaceSpinSpeed.value;
+	f32 speed     = getNokonoko()->getSaveParams()->mSLCarapaceSpeed.value;
+	f32 turnSpeed = getNokonoko()->getSaveParams()->mSLCarapaceTurnSpeed.value;
+
+	if (mStraight)
+		walkToCurPathNode(speed, turnSpeed, 0.0f);
+	else
+		zigzagToCurPathNode(speed, turnSpeed, mZigzagCycle, mZigzagAngle);
+
+	mSpinAngle += spinSpeed;
+	if (mSpinAngle > 360.0f)
+		mSpinAngle -= 360.0f;
 }
 
+// UNUSED, 0x8c in the map.
+// TODO: incorrect size.
 bool TElecCarapace::isMove()
 {
-	return mSpine->getCurrentNerve() == &TNerveElecCarapaceWait::theNerve()
-	           ? false
-	           : true;
+	if (mSpine->getCurrentNerve() == &TNerveElecCarapaceMove::theNerve())
+		return true;
+	return false;
 }
 
 DEFINE_NERVE(TNerveElecNokonokoShoot, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
+
 	if (spine->getTime() == 0)
-		self->setBckAnm(9);
+		nokonoko->setBckAnm(DENNOKO_ANM_READY);
 
-	if (self->isBckAnm(9)) {
-		if (self->checkCurAnmEnd(0)) {
-			self->setBckAnm(12);
-			self->unk198 = 0;
+	if (nokonoko->isBckAnm(DENNOKO_ANM_READY)) {
+		if (nokonoko->checkCurAnmEnd(0)) {
+			nokonoko->setBckAnm(DENNOKO_ANM_SHOOT1);
+			nokonoko->unk198 = 0;
 		}
-	} else if (self->isBckAnm(12)) {
-		if (self->getMActor()->getFrameCtrl(0)->checkPass(60.0f))
-			self->mCarapace->appear();
+	} else if (nokonoko->isBckAnm(DENNOKO_ANM_SHOOT1)) {
+		if (nokonoko->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(60.0f))
+			nokonoko->getCarapace()->appear();
 
-		if (self->getCurAnmFrameNo(0) < 62.0f)
-			self->walkToCurPathNode(0.0f, self->mTurnSpeed, 0.0f);
+		if (nokonoko->getCurAnmFrameNo(0) < 62.0f)
+			nokonoko->walkToCurPathNode(0.0f, nokonoko->getTurnSpeed(), 0.0f);
 
-		if (self->getMActor()->getFrameCtrl(0)->checkPass(62.0f)) {
-			self->mCarapace->shoot();
-			self->unk1A4 = 1;
+		if (nokonoko->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(62.0f)) {
+			nokonoko->getCarapace()->shoot();
+			nokonoko->mHasCarapace = 1;
 		}
 
-		if (self->checkCurAnmEnd(0)) {
+		if (nokonoko->checkCurAnmEnd(0)) {
 			spine->pushAfterCurrent(&TNerveElecNokonokoCollect::theNerve());
 			return TRUE;
 		}
@@ -792,66 +1050,78 @@ DEFINE_NERVE(TNerveElecNokonokoShoot, TLiveActor)
 
 DEFINE_NERVE(TNerveElecNokonokoCollect, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		if (!self->isBckAnm(0))
-			self->setBckAnm(8);
-		self->setGoalPath(TPathNode(self->mCarapace));
+		if (!nokonoko->isBckAnm(DENNOKO_ANM_CATCH1))
+			nokonoko->setBckAnm(DENNOKO_ANM_COLLECT);
+		nokonoko->setGoalPath(nokonoko->getCarapace());
 	}
 
-	if (self->mCarapace->isMove())
-		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), 0);
+	// Name the shell before theNerve() so the compare's receiver is hoisted
+	// past the static init, and materialise the != as an inline predicate
+	// (retail's `li 0; b; li 1; clrlwi.`).
+	TElecCarapace* carapace = nokonoko->getCarapace();
+	if (ElecIsNotNerve(carapace->getSpine(),
+	                   &TNerveElecCarapaceWait::theNerve()))
+		ElecNokonokoGetMActor(nokonoko)->setFrameRate(SMSGetAnmFrameRate(),
+		                                             ANM_TYPE_BCK);
 	else
-		self->getMActor()->setFrameRate(0.0f, 0);
+		nokonoko->getMActor()->setFrameRate(0.0f, ANM_TYPE_BCK);
 
-	if (self->isBckAnm(0)) {
-		int frame = self->getCurAnmFrameNo(0);
+	if (nokonoko->isBckAnm(DENNOKO_ANM_CATCH1)) {
+		int frame = (int)nokonoko->getCurAnmFrameNo(0);
 		if (frame > 20)
-			self->mCarapace->onHitFlag(HIT_FLAG_NO_COLLISION);
-
+			nokonoko->getCarapace()->onHitFlag(HIT_FLAG_NO_COLLISION);
 		if (frame > 32) {
-			self->unk1A4 = 0;
-			self->mCarapace->kill();
+			nokonoko->mHasCarapace = 0;
+			nokonoko->getCarapace()->kill();
 		}
-
-		if (self->checkCurAnmEnd(0))
+		if (nokonoko->checkCurAnmEnd(0))
 			return TRUE;
 	} else if (spine->getTime() > 800
-	           || self->mCarapace->checkLiveFlag(LIVE_FLAG_DEAD)) {
+	           || nokonoko->getCarapace()->checkLiveFlag(LIVE_FLAG_DEAD)) {
 		spine->pushAfterCurrent(&TNerveElecNokonokoRebirth::theNerve());
 		return TRUE;
 	}
 
-	self->walkToCurPathNode(0.0f, self->mTurnSpeed, 0.0f);
+	nokonoko->walkToCurPathNode(0.0f, nokonoko->getTurnSpeed(), 0.0f);
 	return FALSE;
 }
 
 DEFINE_NERVE(TNerveElecNokonokoTurn, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setBckAnm(16);
-		self->setGoalPath(TPathNode((THitActor*)gpMarioAddress));
+		nokonoko->setBckAnm(DENNOKO_ANM_TURN1_START);
+		nokonoko->setGoalPath(ElecMario());
 	}
 
-	if (self->isBckAnm(15)
-	    && MsIsInSight(self->mPosition, self->mRotation.y, *gpMarioPos,
-	                   ((TSmallEnemyParams*)self->getSaveParam())->mSLSearchLength.get(), 60.0f,
-	                   0.0f))
-		self->setBckAnm(14);
+	if (nokonoko->isBckAnm(DENNOKO_ANM_TURN1_LOOP)
+	    && MsIsInSight(nokonoko->getPosition(), nokonoko->mRotation.y,
+	                   SMS_GetMarioPos(),
+	                   ((TSmallEnemyParams*)nokonoko->getSaveParam())
+	                       ->getSLSearchLength(),
+	                   60.0f, 0.0f))
+		nokonoko->setBckAnm(DENNOKO_ANM_TURN1_END);
 
-	if (self->checkCurAnmEnd(0)) {
-		if (self->isBckAnm(16))
-			self->setBckAnm(15);
-		else if (self->isBckAnm(14))
+	if (nokonoko->checkCurAnmEnd(0)) {
+		if (nokonoko->isBckAnm(DENNOKO_ANM_TURN1_START))
+			nokonoko->setBckAnm(DENNOKO_ANM_TURN1_LOOP);
+		else if (nokonoko->isBckAnm(DENNOKO_ANM_TURN1_END))
 			return TRUE;
 	}
 
-	if (self->mPosition.x - self->mCarapace->mPosition.x == 0.0f
-	    && self->mPosition.z - self->mCarapace->mPosition.z == 0.0f)
-		self->mPosition.x += 1.0f;
+	// Standing exactly on top of the shell leaves the turn with no direction
+	// to aim at, so nudge along X.
+	if (nokonoko->mPosition.x - nokonoko->getCarapace()->mPosition.x == 0.0f
+	    && nokonoko->getPosition().z - nokonoko->getCarapace()->mPosition.z
+	           == 0.0f)
+		nokonoko->mPosition.x += 1.0f;
 
-	self->walkToCurPathNode(0.0f, self->mTurnSpeed, 0.0f);
+	nokonoko->walkToCurPathNode(0.0f, nokonoko->getTurnSpeed(), 0.0f);
+
 	if (spine->getTime() > 500)
 		return TRUE;
 
@@ -860,34 +1130,44 @@ DEFINE_NERVE(TNerveElecNokonokoTurn, TLiveActor)
 
 DEFINE_NERVE(TNerveElecNokonokoFreeze, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		if (isCarapaceOn(self)) {
-			self->setBckAnm(3);
+		if (nokonoko->hasCarapace()) {
+			nokonoko->setBckAnm(DENNOKO_ANM_HIT1);
 			gpMarioParticleManager->emitAndBindToMtxPtr(
-			    0xCA, self->getMActor()->getModel()->getAnmMtx(0), 0, nullptr);
+			    PARTICLE_MS_DNK_SHIBIRE_B,
+			    ElecNokonokoGetMActor(nokonoko)->getModel()->getAnmMtx(0), 0,
+			    nullptr);
 		} else {
-			self->setBckAnm(7);
+			nokonoko->setBckAnm(DENNOKO_ANM_MOGAKI1_START);
 		}
 	}
 
-	if (self->isBckAnm(3) && self->getCurAnmFrameNo(0) < 25.0f) {
-		MtxPtr mtx = self->getMActor()->getModel()->getAnmMtx(8);
-		self->unk1A8.set(mtx[0][3], mtx[1][3], mtx[2][3]);
-		if (JPABaseEmitter* emitter
-		    = gpMarioParticleManager->emitAndBindToPosPtr(0x17E, &self->unk1A8,
-		                                                  1, self))
-			emitter->setGlobalScale(self->mScaling);
+	if (nokonoko->isBckAnm(DENNOKO_ANM_HIT1)
+	    && nokonoko->getCurAnmFrameNo(0) < 25.0f) {
+		MtxPtr head = nokonoko->getMActor()->getModel()->getAnmMtx(8);
+		nokonoko->mEffectPos.set(head[0][3], head[1][3], head[2][3]);
+
+		JPABaseEmitter* emitter
+		    = gpMarioParticleManager->emitAndBindToPosPtr(
+		        PARTICLE_MS_DNK_HIBANA, &nokonoko->mEffectPos, 1, nokonoko);
+		if (emitter)
+			emitter->setGlobalScale(nokonoko->mScaling);
 	}
 
-	if (self->checkCurAnmEnd(0)) {
-		if (self->isBckAnm(7)) {
-			self->setBckAnm(6);
-		} else if (self->isBckAnm(6)) {
-			if (!self->unsetUnk165() && isCarapaceOn(self))
-				self->setBckAnm(5);
+	if (nokonoko->checkCurAnmEnd(0)) {
+		if (nokonoko->isBckAnm(DENNOKO_ANM_MOGAKI1_START)) {
+			nokonoko->setBckAnm(DENNOKO_ANM_MOGAKI1_LOOP);
+		} else if (nokonoko->isBckAnm(DENNOKO_ANM_MOGAKI1_LOOP)) {
+			bool first      = nokonoko->unk165;
+			if (first)
+				nokonoko->unk165 = false;
+
+			if (!first && nokonoko->hasCarapace())
+				nokonoko->setBckAnm(DENNOKO_ANM_MOGAKI_BARE);
 			else
-				self->setBckAnm(6);
+				nokonoko->setBckAnm(DENNOKO_ANM_MOGAKI1_LOOP);
 		} else {
 			return TRUE;
 		}
@@ -905,21 +1185,22 @@ DEFINE_NERVE(TNerveElecNokonokoFreeze, TLiveActor)
 
 DEFINE_NERVE(TNerveElecNokonokoRebirth, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		self->setBckAnm(13);
-		self->unk1A4 = 0;
+		nokonoko->setBckAnm(DENNOKO_ANM_SUPPLY1);
+		nokonoko->mHasCarapace = 0;
 		gpMarioParticleManager->emitAndBindToPosPtr(
-		    PARTICLE_MS_TLS_CHANGE, &self->mCarapace->mPosition, 0, nullptr);
-		self->mCarapace->kill();
+		    PARTICLE_MS_TLS_CHANGE, &nokonoko->getCarapace()->mPosition, 0,
+		    nullptr);
+		nokonoko->getCarapace()->kill();
 	}
 
-	if (self->getMActor()->getFrameCtrl(0)->checkPass(88.0f))
-		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
-		                                            &self->mPosition, 0,
-		                                            nullptr);
+	if (nokonoko->getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(88.0f))
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_TLS_CHANGE, &nokonoko->mPosition, 0, nullptr);
 
-	if (self->checkCurAnmEnd(0)) {
+	if (nokonoko->checkCurAnmEnd(0)) {
 		spine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
 		return TRUE;
 	}
@@ -929,11 +1210,12 @@ DEFINE_NERVE(TNerveElecNokonokoRebirth, TLiveActor)
 
 DEFINE_NERVE(TNerveElecNokonokoAttack, TLiveActor)
 {
-	TElecNokonoko* self = (TElecNokonoko*)spine->getBody();
-	if (spine->getTime() == 0 || !self->isBckAnm(3))
-		self->setBckAnm(3);
+	TElecNokonoko* nokonoko = (TElecNokonoko*)spine->getBody();
 
-	if (self->checkCurAnmEnd(0))
+	if (spine->getTime() == 0 || !nokonoko->isBckAnm(DENNOKO_ANM_HIT1))
+		nokonoko->setBckAnm(DENNOKO_ANM_HIT1);
+
+	if (nokonoko->checkCurAnmEnd(0))
 		return TRUE;
 
 	return FALSE;
@@ -941,42 +1223,64 @@ DEFINE_NERVE(TNerveElecNokonokoAttack, TLiveActor)
 
 DEFINE_NERVE(TNerveElecCarapaceMove, TLiveActor)
 {
-	TElecCarapace* self                 = (TElecCarapace*)spine->getBody();
-	TElecNokonokoSaveLoadParams* params = self->mOwner->mParams;
-	f32 spinSpeed                       = params->mSLCarapaceSpinSpeed.get();
-	f32 speed                           = params->mSLCarapaceSpeed.get();
-	f32 turnSpeed                       = params->mSLCarapaceTurnSpeed.get();
-	if (self->unk175)
-		self->walkToCurPathNode(speed, turnSpeed, 0.0f);
-	else
-		self->zigzagToCurPathNode(speed, turnSpeed, self->unk178,
-		                          self->unk17C);
+	TElecCarapace* carapace = (TElecCarapace*)spine->getBody();
 
-	self->unk188 += spinSpeed;
-	if (self->unk188 > 360.0f)
-		self->unk188 -= 360.0f;
+	carapace->move();
 
-	if (self->unk184) {
-		f32 catchDist = 64.0f * self->mOwner->mParams->mSLCarapaceSpeed.get();
-		if ((self->unk104.getPoint() - self->mPosition).length() < catchDist) {
-			if (!self->mOwner->isCatchReady())
-				self->mOwner->forceCatchReady();
+	if (carapace->mLanded) {
+		// Once the shell has landed it homes on the koopa, and a near miss
+		// hands it back over.
+		f32 catchRange = 64.0f
+		    * carapace->getNokonoko()->mSaveParams->mSLCarapaceSpeed.value;
+		if (ElecSubDist(carapace->unk104.getPoint(), carapace->mPosition)
+		    < catchRange) {
+			// The koopa is named ahead of the theNerve() guard, so retail
+			// reloads it for `nokonoko` once the guard's call has run.
+			TElecNokonoko* koopa = carapace->getNokonoko();
+			if (!ElecIsNerve(koopa->getSpine(),
+			                 &TNerveElecNokonokoCollect::theNerve())) {
+				TElecNokonoko* nokonoko = carapace->getNokonoko();
+				if (nokonoko->mSpine->getCurrentNerve()
+				        != &TNerveSmallEnemyDie::theNerve()
+				    && nokonoko->mSpine->getCurrentNerve()
+				           != &TNerveElecNokonokoFreeze::theNerve()
+				    && nokonoko->mSpine->getCurrentNerve()
+				           != &TNerveElecNokonokoCollect::theNerve())
+					nokonoko->catchIn();
+			}
+
 			spine->pushAfterCurrent(&TNerveElecCarapaceReturn::theNerve());
 			return TRUE;
 		}
 	}
 
-	JGeometry::TVec3<f32> diff = self->getUnk104().getPoint();
-	diff -= self->mPosition;
-	diff.y = 0.0f;
-	if (!self->unk176 && MsVECMag2(&diff) < 100.0f) {
-		if (self->unk184) {
+	// TODO: frame size exact through getPosition() here; the slot order is
+	// not: retail puts ElecSubDist's by-value copy lowest (0xd4) and the
+	// setGoalPath TPathNode above it (0xe8), we the reverse. operator-,
+	// a const& fork, an explicit temporary copy, raw mPosition or mNokonoko
+	// at setGoalPath, and getPosition() in ElecSubDist were inert or worse.
+	// c-k7 (debugger): the TPathNode is parse-time object @1577; the by-value
+	// copy is created when the body holding the ElecSubDist call is expanded.
+	// Moving the test into a depth-1 predicate (`ElecIsNearGoal(carapace,
+	// range)` over ElecSubDist or TSpineEnemy::calcDist) puts the TPathNode on
+	// retail's 0xe8 (24 -> 12 markers) but the copy lands at 0xdc, directly
+	// under it; retail has ElecIsNerve's two bindings (@1786 nerve, @1791
+	// spine, depth 1, later in source) between them, so its copy was created
+	// after the depth-1 pass, i.e. one expansion level deeper still. Not landed:
+	// the predicate is fabricated. A named `goal` reference and calcDist at
+	// the site are worse (35).
+	JGeometry::TVec3<f32> toGoal(carapace->getUnk104().getPoint());
+	toGoal.sub(carapace->getPosition());
+	toGoal.y = 0.0f;
+
+	if (!carapace->mFlying && MsVECMag2((Vec*)&toGoal) < 100.0f) {
+		if (carapace->mLanded) {
 			spine->pushAfterCurrent(&TNerveElecCarapaceReturn::theNerve());
 			return TRUE;
 		}
 
-		self->unk184 = 1;
-		self->setGoalPath(TPathNode(self->mOwner->mPosition));
+		carapace->mLanded = true;
+		carapace->setGoalPath(carapace->getNokonoko()->getPosition());
 	}
 
 	return FALSE;
@@ -986,68 +1290,85 @@ DEFINE_NERVE(TNerveElecCarapaceWait, TLiveActor)
 {
 	if (spine->getTime() > 60)
 		return TRUE;
+
 	return FALSE;
 }
 
+// getPosition() on the koopa in ElecIsShockedNearCarapace lands the 0xc0
+// frame and the first `home` slot.
+// TODO: every instruction matches; the second `home` sits 8 high (0x9c vs
+// 0x94) and ElecDistTo's operator- copy still sits above ElecVecMag's
+// parameter (retail 0x48 below 0x74). Inert: a named difference (VECMag or
+// ElecVecMag), an explicit TVec3 temporary, a copy-then-sub body, a copy
+// inside ElecVecMag, getPosition() at either `home`.
 DEFINE_NERVE(TNerveElecCarapaceReturn, TLiveActor)
 {
-	TElecCarapace* self = (TElecCarapace*)spine->getBody();
+	TElecCarapace* carapace = (TElecCarapace*)spine->getBody();
+
 	if (spine->getTime() == 0) {
-		JGeometry::TVec3<f32> ownerPos = self->mOwner->mPosition;
-		self->unk18C.set(0.015625f * (ownerPos.x - self->mPosition.x),
-		                 0.015625f * (ownerPos.y - self->mPosition.y),
-		                 0.015625f * (ownerPos.z - self->mPosition.z));
-		if (self->mOwner->isBckAnm(8))
-			self->mOwner->setBckAnm(0);
+		JGeometry::TVec3<f32> home(carapace->mNokonoko->mPosition);
+		carapace->mReturnStep.set(
+		    0.015625f * (home.x - carapace->mPosition.x),
+		    0.015625f * (home.y - carapace->mPosition.y),
+		    0.015625f * (home.z - carapace->mPosition.z));
+
+		if (carapace->mNokonoko->isBckAnm(DENNOKO_ANM_COLLECT))
+			carapace->mNokonoko->setBckAnm(DENNOKO_ANM_CATCH1);
 	}
 
+	// The koopa keeps being asked for the catch animation over the first
+	// twenty frames, so a late arrival still gets picked up.
 	if (spine->getTime() < 20) {
-		if (self->mOwner->isBckAnm(8))
-			self->mOwner->setBckAnm(0);
+		if (carapace->mNokonoko->isBckAnm(DENNOKO_ANM_COLLECT))
+			carapace->mNokonoko->setBckAnm(DENNOKO_ANM_CATCH1);
 	}
 
-	if (self->mOwner->isDeadByThunder()) {
-		self->mOwner->onLiveFlag(LIVE_FLAG_UNK10000);
-		self->mOwner->kill();
-		gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
-		                                            &self->mPosition, 0,
-		                                            nullptr);
+	if (ElecIsShockedNearCarapace(carapace->mNokonoko)) {
+		// Shocked with the shell almost home: the koopa melts away and the
+		// shell pops instead of being caught.
+		carapace->mNokonoko->onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+		carapace->mNokonoko->kill();
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    PARTICLE_MS_TLS_CHANGE, &carapace->mPosition, 0, nullptr);
 	}
 
-	self->unk188 += self->mOwner->mParams->mSLCarapaceSpinSpeed.get();
-	if (self->unk188 > 360.0f)
-		self->unk188 -= 360.0f;
+	carapace->mSpinAngle
+	    += carapace->mNokonoko->getSaveParams()->getSLCarapaceSpinSpeed();
+	if (carapace->mSpinAngle > 360.0f)
+		carapace->mSpinAngle -= 360.0f;
 
-	self->mPosition.x += self->unk18C.x;
-	self->mPosition.y += self->unk18C.y;
-	self->mPosition.z += self->unk18C.z;
+	carapace->mPosition.x += carapace->mReturnStep.x;
+	carapace->mPosition.y += carapace->mReturnStep.y;
+	carapace->mPosition.z += carapace->mReturnStep.z;
 
-	JGeometry::TVec3<f32> ownerPos = self->mOwner->mPosition;
-	if (self->unk18C.x > 0.0f) {
-		if (self->mPosition.x > ownerPos.x)
-			self->mPosition.x = ownerPos.x;
-	} else if (self->mPosition.x < ownerPos.x) {
-		self->mPosition.x = ownerPos.x;
+	// Clamp per axis so the shell never overshoots the koopa.
+	JGeometry::TVec3<f32> home(carapace->mNokonoko->mPosition);
+
+	if (carapace->mReturnStep.x > 0.0f) {
+		if (carapace->mPosition.x > home.x)
+			carapace->mPosition.x = home.x;
+	} else if (carapace->mPosition.x < home.x) {
+		carapace->mPosition.x = home.x;
 	}
 
-	if (self->unk18C.y > 0.0f) {
-		if (self->mPosition.y > ownerPos.y)
-			self->mPosition.y = ownerPos.y;
-	} else if (self->mPosition.y < ownerPos.y) {
-		self->mPosition.y = ownerPos.y;
+	if (carapace->mReturnStep.y > 0.0f) {
+		if (carapace->mPosition.y > home.y)
+			carapace->mPosition.y = home.y;
+	} else if (carapace->mPosition.y < home.y) {
+		carapace->mPosition.y = home.y;
 	}
 
-	if (self->unk18C.z > 0.0f) {
-		if (self->mPosition.z > ownerPos.z)
-			self->mPosition.z = ownerPos.z;
-	} else if (self->mPosition.z < ownerPos.z) {
-		self->mPosition.z = ownerPos.z;
+	if (carapace->mReturnStep.z > 0.0f) {
+		if (carapace->mPosition.z > home.z)
+			carapace->mPosition.z = home.z;
+	} else if (carapace->mPosition.z < home.z) {
+		carapace->mPosition.z = home.z;
 	}
 
-	if (self->mOwner->checkLiveFlag(LIVE_FLAG_DEAD)) {
-		self->mScaling.y *= 0.8f;
-		if (self->mScaling.y < 0.01f)
-			self->kill();
+	if (carapace->mNokonoko->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		carapace->mScaling.y *= 0.8f;
+		if (carapace->mScaling.y < 0.01f)
+			carapace->kill();
 	}
 
 	return FALSE;

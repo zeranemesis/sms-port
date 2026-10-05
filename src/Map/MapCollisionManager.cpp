@@ -13,7 +13,11 @@ void TMapCollisionManager::changeCollision(u32 i)
 	}
 }
 
-#pragma dont_inline on
+void TMapCollisionManager::getFileName(const char*, char*) { }
+
+// Retail calls this from init: the empty `default` arm is the fifteenth
+// statement over the depth-1 budget (the 228 bytes are the inlined
+// TMapCollision* constructors, which cost nothing).
 void TMapCollisionManager::createCollision(const char* param_1, u8 param_2)
 {
 	switch (param_2) {
@@ -27,9 +31,10 @@ void TMapCollisionManager::createCollision(const char* param_1, u8 param_2)
 	case 2:
 		mEntries[mEntryNum] = new TMapCollisionWarp;
 		break;
+	default:
+		break;
 	}
 }
-#pragma dont_inline off
 
 // fabricated
 inline u8 col_type(u16 param_1) { return param_1 & 3; }

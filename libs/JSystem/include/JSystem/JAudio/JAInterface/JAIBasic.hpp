@@ -47,7 +47,6 @@ public:
 	/* 0x4 */ // vt
 public:
 	JAIBasic();
-	~JAIBasic();
 
 	virtual void initStream();
 	virtual JAISound* makeSound(u32 count);
@@ -82,6 +81,7 @@ public:
 	void initSeqsLoadArea();
 	void startSeSequence();
 	void setCameraInfo(VecPtr pos, VecPtr dir, MtxPtr mtx, u32 param);
+	void initAudioThread(JKRSolidHeap* heap, u32 param1, u8 param2);
 	void bootDSP();
 	void readInitSoundData();
 	void loadFirstStayWave();
@@ -185,6 +185,15 @@ public:
 
 	static JAIBasic* getInterface() { return basic; }
 
+	// Fabricated name. The level it adds over a raw unk0 read is the fourth
+	// +8 lever MSBgm::init needs (three levers on the JAIData/JAISoundTable
+	// side saturate at 0x40 across all 72 spellings the old trial table
+	// measured; retail wants 0x48 at the same 34 instructions, and the fourth
+	// lever has to be on a class the first three do not touch). Every other
+	// JAIBasic::unk0 reader in the tree matches on the raw member, so the
+	// accessor is applied per site.
+	JAIData* getData() { return unk0; }
+
 public:
 	/* 0x8 */ JAICamera* mAudioCameras;
 	/* 0xC */ JKRSolidHeap* mInterfaceHeap;
@@ -224,7 +233,7 @@ public:
 	/* 0x4C */ u8* mInitDataPointer;
 
 	struct FabricatedBankEntry {
-		/* 0x0 */ void* mBankData;
+		/* 0x0 */ PTR32(void) mBankData;
 		/* 0x4 */ char unk4[0x4];
 		/* 0x8 */ int mWaveBankNumber;
 	};
@@ -238,7 +247,7 @@ public:
 	};
 
 	struct FabricatedWaveBankEntry {
-		/* 0x0 */ void* mWaveBankData;
+		/* 0x0 */ PTR32(void) mWaveBankData;
 		/* 0x4 */ u32 unk4;
 		/* 0x8 */ u32 mLoadTiming;
 	};
@@ -246,14 +255,14 @@ public:
 	/* 0x54 */ FabricatedWaveBankEntry* mWaveBankList;
 
 	struct FabricatedSeqArchiveHeader {
-		/* 0x0 */ u8* mData;
+		/* 0x0 */ PTR32(u8) mData;
 		/* 0x4 */ u32 mSize;
 	};
 
 	/* 0x58 */ FabricatedSeqArchiveHeader* mSeqArchiveHeader;
 
 	struct FabricatedStreamListHeader {
-		/* 0x0 */ JAIData::FabricatedStreamEntry* mData;
+		/* 0x0 */ PTR32(JAIData::FabricatedStreamEntry) mData;
 		/* 0x4 */ u32 mSize;
 	};
 
@@ -270,11 +279,11 @@ public:
 
 	struct FabricatedSoundSceneTable {
 		/* 0x0 */ u32 mSceneMax;
-		/* 0x4 */ JAICategoryInfo* mSceneData[];
+		/* 0x4 */ PTR32(JAICategoryInfo) mSceneData[];
 	};
 
 	// Points at FabricatedSoundSceneTable::mSceneData.
-	/* 0x68 */ JAICategoryInfo** mSoundSceneList;
+	/* 0x68 */ PTR32(JAICategoryInfo)* mSoundSceneList;
 
 	struct FabricatedFxSceneTable {
 		/* 0x0 */ u32 mSceneMax;

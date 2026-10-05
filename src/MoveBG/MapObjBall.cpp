@@ -1,164 +1,101 @@
-
+// Definitions follow the map's .text layout reversed, this TU being
+// -inline deferred: all of TMapObjBall from touchRoof down to its
+// constructor, then TResetFruit from checkGroundCollision down to its
+// constructor (the four UNUSED bodies pick/living/waitEffect/rotting sit
+// between makeObjLiving and breaking, where the map's symbol closure puts
+// them), then TRandomFruit, TCoverFruit and TBigWatermelon from
+// touchWaterSurface down to its constructor. Do not resort them by class or
+// by hand; validate-symbol-order.py checks this.
 #include <MoveBG/MapObjBall.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
-#include <System/DummyStrings.hpp>
-// rogue include: the retail object also carries the four
-// MActorMtxCalcType_* names from M3DUtil/InfectiousStrings.hpp in .rodata
-// (they are unreferenced, but the compiler still emits the literals), and
-// they sit between the dummy pair and the /scene/mapObj/*.jpa strings.
-#include <M3DUtil/InfectiousStrings.hpp>
-#include <Map/Map.hpp>
-#include <Map/MapCollisionData.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <MarioUtil/PacketUtil.hpp>
-#include <MSound/MSound.hpp>
-#include <MSound/MSoundSE.hpp>
-#include <MarioUtil/MathUtil.hpp>
-#include <MoveBG/Item.hpp>
 #include <System/FlagManager.hpp>
-#include <Player/ModelWaterManager.hpp>
-#include <JSystem/JParticle/JPAResourceManager.hpp>
-#include <JSystem/JGeometry.hpp>
-#include <Player/MarioAccess.hpp>
 #include <System/MarDirector.hpp>
-#include <Map/PollutionManager.hpp>
-#include <MoveBG/ItemManager.hpp>
-#include <MoveBG/MapObjManager.hpp>
 #include <System/Particles.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <MoveBG/ItemManager.hpp>
 #include <Camera/CubeManagerBase.hpp>
-#include <stdlib.h>
+#include <Enemy/PoiHana.hpp>
+#include <MoveBG/Item.hpp>
+#include <JSystem/JGeometry.hpp>
+#include <MarioUtil/MapUtil.hpp>
+#include <string.h>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <stdio.h>
 #include <string.h>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapCollisionData.hpp>
+#include <Map/PollutionManager.hpp>
+#include <Player/MarioAccess.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
 
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
-// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
-// (see the same block in src/Enemy/effectObj.cpp).
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 
-// The original calls JGeometry::TUtil<f32>::sqrt(v) out-of-line here
-// (bl sqrt__Q29JGeometry8TUtil<f>Ff), with the range guard inside the
-// callee. JGUtil.hpp only offers the inline spelling, so MWCC always
-// expands these sites and the call never appears.
-// FABRICATED: the callee is orig_sqrt, so the `bl` itself still shows as
-// one mismatched instruction. Making JGUtil.hpp out-of-line instead was
-// measured repo-wide at -32.2 points - see docs/AGENT_MATCHING_TIPS.md.
-#pragma dont_inline on
-static f32 orig_sqrt(f32 v) {
-	return JGeometry::TUtil<f32>::sqrt(v);
-}
-#pragma dont_inline off
-
-
-u32 TResetFruit::mFruitLivingTime       = 0x3840;
-f32 TResetFruit::mScaleUpSpeed           = 1.05f;
-f32 TResetFruit::mBreakingScaleSpeed     = 0.96f;
-u32 TResetFruit::mFruitWaitTimeToAppear  = 0x168;
-
-// TBigWatermelon::startEvent's four names, as the raw SJIS bytes the retail
-// object carries at .rodata @1490+0x1AC/0x1C8/0x1D8/0x1EC. They are passed
-// through verbatim, so the literals must stay byte-identical. Declaration
-// order is also emission order, which is what fixes their .rodata offsets.
-static const char kShineName[] = "\x83\x56\x83\x83\x83\x43\x93\x93\x81\x69"
-                                 "\x82\xA8\x89\xBB\x82\xAF\x83\x58\x83\x43"
-                                 "\x83\x4A\x97\x70\x81\x6A";
-static const char kStageName[] = "\x83\x58\x83\x43\x83\x4A\x81\x69\x91\xE5"
-                                 "\x81\x6A";
-static const char kCamName[]   = "\x83\x58\x83\x43\x83\x53\x81\x5B\x83\x8B"
-                                 "\x83\x4A\x83\x81\x83\x89\x83\x89";
-static const char kDemoName[]  = "\x83\x58\x83\x43\x83\x56\x83\x83\x83\x83"
-                                 "\x83\x43\x93\x93\x83\x4A\x83\x81\x83\x89";
-
-// States that TMapObjGeneral does not name yet.
-enum {
-	FRUIT_STATE_ROTTING = 0xB,
-	FRUIT_STATE_WAITING = 0xC,
-	FRUIT_STATE_WAITTOSEE = 0xD,
-};
-
-// TMapObjBase::MAP_OBJ_FLAG_* has no enumerator for 0x40000; the fruit
-// code always raises it together with startStateTimer(), so the name used
-// here is a guess. TODO: needs a real name (and a header enumerator).
-enum { MAP_OBJ_FLAG_HAS_STATE_TIMER = 0x40000 };
-
-// Recovered from the five identical inline copies in
-// receiveMessage / touchWaterSurface / touchPollution / touchGround /
-// makeObjWaitingToAppear. The map lists no symbol for it.
-static void TResetFruit_hideAndWait(TResetFruit* f)
+void TMapObjBall::touchRoof(JGeometry::TVec3<f32>* param_1)
 {
-	f->makeObjDefault();
-	f->makeObjDead();
-	f->calcRootMatrix();
-	f->getModel()->calc();
-
-	f->startStateTimer(TResetFruit::mFruitWaitTimeToAppear);
-	f->offMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-	f->setState(TMapObjGeneral::STATE_WAITING_TO_APPEAR);
-
-	if (SMSGetMarDirector()->mMap == 3 && f->unk1A4)
-		f->makeObjDead();
-}
-
-void TMapObjBall::touchRoof(JGeometry::TVec3<f32>* velocity)
-{
-	if (velocity->y > unk140)
-		velocity->y = unk140;
+	if (param_1->y > unk140)
+		param_1->y = unk140;
 
 	calcReflectingVelocity(unk13C, mMapObjData->mPhysical->unk4->unk4,
 	                       &mVelocity);
 }
 
-void TMapObjBall::touchWall(JGeometry::TVec3<f32>* position,
-	                        TBGWallCheckRecord* record)
+void TMapObjBall::touchWall(JGeometry::TVec3<f32>* param_1,
+                            TBGWallCheckRecord* param_2)
 {
-	if (!checkLiveFlag(LIVE_FLAG_AIRBORNE) && isActorType(0x400000D0))
-		mVelocity.y += unk184 * orig_sqrt(mVelocity.squared());
+	// Hitting a wall while rolling on the ground pops the ball up a little,
+	// scaled by how fast it was going. The watermelon is too heavy for that.
+	if (!isAirborne()) {
+		if (!isActorType(0x400000D0)) {
+			mVelocity.y
+			    += unk184 * JGeometry::TVec3<f32>(mVelocity).length();
+		}
+	}
 
-	for (int i = 0; i < record->mResultWallsNum; ++i) {
-		const TBGCheckData* wall = record->mResultWalls[i];
+	for (int i = 0; i < param_2->mResultWallsNum; ++i) {
+		const TBGCheckData* wall = param_2->mResultWalls[i];
 
-		f32 dot = mVelocity.x * wall->mNormal.x
-		          + mVelocity.y * wall->mNormal.y
-		          + mVelocity.z * wall->mNormal.z;
-		if (dot >= 0.0f)
-			continue;
+		JGeometry::TVec3<f32> vel(mVelocity);
+		f32 into = vel.dot(wall->getNormal());
+		if (into < 0.0f) {
+			// Push the ball back out to exactly one radius from the plane.
+			// Both products are TVec3::dot() (c-k15: the written-out sums let
+			// MWCC reuse the normal's loads, 98.0 -> 99.8).
+			// TODO: every instruction and register matches; the frame is
+			// 0xf0 against 0x120 (the velocity copies sit 0x1c-0x38 low).
+			f32 dist = param_1->dot(wall->getNormal()) + wall->getPlaneDistance();
+			param_1->x += (mBodyRadius - dist) * wall->getNormal().x;
+			param_1->z += (mBodyRadius - dist) * wall->getNormal().z;
 
-		f32 d = position->x * wall->mNormal.x
-		        + position->y * wall->mNormal.y
-		        + position->z * wall->mNormal.z;
+			f32 bounce = into * -(1.0f + mMapObjData->getPhysicalData()->unk8);
+			mVelocity.x += bounce * wall->getNormal().x;
+			mVelocity.z += bounce * wall->getNormal().z;
 
-		position->x += (mBodyRadius - (d + wall->mPlaneDistance))
-		               * wall->mNormal.x;
-		position->z += (mBodyRadius - d) * wall->mNormal.z;
-
-		f32 k = dot * -(1.0f + mMapObjData->mPhysical->unk4->unk8);
-		mVelocity.x += k * wall->mNormal.x;
-		mVelocity.z += k * wall->mNormal.z;
-
-		if (isActorType(0x400000D0)) {
-			if (mScaling.y >= 5.0f) {
-				f32 speed = orig_sqrt(mVelocity.squared());
-				if (gpMSound->gateCheck(0x308A))
-					MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-					    0x308A, &mPosition, nullptr, speed, 0, 0, nullptr, 4,
-					    0);
+			if (isActorType(0x400000D0)) {
+				if (mScaling.y >= 5.0f) {
+					SMSGetMSound()->startSoundActorWithInfo(
+					    MSD_SE_OBJ_WATERMELON_BROLL, &mPosition, nullptr,
+					    abs(JGeometry::TVec3<f32>(mVelocity).length()), 0, 0,
+					    nullptr, 0, 4);
+				} else {
+					SMSGetMSound()->startSoundActorWithInfo(
+					    MSD_SE_OBJ_WATERMELON_SROLL, &mPosition, nullptr,
+					    abs(JGeometry::TVec3<f32>(mVelocity).length()), 0, 0,
+					    nullptr, 0, 4);
+				}
 			} else {
-				f32 speed = orig_sqrt(mVelocity.squared());
-				if (gpMSound->gateCheck(0x308B))
-					MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-					    0x308B, &mPosition, nullptr, speed, 0, 0, nullptr, 4,
-					    0);
+				u32 sound = mMapObjData->mSound->unk4->unk0[4];
+				SMSGetMSound()->startSoundActorWithInfo(
+				    sound, &mPosition, (Vec*)&mVelocity, 0.0f, 0, 0, nullptr,
+				    0, 4);
 			}
-		} else {
-			u32 sound = mMapObjData->mSound->unk4->unk0[2];
-			if (gpMSound->gateCheck(sound))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    sound, &mPosition, &mVelocity, 0.0f, 0, 0, nullptr, 0, 4);
 		}
 	}
 }
@@ -167,92 +104,88 @@ void TMapObjBall::touchPollution() { kill(); }
 
 void TMapObjBall::touchWaterSurface() { kill(); }
 
-void TMapObjBall::rebound(JGeometry::TVec3<f32>* position)
+// Binding level over the sound singleton, sized inside the body that
+// TBigWatermelon::rebound pastes as well.
+static inline MSound* MapObjBallBounceSound()
 {
-	// frame-size pad: the retail frame is 0x38 bytes larger than the code
-	// needs; the extra locals the original declared here were all optimised
-	// away.
-	
-	
-	calcReflectingVelocity(
-	    mGroundPlane, mMapObjData->mPhysical->unk4->unk4, &mVelocity);
-	position->y = mGroundHeight;
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+void TMapObjBall::rebound(JGeometry::TVec3<f32>* param_1)
+{
+	calcReflectingVelocity(mGroundPlane, mMapObjData->mPhysical->unk4->unk4,
+	                       &mVelocity);
+	param_1->y = mGroundHeight;
 	onLiveFlag(LIVE_FLAG_AIRBORNE);
 
 	if (isActorType(0x400000D0)) {
+		// The watermelon has a big and a small bounce sample, chosen by how
+		// far it has been scaled up.
 		if (mScaling.y >= 5.0f) {
-			f32 speed = fabsf(mGroundPlane->mNormal.y);
-			if (gpMSound->gateCheck(0x3889))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x3889, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
+			MapObjBallBounceSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_WATERMELON_BBUND, &mPosition, nullptr,
+			    abs(getGroundPlane()->mNormal.y), 0, 0, nullptr, 0, 4);
 		} else {
-			f32 speed = fabsf(mGroundPlane->mNormal.y);
-			if (gpMSound->gateCheck(0x388C))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x388C, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
+			MapObjBallBounceSound()->startSoundActorWithInfo(
+			    MSD_SE_OBJ_WATERMELON_SBUND, &mPosition, nullptr,
+			    abs(getGroundPlane()->mNormal.y), 0, 0, nullptr, 0, 4);
 		}
 	} else {
 		u32 sound = mMapObjData->mSound->unk4->unk0[4];
-		if (gpMSound->gateCheck(sound))
-			MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-			    sound, &mPosition, &mVelocity, 0.0f, 0, 0, nullptr, 0, 4);
+		MapObjBallBounceSound()->startSoundActorWithInfo(sound, &mPosition,
+		                                        (Vec*)&mVelocity, 0.0f, 0, 0,
+		                                        nullptr, 0, 4);
 	}
 }
 
-void TMapObjBall::touchGround(JGeometry::TVec3<f32>* position)
+void TMapObjBall::touchGround(JGeometry::TVec3<f32>* param_1)
 {
-	f32 speed = fabsf(orig_sqrt(
-	    mVelocity.x * mVelocity.x + mVelocity.y * mVelocity.y
-	    + mVelocity.z * mVelocity.z));
-
-	if (speed > 0.05f && isActorType(0x400000D0)) {
-		if (mScaling.y >= 5.0f) {
-			if (gpMSound->gateCheck(0x308A))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x308A, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-		} else {
-			if (gpMSound->gateCheck(0x308B))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x308B, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
+	f32 speed = abs(JGeometry::TVec3<f32>(getVelocity()).length());
+	if (speed > 0.05f) {
+		if (isActorType(0x400000D0)) {
+			// Big and small rolling samples, same split as rebound().
+			if (mScaling.y >= 5.0f) {
+				SMSGetMSound()->startSoundActorWithInfo(
+				    MSD_SE_OBJ_WATERMELON_BROLL, &mPosition, nullptr, speed, 0,
+				    0, nullptr, 0, 4);
+			} else {
+				SMSGetMSound()->startSoundActorWithInfo(
+				    MSD_SE_OBJ_WATERMELON_SROLL, &mPosition, nullptr, speed, 0,
+				    0, nullptr, 0, 4);
+			}
 		}
 	}
 
-	// TODO: 0x100/0x101/0x102..0x105/0x4104 are TBGCheckData attribute
-	// values that are not named anywhere in the tree yet.
-	u16 attr = mGroundPlane->mBGType;
-	if (attr == 0x100 || attr == 0x101
-	    || (attr >= 0x102 && attr <= 0x105) || attr == 0x4104) {
+	if (mGroundPlane->isWaterSurface()) {
 		touchWaterSurface();
-		position->x = mPosition.x;
-		position->y = mPosition.y;
-		position->z = mPosition.z;
+		param_1->set(mPosition);
 		return;
 	}
 
-	if (gpPollution->isPolluted(position->x, position->y, position->z)) {
+	if (gpPollution->isPolluted(param_1->x, param_1->y, param_1->z)) {
 		touchPollution();
-		position->x = mPosition.x;
-		position->y = mPosition.y;
-		position->z = mPosition.z;
+		param_1->set(mPosition);
 		return;
 	}
 
+	// A slow enough impact settles instead of bouncing.
 	if (mVelocity.y > -unk188) {
-		onLiveFlag(LIVE_FLAG_UNK40);
+		offLiveFlag(LIVE_FLAG_AIRBORNE);
 		mVelocity.y = 0.0f;
-		position->y = mGroundHeight;
+		param_1->y  = getGroundHeight();
 	} else {
-		rebound(position);
+		rebound(param_1);
 	}
 
-	if (!checkLiveFlag(LIVE_FLAG_AIRBORNE)) {
-		mVelocity.x += unk180 * mGroundPlane->mNormal.x;
-		mVelocity.z += unk180 * mGroundPlane->mNormal.z;
+	// Rolling downhill: the ground normal drags the ball along.
+	if (!isAirborne()) {
+		mVelocity.x += unk180 * getGroundPlane()->getNormal().x;
+		mVelocity.z += unk180 * getGroundPlane()->getNormal().z;
 	}
 
-	f32 fric = mMapObjData->mPhysical->unk4->unk10;
-	mVelocity.x *= fric;
-	mVelocity.z *= fric;
+	mVelocity.x *= getMapObjData()->mPhysical->unk4->unk10;
+	mVelocity.z *= getMapObjData()->mPhysical->unk4->unk10;
 }
 
 void TMapObjBall::put()
@@ -261,148 +194,197 @@ void TMapObjBall::put()
 	calcCurrentMtx();
 }
 
-void TMapObjBall::hold(TTakeActor* holder)
+// Consumed const-ref binding under the unnamed TVec3 copy: +4 of pool
+// so the copy sits at retail's 0x20 and the frame stays 0x38, while the
+// unnamed temporary still keeps TUtil<f32>::sqrt out of line.
+static inline f32 MapObjBallHoldSpeed(const JGeometry::TVec3<f32>& vel)
 {
-	JGeometry::TVec3<f32> velocity = mVelocity;
-	f32 speed = orig_sqrt(velocity.x * velocity.x
-	                                       + velocity.y * velocity.y
-	                                       + velocity.z * velocity.z);
-	if (speed <= 10.0f) {
-		TMapObjGeneral::hold(holder);
-		mVelocity.z = 0.0f;
-		mVelocity.y = 0.0f;
-		mVelocity.x = 0.0f;
-	}
+	return JGeometry::TVec3<f32>(vel).length();
+}
+
+void TMapObjBall::hold(TTakeActor* param_1)
+{
+	// A ball still moving fast cannot be picked up. The unnamed temporary
+	// is what keeps JGeometry::TUtil<f32>::sqrt out of line, as the ROM has
+	// it (weak from boid.cpp): a named copy puts sqrt one level shallower
+	// and expands it.
+	if (MapObjBallHoldSpeed(mVelocity) > 10.0f)
+		return;
+
+	TMapObjGeneral::hold(param_1);
+	mVelocity.zero();
 }
 
 void TMapObjBall::kicked()
 {
-	JGeometry::TVec3<f32> velocity = mVelocity;
+	// Only a downward or level kick does anything.
+	if (JGeometry::TVec3<f32>(mVelocity).y > 0.0f)
+		return;
 
-	if (velocity.y > 0.0f) {
-		if (velocity.y == 0.0f) {
-			mVelocity.y = unk178;
-		} else {
-			mVelocity.y = unk160 * velocity.y - unk174 * (*gpMarioSpeedY);
-		}
+	if (JGeometry::TVec3<f32>(mVelocity).y == 0.0f) {
+		mVelocity.y = unk178;
+	} else {
+		mVelocity.y = unk174 * SMS_GetMarioSpeedY()
+		    - unk160 * JGeometry::TVec3<f32>(mVelocity).y;
 	}
 
-	mVelocity.x += unk170 * (*gpMarioSpeedX);
-	mVelocity.z += unk170 * (*gpMarioSpeedZ);
+	mVelocity.x += unk170 * SMS_GetMarioSpeedX();
+	mVelocity.z += unk170 * SMS_GetMarioSpeedZ();
 
-	f32 min = mMapObjData->mPhysical->unk4->unkC;
-	if (fabsf(mVelocity.x) < min && fabsf(mVelocity.z) < min) {
-		mVelocity.x = 2.0f * (rand() * (1.0f / 32768.0f)) - 1.0f;
-		mVelocity.z = 2.0f * (rand() * (1.0f / 32768.0f)) - 1.0f;
+	// A ball kicked straight down would otherwise sit still, so give it a
+	// random nudge in XZ.
+	f32 minSpeed = mMapObjData->getPhysicalData()->unkC;
+	if (abs(mVelocity.x) < minSpeed && abs(mVelocity.z) < minSpeed) {
+		mVelocity.x = 2.0f * MsRandF() - 1.0f;
+		mVelocity.z = 2.0f * MsRandF() - 1.0f;
 	}
 
 	unk194 = 10;
 	offLiveFlag(LIVE_FLAG_UNK10);
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	// Spelled out rather than through SMS_SendMessageToMario(): retail calls
+	// SMS_GetMarioHitActor() and then dispatches receiveMessage through the
+	// vtable here, where the helper is a real `bl` in every other TU.
+	//
+	// TODO: every instruction now matches; the frame is 0xb8 against our 0x78.
+	// Retail parks the first TVec3 copy at 0xc and then a descending block of
+	// three 12-byte temporaries from 0x90, i.e. 0x40 bytes of low region we do
+	// not reserve between the two groups; ours are contiguous at 0x30-0x5f.
+	SMS_GetMarioHitActor()->receiveMessage(this, HIT_MESSAGE_ATTACK);
 
-	SMS_GetMarioHitActor()->receiveMessage(this, 0xE);
-
-	if (!isActorType(0x400000D0) && gpMSound->gateCheck(0x194F))
-		MSoundSESystem::MSoundSE::startSoundActor(0x194F, &mPosition, 0,
-		                                         nullptr, 0, 4);
+	if (!isActorType(0x400000D0)) {
+		SMSGetMSound()->startSoundActor(MSD_SE_MA_KICK_DRIAN, &mPosition, 0,
+		                                nullptr, 0, 4);
+	}
 }
 
-u32 TMapObjBall::touchWater(THitActor* actor)
+u32 TMapObjBall::touchWater(THitActor* param_1)
 {
-	if (!isState(STATE_HOLDING) && !isState(STATE_APPEARING)) {
-		JGeometry::TVec3<f32> velocity = mVelocity;
-		const JGeometry::TVec3<f32>& speed = getWaterSpeed(actor);
-		velocity.x += speed.x * unk17C;
-		velocity.y += speed.y * unk17C;
-		velocity.z += speed.z * unk17C;
-		mVelocity.x = velocity.x;
-		mVelocity.y = velocity.y;
-		mVelocity.z = velocity.z;
-		offLiveFlag(LIVE_FLAG_UNK10);
-	}
+	if (isState(STATE_HOLDING) || isState(STATE_APPEARING))
+		return 1;
 
+	// The current drags the ball along, scaled by the per-kind unk17C.
+	JGeometry::TVec3<f32> pushed;
+	JGeometry::TVec3<f32> vel(mVelocity);
+	pushed.set(vel);
+
+	const JGeometry::TVec3<f32>& flow = getWaterSpeed(param_1);
+	// TODO: retail loads flow.x before the drag factor; every spelling tried
+	// (scaleAdd, the accessor at each site, the raw member, a named flow.x)
+	// loads the drag first. The per-site accessor loads flow first but drops
+	// CSE of drag, swaps the fmadds operands, and grows the frame +8. The
+	// raw member is also 8 short of the frame: the drag was read through an
+	// accessor.
+	f32 drag = getUnk17C();
+	pushed.x += flow.x * drag;
+	pushed.y += flow.y * drag;
+	pushed.z += flow.z * drag;
+	mVelocity = pushed;
+
+	offLiveFlag(LIVE_FLAG_UNK10);
 	return 1;
 }
 
-// The retail object calls this out-of-line from touchActor() and
-// receiveMessage(), so keep it out of line.
-#pragma dont_inline on
-void TMapObjBall::boundByActor(THitActor* actor)
+// Reference binding over the physical-parameter chain, used in
+// TMapObjBall::boundByActor's kick-up level (a value copy orders its slots
+// worse). c-k15: the two direct tests there read
+// TMapObjData::getPhysicalData() (code-identical); at the kick-up site the
+// accessor, a named `const f32&` over it or the raw chain are all worse.
+static inline f32 MapObjBallMinBoundSpeed(const TMapObjBall* p)
 {
-	// Direction to the actor, flattened onto the XZ plane. The zero Y is
-	// live: it is the middle term of the dot product below.
-	JGeometry::TVec3<f32> dir(actor->mPosition.x - mPosition.x, 0.0f,
-	                         actor->mPosition.z - mPosition.z);
+	const f32& min = p->mMapObjData->mPhysical->unk4->unkC;
+	return min;
+}
 
-	// Mario's hit sphere grows with the fruit's own attack radius; every
-	// other ball just uses its damage radius.
-	f32 radius = isActorType(0x400000D0)
-	                 ? mAttackRadius + actor->mDamageRadius
-	                 : mDamageRadius;
+// Binding level over the sound singleton, +8 of low region per site in
+// TMapObjBall::boundByActor.
+static inline MSound* MapObjBallBoundSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
 
-	if (radius * radius < dir.x * dir.x + dir.z * dir.z)
-		return;
-
-	if (dir.x != 0.0f && dir.z != 0.0f)
-		MsVECNormalize(&dir, &dir);
-
-	if (actor->isActorType(0x80000001)) {
-		// Mario kicked us rather than merely touching us.
-		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000)) {
-			f32 min = mMapObjData->mPhysical->unk4->unkC;
-			if (fabsf(*gpMarioSpeedX) > min || fabsf(*gpMarioSpeedZ) > min) {
-				mVelocity.y += unk150;
-				if (!isActorType(0x400000D0)
-				    && gpMSound->gateCheck(0x194F))
-					MSoundSESystem::MSoundSE::startSoundActor(
-					    0x194F, &mPosition, 0, nullptr, 0, 4);
-			} else {
-				mVelocity.y += unk154;
-			}
-			mVelocity.x += unk148 * *gpMarioSpeedX - dir.x * unk14C;
-			mVelocity.z += unk148 * *gpMarioSpeedZ - dir.z * unk14C;
-			actor->receiveMessage(this, 0xE);
+// Mario walking into the ball nudges it harder than standing on it. Holding
+// minSpeed in a callee (not in boundByActor) puts its dead word below the
+// unnamed TVec3 copies, as in retail.
+static inline void MapObjBallKickUp(TMapObjBall* p)
+{
+	f32 minSpeed = MapObjBallMinBoundSpeed(p);
+	if (abs(SMS_GetMarioSpeedX()) > minSpeed
+	    || abs(SMS_GetMarioSpeedZ()) > minSpeed) {
+		p->mVelocity.y += p->unk150;
+		if (!p->isActorType(0x400000D0)) {
+			MapObjBallBoundSound()->startSoundActor(MSD_SE_MA_KICK_DRIAN,
+			                                &p->mPosition, 0, nullptr, 0, 4);
 		}
 	} else {
-		// Something else: bounce off `dir` if we are still travelling
-		// towards it and are moving fast enough to be worth reflecting.
-		JGeometry::TVec3<f32> d = mVelocity;
-		f32 dot = d.x * dir.x + d.y * dir.y + d.z * dir.z;
+		p->mVelocity.y += p->unk154;
+	}
+}
 
-		JGeometry::TVec3<f32> x = mVelocity;
-		JGeometry::TVec3<f32> z = mVelocity;
-		if (dot >= 0.0f
-		    && fabsf(x.x) > mMapObjData->mPhysical->unk4->unkC
-		    && fabsf(z.z) > mMapObjData->mPhysical->unk4->unkC) {
-			f32 k = unk16C + 1.0f;
-			mVelocity.x -= k * dir.x * dot;
-			mVelocity.y += unk168;
-			mVelocity.z -= k * dir.z * dot;
-			actor->receiveMessage(this, 0x10);
-			if (!isActorType(0x400000D0)
-			    && gpMSound->gateCheck(0x3862))
-				MSoundSESystem::MSoundSE::startSoundActor(
-				    0x3862, &mPosition, 0, nullptr, 0, 4);
-		} else {
-			mVelocity.x -= dir.x * unk164;
-			mVelocity.y += unk168;
-			mVelocity.z -= dir.z * unk164;
+void TMapObjBall::boundByActor(THitActor* param_1)
+{
+	JGeometry::TVec3<f32> away;
+	away.set(param_1->mPosition.x - mPosition.x, 0.0f,
+	         param_1->mPosition.z - mPosition.z);
+
+	f32 reach;
+	if (isActorType(0x400000D0))
+		reach = mAttackRadius + param_1->mDamageRadius;
+	else
+		reach = mDamageRadius;
+
+	if (reach * reach < away.x * away.x + away.z * away.z)
+		return;
+
+	if (away.x != 0.0f && away.z != 0.0f)
+		MsVECNormalize(away, away);
+
+	if (param_1->isActorType(0x80000001)) {
+		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000)) {
+			MapObjBallKickUp(this);
+
+			mVelocity.x += unk148 * SMS_GetMarioSpeedX() - away.x * unk14C;
+			mVelocity.z += unk148 * SMS_GetMarioSpeedZ() - away.z * unk14C;
+			param_1->receiveMessage(this, HIT_MESSAGE_ATTACK);
 		}
+	} else {
+		f32 into = JGeometry::TVec3<f32>(mVelocity).dot(away);
 
-		if (actor->isActorType(0x80000001)
-		    && !checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000)) {
-			JGeometry::TVec3<f32> f = mVelocity;
-			if (f.y < 0.0f
-			    && (130.0f + gpMarioPos->y)
-			           < mPosition.y + mBodyRadius) {
-				JGeometry::TVec3<f32> g = f;
-				mVelocity.y = unk160 * -g.y;
-				mVelocity.x += unk158 * *gpMarioSpeedX;
-				mVelocity.y += unk15C * *gpMarioSpeedY;
-				mVelocity.z += unk158 * *gpMarioSpeedZ;
-				if (!isActorType(0x400000D0)
-				    && gpMSound->gateCheck(0x194F))
-					MSoundSESystem::MSoundSE::startSoundActor(
-					    0x194F, &mPosition, 0, nullptr, 0, 4);
+		if (into >= 0.0f
+		    && abs(JGeometry::TVec3<f32>(mVelocity).x)
+		        > mMapObjData->getPhysicalData()->unkC
+		    && abs(JGeometry::TVec3<f32>(mVelocity).z)
+		        > mMapObjData->getPhysicalData()->unkC) {
+			mVelocity.x = -((1.0f + unk16C) * (away.x * into) - mVelocity.x);
+			mVelocity.y += unk168;
+			mVelocity.z = -((1.0f + unk16C) * (away.z * into) - mVelocity.z);
+			param_1->receiveMessage(this, HIT_MESSAGE_UNK10);
+
+			if (!isActorType(0x400000D0)) {
+				MapObjBallBoundSound()->startSoundActor(MSD_SE_IT_DRIAN_BOUND,
+				                                &mPosition, 0, nullptr, 0, 4);
+			}
+		} else {
+			mVelocity.x = -(away.x * unk164 - mVelocity.x);
+			mVelocity.y += unk168;
+			mVelocity.z = -(away.z * unk164 - mVelocity.z);
+		}
+	}
+
+	// A falling ball that lands on Mario's head bounces off him.
+	if (param_1->isActorType(0x80000001)
+	    && !checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000)) {
+		if (JGeometry::TVec3<f32>(mVelocity).y < 0.0f
+		    && 130.0f + SMS_GetMarioPos().y < mPosition.y + mBodyRadius) {
+			mVelocity.y = unk160 * -JGeometry::TVec3<f32>(mVelocity).y;
+			mVelocity.x += unk158 * SMS_GetMarioSpeedX();
+			mVelocity.y += unk15C * SMS_GetMarioSpeedY();
+			mVelocity.z += unk158 * SMS_GetMarioSpeedZ();
+
+			if (!isActorType(0x400000D0)) {
+				MapObjBallBoundSound()->startSoundActor(MSD_SE_MA_KICK_DRIAN,
+				                                &mPosition, 0, nullptr, 0, 4);
 			}
 		}
 	}
@@ -411,149 +393,233 @@ void TMapObjBall::boundByActor(THitActor* actor)
 	offLiveFlag(LIVE_FLAG_UNK10);
 	onLiveFlag(LIVE_FLAG_AIRBORNE);
 }
-#pragma dont_inline off
 
-// The retail object calls this out-of-line from TResetFruit::touchActor()
-// and TResetFruit::receiveMessage(), so keep it out of line.
-#pragma dont_inline on
-void TMapObjBall::touchActor(THitActor* actor)
+void TMapObjBall::touchActor(THitActor* param_1)
 {
-	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	
-	
-	if (unk194 == 0 && !isState(STATE_HOLDING) && !isHideObj(actor)
-	    && actor->isActorType(0x08000083) && !actor->isActorType(0x400000CA)
-	    && !actor->isActorType(0x400000CC)) {
-		if (actor->isActorType(0x80000001) && !isActorType(0x400000D0)
-		    && *gpMarioSpeedY != 0.0f) {
+	// unk194 is a short cooldown after a kick, so one kick cannot chain.
+	if (unk194 != 0 || isState(STATE_HOLDING) || isHideObj(param_1)
+	    || param_1->isActorType(0x08000083)
+	    || param_1->isActorType(0x400000CA)
+	    || param_1->isActorType(0x400000CC))
+		return;
+
+	if (param_1->isActorType(0x80000001)) {
+		if (!isActorType(0x400000D0) && SMS_GetMarioSpeedY() != 0.0f) {
 			kicked();
 			return;
 		}
-		boundByActor(actor);
 	}
-}
-#pragma dont_inline off
 
+	boundByActor(param_1);
+}
+
+// Horizontal speed, one copy of the velocity per read. Retail rounds z*z and
+// fuses x*x into the sum (fma(x, x, z*z)); this spelling does the same.
+static inline f32 MapObjBallXZSpeed(const JGeometry::TVec3<f32>& v)
+{
+	return JGeometry::TUtil<f32>::sqrt(
+	    JGeometry::TVec3<f32>(v).x * JGeometry::TVec3<f32>(v).x
+	    + JGeometry::TVec3<f32>(v).z * JGeometry::TVec3<f32>(v).z);
+}
+
+// TODO: 96.1%. The speed spelled as two arguments to a TU-local
+// `x * x + z * z` helper matched every instruction (99.3%, frame 0x48 short)
+// but rounded x*x and fused z*z, the reverse of retail (tools/expr-diff.py):
+// up to 1 ulp in the roll angle. Swapping that helper's arguments or addends,
+// or naming a square, did not reverse the fusion; the plain four-copy sum
+// above does, at the cost of the velocity temporaries' order.
+// c-k15: the four settle/roll tests read TMapObjData::getPhysicalData(); each
+// accessor's receiver binding and forced load land the frame at retail's
+// 0x1c0 (96.1 -> 96.3, 105 -> 59 markers). What is left is the speed: retail
+// makes two velocity copies (x from the first, z from the second) where the
+// four-copy sum makes four; the two-level SqXZ helper is 0x18 short with it.
 void TMapObjBall::calcCurrentMtx()
 {
-	// TODO: 1072 bytes rebuilding the model matrix from the rolling
-	// parameter table. Not reconstructed.
+	TPosition3f rot;
+	rot.identity();
+
+	// Settle a nearly-stopped ball on flat ground so it does not creep.
+	if (abs(JGeometry::TVec3<f32>(mVelocity).x)
+	    < mMapObjData->getPhysicalData()->unkC) {
+		if (abs(JGeometry::TVec3<f32>(mVelocity).z)
+		        < mMapObjData->getPhysicalData()->unkC
+		    && mGroundPlane->mNormal.y == 1.0f) {
+			mVelocity.x = 0.0f;
+			mVelocity.z = 0.0f;
+		}
+	}
+
+	if (abs(JGeometry::TVec3<f32>(mVelocity).x)
+	        > mMapObjData->getPhysicalData()->unkC
+	    || abs(JGeometry::TVec3<f32>(mVelocity).z)
+	        > mMapObjData->getPhysicalData()->unkC) {
+		// Roll about the horizontal axis square to the direction of travel,
+		// by the arc length the ball has covered over its own radius.
+		JGeometry::TVec3<f32> axis;
+		getVerticalVecToTargetXZ(
+		    mPosition.x + JGeometry::TVec3<f32>(mVelocity).x,
+		    mPosition.z + JGeometry::TVec3<f32>(mVelocity).z, &axis);
+
+		f32 rolled = 2.0f * (MapObjBallXZSpeed(mVelocity) / mBodyRadius);
+		rot.setRotate(axis, rolled);
+	}
+
+	TPosition3f cur;
+	cur.set(getModel()->getAnmMtx(0));
+	cur.ref(0, 3) = 0.0f;
+	cur.ref(1, 3) = 0.0f;
+	cur.ref(2, 3) = 0.0f;
+	MTXConcat(rot, cur, rot);
+
+	rot.ref(0, 3) = mPosition.x;
+	rot.ref(1, 3) = mPosition.y + mBodyRadius;
+	rot.ref(2, 3) = mPosition.z;
+
+	if (isActorType(0x40000394) && rot.at(1, 1) > 0.0f)
+		rot.ref(1, 3) = -(50.0f * rot.at(1, 1) - rot.at(1, 3));
+
+	if (isActorType(0x40000392))
+		rot.ref(1, 3) = -(10.0f * (1.0f - rot.at(1, 1)) - rot.at(1, 3));
+
+	getModel()->setAnmMtx(0, rot);
 }
 
-void TMapObjBall::checkWallCollision(JGeometry::TVec3<f32>* position)
+static inline const TMapObjPhysicalInfo* MapObjBallPhysical(const TMapObjBall* p)
 {
-	JGeometry::TVec3<f32> center(position->x, position->y + mBodyRadius,
-	                            position->z);
+	return p->mMapObjData->mPhysical;
+}
 
-	TBGWallCheckRecord record(center, mBodyRadius, 4,
-	                          mMapObjData->mPhysical->mWallCheckFlags);
+static inline u32 MapObjBallWallCheckFlags(const TMapObjBall* p)
+{
+	u32 flags = MapObjBallPhysical(p)->mWallCheckFlags;
+	return flags;
+}
 
-	if (gpMap->isTouchedWallsAndMoveXZ(&record)) {
-		unk138      = record.mResultWalls[0];
-		position->x = record.mCenter.x;
-		position->z = record.mCenter.z;
-		touchWall(position, &record);
-	} else {
-		unk138 = nullptr;
+// TODO: 99.7%. Every instruction matches and the frame is exact; retail
+// puts `centre` (0x28) below the check record (0x34) where ours puts it
+// above. mBodyRadius read inside the sum gives retail's y-then-radius load
+// order. Declaring the record first and filling it field by field
+// reorders the slots but reloads the radius (four instructions).
+void TMapObjBall::checkWallCollision(JGeometry::TVec3<f32>* param_1)
+{
+	JGeometry::TVec3<f32> centre;
+	centre.x = param_1->x;
+	centre.y = param_1->y + mBodyRadius;
+	centre.z = param_1->z;
+
+	TBGWallCheckRecord check(centre, mBodyRadius, 4,
+	                         MapObjBallWallCheckFlags(this));
+
+	if (gpMap->isTouchedWallsAndMoveXZ(&check)) {
+		unk138   = check.mResultWalls[0];
+		param_1->x = centre.x;
+		param_1->z = centre.z;
+		touchWall(param_1, &check);
+		return;
 	}
+
+	unk138 = nullptr;
 }
 
 void TMapObjBall::makeObjDefault()
 {
-	// The retail frame is 8 bytes larger than the code needs; the extra
-	// locals the original declared here were all optimised away.
-	
-	
 	TMapObjBase::makeObjDefault();
-	MtxPtr mtx = getModel()->getAnmMtx(0);
-	mtx[0][3]  = mPosition.x;
-	mtx[1][3]  = mPosition.y + mBodyRadius;
-	mtx[2][3]  = mPosition.z;
+
+	MtxPtr mtx  = getModel()->getAnmMtx(0);
+	mtx[0][3] = getPosition().x;
+	mtx[1][3] = mPosition.y + mBodyRadius;
+	mtx[2][3] = getPosition().z;
 }
 
 void TMapObjBall::makeObjAppeared()
 {
-	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	
-	
 	TMapObjBase::makeObjAppeared();
 	calcCurrentMtx();
 
 	MtxPtr mtx = getModel()->getAnmMtx(0);
-	mtx[0][3]  = mPosition.x;
-	mtx[1][3]  = mPosition.y + mBodyRadius;
-	mtx[2][3]  = mPosition.z;
+	mtx[0][3] = getPosition().x;
+	mtx[1][3] = mPosition.y + mBodyRadius;
+	mtx[2][3] = getPosition().z;
 
-	if (isActorType(0x40000394) && mtx[1][1] > 0.0f)
-		mtx[1][3] -= 50.0f * mtx[1][1];
+	if (isActorType(0x40000394)) {
+		if (mtx[1][1] > 0.0f)
+			mtx[1][3] = -(50.0f * mtx[1][1] - mtx[1][3]);
+	}
 
 	if (isActorType(0x40000392))
-		mtx[1][3] -= 10.0f * (1.0f - mtx[1][1]);
+		mtx[1][3] = -(10.0f * (1.0f - mtx[1][1]) - mtx[1][3]);
 
 	unkE8 = 0;
 }
 
-// TResetFruit::control() calls this twice with a real `bl`
-// (801DA53C, 801DA5C0); MWCC inlines it away by default.
-#pragma dont_inline on
 void TMapObjBall::control()
 {
 	TMapObjGeneral::control();
 
-	if (unk194 != 0)
-		unk194--;
+	// The three named locals below are what keeps this body at fifteen
+	// statements, which is one over MWCC's depth-1 inline budget; without
+	// them TResetFruit::control's LIVING and HOLDING arms expand this
+	// function instead of calling it, as the ROM does. The register
+	// evidence agrees: the countdown is loaded into a register and tested
+	// there, and both matrix pointers are fetched into their own registers.
+	int timer = unk194;
+	if (timer != 0)
+		unk194 = timer - 1;
 
 	if (isState(STATE_HOLDING)) {
+		// While carried the ball rides the holder's matrix, lifted clear of
+		// the hand by unk190.
 		Mtx mtx;
-		PSMTXCopy(mHolder->getTakingMtx(), mtx);
+		MtxPtr taking = mHolder->getTakingMtx();
+		MTXCopy(taking, mtx);
 		mtx[1][3] += unk190;
-		PSMTXCopy(mtx, getModel()->getAnmMtx(0));
-	} else {
-		JGeometry::TVec3<f32> velocity = mVelocity;
-		// frame-size pad: the retail frame is 0x18 bytes larger than the
-		// code needs; the extra locals the original declared here were all
-		// optimised away.
-		
-		
-		if (!(velocity.squared() <= JGeometry::TUtil<f32>::epsilon())
-		    && mGroundPlane->mActor)
-			calcCurrentMtx();
+		MtxPtr anm = getModel()->getAnmMtx(0);
+		MTXCopy(mtx, anm);
+		return;
 	}
+
+	// Assigned, not copy-constructed: retail's isZero keeps its three
+	// fmuls apart (no fmadds), which only operator='s cast copy gives.
+	JGeometry::TVec3<f32> vel;
+	vel = getVelocity();
+	if (!vel.isZero() || mGroundPlane->getActor() != nullptr)
+		calcCurrentMtx();
 }
-#pragma dont_inline off
 
 BOOL TMapObjBall::receiveMessage(THitActor* sender, u32 message)
 {
 	if (TMapObjGeneral::receiveMessage(sender, message))
-		return true;
+		return TRUE;
 
-	if (message == 4 && checkMapObjFlag(MAP_OBJ_FLAG_UNK100000)) {
+	if (message == HIT_MESSAGE_TAKE && (unkF8 & 0x100000)) {
 		hold((TTakeActor*)sender);
-		return true;
+		return TRUE;
 	}
 
-	if (sender->isActorType(0x80000001) && !isActorType(0x400000D0)
-	    && message != 4) {
-		kicked();
-		return true;
+	// Mario walking into a ball kicks it, except for the watermelon and
+	// except when he is trying to pick it up.
+	if (sender->isActorType(0x80000001)) {
+		if (!isActorType(0x400000D0) && message != HIT_MESSAGE_TAKE) {
+			kicked();
+			return TRUE;
+		}
 	}
 
-	return false;
+	return FALSE;
 }
 
-// The six parameter tables below were transcribed field-by-field out of
-// the .s. The field names are placeholders; the *assignment order* inside
-// each table is what the original wrote and must not be re-sorted --
-// 0x4000064 and the 0x4000039x tables store 0x170/0x174/0x178 before
-// 0x164/0x168/0x16C.
 void TMapObjBall::initMapObj()
 {
 	TMapObjGeneral::initMapObj();
 
-	mInitialScaling.set(mScaling);
+	mInitialScaling.x = mScaling.x;
+	mInitialScaling.y = mScaling.y;
+	mInitialScaling.z = mScaling.z;
 
+	// Per-kind physics. The layout is identical in every arm, so the switch
+	// is really a table of tunables keyed on the object type.
 	switch (mActorType) {
-	case 0x400000D0:
+	case 0x400000D0: // watermelon
 		unk14C = 4.0f;
 		unk150 = 0.0f;
 		unk154 = 0.0f;
@@ -571,8 +637,9 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.5f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = mBodyRadius / 3.0f;
+		mDepthAtFloating      = mBodyRadius / 3.0f;
 		break;
+
 	case 0x40000064:
 		unk148 = 0.6f;
 		unk14C = 2.0f;
@@ -592,8 +659,9 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.0f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = mBodyRadius / 3.0f;
+		mDepthAtFloating      = mBodyRadius / 3.0f;
 		break;
+
 	case 0x40000393:
 		unk148 = 0.6f;
 		unk14C = 0.2f;
@@ -613,8 +681,9 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.0f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = 50.0f;
+		mDepthAtFloating      = 50.0f;
 		break;
+
 	case 0x40000390:
 	case 0x40000391:
 	case 0x40000392:
@@ -636,8 +705,9 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.0f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = 50.0f;
+		mDepthAtFloating      = 50.0f;
 		break;
+
 	case 0x40000394:
 		unk148 = 0.2f;
 		unk14C = 0.0f;
@@ -657,8 +727,9 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.0f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = 50.0f;
+		mDepthAtFloating      = 50.0f;
 		break;
+
 	case 0x40000395:
 		unk148 = 0.4f;
 		unk14C = 0.2f;
@@ -678,10 +749,12 @@ void TMapObjBall::initMapObj()
 		unk184 = 1.0f;
 		unk188 = 1.5f;
 		mBodyRadius = 50.0f * mScaling.y;
-		unk18C     = 50.0f;
+		mDepthAtFloating      = 50.0f;
 		break;
+
 	}
 
+	// unk190 is the lift applied while the ball is carried.
 	if (isActorType(0x40000393)) {
 		mBodyRadius = 45.0f * mScaling.y;
 		unk190      = mBodyRadius;
@@ -699,7 +772,7 @@ void TMapObjBall::initMapObj()
 }
 
 TMapObjBall::TMapObjBall(const char* name)
-	: TMapObjGeneral(name)
+    : TMapObjGeneral(name)
 {
 	unk148 = 0.0f;
 	unk14C = 0.0f;
@@ -718,306 +791,434 @@ TMapObjBall::TMapObjBall(const char* name)
 	unk180 = 0.0f;
 	unk184 = 0.0f;
 	unk188 = 0.0f;
-	unk18C = 0.0f;
+	mDepthAtFloating = 0.0f;
 	unk190 = 0.0f;
 	unk194 = 0;
+
 	mInitialScaling.z = 0.0f;
 	mInitialScaling.y = 0.0f;
 	mInitialScaling.x = 0.0f;
 }
 
-void TResetFruit::checkGroundCollision(JGeometry::TVec3<f32>* position)
+u32 TResetFruit::mFruitLivingTime       = 14400;
+f32 TResetFruit::mScaleUpSpeed          = 1.05f;
+// UNUSED in the map; the value is not recoverable from the binary.
+f32 TResetFruit::mRottingScaleSpeed     = 0.99f;
+f32 TResetFruit::mBreakingScaleSpeed    = 0.96f;
+u32 TResetFruit::mFruitWaitTimeToAppear = 360;
+// UNUSED in the map; the value is not recoverable from the binary.
+GXColorS10 TResetFruit::mRottenColor    = { 0, 0, 0, 0 };
+
+void TResetFruit::checkGroundCollision(JGeometry::TVec3<f32>* param_1)
 {
-	// frame-size pad: the retail frame is 0x28 bytes larger than the code needs
-	
-	
-	if (SMSGetMarDirector()->mMap == 7 || SMSGetMarDirector()->mMap == 4) {
-		if (SMSGetMarDirector()->mMap == 4) {
-			mGroundHeight = gpMap->checkGround(position->x,
-			                                   position->y + 200.0f,
-			                                   position->z, &mGroundPlane);
-			mGroundHeight += 1.0f;
-			if (!(position->y <= mGroundHeight)) {
-				touchGround(position);
-			} else {
-				onLiveFlag(LIVE_FLAG_AIRBORNE);
-			}
-		} else {
-			mGroundHeight = gpMap->checkGround(position->x,
-			                                   position->y + mHeadHeight,
-			                                   position->z, &mGroundPlane);
-			if (mGroundPlane->mBGType == 0x801
-			    || mGroundPlane->mBGType == 0x203) {
-				mGroundHeight = gpMap->checkGroundExactY(
-				    position->x, mGroundHeight - 200.0f, position->z,
-				    &mGroundPlane);
-			}
-			mGroundHeight += 1.0f;
-			if (!(position->y <= mGroundHeight)) {
-				touchGround(position);
-			} else {
-				onLiveFlag(LIVE_FLAG_AIRBORNE);
-			}
-		}
-	} else {
-		TMapObjGeneral::checkGroundCollision(position);
+	u8 map = SMSGetMarDirector()->getCurrentMap();
+	if (map != 7 && map != 4) {
+		TMapObjGeneral::checkGroundCollision(param_1);
+		return;
 	}
+
+	if (map == 4) {
+		// Probe from well above so a fruit cannot fall through the deck.
+		mGroundHeight = gpMap->checkGround(param_1->x, 200.0f + param_1->y,
+		                                   param_1->z, &mGroundPlane);
+		mGroundHeight += 1.0f;
+		if (param_1->y <= getGroundHeight()) {
+			touchGround(param_1);
+			return;
+		}
+		onLiveFlag(LIVE_FLAG_AIRBORNE);
+		return;
+	}
+
+	mGroundHeight = SMSGetMapBound()->checkGround(param_1->x, param_1->y + mHeadHeight,
+	                                   param_1->z, &mGroundPlane);
+
+	if (getGroundPlane()->isMapObjThrough()) {
+		mGroundHeight = SMSGetMapBound()->checkGroundExactY(
+		    param_1->x, mGroundHeight - 200.0f, param_1->z, &mGroundPlane);
+	}
+
+	mGroundHeight += 1.0f;
+	if (param_1->y <= mGroundHeight) {
+		touchGround(param_1);
+		return;
+	}
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+}
+
+// By-value pointer fork over the model accessor, +4 of low region per site.
+static inline J3DModel* MapObjBallModel(const TLiveActor* p) { return p->getModel(); }
+
+// Binding level nested over the model fork, +8 of low region per site.
+static inline MtxPtr MapObjBallAnmMtx0(const TLiveActor* p)
+{
+	MtxPtr mtx = MapObjBallModel(p)->getAnmMtx(0);
+	return mtx;
+}
+
+// Binding level over the sound singleton, +8 of low region per site.
+static inline MSound* ResetFruitAppearSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TResetFruit::makeObjWaitingToAppear (batch 127).
+static inline u8 MapObjBallUnk1A4(const TResetFruit* p)
+{
+	u8 v1A4 = p->unk1A4;
+	return v1A4;
 }
 
 void TResetFruit::waitingToAppear()
 {
-	if (SMSGetMarDirector()->mMap == 3 && unk1A4)
+	if (SMSGetMarDirector()->getCurrentMap() == 3 && MapObjBallUnk1A4(this))
 		makeObjDead();
 
-	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isStateTimerEngaged()
-	    && getHitObjNumMax() == 0) {
-		onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
+	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
+		return;
+
+	if (!isStateTimerEngaged() && mColCount == 0) {
+		onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
 		makeObjAppeared();
 
-		Mtx mtx;
-		// frame-size pad: the retail frame is 0x28 bytes larger than the
-		// code needs; the extra locals were all optimised away.
-		
-		
-		PSMTXScale(&mtx[0], 0.2f, 0.2f, 0.2f);
-		concatOnlyRotFromLeft(&mtx[0], getModel()->getAnmMtx(0),
-		                      getModel()->getAnmMtx(0));
+		Mtx small;
+		MTXScale(small, 0.2f, 0.2f, 0.2f);
+		concatOnlyRotFromLeft(small, MapObjBallModel(this)->getAnmMtx(0),
+		                      MapObjBallModel(this)->getAnmMtx(0));
 
 		mScaling.y = 0.2f;
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		mState = STATE_APPEARING;
 
-		if (gpMSound->gateCheck(0x3802))
-			MSoundSESystem::MSoundSE::startSoundActor(0x3802, &mPosition, 0,
-			                                         nullptr, 0, 4);
+		ResetFruitAppearSound()->startSoundActor(MSD_SE_IT_COMMON_APPEAR, &mPosition, 0,
+		                                nullptr, 0, 4);
 	}
 }
 
+
 void TResetFruit::makeObjWaitingToAppear()
 {
-	
-	
-	mState = FRUIT_STATE_ROTTING;
-	TResetFruit_hideAndWait(this);
+	mState = STATE_LIVING;
+	makeObjDefault();
+	makeObjDead();
+	calcRootMatrix();
+	getModel()->calc();
+
+	mStateTimer = mFruitWaitTimeToAppear;
+	offMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+	mState = STATE_WAITING_TO_APPEAR;
+
+	// On the map where these are a one-shot, do not queue a respawn.
+	if (SMSGetMarDirectorBound()->mMap == 3 && MapObjBallUnk1A4(this))
+		makeObjDead();
 }
 
 void TResetFruit::thrown()
 {
 	TMapObjGeneral::thrown();
-	mState = FRUIT_STATE_ROTTING;
+	mState = STATE_LIVING;
 }
 
-void TResetFruit::hold(TTakeActor* holder)
+// Inlined TMapObjBall::hold expansion for TResetFruit::hold. getVelocity()
+// inside this callee is what sizes the second TVec3; the standalone
+// TMapObjBall::hold uses MapObjBallHoldSpeed instead.
+static inline void MapObjBallDoHold(TMapObjBall* p, TTakeActor* actor)
 {
-	if (orig_sqrt(mVelocity.squared()) <= 10.0f) {
-		TMapObjGeneral::hold(holder);
-	}
+	if (JGeometry::TVec3<f32>(p->getVelocity()).length() > 10.0f)
+		return;
+	p->TMapObjGeneral::hold(actor);
+	p->mVelocity.zero();
+}
+
+void TResetFruit::hold(TTakeActor* param_1)
+{
+	if (JGeometry::TVec3<f32>(mVelocity).length() > 10.0f)
+		return;
+
+	MapObjBallDoHold(this, param_1);
 	mVelocity.zero();
+	onLiveFlag(LIVE_FLAG_UNK10);
 
-	offLiveFlag(LIVE_FLAG_UNK10);
-
-	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isStateTimerEngaged()) {
-		onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-		startStateTimer(getLivingTime());
+	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000)) {
+		if (!isStateTimerEngaged()) {
+			onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+			mStateTimer = getLivingTime();
+		}
 	}
+}
+
+// Binding level over the sound singleton, worth +0x10 of low region in
+// TResetFruit::touchPollution.
+static inline MSound* MapObjBallGetMSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
 }
 
 void TResetFruit::touchPollution()
 {
-	// TODO: the leading particle emission (index 0x8B) needs
-	// TMarioParticleManager's wrapper, which is not in the tree.
-	if (gpMSound->gateCheck(0x3881))
-		MSoundSESystem::MSoundSE::startSoundActor(0x3881, &mPosition, 0,
-		                                         nullptr, 0, 4);
-
-	mState = FRUIT_STATE_ROTTING;
-	TResetFruit_hideAndWait(this);
-	mState = FRUIT_STATE_ROTTING;
-	TResetFruit_hideAndWait(this);
+	gpMarioParticleManager->emitAndBindToPosPtr(0x8B, &mPosition, 0, nullptr);
+	MapObjBallGetMSound()->startSoundActor(MSD_SE_OBJ_AWAY_INTO_GRAF,
+	                                       &mPosition, 0, nullptr, 0, 4);
+	makeObjDefault();
+	makeObjWaitingToAppear();
 }
 
 void TResetFruit::touchWaterSurface()
 {
-	
-	
 	emitColumnWater();
-
-	if (gpMSound->gateCheck(0x3875))
-		MSoundSESystem::MSoundSE::startSoundActor(0x3875, &mPosition, 0,
-		                                         nullptr, 0, 4);
-
-	mState = FRUIT_STATE_ROTTING;
-	TResetFruit_hideAndWait(this);
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_DRINA_TO_WATER, &mPosition);
+	makeObjWaitingToAppear();
 }
 
-u32 TResetFruit::touchWater(THitActor* actor)
+// TODO: loads drag before flow.x, as in TMapObjBall::touchWater. Also inert:
+// `flow.x * drag + pushed.x`, `drag * flow.x`, raw unk17C, drag first.
+u32 TResetFruit::touchWater(THitActor* param_1)
 {
 	if (!isState(STATE_HOLDING) && !isState(STATE_APPEARING)) {
-		JGeometry::TVec3<f32> velocity = mVelocity;
-		const JGeometry::TVec3<f32>& speed = getWaterSpeed(actor);
-		velocity.x += speed.x * unk17C;
-		velocity.y += speed.y * unk17C;
-		velocity.z += speed.z * unk17C;
-		mVelocity.x = velocity.x;
-		mVelocity.y = velocity.y;
-		mVelocity.z = velocity.z;
+		JGeometry::TVec3<f32> vel(mVelocity);
+		JGeometry::TVec3<f32> pushed;
+		pushed.set(vel);
+
+		const JGeometry::TVec3<f32>& flow = getWaterSpeed(param_1);
+		f32 drag = getUnk17C();
+		pushed.x += flow.x * drag;
+		pushed.y += flow.y * drag;
+		pushed.z += flow.z * drag;
+		mVelocity = pushed;
+
 		offLiveFlag(LIVE_FLAG_UNK10);
 	}
 
-	if (!isStateTimerEngaged()) {
-		onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-		startStateTimer(getLivingTime());
-	}
-
-	offLiveFlag(LIVE_FLAG_UNK10);
-	mState = FRUIT_STATE_ROTTING;
-
+	makeObjLiving();
 	return 1;
 }
 
-void TResetFruit::touchActor(THitActor* actor)
+// Binding level worth +16 of low region, landing TResetFruit::touchActor's
+// frame at 0x28 (batch 124).
+static inline bool MapObjBallIsState(TResetFruit* p, u32 i)
 {
-	// frame-size pad: the retail frame is 0x10 bytes larger than the code needs
-	
-	
-	if (!isState(STATE_APPEARING) && !isState(STATE_BREAKING)
-	    && !isState(FRUIT_STATE_WAITING)
-	    && !isState(STATE_WAITING_TO_APPEAR)) {
-		TMapObjBall::touchActor(actor);
-
-		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isState(STATE_NORMAL)
-		    && !checkLiveFlag(LIVE_FLAG_UNK10) && !isStateTimerEngaged()) {
-			onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-			startStateTimer(getLivingTime());
-		}
-
-		offLiveFlag(LIVE_FLAG_UNK10);
-		mState = FRUIT_STATE_ROTTING;
-	}
+	bool state = p->isState(i);
+	return state;
 }
 
-void TResetFruit::touchGround(JGeometry::TVec3<f32>* position)
+void TResetFruit::touchActor(THitActor* param_1) { pick(param_1); }
+
+void TResetFruit::touchGround(JGeometry::TVec3<f32>* param_1)
 {
-	// frame-size pad: the retail frame is 0x10 bytes larger than the code needs
-	
-	
-	// The `? true : false` is what makes MWCC materialise the bool in r0.
-	if (mGroundPlane->mBGType == 0x800 ? true : false) {
-		mState = FRUIT_STATE_ROTTING;
-		TResetFruit_hideAndWait(this);
-		position->x = mPosition.x;
-		position->y = mPosition.y;
-		position->z = mPosition.z;
-	} else {
-		TMapObjBall::touchGround(position);
+	if (mGroundPlane->isDeathPlane()) {
+		makeObjWaitingToAppear();
+		param_1->set(mPosition);
+		return;
 	}
+
+	TMapObjBall::touchGround(param_1);
 }
 
 void TResetFruit::makeObjLiving()
 {
 	if (!isStateTimerEngaged()) {
-		onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-		startStateTimer(getLivingTime());
+		onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+		mStateTimer = getLivingTime();
 	}
-
 	offLiveFlag(LIVE_FLAG_UNK10);
-	mState = FRUIT_STATE_ROTTING;
+	mState = STATE_LIVING;
 }
 
-void TResetFruit::pick(THitActor*) { }
+// UNUSED, 0x254 in the map.
+// UNUSED, 0x254 in the map (ours 0x250): touchActor()'s body. Out of line it
+// expands TMapObjBall::touchActor; reached through touchActor() or control()'s
+// NORMAL loop it sits one level deeper, where retail calls that instead.
+void TResetFruit::pick(THitActor* param_1)
+{
+	if (MapObjBallIsState(this, STATE_APPEARING))
+		return;
+	if (MapObjBallIsState(this, STATE_BREAKING))
+		return;
+	if (MapObjBallIsState(this, STATE_ROTTING))
+		return;
+	if (MapObjBallIsState(this, STATE_WAITING_TO_APPEAR))
+		return;
+
+	TMapObjBall::touchActor(param_1);
+
+	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
+		return;
+
+	// Being knocked about starts the countdown, unless it is being carried.
+	if (MapObjBallIsState(this, STATE_NORMAL)
+	    && !checkLiveFlag(LIVE_FLAG_UNK10))
+		makeObjLiving();
+}
 
 void TResetFruit::kicked()
 {
-	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK40) && !isState(STATE_HOLDING)
-	    && (*gpMarioSpeedY) >= 0.0f) {
-		JGeometry::TVec3<f32> velocity = mVelocity;
-		f32 min = mMapObjData->mPhysical->unk4->unkC;
+	// Assigned in the last || term so the load sits after the two flag
+	// tests and the value stays in f5 through the later fmsubs.
+	f32 marioY;
+	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000) || isState(STATE_HOLDING)
+	    || (marioY = SMS_GetMarioSpeedY()) < 0.0f)
+		return;
 
-		if (fabsf(velocity.x) < min && fabsf(velocity.z) < min) {
-			if (!checkLiveFlag(LIVE_FLAG_AIRBORNE) || mScaling.x > 130.0f
-			    || mScaling.x > 0.0f) {
-				// TODO: the two-way bounce test is not recovered.
-			} else {
-				velocity.zero();
-			}
+	if (JGeometry::TVec3<f32>(mVelocity).y <= 0.0f) {
+		// Already in the air and heading away from Mario: leave it alone.
+		JGeometry::TVec3<f32> diff;
+		diff.x = SMS_GetMarioPos().x - getPosition().x;
+		diff.y = 0.0f;
+		diff.z = SMS_GetMarioPos().z - getPosition().z;
+		f32 toward = JGeometry::TVec3<f32>(mVelocity).dot(diff);
+		// checkLiveFlag2 is the signed BOOL that emits retail's
+		// `li 1/0; cmpwi`. toward has to be computed first so that
+		// materialisation lands after the dot product.
+		BOOL airborne = checkLiveFlag2(LIVE_FLAG_AIRBORNE);
+		if (airborne) {
+			if (toward > 0.0f)
+				return;
 		}
+		// TODO: 99.8%, every instruction matches. Frame is 0xc8 against
+		// retail 0xe0 (ladder 330's TVec3-at-bottom-of-pool class): the
+		// velocity copies sit low. getMapObjData() for minSpeed is +8
+		// more, but TMapObjBall::kicked reads it raw (c-hs6). Each test copies mVelocity itself,
+		// as in TMapObjBall::kicked; a named `vel` copied again for the dot
+		// product reloads it instead of reusing the source registers.
 
-		if (velocity.y == 0.0f) {
+		if (JGeometry::TVec3<f32>(mVelocity).y == 0.0f) {
 			mVelocity.y = unk178;
 		} else {
-			mVelocity.y = unk160 * velocity.y - unk174 * (*gpMarioSpeedY);
+			mVelocity.y = unk174 * marioY
+			    - unk160 * JGeometry::TVec3<f32>(mVelocity).y;
 		}
 
-		mVelocity.x += unk170 * (*gpMarioSpeedX);
-		mVelocity.z += unk170 * (*gpMarioSpeedZ);
+		mVelocity.x += unk170 * SMS_GetMarioSpeedX();
+		mVelocity.z += unk170 * SMS_GetMarioSpeedZ();
 
-		if (fabsf(mVelocity.x) < min && fabsf(mVelocity.z) < min) {
-			mVelocity.x = 2.0f * (rand() * (1.0f / 32768.0f)) - 1.0f;
-			mVelocity.z = 2.0f * (rand() * (1.0f / 32768.0f)) - 1.0f;
+		f32 minSpeed = mMapObjData->getPhysicalData()->unkC;
+		if (abs(mVelocity.x) < minSpeed && abs(mVelocity.z) < minSpeed) {
+			mVelocity.x = 2.0f * MsRandF() - 1.0f;
+			mVelocity.z = 2.0f * MsRandF() - 1.0f;
 		}
 
 		unk194 = 10;
 		offLiveFlag(LIVE_FLAG_UNK10);
-
-		SMS_GetMarioHitActor()->receiveMessage(this, 0xE);
-
-		if (gpMSound->gateCheck(0x194F))
-			MSoundSESystem::MSoundSE::startSoundActor(0x194F, &mPosition, 0,
-			                                         nullptr, 0, 4);
+		SMS_GetMarioHitActor()->receiveMessage(this, HIT_MESSAGE_ATTACK);
+		SMSGetMSound()->startSoundActor(MSD_SE_MA_KICK_DRIAN, &mPosition, 0,
+		                                nullptr, 0, 4);
 	}
 }
 
-// UNUSED in the map: these three were always inlined, so the linker never
-// emitted a copy of them. Placed where the map's symbol order puts them.
-void TResetFruit::living() { }
-void TResetFruit::waitEffect() { }
-void TResetFruit::rotting() { }
+// UNUSED, 0x188 in the map. control()'s LIVING arm without its doubled
+// sand-pillar type test. TODO: 0x190 with one isActorType() (0x1b0 with two).
+void TResetFruit::living()
+{
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+	if (gpMarDirector->mMap == 4 && checkLiveFlag(LIVE_FLAG_UNK10))
+		offLiveFlag(LIVE_FLAG_UNK10);
 
+	if (mGroundPlane->getActor()) {
+		if (checkLiveFlag(LIVE_FLAG_UNK10))
+			offLiveFlag(LIVE_FLAG_UNK10);
+
+		const TLiveActor* owner = getGroundPlane()->getActor();
+		if (mPosition.y < mGroundHeight + 200.0f) {
+			if (owner->isActorType(0x400000CD)) {
+				f32 wasRatio = unk198;
+				unk198       = SMS_GetSandRiseUpRatio(owner);
+				if (unk198 > 0.05f && unk198 > wasRatio)
+					mVelocity.y += 20.0f;
+			}
+		}
+	} else {
+		unk198 = 0.0f;
+	}
+
+	TMapObjBall::control();
+	rotting();
+}
+
+// UNUSED, 0xac in the map. The appear-effect half of waitingToAppear(): the
+// original spells it out there, so this standalone copy is dead.
+void TResetFruit::waitEffect()
+{
+	onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+	makeObjAppeared();
+
+	Mtx small;
+	MTXScale(small, 0.2f, 0.2f, 0.2f);
+	concatOnlyRotFromLeft(small, getModel()->getAnmMtx(0),
+	                      getModel()->getAnmMtx(0));
+
+	mScaling.y = 0.2f;
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	mState = STATE_APPEARING;
+
+	SMSGetMSound()->startSoundActor(MSD_SE_IT_COMMON_APPEAR, &mPosition, 0,
+	                                nullptr, 0, 4);
+}
+
+// UNUSED, 0xac in the map. Inlined at the end of control()'s living and
+// holding arms: once the countdown expires the fruit is dropped by whoever
+// is carrying it, stopped dead, and starts to rot.
+void TResetFruit::rotting()
+{
+	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
+		return;
+	if (isStateTimerEngaged())
+		return;
+
+	if (mHolder) {
+		mHolder->receiveMessage(this, HIT_MESSAGE_UNK8);
+		mHolder->mHeldObject = nullptr;
+		mHolder              = nullptr;
+	}
+
+	mVelocity.z = mVelocity.y = mVelocity.x = 0.0f;
+	mState                                  = STATE_ROTTING;
+}
 
 void TResetFruit::breaking()
 {
-	Mtx mtx;
-	
-	
-	PSMTXScale(&mtx[0], 1.0f, mBreakingScaleSpeed, 1.0f);
-	J3DModel* model = getModel();
-	MtxPtr anmMtx   = model->getAnmMtx(0);
-	concatOnlyRotFromLeft(&mtx[0], anmMtx, anmMtx);
+	Mtx squash;
+	MTXScale(squash, 1.0f, mBreakingScaleSpeed, 1.0f);
+
+	MtxPtr mtx = MapObjBallModel(this)->getAnmMtx(0);
+	concatOnlyRotFromLeft(squash, mtx, mtx);
 
 	mScaling.y *= mBreakingScaleSpeed;
-	anmMtx[1][3] = mPosition.y + mBodyRadius * mScaling.y;
+	mtx[1][3] = mBodyRadius * mScaling.y + mPosition.y;
 
 	if (mScaling.y < 0.2f) {
-		mPosition.y = mPosition.y + mBodyRadius * 0.5f;
-		mScaling.set(mInitialScaling);
+		mPosition.y += mBodyRadius / 2.0f;
+		mScaling.x = mInitialScaling.x;
+		mScaling.y = mInitialScaling.y;
+		mScaling.z = mInitialScaling.z;
+
 		emitAndScale(0xE5, 0, &mPosition);
-
-		if (gpMSound->gateCheck(0x387D))
-			MSoundSESystem::MSoundSE::startSoundActor(0x387D, &mPosition, 0,
-			                                         nullptr, 0, 4);
-
-		startStateTimer(0xF0);
+		MapObjBallGetMSound()->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition, 0,
+		                                nullptr, 0, 4);
+		mStateTimer = 240;
 		sleep();
-		mState = FRUIT_STATE_WAITTOSEE;
+		mState = STATE_BROKEN;
 	}
 }
 
 void TResetFruit::appearing()
 {
-	Mtx mtx;
-	
-	
-	PSMTXScale(&mtx[0], mScaleUpSpeed, mScaleUpSpeed, mScaleUpSpeed);
-	J3DModel* model = getModel();
-	MtxPtr anmMtx   = model->getAnmMtx(0);
-	concatOnlyRotFromLeft(&mtx[0], anmMtx, anmMtx);
+	Mtx grow;
+	MTXScale(grow, mScaleUpSpeed, mScaleUpSpeed, mScaleUpSpeed);
+
+	MtxPtr mtx = MapObjBallModel(this)->getAnmMtx(0);
+	concatOnlyRotFromLeft(grow, mtx, mtx);
 
 	mScaling.y *= mScaleUpSpeed;
-	mScaledBodyRadius = mBodyRadius * mScaling.y;
-	anmMtx[1][3] = mPosition.y + mBodyRadius * mScaling.y;
+	mScaledBodyRadius = mBodyRadius * getScaling().y;
+	mtx[1][3] = mBodyRadius * getScaling().y + mPosition.y;
 
-	if (mScaling.y >= mInitialScaling.y) {
-		mScaling.set(mInitialScaling);
+	if (getScaling().y >= mInitialScaling.y) {
+		mScaling.x = mInitialScaling.x;
+		mScaling.y = mInitialScaling.y;
+		mScaling.z = mInitialScaling.z;
 		getModel()->calc();
 		offHitFlag(HIT_FLAG_NO_COLLISION);
 		makeObjAppeared();
@@ -1025,146 +1226,139 @@ void TResetFruit::appearing()
 	}
 }
 
+// TODO: instruction-exact, frame 0xb8 vs 0xf8 (0x90 before the ground
+// plane, map and initial scaling were read through their accessors, c-hs5).
+// The APPEARING arm is TMapObjBall::control expanded; a 12-statement
+// spelling of it (no `timer`, if/else instead of return; 99.9 out of line)
+// inlines at all three arms and the frame jumps to 0x158. Retail must reach the LIVING and HOLDING arms one
+// level deeper; living() itself is not it (it is then called, frame 0xe8).
 void TResetFruit::control()
 {
-	// The case numbers below are read off the retail jump table at
-	// @4191 (.data:0x1F0), which maps state -> body as
-	//   0 -> break          1 -> .L_801DA2D0 (collision walk)
-	//   2,3 -> .L_801DA640  6 -> .L_801DA5BC
-	//  11 -> .L_801DA438   12 -> .L_801DA730  13 -> .L_801DA7BC
 	switch (mState) {
-	case 0:
-		break;
-	case 1: {
-		// Walk our own collision list and re-run the normal-state logic on
-		// anything touching us, skipping the states that own themselves.
+	case STATE_NORMAL:
 		offHitFlag(HIT_FLAG_NO_COLLISION);
-		for (int i = 0; i < (int) mColCount; i++) {
-			if (isState(STATE_APPEARING) || isState(STATE_BREAKING)
-			    || isState(FRUIT_STATE_WAITING)
-			    || isState(STATE_WAITING_TO_APPEAR)) {
-				continue;
-			}
-			TMapObjBall::touchActor(mCollisions[i]);
-			if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000)
-			    && !isState(STATE_NORMAL) && !checkLiveFlag(LIVE_FLAG_UNK10)
-			    && !isStateTimerEngaged()) {
-				onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-				// Virtual slot 0x164 in __vt__11TResetFruit is
-				// getLivingTime() const.
-				startStateTimer(getLivingTime());
-			}
-			// rlwinm r3,r3,0,28,26 clears LIVE_FLAG_UNK10.
-			mLiveFlag &= ~(LIVE_FLAG_UNK8 | LIVE_FLAG_UNK10
-			               | LIVE_FLAG_UNK20);
-			mState = FRUIT_STATE_ROTTING;
-		}
-		if (mGroundPlane->mActor) {
-			// Virtual slot 0x1EC is calcCurrentMtx().
+		for (int i = 0; i < mColCount; ++i)
+			pick(mCollisions[i]);
+		if (getGroundPlane()->getActor())
 			calcCurrentMtx();
-		}
 		break;
-	}
-	case 2:
-	case 3: {
+
+	case STATE_LIVING:
+		offHitFlag(HIT_FLAG_NO_COLLISION);
+		if (gpMarDirector->getCurrentMap() == 4
+		    && checkLiveFlag(LIVE_FLAG_UNK10))
+			offLiveFlag(LIVE_FLAG_UNK10);
+
+		if (getGroundPlane()->getActor()) {
+			if (checkLiveFlag(LIVE_FLAG_UNK10))
+				offLiveFlag(LIVE_FLAG_UNK10);
+
+			// Sitting on a rising sand pillar lifts the fruit with it.
+			const TLiveActor* owner = getGroundPlane()->getActor();
+			if (mPosition.y < mGroundHeight + 200.0f) {
+				// TODO: the original tests the same type twice here.
+				if (owner->isActorType(0x400000CD)
+				    || owner->isActorType(0x400000CD)) {
+					f32 wasRatio = unk198;
+					unk198       = SMS_GetSandRiseUpRatio(owner);
+					if (unk198 > 0.05f && unk198 > wasRatio)
+						mVelocity.y += 20.0f;
+				}
+			}
+		} else {
+			unk198 = 0.0f;
+		}
+
+		TMapObjBall::control();
+		rotting();
+		break;
+
+	case STATE_HOLDING:
+		TMapObjBall::control();
+		rotting();
+		break;
+
+	case STATE_APPEARING:
+	case STATE_BREAKING:
 		TMapObjGeneral::control();
 		if (unk194 != 0)
-			unk194--;
+			unk194 -= 1;
+
 		if (isState(STATE_HOLDING)) {
-			// TODO: taking-matrix fix-up.
-		} else {
-			if (mVelocity.squared() > 3.814697265625e-06f
-			    && mGroundPlane->mActor)
-				kill();
+			Mtx held;
+			MTXCopy(mHolder->getTakingMtx(), held);
+			held[1][3] += unk190;
+			MTXCopy(held, getModel()->getAnmMtx(0));
+			break;
 		}
-		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isStateTimerEngaged()) {
-			if (mHolder != nullptr) {
-				mHolder->receiveMessage(this, 8);
-				mHolder->mHeldObject = 0;
-				mHolder        = nullptr;
-			}
-			mVelocity.z = 0.0f;
-			mVelocity.y = 0.0f;
-			mVelocity.x = 0.0f;
-			mState      = FRUIT_STATE_WAITING;
+
+		{
+			JGeometry::TVec3<f32> vel;
+			vel = mVelocity;
+			if (!vel.isZero() || getGroundPlane()->getActor())
+				calcCurrentMtx();
 		}
 		break;
-	}
-	case 6: {
-		TMapObjBall::control();
-		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isStateTimerEngaged()) {
-			if (mHolder != nullptr) {
-				mHolder->receiveMessage(this, 8);
-				mHolder->mHeldObject = 0;
-				mHolder        = nullptr;
-			}
-			mVelocity.z = 0.0f;
-			mVelocity.y = 0.0f;
-			mVelocity.x = 0.0f;
-			mState      = FRUIT_STATE_WAITING;
-		}
+
+	case STATE_ROTTING:
+		// Sink into the ground, restore the original scale, puff smoke and
+		// sleep until the respawn timer runs out.
+		mPosition.y += mBodyRadius / 2.0f;
+		mScaling.x = getInitialScaling().x;
+		mScaling.y = getInitialScaling().y;
+		mScaling.z = getInitialScaling().z;
+		emitAndScale(0xE5, 0, &mPosition);
+		SMSGetMSound()->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition, 0,
+		                                nullptr, 0, 4);
+		mStateTimer = 240;
+		sleep();
+		mState = STATE_BROKEN;
 		break;
-	}
-	// Source order here must stay WAITTOSEE (0xD) before ROTTING (0xB):
-	// MWCC emits switch bodies in source order, which is what puts the
-	// .L_801DA730 body before .L_801DA7BC in the jump table.
-	case FRUIT_STATE_ROTTING:
+
+	case STATE_BROKEN:
 		if (isStateTimerEngaged())
 			break;
-		TResetFruit_hideAndWait(this);
-		break;
-	case FRUIT_STATE_WAITING:
-		// Drop whatever is holding us, stop dead, and go back to
-		// FRUIT_STATE_WAITING's own "wait then respawn" timer.
-		TMapObjBall::control();
-		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000)
-		    && !isStateTimerEngaged()) {
-			if (mHolder != nullptr) {
-				mHolder->receiveMessage(this, 8);
-				mHolder->mHeldObject = 0;
-				mHolder        = nullptr;
-			}
-			mVelocity.z = 0.0f;
-			mVelocity.y = 0.0f;
-			mVelocity.x = 0.0f;
-			mState      = FRUIT_STATE_WAITING;
-		}
-		break;
-	case FRUIT_STATE_WAITTOSEE:
-		if (isStateTimerEngaged())
-			break;
-		mRottenColor.r = 0xFF;
-		mRottenColor.g = 0xFF;
-		mRottenColor.b = 0xFF;
+
+		unk19C.r = 255;
+		unk19C.g = 255;
+		unk19C.b = 255;
 		awake();
-		mState = FRUIT_STATE_ROTTING;
-		TResetFruit_hideAndWait(this);
-		break;
-	default:
+		mState = STATE_LIVING;
+		makeObjDefault();
+		makeObjDead();
+		calcRootMatrix();
+		getModel()->calc();
+
+		mStateTimer = mFruitWaitTimeToAppear;
+		offMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+		mState = STATE_WAITING_TO_APPEAR;
+		if (gpMarDirector->getCurrentMap() == 3 && unk1A4)
+			makeObjDead();
 		break;
 	}
+}
+
+// Binding level over the area-cube singleton, +8 of low region.
+static inline TCubeManagerArea* MapObjBallGetCubeArea()
+{
+	TCubeManagerArea* area = gpCubeArea;
+	return area;
 }
 
 void TResetFruit::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (SMSGetMarDirector()->mMap == 7) {
-		if (isState(STATE_HOLDING)
-		    || mVelocity.squared() > 3.814697265625e-06f) {
-			onLiveFlag(LIVE_FLAG_UNK2000);
-		} else if (gpCubeArea->isInAreaCube(mPosition)) {
-			if (isState(FRUIT_STATE_ROTTING)
+		if (MapObjBallIsState(this, STATE_HOLDING)
+		    || !JGeometry::TVec3<f32>(getVelocity()).isZero()) {
+			if (checkLiveFlag(LIVE_FLAG_UNK200))
+				offLiveFlag(LIVE_FLAG_UNK200);
+		} else if (!MapObjBallGetCubeArea()->isInAreaCube((const Vec&)mPosition)) {
+			// Settled outside every area cube and away from where it
+			// started: send it back to its spawn point.
+			if (MapObjBallIsState(this, STATE_LIVING)
 			    && (mPosition.x != mInitialPosition.x
 			        || mPosition.z != mInitialPosition.z)) {
-				mState = FRUIT_STATE_ROTTING;
-				makeObjDead();
-				calcRootMatrix();
-				getModel()->calc();
-				startStateTimer(mFruitWaitTimeToAppear);
-				offMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-				mState = STATE_WAITING_TO_APPEAR;
-
-				if (SMSGetMarDirector()->mMap == 3 && unk1A4)
-					makeObjDead();
+				makeObjWaitingToAppear();
 				return;
 			}
 		}
@@ -1173,18 +1367,15 @@ void TResetFruit::perform(u32 cue, JDrama::TGraphics* graphics)
 	TMapObjGeneral::perform(cue, graphics);
 }
 
-void TResetFruit::killByTimer(int timer)
+void TResetFruit::killByTimer(int param_1)
 {
-	startStateTimer(timer);
-	onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-	mState = FRUIT_STATE_ROTTING;
+	mStateTimer = param_1;
+	onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+	mState = STATE_LIVING;
 }
 
 void TResetFruit::makeObjAppeared()
 {
-	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	
-	
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
 		makeObjDefault();
 
@@ -1192,267 +1383,236 @@ void TResetFruit::makeObjAppeared()
 	calcCurrentMtx();
 
 	MtxPtr mtx = getModel()->getAnmMtx(0);
-	mtx[0][3]  = mPosition.x;
-	mtx[1][3]  = mPosition.y + mBodyRadius;
-	mtx[2][3]  = mPosition.z;
+	mtx[0][3] = getPosition().x;
+	mtx[1][3] = mPosition.y + mBodyRadius;
+	mtx[2][3] = getPosition().z;
 
-	if (isActorType(0x40000394) && mtx[1][1] > 0.0f)
-		mtx[1][3] -= 50.0f * mtx[1][1];
+	if (isActorType(0x40000394)) {
+		if (mtx[1][1] > 0.0f)
+			mtx[1][3] = -(50.0f * mtx[1][1] - mtx[1][3]);
+	}
 
 	if (isActorType(0x40000392))
-		mtx[1][3] -= 10.0f * (1.0f - mtx[1][1]);
+		mtx[1][3] = -(10.0f * (1.0f - mtx[1][1]) - mtx[1][3]);
 
 	unkE8 = 0;
 
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
-		mState = FRUIT_STATE_ROTTING;
+		mState = STATE_LIVING;
 }
 
-// TODO: the first branch's call sequence is recovered but its guard
-// conditions are not fully understood.
 BOOL TResetFruit::receiveMessage(THitActor* sender, u32 message)
 {
-	// frame-size pad: the retail frame is 0x28 bytes larger than the code needs
-	
-	
-	if (message == 0xB) {
-		if (!isState(STATE_NORMAL) && !isState(STATE_HOLDING)
-		    && !isState(FRUIT_STATE_ROTTING)) {
-			mState = FRUIT_STATE_ROTTING;
-			TResetFruit_hideAndWait(this);
-			return true;
+	if (message == HIT_MESSAGE_UNKB) {
+		if (MapObjBallIsState(this, STATE_NORMAL)
+		    || MapObjBallIsState(this, STATE_HOLDING)
+		    || MapObjBallIsState(this, STATE_LIVING)) {
+			makeObjWaitingToAppear();
+			return TRUE;
 		}
-		return false;
+		return FALSE;
 	}
 
-	if (message == 0xD) {
+	if (message == HIT_MESSAGE_UNKD) {
 		kill();
-		return true;
+		return TRUE;
 	}
 
-	if (!isState(STATE_NORMAL) && !isState(STATE_HOLDING)
-	    && !isState(FRUIT_STATE_ROTTING)) {
-		if (!isState(STATE_APPEARING) && !isState(STATE_BREAKING)
-		    && !isState(FRUIT_STATE_WAITING)
-		    && !isState(STATE_WAITING_TO_APPEAR)) {
-			TMapObjBall::touchActor(sender);
+	if (MapObjBallIsState(this, STATE_NORMAL)
+	    || MapObjBallIsState(this, STATE_HOLDING)
+	    || MapObjBallIsState(this, STATE_LIVING)) {
+		// pick() expands here as in control(); the virtual touchActor()
+		// could not be inlined.
+		pick(sender);
 
-			if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000)
-			    && !isState(STATE_NORMAL)
-			    && !checkLiveFlag(LIVE_FLAG_UNK10)
-			    && !isStateTimerEngaged()) {
-				onMapObjFlag(MAP_OBJ_FLAG_HAS_STATE_TIMER);
-				startStateTimer(getLivingTime());
-			}
-
-			offLiveFlag(LIVE_FLAG_UNK10);
-			mState = FRUIT_STATE_ROTTING;
+		BOOL handled = TMapObjBall::receiveMessage(sender, message);
+		// Putting the fruit down starts its countdown.
+		if (message == HIT_MESSAGE_PUT) {
+			if (MapObjBallIsState(this, STATE_NORMAL))
+				mState = STATE_LIVING;
 		}
+		return handled;
 	}
 
-	if (TMapObjGeneral::receiveMessage(sender, message))
-		return true;
-
-	if (message == 4 && checkMapObjFlag(MAP_OBJ_FLAG_UNK100000)) {
-		hold((TTakeActor*)sender);
-		return true;
-	}
-
-	if (sender->isActorType(0x80000001) && !isActorType(0x400000D0)
-	    && message != 4) {
-		kicked();
-		return true;
-	}
-
-	if (message == 6 && isState(STATE_NORMAL))
-		mState = FRUIT_STATE_ROTTING;
-
-	return false;
+	return FALSE;
 }
 
 void TResetFruit::initMapObj()
 {
 	TMapObjBall::initMapObj();
-	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &mRottenColor);
+	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &unk19C);
 }
 
 TResetFruit::TResetFruit(const char* name)
     : TMapObjBall(name)
 {
-	mRottingScaleSpeed = 0.0f;
-	unk1A4             = 0;
-	mRottenColor.r     = 0xFF;
-	mRottenColor.g     = 0xFF;
-	mRottenColor.b     = 0xFF;
-	mRottenColor.a     = 0xFF;
+	unk198 = 0.0f;
+	unk1A4 = 0;
+
+	unk19C.r = 255;
+	unk19C.g = 255;
+	unk19C.b = 255;
+	unk19C.a = 255;
 }
 
-// TODO: the four-way name switch and the snprintf argument order are
-// reconstructed from the .s; the strings themselves are recovered.
 void TRandomFruit::initMapObj()
 {
-	s32 sel = (s32)((rand() * (1.0f / 32768.0f)) * 5.0f);
-
-	switch (sel) {
+	switch ((int)(5.0f * MsRandF())) {
 	case 0:
-		snprintf((char*)unk1A8, 0x20, "FruitCoconut");
+		snprintf(mModelName, sizeof(mModelName), "FruitCoconut");
 		break;
 	case 1:
-		snprintf((char*)unk1A8, 0x20, "FruitDurian");
+		snprintf(mModelName, sizeof(mModelName), "FruitDurian");
 		break;
 	case 2:
-		snprintf((char*)unk1A8, 0x20, "FruitPapaya");
+		snprintf(mModelName, sizeof(mModelName), "FruitPapaya");
 		break;
 	case 3:
-		snprintf((char*)unk1A8, 0x20, "FruitPine");
+		snprintf(mModelName, sizeof(mModelName), "FruitPine");
 		break;
 	case 4:
 	case 5:
 	default:
-		snprintf((char*)unk1A8, 0x20, "FruitPine");
+		snprintf(mModelName, sizeof(mModelName), "FruitPine");
 		break;
 	}
 
-	unkF4 = (const char*)unk1A8;
-
+	unkF4 = mModelName;
 	TMapObjBall::initMapObj();
-	// The retail object loads 1 here, i.e. GX_TEVREG0 -- not GX_TEVREG1.
-	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &mRottenColor);
+	SMS_InitPacket_OneTevColor(getModel(), 0, GX_TEVREG0, &unk19C);
 }
 
 TRandomFruit::TRandomFruit(const char* name)
-	: TResetFruit(name)
+    : TResetFruit(name)
 {
-	memset(unk1A8, 0, sizeof(unk1A8));
+	memset(mModelName, 0, sizeof(mModelName));
 }
 
 void TCoverFruit::calcRootMatrix()
 {
-	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	
-	
-	if (mHolder != nullptr) {
-		MtxPtr mtx = mHolder->getTakingMtx();
-		PSMTXCopy(mtx, getModel()->getBaseTRMtx());
-		mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	if (mHolder) {
+		// While carried it simply rides the holder's matrix.
+		MtxPtr held = mHolder->getTakingMtx();
+		getModel()->setBaseTRMtx(held);
+		mPosition.set(held[0][3], held[1][3], held[2][3]);
 	} else {
-		// The declaration order matters: MWCC hands out f31..f26 to these
-		// locals in declaration order.
-		f32 x    = mPosition.x;
-		f32 y    = mPosition.y - mYOffset;
-		f32 z    = mPosition.z;
-		f32 rotX = mRotation.x;
-		f32 rotY = mRotation.y;
-		f32 rotZ = mRotation.z;
-		J3DModel* model = getModel();
-		MtxPtr mtx      = model->getBaseTRMtx();
-		s16 rotX16      = rotX * (65536.0f / 360.0f);
-		s16 rotY16      = rotY * (65536.0f / 360.0f);
-		s16 rotZ16      = rotZ * (65536.0f / 360.0f);
-		MsMtxSetXYZRPH(mtx, x, y, z, rotX16, rotY16, rotZ16);
+		MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
+		               mPosition.y - mYOffset, mPosition.z, getRotation().x,
+		               getRotation().y, mRotation.z);
 	}
-	getModel()->setBaseScale(mScaling);
+
+	getModel()->setBaseScale(*(Vec*)&mScaling);
 }
 
 BOOL TCoverFruit::receiveMessage(THitActor* sender, u32 message)
 {
+	// A Yoshi-class actor taking the cover fruit picks it up outright.
 	if (sender->isActorType(0x08000083) && message == HIT_MESSAGE_TAKE) {
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		mHolder = (TTakeActor*)sender;
-		return true;
+		return TRUE;
 	}
 
 	if (message == HIT_MESSAGE_UNKB) {
 		kill();
 		TFlagManager::smInstance->setBool(true, 0x1038B);
-		return true;
+		return TRUE;
 	}
 
-	return false;
+	return FALSE;
 }
 
 void TCoverFruit::loadAfter()
 {
-    TMapObjBase::loadAfter();
-    if (TFlagManager::smInstance->getBool(0x1038B))
-        makeObjDead();
+	TMapObjBase::loadAfter();
+	if (TFlagManager::smInstance->getBool(0x1038B))
+		makeObjDead();
 }
 
 void TBigWatermelon::touchWaterSurface()
 {
-	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	
-	
 	emitColumnWater();
-	if (gpMSound->gateCheck(0x3875))
-		MSoundSESystem::MSoundSE::startSoundActor(0x3875, &mPosition, 0,
-		                                         nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_DRINA_TO_WATER, &mPosition);
 	kill();
 }
 
-void TBigWatermelon::touchWall(JGeometry::TVec3<f32>* position,
-	                           TBGWallCheckRecord* record)
+void TBigWatermelon::touchWall(JGeometry::TVec3<f32>* param_1,
+                               TBGWallCheckRecord* param_2)
 {
-	TMapObjBall::touchWall(position, record);
+	TMapObjBall::touchWall(param_1, param_2);
 }
 
-void TBigWatermelon::rebound(JGeometry::TVec3<f32>* position)
+void TBigWatermelon::rebound(JGeometry::TVec3<f32>* param_1)
 {
-	if (isState(FRUIT_STATE_WAITING)) {
+	// A second bounce while already rotting bursts it.
+	if (isState(STATE_ROTTING)) {
 		kill();
-		position->x = mPosition.x;
-		position->y = mPosition.y;
-		position->z = mPosition.z;
+		*param_1 = mPosition;
 		return;
 	}
 
-	calcReflectingVelocity(
-	    mGroundPlane, mMapObjData->mPhysical->unk4->unk4, &mVelocity);
-	position->y = mGroundHeight;
-	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	TMapObjBall::rebound(param_1);
 
-	if (isActorType(0x400000D0)) {
-		if (mScaling.y >= 5.0f) {
-			f32 speed = fabsf(mGroundPlane->mNormal.y);
-			if (gpMSound->gateCheck(0x3889))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x3889, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-		} else {
-			f32 speed = fabsf(mGroundPlane->mNormal.y);
-			if (gpMSound->gateCheck(0x388C))
-				MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-				    0x388C, &mPosition, nullptr, speed, 0, 0, nullptr, 0, 4);
-		}
-	} else {
-		u32 sound = mMapObjData->mSound->unk4->unk0[4];
-		if (gpMSound->gateCheck(sound))
-			MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-			    sound, &mPosition, &mVelocity, 0.0f, 0, 0, nullptr, 0, 4);
-	}
-
-	if (isState(FRUIT_STATE_ROTTING))
-		mState = FRUIT_STATE_WAITING;
+	if (isState(STATE_LIVING))
+		mState = STATE_ROTTING;
 }
 
-void TBigWatermelon::touchGround(JGeometry::TVec3<f32>* position)
+void TBigWatermelon::touchGround(JGeometry::TVec3<f32>* param_1)
 {
-	TMapObjBall::touchGround(position);
+	TMapObjBall::touchGround(param_1);
 }
 
-void TBigWatermelon::touchActor(THitActor* actor)
+// TMapObjBall::touchActor expands here at depth 1 once its guards are one
+// `||` chain; one level down (TResetFruit::pick) it stays a call.
+void TBigWatermelon::touchActor(THitActor* param_1)
 {
-	// TODO: the 0x0800083 distance test and the TPoiHana branch need
-	// helpers that are not in the tree yet.
-	if (unk194 == 0 && !isState(STATE_HOLDING) && !isHideObj(actor)
-	    && actor->isActorType(0x08000083) && !actor->isActorType(0x400000CA)
-	    && !actor->isActorType(0x400000CC)) {
-		if (actor->isActorType(0x80000001) && !isActorType(0x400000D0)
-		    && *gpMarioSpeedY != 0.0f) {
+	if (isState(STATE_APPEARING))
+		return;
+
+	// Once it is falling, touching anything at all bursts it.
+	if (!isState(STATE_NORMAL)) {
+		// Assigned, not copy-constructed: retail's isZero keeps its three
+	// fmuls apart (no fmadds), which only operator='s cast copy gives.
+	JGeometry::TVec3<f32> vel;
+	vel = getVelocity();
+		if (vel.y < 0.0f) {
 			kill();
 			return;
 		}
-		boundByActor(actor);
 	}
+
+	if (param_1->isActorType(0x80000001)) {
+		// TODO: 97.3%. The ROM batches the fourth component load before the
+		// first fsubs here; distance()'s doubled subtraction, a named
+		// squared() and sqrt(squared(other)) all schedule it later. The
+		// frame is also 16 bytes short after getVelocity() above. A named
+		// `TVec3 diff; diff.sub(mPosition, param_1->mPosition);` tested by
+		// diff.length() gives the exact frame and vel slots, but then fuses
+		// the squares into fmadds (95.9%); retail keeps three fmuls.
+		if (mPosition.distance(param_1->mPosition) < 0.6f * mBodyRadius) {
+			kill();
+			return;
+		}
+	}
+
+	// A moving poihana bounces it back up instead.
+	if (param_1->isActorType(0x10000015) && ((TPoiHana*)param_1)->isMoving()) {
+		if (abs(mVelocity.y) < getMapObjData()->getPhysicalData()->unkC) {
+			mVelocity.y += 30.0f;
+			mState = STATE_LIVING;
+		}
+		return;
+	}
+
+	TMapObjBall::touchActor(param_1);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TBigWatermelon::kill (batch 127).
+static inline TWaterEmitInfo* MapObjBallUnk198(const TBigWatermelon* p)
+{
+	TWaterEmitInfo* v198 = p->unk198;
+	return v198;
 }
 
 void TBigWatermelon::kill()
@@ -1460,26 +1620,27 @@ void TBigWatermelon::kill()
 	emitAndScale(0x5D, 0, &mPosition);
 	emitAndScale(0x5E, 0, &mPosition);
 	emitAndScale(0x5F, 0, &mPosition);
-	emitAndScale(0x6B, 0, &mPosition, JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
-	emitAndScale(0x6C, 0, &mPosition, JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
 
-	mWaterEmitInfo->mPos.value.x = mPosition.x;
-	mWaterEmitInfo->mPos.value.y = mPosition.y;
-	mWaterEmitInfo->mPos.value.z = mPosition.z;
-	gpModelWaterManager->emitRequest(*mWaterEmitInfo);
+	JGeometry::TVec3<f32> scale(1.0f, 1.0f, 1.0f);
+	emitAndScale(0x6B, 0, &mPosition, scale);
+	emitAndScale(0x6C, 0, &mPosition, scale);
 
-	if (gpMSound->gateCheck(0x38A3))
-		MSoundSESystem::MSoundSE::startSoundActor(0x38A3, &mPosition, 0,
-		                                         nullptr, 0, 4);
+	// Splash the juice through the water manager.
+	MapObjBallUnk198(this)->mPos.value = mPosition;
+	gpModelWaterManager->emitRequest(*unk198);
 
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_WATERMELON_BLOCK, &mPosition, 0,
+	                                nullptr, 0, 4);
+
+	// Each burst drops one coin, up to ten over the object's lifetime.
 	if (unk19C < 10) {
-		TMapObjBase* obj = ((TMapObjBaseManager*)gpItemManager)->makeObjAppear(
-		    mPosition.x, mPosition.y, mPosition.z, 0x200E, true);
-		if (obj != nullptr) {
-			obj->mVelocity.x = 0.0f;
-			obj->mVelocity.y = 25.0f;
-			obj->mVelocity.z = 0.0f;
-			obj->offLiveFlag(LIVE_FLAG_UNK10);
+		TMapObjBase* coin = gpItemManager->makeObjAppear(
+		    mPosition.x, mPosition.y, mPosition.z, 0x2000000E, true);
+		if (coin) {
+			coin->mVelocity.x = 0.0f;
+			coin->mVelocity.y = 25.0f;
+			coin->mVelocity.z = 0.0f;
+			coin->offLiveFlag(LIVE_FLAG_UNK10);
 			unk19C++;
 		}
 	}
@@ -1487,194 +1648,212 @@ void TBigWatermelon::kill()
 	TMapObjGeneral::kill();
 }
 
+static inline J3DModel* BigWatermelonModel(const TBigWatermelon* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+static inline MtxPtr BigWatermelonAnmMtx(const TBigWatermelon* p)
+{
+	MtxPtr mtx = BigWatermelonModel(p)->getAnmMtx(0);
+	return mtx;
+}
+
 void TBigWatermelon::appearing()
 {
-	
-	
 	TMapObjGeneral::appearing();
 
-	MtxPtr mtx = getModel()->getAnmMtx(0);
+	MtxPtr mtx = BigWatermelonAnmMtx(this);
 	calcRootMatrix();
-	getModel()->calc();
+	BigWatermelonModel(this)->calc();
+	mtx[1][3] = mBodyRadius * (mScaling.y / mInitialScaling.y) + mPosition.y;
 
-	mtx[1][3] = mPosition.y + mBodyRadius * (mScaling.y / mInitialScaling.y);
 	mScaledBodyRadius = 50.0f * mScaling.x;
 	mDamageRadius     = 50.0f * mScaling.x;
 	calcEntryRadius();
 
+	// Only once it has finished growing does it become the crushing type.
 	if (isState(STATE_NORMAL)) {
-		mActorType   = 0x400000D0;
+		mActorType    = 0x400000D0;
 		mAttackRadius = 50.0f * mScaling.x;
 		calcEntryRadius();
-	} else {
-		mActorType   = 0x400000DB;
-		mAttackRadius = 0.0f;
-		calcEntryRadius();
+		return;
 	}
+
+	mActorType    = 0x400000DB;
+	mAttackRadius = 0.0f;
+	calcEntryRadius();
 }
 
 void TBigWatermelon::control()
 {
-	TMapObjGeneral::control();
+	JGeometry::TVec3<f32> scale;
+	JGeometry::TVec3<f32> vel;
+	Mtx held;
 
+	TMapObjGeneral::control();
 	if (unk194 != 0)
-		unk194--;
+		unk194 -= 1;
 
 	if (isState(STATE_HOLDING)) {
-		// TODO: taking-matrix fix-up.
+		MTXCopy(mHolder->getTakingMtx(), held);
+		held[1][3] += unk190;
+		MtxPtr anm = getModel()->getAnmMtx(0);
+		MTXCopy(held, anm);
 	} else {
-		if (mVelocity.squared() > 3.814697265625e-06f && mGroundPlane->mActor)
-			kill();
+		vel = getVelocity();
+		if (!vel.isZero() || getGroundPlane()->getActor())
+			calcCurrentMtx();
 	}
 
 	switch (mState) {
-	case FRUIT_STATE_WAITTOSEE:
-		if (!isStateTimerEngaged()) {
-			JGeometry::TVec3<f32> one(1.0f, 1.0f, 1.0f);
-			emitAndScale(0x6B, 0, &mPosition, one);
-			emitAndScale(0x6C, 0, &mPosition, one);
-			startStateTimer(0x1E);
+	case STATE_NORMAL:
+		if (checkLiveFlag(LIVE_FLAG_UNK10))
+			offLiveFlag(LIVE_FLAG_UNK10);
+
+		{
+			// Sitting on a rising sand pillar lifts the watermelon with it,
+			// the same way TResetFruit::control does.
+			const TLiveActor* owner = getGroundPlane()->getActor();
+			if (mPosition.y < getGroundHeight() + 200.0f && owner) {
+				// TODO: the original tests the same type twice here, as it
+				// also does in TResetFruit::control.
+				if (owner->isActorType(0x400000CD)
+				    || owner->isActorType(0x400000CD)) {
+					f32 wasRatio = unk1A0;
+					unk1A0       = SMS_GetSandRiseUpRatio(owner);
+					if (unk1A0 > 0.05f && unk1A0 > wasRatio)
+						mVelocity.y += 20.0f;
+				}
+			}
 		}
-		if (animIsFinished())
-			kill();
 		break;
-	default:
+
+	case STATE_APPEARING:
+	case STATE_WAITING_TO_APPEAR:
+	case STATE_LIVING:
+	case STATE_ROTTING:
+		break;
+
+	case STATE_BROKEN:
+		if (!isStateTimerEngaged()) {
+			scale.set(1.0f, 1.0f, 1.0f);
+			emitAndScale(0x6B, 0, &mPosition, scale);
+			emitAndScale(0x6C, 0, &mPosition, scale);
+			mStateTimer = 30;
+		}
+
+		if (animIsFinished())
+			makeObjDead();
 		break;
 	}
 }
 
-// TODO: the object-name comparison and the demo-camera call need field
-// and parameter names that are not in the tree yet.
 void TBigWatermelon::startEvent()
 {
-	// The stage-event name takes the scripted-camera path; everything else
-	// scatters ten watermelon items around Mario.
-	if (strcmp(getName(), kStageName) == 0) {
+	// Only the one big watermelon on the Sirena roof runs the shine demo;
+	// the others just burst into coins.
+	if (strcmp(getName(), "スイカ（大）") == 0) {
 		mPosition.x = -4660.0f;
 		mPosition.y = 1300.0f;
 		mPosition.z = 13600.0f;
 
-		// rlwinm r0,r0,0,24,22 clears MAP_OBJ_FLAG_UNK100.
-		unkF8 &= ~MAP_OBJ_FLAG_UNK100;
+		offMapObjFlag(MAP_OBJ_FLAG_UNK100);
 		onLiveFlag(LIVE_FLAG_UNK10);
-		mVelocity.z = 0.0f;
-		mVelocity.y = 0.0f;
-		mVelocity.x = 0.0f;
+		mVelocity.x = mVelocity.y = mVelocity.z = 0.0f;
 		onLiveFlag(LIVE_FLAG_UNK10);
-
 		startAnim(7);
 
-		JDrama::TFlagT<u16> flag;
-		gpMarDirector->fireStartDemoCamera(kCamName, nullptr, -1, 0.0f,
-		                                   true, nullptr, 0, nullptr, flag);
-		gpItemManager->makeShineAppearWithDemoOffset(kShineName, kDemoName,
-		                                             0.0f, 0.0f, 0.0f);
+		SMSGetMarDirector()->fireStartDemoCamera("スイカゴールカメラ",
+		                                         &mPosition, -1, 0.0f, true,
+		                                         nullptr, 0, nullptr,
+		                                         JDrama::TFlagT<u16>(0));
+		gpItemManager->makeShineAppearWithDemoOffset(
+		    "シャイン（お化けスイカ用）", "スイカシャインカメラ", 0.0f, 0.0f,
+		    0.0f);
 
-		mStateTimer = 0x17C;
-		mState       = 0xD;
+		mStateTimer = 380;
+		mState      = STATE_BROKEN;
 		return;
 	}
 
-	for (int i = 0; i < 10; i++) {
-		// The spawned item is a watermelon, so its post-0x138 fields are
-		// reachable; makeObjAppear() only hands back the base pointer.
-		TMapObjBall* item = (TMapObjBall*) gpItemManager->makeObjAppear(
-		    gpMarioPos->x, gpMarioPos->y, gpMarioPos->z, 0x200000E, true);
-		if (item != nullptr) {
-			// Three independent rand() draws, each folded into
-			// [-0.5,0.5] before the launch-speed scaling.
-			f32 a = 3.8146973e-05f * (f32) rand();
-			f32 b = 3.8146973e-05f * (f32) rand();
-			f32 c = 3.8146973e-05f * (f32) rand();
-
-			item->mVelocity.x = 20.0f * (c - 0.5f);
-			item->mVelocity.y = 20.0f * b + 20.0f;
-			item->mVelocity.z = 20.0f * (a - 0.5f);
-
-			item->mLiveFlag &= ~LIVE_FLAG_UNK10;
-			item->unk14C = 0x3C0;
+	for (int i = 0; i < 10; ++i) {
+		const JGeometry::TVec3<f32>& marioPos = SMS_GetMarioPos();
+		TCoin* coin = (TCoin*)gpItemManager->makeObjAppear(
+		    marioPos.x, marioPos.y, marioPos.z, 0x2000000E, true);
+		if (coin) {
+			coin->mVelocity.set(20.0f * (MsRandF() - 0.5f),
+			                    20.0f * MsRandF() + 20.0f,
+			                    20.0f * (MsRandF() - 0.5f));
+			coin->offLiveFlag(LIVE_FLAG_UNK10);
+			coin->unk14C = 0x3C0;
 		}
 	}
 
-	// Virtual slot 0x104 in __vt__14TBigWatermelon is makeObjDead().
 	makeObjDead();
 }
 
-void TBigWatermelon::checkWallCollision(JGeometry::TVec3<f32>* position)
+void TBigWatermelon::checkWallCollision(JGeometry::TVec3<f32>* param_1)
 {
-	TMapObjGeneral::checkWallCollision(position);
+	TMapObjGeneral::checkWallCollision(param_1);
 }
 
 BOOL TBigWatermelon::receiveMessage(THitActor* sender, u32 message)
 {
+	// Mario always bounces off the big watermelon, whatever the message.
 	if (sender->isActorType(0x80000001)) {
 		boundByActor(sender);
-		return true;
+		return TRUE;
 	}
 
 	if (TMapObjGeneral::receiveMessage(sender, message))
-		return true;
+		return TRUE;
 
-	if (message == 4 && checkMapObjFlag(MAP_OBJ_FLAG_UNK100000)) {
+	if (message == HIT_MESSAGE_TAKE && (unkF8 & 0x100000)) {
 		hold((TTakeActor*)sender);
-		return true;
+		return TRUE;
 	}
 
-	if (sender->isActorType(0x80000001) && !isActorType(0x400000D0)
-	    && message != 4) {
-		kicked();
-		return true;
+	if (sender->isActorType(0x80000001)) {
+		if (!isActorType(0x400000D0) && message != HIT_MESSAGE_TAKE) {
+			kicked();
+			return TRUE;
+		}
 	}
 
-	return false;
+	return FALSE;
 }
 
 void TBigWatermelon::loadAfter()
 {
 	TMapObjGeneral::loadAfter();
-	TShine* shine = static_cast<TShine*>(
-	    JDrama::TNameRefGen::search("シャイン（お化けスイカ用）"));
-	shine->mPosition.set(-4659.0f, 460.0f, 13620.0f);
+
+	// Park the shine that belongs to this watermelon at its fixed spot.
+	JDrama::TActor* shine
+	    = JDrama::TNameRefGen::search<JDrama::TActor>("シャイン（お化けスイカ用）");
+	shine->mPosition.x = -4659.0f;
+	shine->mPosition.y = 460.0f;
+	shine->mPosition.z = 13620.0f;
 }
 
 void TBigWatermelon::initMapObj()
 {
 	TMapObjBall::initMapObj();
 
-	if (!gParticleFlagLoaded[0x5D]) {
-		gpResourceManager->load(
-		    "/scene/mapObj/watermelon_bomb.jpa", 0x5D);
-		gParticleFlagLoaded[0x5D] = true;
-	}
-	if (!gParticleFlagLoaded[0x5E]) {
-		gpResourceManager->load(
-		    "/scene/mapObj/watermelon_bomb_a.jpa", 0x5E);
-		gParticleFlagLoaded[0x5E] = true;
-	}
-	if (!gParticleFlagLoaded[0x5F]) {
-		gpResourceManager->load(
-		    "/scene/mapObj/watermelon_bomb_b.jpa", 0x5F);
-		gParticleFlagLoaded[0x5F] = true;
-	}
-	if (!gParticleFlagLoaded[0x6B]) {
-		gpResourceManager->load(
-		    "/scene/mapObj/watermelon_shrink_a.jpa", 0x6B);
-		gParticleFlagLoaded[0x6B] = true;
-	}
-	if (!gParticleFlagLoaded[0x6C]) {
-		gpResourceManager->load(
-		    "/scene/mapObj/watermelon_shrink_b.jpa", 0x6C);
-		gParticleFlagLoaded[0x6C] = true;
-	}
+	SMS_LoadParticle("/scene/mapObj/watermelon_bomb.jpa", 0x5D);
+	SMS_LoadParticle("/scene/mapObj/watermelon_bomb_a.jpa", 0x5E);
+	SMS_LoadParticle("/scene/mapObj/watermelon_bomb_b.jpa", 0x5F);
+	SMS_LoadParticle("/scene/mapObj/watermelon_shrink_a.jpa", 0x6B);
+	SMS_LoadParticle("/scene/mapObj/watermelon_shrink_b.jpa", 0x6C);
 
-	mWaterEmitInfo = new TWaterEmitInfo("/watermelon.prm");
+	unk198 = new TWaterEmitInfo("/watermelon.prm");
 }
 
 TBigWatermelon::TBigWatermelon(const char* name)
-	: TMapObjBall(name)
+    : TMapObjBall(name)
 {
-	mWaterEmitInfo = nullptr;
-	unk19C         = 0;
-	unk1A0         = 0.0f;
+	unk198 = 0;
+	unk19C = 0;
+	unk1A0 = 0.0f;
 }
-

@@ -1,39 +1,27 @@
 #ifndef ENEMY_EFFECT_OBJ_HPP
 #define ENEMY_EFFECT_OBJ_HPP
 
+#include <JSystem/JGeometry.hpp>
 #include <Enemy/Enemy.hpp>
 #include <Enemy/EnemyManager.hpp>
 #include <JSystem/JGadget/std-list.hpp>
 
 class TSimpleEffect : public JDrama::TActor {
 public:
-	// marioEU.MAP has no __ct__13TSimpleEffectFPCc, and MarNameRefGen_Enemy
-	// inlines the whole thing at `new TEffectPinnaFunsui` / `...BiancoFunsui`:
-	// call __ct__Q26JDrama6TActorFPCc, patch __vt__13TSimpleEffect, store 1 to
-	// +0x44, then call TRotation3's (empty) default constructor on +0x48 --
-	// which also explains the 0x28 stack frame there, since JDrama::TActor has a
-	// non-trivial destructor and the fresh object gets spilled. The order
-	// (byte store to +0x44 before the +0x48 ctor call) is a member-initializer,
-	// not a body statement.
 	TSimpleEffect(const char* name)
 	    : JDrama::TActor(name)
-	    , unk44(1)
+	    , unk44(true)
 	{
 	}
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void emitEffect() = 0;
 
-	MtxPtr getUnk48() { return (MtxPtr)&unk48; }
+	MtxPtr getUnk48() { return unk48; }
 
 public:
-	/* 0x44 */ u8 unk44;
-	// 0x30 bytes, not a plain Mtx: the ROM calls this type's (empty) default
-	// constructor on +0x48, so the member has to be a class with a
-	// user-declared ctor. The exact 4-byte stub differs from the ROM's by one
-	// level -- see the note on __ct__ in MarNameRefGen_Enemy.
-	/* 0x48 */ JGeometry::TRotation3<JGeometry::TMatrix34<
-	    JGeometry::SMatrix34C<f32> > > unk48;
+	/* 0x44 */ bool unk44;
+	/* 0x48 */ TPosition3f unk48;
 };
 
 class TEffectPinnaFunsui : public TSimpleEffect {
@@ -134,10 +122,7 @@ public:
 
 class TEffectColumWater : public TEffectModel {
 public:
-	TEffectColumWater(const char* name = "エフェクト水柱")
-	    : TEffectModel(name)
-	{
-	}
+	TEffectColumWater(const char* name = "エフェクト水柱");
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -157,10 +142,7 @@ public:
 
 class TEffectBombColumWater : public TEffectModel {
 public:
-	TEffectBombColumWater(const char* name = "エフェクト爆発水柱")
-	    : TEffectModel(name)
-	{
-	}
+	TEffectBombColumWater(const char* name = "エフェクト爆発水柱");
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -179,10 +161,7 @@ public:
 
 class TEffectColumSand : public TEffectModel {
 public:
-	TEffectColumSand(const char* name = "エフェクト砂柱")
-	    : TEffectModel(name)
-	{
-	}
+	TEffectColumSand(const char* name = "エフェクト砂柱");
 	virtual void init(TLiveManager*);
 	virtual void reset();
 
@@ -201,10 +180,7 @@ public:
 
 class TEffectExplosion : public TEffectModel {
 public:
-	TEffectExplosion(const char* name = "エフェクト爆発")
-	    : TEffectModel(name)
-	{
-	}
+	TEffectExplosion(const char* name = "エフェクト爆発");
 	virtual void init(TLiveManager*);
 	virtual void reset();
 

@@ -28,6 +28,7 @@
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionManager.hpp>
 
 void THideObjBase::appearObj(f32 y_offset)
 {
@@ -83,14 +84,41 @@ BOOL THideObjBase::receiveMessage(THitActor* sender, u32 message)
 	return TMapObjBase::receiveMessage(sender, message);
 }
 
+// Binding level worth +8 of low region, landing THideObjBase::loadAfter's
+// frame at 0x30 (batch 121).
+static inline const char* MapObjHideGetName(const THideObjBase* p)
+{
+	const char* name = p->getName();
+	return name;
+}
+
+// Named getModel / getAnmMtx stack: +0x10 then +8 on
+// TWaterHitPictureHideObj::loadAfter / load.
+static inline J3DModel* MapObjHideGetModel(TLiveActor* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+static inline MtxPtr MapObjHideGetRootMtx(TLiveActor* p)
+{
+	MtxPtr mtx = MapObjHideGetModel(p)->getAnmMtx(0);
+	return mtx;
+}
+
+// SMSGetParticleManagerBound is +8 on touchWater.
+// Unnamed extra level over gpModelWaterManager, last +8 on touchWater.
+static inline TModelWaterManager* MapObjHideWaterMgr()
+{
+	return gpModelWaterManager;
+}
+
 void THideObjBase::loadAfter()
 {
-
-	
-	
 	TMapObjBase::loadAfter();
 	mHiddenObj
-	    = TMapObjBaseManager::newAndRegisterObjByEventID(mEventId, getName());
+	    = TMapObjBaseManager::newAndRegisterObjByEventID(
+	        mEventId, MapObjHideGetName(this));
 	if (mHiddenObj != nullptr) {
 		if (mHiddenObj->isActorType(0x20000010)) {
 			bool isBlueCollected = TFlagManager::smInstance->getBlueCoinFlag(
@@ -175,6 +203,12 @@ void TFruitHitHideObj::load(JSUMemoryInputStream& stream)
 	THideObjBase::load(stream);
 }
 
+static inline MSound* FruitBasketSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
 void TFruitBasket::countFruit(THitActor* param_1)
 {
 	mMActor->setBck("basket");
@@ -182,9 +216,9 @@ void TFruitBasket::countFruit(THitActor* param_1)
 	if (mHiddenObj != nullptr) {
 		appearObj(0.0f);
 
-		SMSGetMSound()->startSoundActor(MSD_SE_IT_SOCCER_GOAL, &mPosition, 0,
+		FruitBasketSound()->startSoundActor(MSD_SE_IT_SOCCER_GOAL, &mPosition, 0,
 		                                nullptr, 0, 4);
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_FGM_SOCCER_GOAL, 0, nullptr,
+		FruitBasketSound()->startSoundSystemSE(MSD_SE_FGM_SOCCER_GOAL, 0, nullptr,
 		                                   0);
 	} else {
 		if (unk150 == 0) {
@@ -203,19 +237,22 @@ void TFruitBasket::countFruit(THitActor* param_1)
 	((TResetFruit*)param_1)->makeObjWaitingToAppear();
 }
 
+// roofPlane declared at function scope, the fruit named inside the first arm
+// and the roof's actor read raw put roofPlane at retail's 0x28.
 void TFruitBasket::touchFruit(THitActor* param_1)
 {
+	const TBGCheckData* roofPlane;
 	if (fabsf(mRotation.x) < 45.0f) {
+		TLiveActor* fruit = (TLiveActor*)param_1;
 		// Upwards facing basket -- check that the fruit's on top of us
-		if (((TLiveActor*)param_1)->getGroundPlane()->getActor() != this)
+		if (fruit->getGroundPlane()->getActor() != this)
 			return;
 	} else {
 		// Basket lying on it's side -- check that the fruit rolled inside
 		// enough to be under our side
-		const TBGCheckData* roofPlane;
 		gpMap->checkRoof(param_1->mPosition.x, param_1->mPosition.y,
 		                 param_1->mPosition.z, &roofPlane);
-		if (roofPlane->getActor() != this)
+		if (roofPlane->mActor != this)
 			return;
 	}
 
@@ -286,12 +323,8 @@ void THipDropHideObj::touchPlayer(THitActor* param_1)
 
 void TWaterHitPictureHideObj::afterFinishedAnim()
 {
-
-	
-	
 	if (isActorType(0x400001A1)) {
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_POSTER_RIP2, &mPosition, 0,
-		                                nullptr, 0, 4);
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_POSTER_RIP2, &mPosition);
 		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr,
 		                                   0);
 	}
@@ -320,23 +353,20 @@ void TWaterHitPictureHideObj::forward(f32 param_1)
 
 u32 TWaterHitPictureHideObj::touchWater(THitActor* param_1)
 {
-
-	
-	
 	const JGeometry::TVec3<f32>& waterSpeed = getWaterSpeed(param_1);
 
-	MtxPtr rootMtx = getModel()->getAnmMtx(0);
+	MtxPtr rootMtx = MapObjHideGetRootMtx(this);
 	if ((rootMtx[0][2] * waterSpeed.x + rootMtx[1][2] * waterSpeed.y
 	     + rootMtx[2][2] * waterSpeed.z)
 	    > 0.0f)
 		return 0;
 
 	int id = getWaterID(param_1);
-	if (gpModelWaterManager->checkFlagBottom4Bits(id, 0x1)) {
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
-		                             &param_1->mPosition, 0, nullptr);
-		SMSGetMSound()->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0,
-		                              0, 0, 0, 4);
+	if (MapObjHideWaterMgr()->checkFlagBottom4Bits(id, 0x1)) {
+		SMSGetParticleManagerBound()->emit(PARTICLE_MS_ENM_WATHIT,
+		                            &param_1->getPosition(), 0, nullptr);
+		FruitBasketSound()->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition,
+		                                  0, 0, 0, 0, 4);
 	}
 	forward(mSprayProgressSpeed);
 	if (isActorType(0x400001A1))
@@ -401,15 +431,12 @@ BOOL TWaterHitPictureHideObj::receiveMessage(THitActor* sender, u32 message)
 
 void TWaterHitPictureHideObj::loadAfter()
 {
-
-	
-	
 	THideObjBase::loadAfter();
 
 	if (mHiddenObj != nullptr) {
 		if (mHiddenObj->isActorType(0x20000010)) {
 			bool isBlueCollected = TFlagManager::smInstance->getBlueCoinFlag(
-			    gpMarDirector->getCurrentMap(), mEventId);
+			    SMSGetMarDirector()->getCurrentMap(), mEventId);
 			if (isBlueCollected) {
 				makeObjDead();
 				return;
@@ -420,7 +447,7 @@ void TWaterHitPictureHideObj::loadAfter()
 	case 0x40000012:
 		mMinProgress = 32.0f;
 		mMaxProgress = 100.0f;
-		if (getModel()->getAnmMtx(0)[1][2] > 0.7f) {
+		if (MapObjHideGetRootMtx(this)[1][2] > 0.7f) {
 			mSprayProgressSpeed = 1.5f;
 		} else {
 			mSprayProgressSpeed = 0.48f;
@@ -494,14 +521,15 @@ void TWaterHitPictureHideObj::load(JSUMemoryInputStream& stream)
 	mBarrelProgressSpeed = 1.0f;
 	unk15C               = 0.4f;
 
-	f32 yOffset = getModel()->getAnmMtx(0)[1][2];
+	f32 yOffset = MapObjHideGetRootMtx(this)[1][2];
 	if (yOffset > 0.7f) {
 		mYOffset = 0.0f;
 		setDamageHeight(40.0f);
 		mPosition.y         = mInitialPosition.y + mYOffset;
 		mSprayProgressSpeed = 2.8f;
 	} else if (yOffset < -0.7f) {
-		mYOffset = mScaling.y * -10.0f;
+		f32 scaleY = mScaling.y;
+		mYOffset   = scaleY * -10.0f;
 		setDamageHeight(30.0f);
 		mPosition.y         = mInitialPosition.y + mYOffset;
 		mSprayProgressSpeed = 2.5f;
@@ -509,7 +537,7 @@ void TWaterHitPictureHideObj::load(JSUMemoryInputStream& stream)
 		mSprayProgressSpeed = 1.8f;
 	}
 
-	initPacketMatColor(getModel(), GX_TEVREG0, &mColor);
+	initPacketMatColor(MapObjHideGetModel(this), GX_TEVREG0, &mColor);
 }
 
 TWaterHitPictureHideObj::TWaterHitPictureHideObj(const char* name)
@@ -547,7 +575,7 @@ void THideObjPictureTwin::afterFinishedAnim()
 			obj->appear();
 		}
 
-		obj->mPosition.set(unk174->mPosition);
+		obj->mPosition.set(unk174->getPosition());
 		Mtx mtx;
 		MsMtxSetRotRPH(mtx, unk174->mRotation.x, unk174->mRotation.y,
 		               unk174->mRotation.z);
@@ -564,10 +592,18 @@ void THideObjPictureTwin::afterFinishedAnim()
 		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_TIMECOIN_APPEAR, 0,
 		                                   nullptr, 0);
 
-		SMSGetMarDirector()->fireStartDemoCamera(unk178, &mPosition, -1, 0.0f,
-		                                         true, nullptr, 0, nullptr, 0);
+		SMSGetMarDirectorBound()->fireStartDemoCamera(
+		    unk178, &obj->mPosition, -1, 0.0f, true, nullptr, 0, nullptr, 0);
 	}
 	mState = 3;
+}
+
+// Setter level over the partner link: +4 of low region, putting the name
+// buffer at retail's 0x28.
+static inline void HideObjSetTwin(THideObjPictureTwin* obj,
+                                  THideObjPictureTwin* twin)
+{
+	obj->unk174 = twin;
 }
 
 void THideObjPictureTwin::loadAfter()
@@ -576,23 +612,21 @@ void THideObjPictureTwin::loadAfter()
 	const char* wrapName = strstr(mName, "ふたご落書きＡ");
 	if (wrapName != nullptr) {
 		size_t len = strlen("ふたご落書きＡ");
-		char buffer[4];
-		buffer[0] = mName[len];
-		buffer[1] = mName[len + 1];
-		buffer[2] = mName[len + 2];
-		buffer[3] = mName[len + 3];
+		char c0    = mName[len];
+		char c1    = mName[len + 1];
+		char c2    = mName[len + 2];
+		char c3    = mName[len + 3];
 
-		char buffer2[0x4C];
+		char buffer2[0x48];
 		snprintf(buffer2, 0x40, "ふたご落書きＢ００");
-		buffer2[len]     = buffer[0];
-		buffer2[len + 1] = buffer[1];
-		buffer2[len + 2] = buffer[2];
-		buffer2[len + 3] = buffer[3];
+		buffer2[len]     = c0;
+		buffer2[len + 1] = c1;
+		buffer2[len + 2] = c2;
+		buffer2[len + 3] = c3;
 
-		THideObjPictureTwin* hitActor = static_cast<THideObjPictureTwin*>(
-		    JDrama::TNameRefGen::search(buffer2));
-		unk174         = hitActor;
-		unk174->unk174 = this;
+		unk174 = JDrama::TNameRefGen::getInstance()->search<THideObjPictureTwin>(
+		    buffer2);
+		HideObjSetTwin(unk174, this);
 	}
 }
 
@@ -621,15 +655,11 @@ void TBreakHideObj::kill()
 
 BOOL TBreakHideObj::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	if (message == 1) {
 		if (isActorType(0x400002C3)) {
 			emitAndScale(0x6B, 0, &mPosition);
 			emitAndScale(0x6C, 0, &mPosition);
-			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_WATERMELON_BLOCK,
-			                                &mPosition, 0, nullptr, 0, 4);
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_WATERMELON_BLOCK, &mPosition);
 		}
 		kill();
 		return TRUE;
@@ -662,11 +692,19 @@ void TBreakHideObj::initMapObj()
 	}
 }
 
-void TWoodBox::fabricatedGroundKillCheck(f32 dX, f32 dY)
+// Binding levels: with kill()'s named sound pointer they supply the 0x98
+// bytes of low region killNearWoodBox's four expansions leave in retail.
+static inline const JGeometry::TVec3<f32>& MapObjHideMarioPos()
+{
+	const JGeometry::TVec3<f32>& pos = SMS_GetMarioPos();
+	return pos;
+}
+
+void TWoodBox::killNearWoodBox(f32 dX, f32 dY) const
 {
 	const TBGCheckData* groundPlane;
-	f32 resY = gpMap->checkGround(dX + gpMarioPos->x, gpMarioPos->y + 1000.0f,
-	                              dY + gpMarioPos->z, &groundPlane);
+	f32 resY = gpMap->checkGround(dX + MapObjHideMarioPos().x, MapObjHideMarioPos().y + 1000.0f,
+	                              dY + MapObjHideMarioPos().z, &groundPlane);
 	if (resY + 10.0f > gpMarioPos->y) {
 		const TLiveActor* actor = groundPlane->getActor();
 		if (actor != nullptr && actor != this
@@ -684,13 +722,12 @@ void TWoodBox::kill()
 	mStateTimer = -1;
 	mState      = 2;
 
-	SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition, 0,
-	                                nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition);
 
-	fabricatedGroundKillCheck(50.0f, 50.0f);
-	fabricatedGroundKillCheck(50.0f, -50.0f);
-	fabricatedGroundKillCheck(-50.0f, 50.0f);
-	fabricatedGroundKillCheck(-50.0f, -50.0f);
+	killNearWoodBox(-50.0f, -50.0f);
+	killNearWoodBox(50.0f, -50.0f);
+	killNearWoodBox(-50.0f, 50.0f);
+	killNearWoodBox(50.0f, 50.0f);
 }
 
 void TWoodBox::loadAfter()

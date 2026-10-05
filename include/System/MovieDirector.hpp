@@ -11,6 +11,7 @@
 class TCardSave;
 class TMovieSubTitle;
 class TMovieRumble;
+class TEndingString;
 
 namespace JDrama {
 class TDisplay;
@@ -18,31 +19,7 @@ class TDisplay;
 
 class TMarioGamePad;
 
-#ifdef VERSION_GMSP01
-class TEndingString : public JDrama::TViewObj {
-public:
-	TEndingString(const char*);
 
-	virtual void perform(u32, JDrama::TGraphics*);
-
-	void startFadeIn();
-
-	void startFadeOut() { mState = STATE_FADE_OUT; }
-
-public:
-	enum {
-		STATE_HIDDEN   = 0,
-		STATE_FADE_IN  = 1,
-		STATE_SHOWN    = 2,
-		STATE_FADE_OUT = 3,
-	};
-
-	/* 0x10 */ u8 mState;
-	/* 0x14 */ int mTimer;
-	/* 0x18 */ J2DSetScreen* mScreen;
-	/* 0x1C */ J2DPane* mRootPane;
-};
-#endif
 
 class TMovieDirector : public JDrama::TDirector {
 public:
@@ -57,6 +34,15 @@ public:
 	u32 decideNextMode(s32*);
 
 	static const char* getStreamMovieName(u32);
+
+	// Same shape as TSelectDir::getGamePad(): the named pointer is the
+	// dead depth-2 word setup's `getGamePad()->setFlag(1)` leaves in retail
+	// (research c-r28).
+	TMarioGamePad* getGamePad()
+	{
+		TMarioGamePad* gamePad = unk20;
+		return gamePad;
+	}
 
 public:
 	enum {
@@ -74,8 +60,11 @@ public:
 	/* 0x28 */ TMovieSubTitle* unk28;
 	/* 0x2C */ TMovieRumble* unk2C;
 	/* 0x30 */ JDrama::TFlagT<u16> unk30;
-#ifdef VERSION_GMSP01
+#if defined(VERSION_GMSP01) || defined(VERSION_GMSE01)
 	/* 0x34 */ TEndingString* mEndingString;
+	// The ROM's `new` size is 0x3c and the constructor zeroes 0x38 next to
+	// 0x34. `direct()` counts it up to 300 while a movie plays and keys the
+	// ending-string fade on it, so it is an unsigned frame counter.
 	/* 0x38 */ u32 mEndingTimer;
 #endif
 };

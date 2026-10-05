@@ -57,6 +57,10 @@ bool TCameraBck::isFileExist(const char* name) const
 	return unk0->checkAnmFileExist(name, ANM_TYPE_BCK);
 }
 
+void TCameraBck::getDemoFileName() const { }
+
+void TCameraBck::isNowDemo() const { }
+
 void TCameraBck::startDemo(const char* name,
                            const JGeometry::TVec3<f32>* offset)
 {
@@ -77,16 +81,37 @@ int TCameraBck::getTotalDemoFrames() const
 	return total;
 }
 
+// UNUSED 0x70 in the map, and our body compiles to exactly 0x70. updateDemo
+// inlines it, which is what puts the whole result in r31: `finished`'s `true`
+// initialiser is hoisted above the getFrameCtrl call, checkState()'s own
+// ternary reuses that register (so only `li r31, 0` survives) and the outer
+// ternary re-normalises it in place.
+bool TCameraBck::isDemoFinished() const
+{
+	bool finished    = true;
+	J3DFrameCtrl* fc = unk0->getFrameCtrl(ANM_TYPE_BCK);
+	if (fc != nullptr)
+		finished = fc->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE)
+		    ? true
+		    : false;
+	return finished;
+}
+
 void TCameraBck::endDemo() { unk0->setBckFromIndex(-1); }
+
+void TCameraBck::restartDemo() { }
 
 bool TCameraBck::updateDemo(JGeometry::TVec3<f32>* pos,
                             JGeometry::TVec3<f32>* lookat,
                             JGeometry::TVec3<f32>* up, f32* out_y_scale)
 {
-	unk0->calcAnm();
 
-	if (pos != nullptr)
-		pos->set(unkC[0][3], unkC[1][3], unkC[2][3]);
+	getMActor()->calcAnm();
+
+	if (pos != nullptr) {
+		MtxPtr mtx = getPosMtx();
+		pos->set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	}
 
 	if (lookat != nullptr)
 		lookat->set(unk10[0][3], unk10[1][3], unk10[2][3]);
@@ -98,28 +123,20 @@ bool TCameraBck::updateDemo(JGeometry::TVec3<f32>* pos,
 		J3DAnmTransformKey* anm = unk0->getBckAnm();
 		if (anm != nullptr) {
 			J3DTransformInfo info;
-			anm->getTransform((u16)unk8, &info);
-			*out_y_scale = info.mScale.y;
+			anm->getTransform((u16)getFrame(), &info);
+			f32 scaleY   = info.mScale.y;
+			*out_y_scale = scaleY;
 		}
 	}
 
-	if (unk14 != nullptr) {
+	if (getOffset() != nullptr) {
 		if (pos != nullptr)
-			*pos += *unk14;
+			*pos += *getOffset();
 		if (lookat != nullptr)
-			*lookat += *unk14;
+			*lookat += *getOffset();
 	}
 
-	bool result      = true;
-	J3DFrameCtrl* fc = unk0->getFrameCtrl(ANM_TYPE_BCK);
-	if (fc != nullptr) {
-		if (fc->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE))
-			result = true;
-		else
-			result = false;
-	}
-
-	return result;
+	return isDemoFinished();
 }
 
 void TCameraBck::setFrame(f32 frame)

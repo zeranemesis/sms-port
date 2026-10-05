@@ -2,6 +2,9 @@
 #include <JSystem/J3D/J3DGraphBase/Components/J3DLightObj.hpp>
 #include <JSystem/J3D/J3DGraphBase/Components/J3DTexMtx.hpp>
 #include <JSystem/J3D/J3DGraphBase/Components/J3DNBTScale.hpp>
+#include <JSystem/J3D/J3DGraphBase/Components/J3DTevOrder.hpp>
+#include <JSystem/J3D/J3DGraphBase/Components/J3DIndTexOrder.hpp>
+#include <JSystem/J3D/J3DGraphBase/Components/J3DIndTexCoordScale.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTransform.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
 #include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
@@ -40,6 +43,13 @@ const J3DColorChanInfo j3dDefaultColorChanInfo
 const u8 j3dDefaultTevSwapTableID = 0x1B;
 const u16 j3dDefaultAlphaCmpID    = 0xE7;
 const u16 j3dDefaultZModeID       = 0x17;
+
+void J3DLoadCPCmd(u8 cmd, u32 param)
+{
+	GXCmd1u8(8);
+	GXCmd1u8(cmd);
+	GXCmd1u32(param);
+}
 
 void J3DLoadArrayBasePtr(GXAttr attr, void* ptr)
 {
@@ -224,38 +234,9 @@ const J3DFogInfo j3dDefaultFogInfo = {
 
 const J3DNBTScaleInfo j3dDefaultNBTScaleInfo = { 0, 1.0f, 1.0f, 1.0f };
 
-void J3DGDSetTexLookupMode(GXTexMapID id, GXTexWrapMode wrapS,
-                           GXTexWrapMode wrapT, GXTexFilter minFilter,
-                           GXTexFilter magFilter, f32 minLOD, f32 maxLOD,
-                           f32 lodBias, u8 biasClamp, u8 edgeLOD,
-                           GXAnisotropy maxAniso)
-{
-	// clang-format off
-	u32 reg1 =
-		(wrapS) << 0 |
-		(wrapT) << 2 |
-		(magFilter == GX_LINEAR) << 4 |
-		(GX2HWFiltConv[minFilter]) << 5 |
-		(!edgeLOD) << 8 |
-		((u8)(lodBias * 32.0f)) << 9 |
-		(maxAniso) << 19 |
-		(biasClamp) << 21 |
-		(GXTexMode0Ids[id] << 24);
-	// clang-format on
-	GDOverflowCheck(5);
-	J3DGDWriteBPCmd(reg1);
-
-	// clang-format off
-	u32 reg2 =
-		((u8)(minLOD * 16.0f)) << 0 |
-		((u8)(maxLOD * 16.0f)) << 8 |
-		(GXTexMode1Ids[id] << 24);
-	// clang-format on
-	GDOverflowCheck(5);
-	J3DGDWriteBPCmd(reg2);
-}
-
 void loadCullMode(u8) { }
+
+void loadColorChanNum(u8) { }
 
 void J3DLightObj::load(u32 id) const
 {
@@ -267,6 +248,8 @@ void J3DLightObj::load(u32 id) const
 	GDSetLightDir(light, mLightDirection.x, mLightDirection.y,
 	              mLightDirection.z);
 }
+
+void loadTexGenNum(u32) { }
 
 void J3DTexMtx::calc()
 {
@@ -363,6 +346,39 @@ void J3DTexMtx::load(u32 id) const
 	                   (GXTexMtxType)mProjection);
 }
 
+// TODO: 0x218 against the map's 0x214: out of line, reg2 is assembled in r0
+// and copied to r31, where loadTexNo's inlined copy builds it in r31 directly.
+void J3DGDSetTexLookupMode(GXTexMapID id, GXTexWrapMode wrapS,
+                           GXTexWrapMode wrapT, GXTexFilter minFilter,
+                           GXTexFilter magFilter, f32 minLOD, f32 maxLOD,
+                           f32 lodBias, u8 biasClamp, u8 edgeLOD,
+                           GXAnisotropy maxAniso)
+{
+	// clang-format off
+	u32 reg1 =
+		(wrapS) << 0 |
+		(wrapT) << 2 |
+		(magFilter == GX_LINEAR) << 4 |
+		(GX2HWFiltConv[minFilter]) << 5 |
+		(!edgeLOD) << 8 |
+		((u8)(lodBias * 32.0f)) << 9 |
+		(maxAniso) << 19 |
+		(biasClamp) << 21 |
+		(GXTexMode0Ids[id] << 24);
+	// clang-format on
+	GDOverflowCheck(5);
+	J3DGDWriteBPCmd(reg1);
+
+	// clang-format off
+	u32 reg2 =
+		((u8)(minLOD * 16.0f)) << 0 |
+		((u8)(maxLOD * 16.0f)) << 8 |
+		(GXTexMode1Ids[id] << 24);
+	// clang-format on
+	GDOverflowCheck(5);
+	J3DGDWriteBPCmd(reg2);
+}
+
 void loadTexNo(u32 param_1, const u16& param_2)
 {
 	ResTIMG* img = &j3dSys.getTexture()->mResources[param_2];
@@ -388,6 +404,20 @@ void loadTexNo(u32 param_1, const u16& param_2)
 		                (GXTlutFmt)img->colorFormat);
 	}
 }
+
+void J3DTevOrder::load(u32) const { }
+
+void J3DIndTexOrder::load(u32) const { }
+
+void J3DIndTexCoordScale::load(u32) const { }
+
+void loadTevKColorSel(u32, u8) { }
+
+void loadTevKAlphaSel(u32, u8) { }
+
+void loadTevStageNum(u8) { }
+
+void loadIndTexStageNum(u8) { }
 
 void loadDither(u8) { }
 

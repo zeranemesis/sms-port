@@ -16,7 +16,8 @@ extern TMap* gpMap;
 
 class TMap : public JDrama::TViewObj {
 public:
-	~TMap();
+	// __dt__4TMapFv is weak (0x74) in the map with no ~TMap() of its own:
+	// it is the implicit destructor, and declaring one makes it global.
 	TMap(const char* name = "マップ");
 
 	void load(JSUMemoryInputStream&);
@@ -76,5 +77,21 @@ public:
 	/* 0x1C */ TMapXlu* mXlu;
 	/* 0x20 */ u8 unk20;
 };
+
+// Fabricated name, in the SMSGet* family. The map has no symbol for it, as
+// expected of a header inline that inlines everywhere. It is the +4-per-read
+// rung TMapWarp::changeModel needs on top of its getChild() level; every other
+// gpMap reader in the tree matches on the raw global, so it is applied per
+// site.
+inline TMap* SMSGetMap() { return gpMap; }
+
+// Fabricated: the map bound to a named local before it is returned, +8 of
+// low region per expansion over SMSGetMap. Formerly parked TU-locally in six
+// units.
+inline TMap* SMSGetMapBound()
+{
+	TMap* map = gpMap;
+	return map;
+}
 
 #endif

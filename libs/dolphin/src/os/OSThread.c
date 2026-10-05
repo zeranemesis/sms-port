@@ -70,12 +70,18 @@
 	} while (0);
 
 // which header should these go in?
-#ifdef VERSION_GMSP01
+// The linker script computes these from the end of .sdata2, so they are
+// region-specific; marioUS.MAP gives _stack_end 0x804177e4 and
+// _stack_addr 0x804277e8 for GMSE01.
+#if defined(VERSION_GMSE01)
+extern unsigned char _stack_end[] AT_ADDRESS(0x804177e4);
+extern char _stack_addr[] AT_ADDRESS(0x804277e8);
+#elif defined(VERSION_GMSP01)
 extern char _stack_addr[] AT_ADDRESS(0x8041ED48);
 extern unsigned char _stack_end[] AT_ADDRESS(0x8040ED44);
 #else
-extern char _stack_addr[] AT_ADDRESS(0x80424008);
 extern unsigned char _stack_end[] AT_ADDRESS(0x80414004);
+extern char _stack_addr[] AT_ADDRESS(0x80424008);
 #endif
 
 // .bss

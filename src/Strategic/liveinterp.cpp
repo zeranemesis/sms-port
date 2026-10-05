@@ -9,6 +9,7 @@
 #include <Enemy/BossWanwan.hpp>
 #include <Enemy/BossEel.hpp>
 #include <Enemy/BossHanachan.hpp>
+#include <Enemy/SleepBossHanachan.hpp>
 #include <Enemy/TypicalEnemy.hpp>
 #include <Animal/AnimalNerve.hpp>
 #include <NPC/NpcNerve.hpp>
@@ -346,7 +347,7 @@ const TNerveBase<TLiveActor>* NerveGetByIndex(int param_1)
 	}
 }
 
-void linSetBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -358,9 +359,9 @@ void linSetBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetSubBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num) { }
+static void linSetSubBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num) { }
 
-void linSetBpk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBpk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -372,7 +373,7 @@ void linSetBpk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetBtp(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBtp(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -384,7 +385,7 @@ void linSetBtp(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetBtk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBtk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -396,7 +397,7 @@ void linSetBtk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetBlk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBlk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -408,7 +409,7 @@ void linSetBlk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetBls(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetBls(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TSpcSlice arg = interp->pop();
@@ -420,7 +421,7 @@ void linSetBls(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linSetAnmRate(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetAnmRate(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
 	TLiveActor* owner = interp->getOwner();
@@ -439,7 +440,35 @@ void linSetAnmRate(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+// The nine float arms set mType and mData directly instead of calling
+// TSpcSlice::setDataFloat: the setter's by-value f32 parameter costs one
+// instruction per site. A `const f32&` binder on each member read is
+// load-bearing: it lands the ROM's 0xe0 frame and the 12-byte slice spacing
+// (nine 4-byte reference temps interleaved with the nine TSpcSlice locals).
+// Without the binders the frame collapses to 0xc0 with 8-byte packing.
+// Outer `case 1` before `case 0` is also load-bearing (batch 122 source-order
+// arm emission); earlier trials without the binders saw no effect.
+//
+// TODO: the two `pop()` return temps still sit at 0x44/0x3c (bottom of the
+// low pool) against the ROM's 0xb0/0xa8 (immediately below arg1/arg2). That
+// 0x10 shift lifts every push-slice slot by the same amount (ours 0xac.. vs
+// ROM 0x9c..). Same "we hoist the whole function's pool bytes, the ROM
+// allocates per statement" residue as research batches 116/119; catalog
+// parks it with NPCNeckCallBack / TSpider::bind. Tried and rejected here:
+// `push(f32)` (92.5%), if/else outer (97.4%), separate arg decl+assign
+// (95.7%), TU-local pop wrapper (forces out-of-line TSpcStack::pop, 90.3%).
+// Header `setDataFloat(const f32&)` still regresses exact spcFloat.
+// c-d11: moving each float arm into `static inline void f(interp, const f32&
+// value) { TSpcSlice slice; <direct writes>; interp->push(slice); }` is
+// instruction-exact and puts pop temps and every slice in retail's source
+// order (slices become depth-1 callee locals); retail then still has one
+// 4-byte object under each float slice (the arg is simple, so no binding).
+// c-m25, on that helper: setDataFloat(value) inside it loads the member one
+// slot early (96.1), accessor arguments overshoot (+0x48), `+member` is inert.
+// c-k3: `pushFloat(interp, const f32& value)` (slice, direct writes, push)
+// at all nine sites is instruction-exact at 0xc0; by-value `f32 value` or
+// setDataFloat inside it change code (93.7).
+static void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(2, &arg_num);
 	TLiveActor* owner = interp->getOwner();
@@ -447,21 +476,27 @@ void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	TSpcSlice arg2    = interp->pop();
 
 	switch (arg2.getDataInt()) {
-	case 0:
+	case 1:
 		switch (arg1.getDataInt()) {
 		case 0: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mPosition.x);
+			const f32& v        = owner->mRotation.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 1: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mPosition.y);
+			const f32& v        = owner->mRotation.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 2: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mPosition.z);
+			const f32& v        = owner->mRotation.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		default:
@@ -469,21 +504,27 @@ void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 			break;
 		}
 		break;
-	case 1:
+	case 0:
 		switch (arg1.getDataInt()) {
 		case 0: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mRotation.x);
+			const f32& v        = owner->mPosition.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 1: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mRotation.y);
+			const f32& v        = owner->mPosition.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 2: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mRotation.z);
+			const f32& v        = owner->mPosition.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		default:
@@ -495,17 +536,23 @@ void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 		switch (arg1.getDataInt()) {
 		case 0: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mScaling.x);
+			const f32& v        = owner->mScaling.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 1: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mScaling.y);
+			const f32& v        = owner->mScaling.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		case 2: {
 			TSpcSlice slice;
-			slice.setDataFloat(owner->mScaling.z);
+			const f32& v        = owner->mScaling.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
 			interp->push(slice);
 		} break;
 		default:
@@ -519,7 +566,7 @@ void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	}
 }
 
-void linSetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linSetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(3, &arg_num);
 	TLiveActor* owner = interp->getOwner();
@@ -577,7 +624,7 @@ void linSetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 	interp->push();
 }
 
-void linPushNerve(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+static void linPushNerve(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
 {
 	interp->verifyArgNum(1, &arg_num);
 	TLiveActor* owner = interp->getOwner();

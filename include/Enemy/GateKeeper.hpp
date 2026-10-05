@@ -11,6 +11,15 @@ class TGateKeeperParams : public TSpineEnemyParams {
 public:
 	TGateKeeperParams(const char* path);
 
+	s32 getSLDiveTimer() const
+	{
+		s32 diveTimer = mSLDiveTimer.get();
+		return diveTimer;
+	}
+	s32 getSLLoop2Dive() const { return mSLLoop2Dive.get(); }
+	s32 getSLLaunchTimerNormal() const { return mSLLaunchTimerNormal.get(); }
+	s32 getSLLaunchTimerDamage() const { return mSLLaunchTimerDamage.get(); }
+
 public:
 	/* 0xA8 */ TParamRT<s32> mSLDiveTimer;
 	/* 0xBC */ TParamRT<s32> mSLLoop2Dive;
@@ -53,7 +62,7 @@ public:
 
 class TBiancoGateKeeperManager : public TEnemyManager {
 public:
-	TBiancoGateKeeperManager(const char* name = "ゲートキーパーマネージャー");
+	TBiancoGateKeeperManager(const char*);
 	virtual void load(JSUMemoryInputStream&);
 	virtual void createModelData();
 	virtual void initJParticle();
@@ -81,7 +90,7 @@ public:
 
 class TBiancoGateKeeper : public TGateKeeperBase {
 public:
-	TBiancoGateKeeper(const char* name = "ビアンコゲートキーパー");
+	TBiancoGateKeeper(const char*);
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void init(TLiveManager*);

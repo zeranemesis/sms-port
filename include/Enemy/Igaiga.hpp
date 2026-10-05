@@ -3,13 +3,19 @@
 
 #include <Enemy/EnemyAttachment.hpp>
 #include <Enemy/WalkerEnemy.hpp>
-#include <JSystem/JGeometry/JGMatrix34.hpp>
+#include <JSystem/JGeometry.hpp>
 
 class TWaterEmitInfo;
+class TGraphWeb;
+class TMapEventSink;
+class TAreaCylinderManager;
 
+// Shared by the igaiga and the gorogoro; each manager loads it from its own
+// .prm. Names are the PARAM_INIT strings in .rodata, defaults are what the
+// inlined constructor stores. 0x390 bytes (the managers' operator new).
 class TRollEnemySaveLoadParams : public TWalkerEnemyParams {
 public:
-	TRollEnemySaveLoadParams(const char* path);
+	TRollEnemySaveLoadParams(const char* prm);
 
 	/* 0x32C */ TParamRT<s32> mSLGenerateInterval;
 	/* 0x340 */ TParamRT<f32> mSLExpandRate;
@@ -18,11 +24,9 @@ public:
 	/* 0x37C */ TParamRT<f32> mSLGroundOffsetY;
 };
 
-extern class TRollEnemy* gpCurRollEnemy;
-
 class TRollEnemy : public TWalkerEnemy {
 public:
-	TRollEnemy(const char*);
+	TRollEnemy(const char* name);
 
 	virtual void reset();
 	virtual void setBehavior();
@@ -38,11 +42,32 @@ public:
 	virtual void rollSE() { }
 	virtual void boundSE() { }
 
+	// Rescales the hit and damage cylinders from the swollen body scale.
+	// Retail reaches this from behaveToWater, which expands whole into
+	// TGorogoro::behaveToWater; the split is what keeps that expansion inside
+	// MWCC's depth-1 statement budget while this stays inside the depth-2 one.
+	// TODO: in TGorogoro::behaveToWater retail keeps attackRadius /
+	// attackHeight / damageRadius in f29 / f30 / f31 (ours f31 / f30 / f29).
+	// Inert: C-style top declarations in reverse, ratio declared first;
+	// setHitParams(...) with calcEntryRadius dropped from the caller grows
+	// the frame by 0x10-0x18.
+	void calcHitScale()
+	{
+		f32 attackRadius = getSaveParams()->getSLAttackRadius();
+		f32 attackHeight = getSaveParams()->getSLAttackHeight();
+		f32 damageRadius = getSaveParams()->getSLDamageRadius();
+		f32 damageHeight = getSaveParams()->getSLDamageHeight();
+		f32 ratio        = mBodyScale / unk154;
+		mAttackRadius    = attackRadius * ratio;
+		mAttackHeight    = attackHeight * ratio;
+		mDamageRadius    = damageRadius * ratio;
+		mDamageHeight    = damageHeight * ratio;
+	}
+
 	static f32 mBoundVal;
 	static f32 mTransYOffset;
 
-public:
-	/* 0x194 */ f32 unk194;
+	/* 0x194 */ f32 mRollAngle;
 	/* 0x198 */ f32 unk198;
 	/* 0x19C */ f32 unk19C;
 	/* 0x1A0 */ f32 unk1A0;
@@ -64,9 +89,9 @@ public:
 
 class TIgaigaPolluteModel : public TEnemyPolluteModel {
 public:
-	TIgaigaPolluteModel(TLiveActor* actor, int index, SDLModelData* model_data,
+	TIgaigaPolluteModel(TLiveActor* actor, SDLModelData* data,
 	                    const char* name = "イガイガ汚染モデル")
-	    : TEnemyPolluteModel(actor, index, model_data, name)
+	    : TEnemyPolluteModel(actor, 0, data, name)
 	{
 	}
 
@@ -75,19 +100,18 @@ public:
 
 class TIgaigaManager : public TSmallEnemyManager {
 public:
-	TIgaigaManager(const char* name = "イガイガマネージャー");
+	TIgaigaManager(const char* name);
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void createModelData();
-	virtual TSmallEnemy* createEnemyInstance();
+	virtual TSpineEnemy* createEnemyInstance();
 	virtual void initSetEnemies();
 
 	void requestPolluteModel(JGeometry::TVec3<f32>&, JGeometry::TVec3<f32>&);
 
-public:
 	/* 0x60 */ TIgaigaPolluteModelManager* unk60;
-	/* 0x64 */ int unk64;
+	/* 0x64 */ u32 unk64;
 	/* 0x68 */ TWaterEmitInfo* unk68;
 };
 
@@ -115,23 +139,27 @@ public:
 	virtual void rollSE();
 	virtual void boundSE();
 
-	void rollMove();
-	void waterExplosion();
 	void shoot(JGeometry::TVec3<f32>&);
 
-	static f32 mReachNodeDist;
+	// UNUSED in the map.
+	void rollMove();
+	void waterExplosion();
 
-public:
-	/* 0x1B4 */ int unk1B4;
-	/* 0x1B8 */ int unk1B8;
+	static f32 mReachNodeDist;
+	static f32 mTremblePow;
+	static f32 mTrembleAcc;
+	static f32 mTrembleBrk;
+
+	/* 0x1B4 */ s32 unk1B4;
+	/* 0x1B8 */ s32 unk1B8;
 	/* 0x1BC */ u8 unk1BC;
 	/* 0x1C0 */ JGeometry::TVec3<f32> unk1C0;
 	/* 0x1CC */ f32 unk1CC;
-	/* 0x1D0 */ int unk1D0;
-	/* 0x1D4 */ char unk1D4[4];
-	/* 0x1D8 */ JGeometry::TVec3<f32> unk1D8;
+	/* 0x1D0 */ u32 unk1D0;
+	/* 0x1D4 */ u8 unk1D4[4];
+	/* 0x1D8 */ JGeometry::TVec3<f32> mShootVelocity;
 	/* 0x1E4 */ f32 unk1E4;
-	/* 0x1E8 */ int unk1E8;
+	/* 0x1E8 */ s32 unk1E8;
 };
 
 DECLARE_NERVE(TNerveIgaigaRollOnGraph, TLiveActor);
@@ -150,35 +178,36 @@ public:
 
 class TGorogoroPolluteModel : public TEnemyPolluteModel {
 public:
-	TGorogoroPolluteModel(TLiveActor* actor, int index,
-	                      SDLModelData* model_data,
+	TGorogoroPolluteModel(TLiveActor* actor, SDLModelData* data,
 	                      const char* name = "汚染モデル")
-	    : TEnemyPolluteModel(actor, index, model_data, name)
+	    : TEnemyPolluteModel(actor, 0, data, name)
 	{
 	}
 
 	virtual void setAnm();
 };
 
-class TMapEventSink;
-class TAreaCylinderManager;
+class TGorogoro;
 
 class TGorogoroManager : public TSmallEnemyManager {
 public:
-	TGorogoroManager(const char* name = "ゴロゴロマネージャー");
+	TGorogoroManager(const char* name);
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void createModelData();
-	virtual TSmallEnemy* createEnemyInstance();
+	virtual TSpineEnemy* createEnemyInstance();
 	virtual void initSetEnemies();
 
+	// UNUSED in the map.
 	BOOL inArea(const JGeometry::TVec3<f32>&);
 	void requestPolluteModel(JGeometry::TVec3<f32>&, JGeometry::TVec3<f32>&);
 
-public:
-	/* 0x60 */ int unk60;
+	// Frames since the last spawn, the sinking event it waits on, whether the
+	// next spawn is the first, the stamp manager, and the cylinder Mario has
+	// to be inside for spawning to run.
+	/* 0x60 */ s32 unk60;
 	/* 0x64 */ TMapEventSink* unk64;
 	/* 0x68 */ u8 unk68;
 	/* 0x6C */ TGorogoroPolluteModelManager* unk6C;
@@ -187,14 +216,7 @@ public:
 
 class TGorogoro : public TRollEnemy {
 public:
-	TGorogoro(const char* name = "ゴロゴロ")
-	    : TRollEnemy(name)
-	    , unk1E4(0)
-	    , unk1E8(0)
-	    , unk1EC(0)
-	{
-		gpCurRollEnemy = nullptr;
-	}
+	TGorogoro(const char* name = "ゴロゴロ");
 
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual void init(TLiveManager*);
@@ -214,16 +236,19 @@ public:
 	virtual void rollSE();
 	virtual void boundSE();
 
-	void setGenerateGraphIdx(int);
 	void generateByGateKeeper(const JGeometry::TVec3<f32>&,
 	                          const JGeometry::TVec3<f32>&);
 
-public:
-	/* 0x1B4 */ JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > unk1B4;
+	// UNUSED in the map.
+	void setGenerateGraphIdx(int);
+
+	// unk1B4 is the matrix it dies in; setMeltAnm copies the base matrix
+	// there and pins its translation row to the ground.
+	/* 0x1B4 */ TPosition3f unk1B4;
 	/* 0x1E4 */ u8 unk1E4;
-	/* 0x1E8 */ int unk1E8;
+	/* 0x1E8 */ s32 mGenerateGraphIdx;
 	/* 0x1EC */ u8 unk1EC;
-	/* 0x1ED */ GXColor unk1ED;
+	/* 0x1ED */ GXColor mTevKColor;
 };
 
 DECLARE_NERVE(TNerveGorogoroRollOnGraph, TLiveActor);

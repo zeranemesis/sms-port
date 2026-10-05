@@ -3,6 +3,7 @@
 
 #include <Strategic/HitActor.hpp>
 #include <JSystem/JMath.hpp>
+#include <JSystem/JGeometry/JGPosition3.hpp>
 #include <System/Params.hpp>
 #include <System/ParamInst.hpp>
 
@@ -13,6 +14,16 @@ class J3DModel;
 
 class TBathtubData {
 public:
+	// TODO: 97.9%, frame 0xf0 against retail's 0xd0 (the inlined setRotate's
+	// locals, see JGQuat4.hpp; declaring q first, a separate result vector and
+	// dropping the (void)0 are inert or worse). The instruction stream is right; what is left is the
+	// callee-saved float allocation around the inlined
+	// TQuat4::setRotate(from, to, amount) -- retail holds the cross
+	// product's components and the two constant `up` components in
+	// f25-f31 and re-reads only up.x, while we spill up.y/up.z back to the
+	// stack across atan2f/sinf/cosf. JGQuat4.hpp's setRotate already carries
+	// the same note (the order is decided inside cross()'s batched set()),
+	// so no spelling here reaches it.
 	JGeometry::TVec3<f32> getGravityDir(f32 amount) const
 	{
 		(void)0;
@@ -29,27 +40,52 @@ public:
 
 	JGeometry::TVec3<f32> getPos(int i, int j, f32 h) const
 	{
-		f32 t     = (f32)i / (f32)j;
-		f32 amp   = t * (unk3C - h);
-		f32 angle = (f32)i * 0.31415927f;
+		// Declared as a block and assigned afterwards: the ROM hands the
+		// float registers out in declaration order (t, angle, amp) but
+		// converts angle's i first (the int-to-float temporaries at
+		// 0x30/0x38/0x40 hold j, i, i).
+		// TODO: the ROM converts angle's i into a volatile register and only
+		// lands the product in angle's. `angle = angle * k` gets that (the
+		// `angle *= k` spelling converted straight into angle's register),
+		// but the one fmuls still has its operands commuted: retail is
+		// (conversion, constant), ours (constant, conversion) whichever side
+		// the constant is written on, and moving the multiply after t or amp
+		// is worse (93.8). `angle = (f32)i * k` in one statement gets the
+		// operand order but swaps f1/f2 (conversion lands in f1).
+		// c-r11: a literal is always the left operand at parse; a non-const
+		// `f32 step = 0.31415927f; angle = angle * step;` gets retail's order
+		// but its dead home makes the frame 0x78 (retail 0x70).
+		f32 t;
+		f32 angle;
+		f32 amp;
+		angle = (f32)i;
+		angle = angle * 0.31415927f;
+		t     = (f32)i / (f32)j;
+		amp   = t * (unk3C - h);
 
 		JGeometry::TVec3<f32> result;
 		result = mPos;
 
+		// The rows of mMtx are the bathtub's axes: the sin term walks
+		// 0x18/0x1c/0x20 (row 0, X), the cos term 0x30/0x34/0x38 (row 2, Z)
+		// and the height term 0x24/0x28/0x2c (row 1, Y). Read through the
+		// array and not at(): an inlined accessor's result always lands as
+		// the *second* operand of the multiply, and the ROM has the matrix
+		// element first in all nine fmadds.
 		f32 s = amp * sinf(angle);
-		result.x += unk18.at(0, 0) * s;
-		result.y += unk18.at(0, 1) * s;
-		result.z += unk18.at(0, 2) * s;
+		result.x += unk18.mMtx[0][0] * s;
+		result.y += unk18.mMtx[0][1] * s;
+		result.z += unk18.mMtx[0][2] * s;
 
 		f32 c = amp * cosf(angle);
-		result.x += unk18.at(2, 0) * c;
-		result.y += unk18.at(2, 1) * c;
-		result.z += unk18.at(2, 2) * c;
+		result.x += unk18.mMtx[2][0] * c;
+		result.y += unk18.mMtx[2][1] * c;
+		result.z += unk18.mMtx[2][2] * c;
 
 		f32 yScale = (1.0f - t) * -(unk44 - h);
-		result.x += unk18.at(1, 0) * yScale;
-		result.y += unk18.at(1, 1) * yScale;
-		result.z += unk18.at(1, 2) * yScale;
+		result.x += unk18.mMtx[1][0] * yScale;
+		result.y += unk18.mMtx[1][1] * yScale;
+		result.z += unk18.mMtx[1][2] * yScale;
 
 		return result;
 	}
@@ -60,10 +96,34 @@ public:
 		return JGeometry::TVec3<f32>(mPos.x, mPos.y - unk44, mPos.z);
 	}
 
+	// fabricated, but it has to be a function and it has to return by value:
+	// TBathWaterManager::throwMario builds its local position through a
+	// by-value temporary that it then copies word-wise into a named vector,
+	// and only at this depth does the member template TVec3<f>::set<f> stay
+	// the `bl` the ROM has (constructor at depth 2, set<f> at depth 3).
+	// The projection is the transpose of TRotation3::mult33 because the
+	// bathtub's axes are this matrix's rows.
+	JGeometry::TVec3<f32> getLocalPos(const JGeometry::TVec3<f32>& pos) const
+	{
+		JGeometry::TVec3<f32> diff;
+		diff.sub(pos, mPos);
+		return JGeometry::TVec3<f32>(
+		    unk18.mMtx[0][0] * diff.x + unk18.mMtx[0][1] * diff.y
+		        + unk18.mMtx[0][2] * diff.z,
+		    unk18.mMtx[1][0] * diff.x + unk18.mMtx[1][1] * diff.y
+		        + unk18.mMtx[1][2] * diff.z,
+		    unk18.mMtx[2][0] * diff.x + unk18.mMtx[2][1] * diff.y
+		        + unk18.mMtx[2][2] * diff.z);
+	}
+
 public:
 	/* 0x00 */ JGeometry::TVec3<f32> mPos;
 	/* 0x0C */ JGeometry::TVec3<f32> unk0C;
-	JGeometry::TRotation3<TMtx33f> unk18;
+	// TPosition3, not TRotation3: the extra (empty) inheritance level is what
+	// puts the 4-byte SMatrix33R<f32> constructor out of line, as the map's
+	// weak __ct__Q29JGeometry13SMatrix33R<f>Fv in MapObjCorona.cpp shows.
+	/* 0x18 */ JGeometry::TPosition3<JGeometry::TMatrix33<
+	    JGeometry::SMatrix33R<f32> > > unk18;
 	/* 0x3C */ f32 unk3C;
 	/* 0x40 */ f32 unk40;
 	/* 0x44 */ f32 unk44;

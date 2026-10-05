@@ -13,7 +13,12 @@ void JDrama::TActor::load(JSUMemoryInputStream& stream)
 	char str[0x50];
 	stream.readString(str, 0x50);
 
-	unk3C = static_cast<TCharacter*>(TNameRefGen::search(str));
+	// The `TNameRefGen::search<T>` wrapper is one inline level too many here:
+	// its pointer return costs 4 bytes of inline-temp pool and puts the name
+	// buffer at 0x50(r1) instead of retail's 0x4c. Spelling the lookup out is
+	// byte-exact (closure re-pass, 2026-09-18).
+	unk3C = static_cast<TCharacter*>(
+	    TNameRefGen::getInstance()->getRootNameRef()->search(str));
 
 	TLightMap* lightMap = new TLightMap;
 

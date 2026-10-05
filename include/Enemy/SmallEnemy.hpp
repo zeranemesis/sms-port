@@ -23,10 +23,10 @@ public:
 	f32 getSLGiveUpHeight() const { return mSLGiveUpHeight.get(); }
 	s32 getSLAttackWait() const { return mSLAttackWait.get(); }
 	s32 getSLFreezeWait() const { return mSLFreezeWait.get(); }
-	s32 getSLDamageRadius() const { return mSLDamageRadius.get(); }
-	s32 getSLDamageHeight() const { return mSLDamageHeight.get(); }
-	s32 getSLAttackRadius() const { return mSLAttackRadius.get(); }
-	s32 getSLAttackHeight() const { return mSLAttackHeight.get(); }
+	f32 getSLDamageRadius() const { return mSLDamageRadius.get(); }
+	f32 getSLDamageHeight() const { return mSLDamageHeight.get(); }
+	f32 getSLAttackRadius() const { return mSLAttackRadius.get(); }
+	f32 getSLAttackHeight() const { return mSLAttackHeight.get(); }
 	f32 getSLTurnSpeedLow() const { return mSLTurnSpeedLow.get(); }
 	f32 getSLTurnSpeedHigh() const { return mSLTurnSpeedHigh.get(); }
 	f32 getSLBodyScaleLow() const { return mSLBodyScaleLow.get(); }
@@ -144,14 +144,21 @@ public:
 	virtual void attackToMario();
 	virtual void forceKill();
 	virtual void setMActorAndKeeper();
+	// Weak in the map with an UNREFERENCED DUPLICATE (0xc, linked from
+	// pakkun.cpp), so it was defined here rather than in smallenemy.cpp. The
+	// whole body is the one stb: TWalkerEnemy's override copies the attacker's
+	// rotation first and then does the same store.
 	virtual void initAttacker(THitActor*) { unk184 = 1; }
+	// Raw read, not checkLiveFlag(): that accessor is const, so MWCC will not
+	// share its load with the non-const onLiveFlag below, and the ROM loads
+	// mLiveFlag exactly once here (same shape as THaneHamuKuri's override).
 	virtual bool isHitValid(u32 message)
 	{
 		if (mLiveFlag & LIVE_FLAG_HIDDEN)
 			return false;
 
 		if (message == HIT_MESSAGE_UNKB)
-			mLiveFlag |= LIVE_FLAG_HIDDEN;
+			onLiveFlag(LIVE_FLAG_HIDDEN);
 
 		return true;
 	}
@@ -190,6 +197,16 @@ public:
 	f32 getUnk158() const { return unk158; }
 	u8 getUnk184() const { return unk184; }
 
+	// The binding is load-bearing and applies per site: TTobiPuku::changeOut
+	// wants the named pointer at its kill() site only (+8, the byte count its
+	// frame was short), while the same level on the position read above it is
+	// +16 and overshoots. Header round 21.
+	TJuiceBlock* getJuiceBlock() const
+	{
+		TJuiceBlock* block = mJuiceBlock;
+		return block;
+	}
+
 	static bool mIsPolluter;
 	static bool mIsAmpPolluter;
 
@@ -208,7 +225,7 @@ public:
 
 	enum {
 		LIVE_FLAG_MELT_ON_DEATH
-		= VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000)),
+		= VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000), GMSE01(0x10000)),
 	};
 
 public:

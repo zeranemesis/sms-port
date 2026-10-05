@@ -46,3 +46,5 @@ u16 JUTNameTab::calcKeyCode(const char* pName) const
 		keyCode = (keyCode * 3) + *pName++;
 	return keyCode;
 }
+
+const ResNTAB* JUTNameTab::getResNameTable() const { return mNameTable; }

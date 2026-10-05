@@ -1,7 +1,3 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Map/BathWaterManager.hpp>
 #include <JSystem/ResTIMG.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -28,8 +24,12 @@
 
 #include <MSound/MSound.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+// The only retail TU with the no-memory message ahead of the zero object.
+#include <System/DummyStrings.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 
 // NOTE: the main tragedy of this file is that it looks like a bunch of classes
 // were defined right inside of the cpp file and all their methods were defined
@@ -97,7 +97,22 @@ TBathWaterGlobalParams::TBathWaterGlobalParams()
 	TParams::load(mPrmPath);
 }
 
-static void minmax_set(JGeometry::TBox3<f32>&, const JGeometry::TVec3<f32>&) { }
+static void minmax_set(JGeometry::TBox3<f32>& box,
+                       const JGeometry::TVec3<f32>& v)
+{
+	if (v.x < box.i.x)
+		box.i.x = v.x;
+	if (v.y < box.i.y)
+		box.i.y = v.y;
+	if (v.z < box.i.z)
+		box.i.z = v.z;
+	if (v.x > box.f.x)
+		box.f.x = v.x;
+	if (v.y > box.f.y)
+		box.f.y = v.y;
+	if (v.z > box.f.z)
+		box.f.z = v.z;
+}
 
 class TBathWater : public THitActor {
 public:
@@ -124,12 +139,19 @@ public:
 			            unk68.get_float01());
 		}
 
+		// TODO: retail loads the radius once with `lfsu` and multiplies it
+		// value-first; a named f32, a const reference and `.value` for both
+		// arguments are all worse than this spelling.
 		initHitActor(0x4000025B, 1, 0x80000000, unk8C->dropRadius.get(),
-		             unk8C->dropRadius.get() * 2.0f, 0.0f, 0.0f);
+		             unk8C->dropRadius.value * 2.0f, 0.0f, 0.0f);
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		onHitFlag(HIT_FLAG_CANNOT_GET_HIT);
-		unk78.set(0.0f, 0.0f, 0.0f);
-		unk84 = 0.0f;
+		// Three reverse stores, not a descending chain: `z = y = x = 0`
+		// still emits x,y,z. Retail writes z, then y, then x.
+		unk78.z = 0.0f;
+		unk78.y = 0.0f;
+		unk78.x = 0.0f;
+		unk84   = 0.0f;
 	}
 
 	void addDrop(const JGeometry::TVec3<f32>& param_1, f32 param_2)
@@ -165,7 +187,7 @@ public:
 		f32 upper = mario->mDamageHeight + rr;
 		f32 radH  = rr + mario->mDamageRadius;
 		f32 radH2 = radH * radH;
-		f32 mx    = mario->mPosition.x;
+		f32 mx    = mario->getPosition().x;
 		f32 my    = mario->mPosition.y;
 		f32 mz    = mario->mPosition.z;
 
@@ -176,7 +198,7 @@ public:
 				f32 dz = mz - drop->unk0.z;
 				if (dx * dx + dz * dz < radH2) {
 					setAttackRadius(unk8C->dropRadius.get());
-					setAttackRadius(unk8C->dropRadius.get() * 2.0f);
+					setAttackRadius(unk8C->dropRadius.value * 2.0f);
 					mPosition.set(drop->unk0);
 					mPosition.y -= unk8C->dropRadius.get();
 					mario->receiveMessage(this, HIT_MESSAGE_UNKA);
@@ -194,7 +216,10 @@ public:
 		f32 mz  = mario->mPosition.z;
 		f32 mdh = mario->mDamageHeight;
 
-		JGeometry::TVec3<f32> capCenter = data.getThing();
+		// A const reference to the by-value return, not a copy: the ROM
+		// reads the temporary in place and never copies it into a named
+		// vector.
+		const JGeometry::TVec3<f32>& capCenter = data.getThing();
 
 		f32 rad = JGeometry::TUtil<f32>::sqrt(data.unk3C * data.unk3C
 		                                      - data.unk44 * data.unk44);
@@ -235,6 +260,17 @@ public:
 			unk4C = 0;
 		}
 
+		// Its own level: inlined, the zeroing's box addresses are
+		// expressions again, so extend()'s `this` is `addi rX, rY, 0`.
+		void move()
+		{
+			unk0.add(unkC);
+			unk18.i.zero();
+			unk18.f.zero();
+			unk30.i.zero();
+			unk30.f.zero();
+		}
+
 		void doThing(f32 damp)
 		{
 			unk0.add(unk18.i);
@@ -249,18 +285,24 @@ public:
 		                 const JGeometry::TVec3<f32>& grav2, int& count,
 		                 JGeometry::TVec3<f32>& accum)
 		{
-			JGeometry::TVec3<f32> m(data.unk18.at(1, 0), data.unk18.at(1, 1),
-			                        data.unk18.at(1, 2));
+			// The ROM re-reads the matrix's second row after the stores
+			// through this, so it is read in place at each use, not copied.
+			// TODO: frame 0x108 against the ROM's 0xa8; radius takes f28
+			// instead of f25 (below the r vector), and the entry block's
+			// loads are scheduled differently.
 			JGeometry::TVec3<f32> delta;
 			delta.sub(unk0, data.mPos);
 			f32 outerR = data.unk40 + radius;
 			f32 innerR = data.unk3C - radius;
 			f32 distSq = delta.squared();
-			f32 proj   = m.dot(delta);
+			f32 proj    = data.unk18.mMtx[1][0] * delta.x
+			            + data.unk18.mMtx[1][1] * delta.y
+			            + data.unk18.mMtx[1][2] * delta.z;
+			f32 innerR2 = innerR * innerR;
 
 			if (distSq <= outerR * outerR) {
 				if (proj < 0.0f) {
-					if (distSq >= innerR * innerR) {
+					if (distSq >= innerR2) {
 						f32 dist = JGeometry::TUtil<f32>::sqrt(distSq);
 						f32 pen  = dist - innerR;
 						f32 inv  = -1.0f / dist;
@@ -300,13 +342,16 @@ public:
 				unk30.extend(grav1);
 			} else {
 				if (proj > 0.0f && proj < radius + data.unk48
-				    && distSq > innerR * innerR && distSq < outerR * outerR) {
+				    && distSq > innerR2 && distSq < outerR * outerR) {
 					JGeometry::TVec3<f32> point;
-					point.scale((radius + data.unk48) - proj, m);
+					f32 k = (radius + data.unk48) - proj;
+					point.set(data.unk18.mMtx[1][0] * k, data.unk18.mMtx[1][1] * k, data.unk18.mMtx[1][2] * k);
 					unk18.extend(point);
 
 					JGeometry::TVec3<f32> r;
-					r.scale(1.5f * -m.dot(unkC), m);
+					f32 dot = data.unk18.mMtx[1][0] * unkC.x + data.unk18.mMtx[1][1] * unkC.y + data.unk18.mMtx[1][2] * unkC.z;
+					f32 d = 1.5f * -dot;
+					r.set(data.unk18.mMtx[1][0] * d, data.unk18.mMtx[1][1] * d, data.unk18.mMtx[1][2] * d);
 					JGeometry::TVec3<f32> thing;
 					thing.set(delta);
 					thing.setLength(0.01f * radius);
@@ -339,87 +384,83 @@ public:
 
 			if (data.unk18.at(1, 1) > 0.0f) {
 				for (TDrop* drop = bw->unk88; drop < end2; ++drop) {
-					drop->unk0.add(drop->unkC);
-					drop->unk18.i.zero();
-					drop->unk18.f.zero();
-					drop->unk30.i.zero();
-					drop->unk30.f.zero();
+					drop->move();
 					drop->calcBathtub(data, dropRadius, gravVec1, gravVec2,
 					                  count, accum);
 				}
 			} else {
 				for (TDrop* drop = bw->unk88; drop < end2; ++drop) {
-					drop->unk0.add(drop->unkC);
-					drop->unk18.i.zero();
-					drop->unk18.f.zero();
-					drop->unk30.i.zero();
-					drop->unk30.f.zero();
+					drop->move();
 					drop->unk30.extend(gravVec2);
 					accum.add(drop->unk0);
 					count++;
 				}
 			}
 
-			f32 heightVal;
+			// Seeded with the fallback and no else arm: the ROM hoists the
+			// 0.0f above the count test.
+			f32 heightVal = 0.0f;
 			if (count * 30 > bw->unk74) {
 				f32 inv = 1.0f / (f32)count;
 				accum *= inv;
-				f32 t     = 3.0f * (f32)count;
-				t         = t / (f32)bw->unk74;
-				heightVal = JGeometry::TUtil<f32>::sqrt(t);
+				heightVal = JGeometry::TUtil<f32>::sqrt(3.0f * (f32)count
+				                                        / (f32)bw->unk74);
 				if (heightVal > 1.0f)
 					heightVal = 1.0f;
-			} else {
-				heightVal = 0.0f;
 			}
 			bw->unk78.set(accum);
 			bw->unk84 = heightVal;
 
 			if (bw->unk8C->intersects.get()) {
-				f32 dropRadius = bw->unk8C->dropRadius.get();
-				f32 twoR       = 2.0f * dropRadius;
-				f32 sep2       = 4.0f * (dropRadius * dropRadius);
+				f32 twoR = 2.0f * dropRadius;
+				f32 sep2 = 4.0f * (dropRadius * dropRadius);
 				for (TDrop* a = bw->unk88; a < end2; a++) {
-					for (TDrop* b = a + bw->unk8C->intersects.get(); b < end2;
-					     b += bw->unk8C->intersects.get()) {
+					// A do-while, not a for: the ROM enters the body before
+					// the first test, so the last live drop always gets
+					// pushed against the one just past the end (harmless --
+					// the array holds unk70 entries, not unk74).
+					TDrop* b = a + bw->unk8C->intersects.get();
+					do {
 						JGeometry::TVec3<f32> local_2D8;
 						local_2D8.sub(b->unk0, a->unk0);
-						(void)&local_2D8;
 						if (!(local_2D8.squared() > sep2)) {
 							f32 dist = local_2D8.length();
 							JGeometry::TVec3<f32> local_2E4;
 							local_2E4.scale(1.0f / dist, local_2D8);
 
-							(void)&local_2E4;
+							f32 half = 0.5f * (twoR - dist);
 
-							f32 half = (twoR - dist) / 2.0f;
+							local_2D8.scale(half, local_2E4);
 
-							local_2D8.x = local_2E4.x * half;
-							local_2D8.z = local_2E4.z * half;
+							// In place: the ROM overwrites half's register
+							// with the product and never CSEs it with the
+							// y term of the scale() above.
+							half *= local_2E4.y;
 
-							f32 hny = half * local_2E4.y;
-
-							local_2D8.set(local_2E4.x * half,
-							              (local_2E4.y + 1.0f) * hny,
-							              local_2E4.z * half);
+							// TODO: the ROM re-stores x and z from the
+							// scale() products still in registers; this
+							// reloads z and drops the x store.
+							local_2D8.set(local_2D8.x,
+							              (1.0f + local_2E4.y) * half,
+							              local_2D8.z);
 							b->unk18.extend(local_2D8);
 							local_2D8.x = -local_2D8.x;
 							local_2D8.z = -local_2D8.z;
-							local_2D8.y = (local_2E4.y - 1.0f) * hny;
+							local_2D8.y = (local_2E4.y - 1.0f) * half;
 							a->unk18.extend(local_2D8);
 
-							f32 mag = hny;
-							if (mag < twoR - dist)
-								mag = twoR - dist;
+							if (half < twoR - dist)
+								half = twoR - dist;
 
-							local_2E4.x *= mag * bw->unk8C->bounceXZ.get();
-							local_2E4.y *= mag * bw->unk8C->bounceY.get();
-							local_2E4.z *= mag * bw->unk8C->bounceXZ.get();
+							local_2E4.x *= half * bw->unk8C->bounceXZ.get();
+							local_2E4.y *= half * bw->unk8C->bounceY.get();
+							local_2E4.z *= half * bw->unk8C->bounceXZ.get();
 							b->unk30.extend(local_2E4);
 							local_2E4.negate();
 							a->unk30.extend(local_2E4);
 						}
-					}
+						b += bw->unk8C->intersects.get();
+					} while (b < end2);
 				}
 			}
 
@@ -446,8 +487,7 @@ public:
 			int lifeTime = bw->unk8C->lifeTime.get();
 			if (lifeTime > 0) {
 				for (TDrop* drop = bw->unk88; drop < end2; --end2, ++drop) {
-					drop->unk4C++;
-					if (drop->unk4C > lifeTime)
+					if (++drop->unk4C > lifeTime)
 						bw->eraseDrop(drop);
 				}
 			}
@@ -483,45 +523,86 @@ public:
 	/* 0x8C */ TBathWaterParams* unk8C;
 };
 
-static void initScreen2D(s16, s16) { }
+// UNUSED (0x150): inlined at every 2D-overlay site. It has to be a real
+// function, not the block written out, because it is the extra inline level
+// that leaves `bl SMatrix34C<f>::SMatrix34C()` for the scratch matrix: at
+// depth 1 the whole TPosition3f constructor chain expands.
+static void initScreen2D(s16 w, s16 h)
+{
+	TPosition3f mtx;
+	mtx.identity();
+	Mtx44 ortho;
+	C_MTXOrtho(ortho, 0.0f, (f32)h, 0.0f, (f32)w, -1.0f, 1.0f);
+	GXSetProjection(ortho, GX_ORTHOGRAPHIC);
+	GXSetViewport(0.0f, 0.0f, (f32)w, (f32)h, 0.0f, 1.0f);
+	GXSetScissor(0, 0, w, h);
+	GXLoadPosMtxImm(mtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXSetCullMode(GX_CULL_BACK);
+	GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
+	               GX_LO_NOOP);
+	GXSetColorUpdate(GX_TRUE);
+	GXSetAlphaUpdate(GX_FALSE);
+}
 
 static void drawCap(const JGeometry::TVec3<f32>& pos, f32 radius)
 {
 	static f32 delta = 2.0f * 3.1415927f / 30.0f;
-	f32 angle;
-	f32 r;
-
-	r     = radius / cosf(0.5f * delta);
-	angle = 0.0f;
+	// The radius is divided in place (the out-of-line copy keeps it in the
+	// parameter's register with no `fmr`): as a parameter it is allocated
+	// before angle at every inlined site, which a separate `r` local was not.
+	radius /= cosf(0.5f * delta);
+	f32 angle = 0.0f;
 	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, 30);
 	for (int i = 0; i < 30; i++) {
-		GXPosition3f32(r * cosf(angle) + pos.x, pos.y, r * sinf(angle) + pos.z);
+		GXPosition3f32(radius * cosf(angle) + pos.x, pos.y,
+		               radius * sinf(angle) + pos.z);
 		GXTexCoord2u8(0x40, 0x40);
 		angle += delta;
 	}
 	GXEnd();
 }
 
+// The mesh renderer's cap goes through one more inline level than the flat
+// renderer's: the ROM calls drawCap out of line from TBathWaterMeshRenderer::
+// render only (depth 2, where its cost is over budget) and expands it
+// everywhere else.
+static inline void drawBathtubCap(const TBathtubData& data)
+{
+	drawCap(data.getThing(),
+	        JGeometry::TUtil<f32>::sqrt(data.unk3C * data.unk3C
+	                                    - data.unk44 * data.unk44));
+}
+
 namespace {
 void clearEFB_alpha(s16 x, s16 y, s16 wd, s16 ht, u8 alpha)
 {
-	Mtx44 m;
 	Mtx pmtx;
+	Mtx44 m;
 
 	if (wd <= 0)
 		wd = SMSGetGameRenderWidth();
 	if (ht <= 0)
 		ht = SMSGetGameRenderHeight();
 
-	f32 fx      = x;
-	f32 fwd     = wd;
-	f32 fy      = y;
-	f32 fht     = ht;
-	f32 fright  = fx + fwd;
-	f32 fbottom = fy + fht;
+	// Declared as a block and assigned afterwards: the float registers are
+	// handed out in declaration order (fx, fy, fwd, fht -> f31..f28) while the
+	// int-to-float conversion temporaries follow assignment order (fx, fwd,
+	// fy, fht). Initialising at the point of declaration makes the two orders
+	// agree and mis-numbers f29/f30.
+	f32 fx, fy, fwd, fht;
+	f32 fright, fbottom;
+
+	fx      = x;
+	fwd     = wd;
+	fy      = y;
+	fht     = ht;
+	fright  = fx + fwd;
+	fbottom = fy + fht;
 
 	C_MTXOrtho(m, fy, fbottom, fx, fright, 0.0f, 1.0f);
-	MTXIdentity(pmtx);
+	PSMTXIdentity(pmtx);
 	GXClearVtxDesc();
 	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XY, GX_U16, 0);
@@ -583,17 +664,21 @@ static void draw_mist(u16 x, u16 y, u16 wd, u16 ht, void* buffer)
 	GXColor tev_color = { 0x03, 0x03, 0x03, 0x00 };
 	u8 vFilter[7]     = { 0x15, 0x00, 0x00, 0x16, 0x00, 0x00, 0x15 };
 
-	f32 f_left   = x;
-	f32 f_wd     = wd;
-	f32 f_top    = y;
-	f32 f_ht     = ht;
+	// Declared in parameter order, assigned horizontal pair first: see the
+	// note in clearEFB_alpha. Initialising in place swaps f25 and f26.
+	f32 f_left, f_top, f_wd, f_ht;
+
+	f_left       = x;
+	f_wd         = wd;
+	f_top        = y;
+	f_ht         = ht;
 	f32 f_right  = f_left + f_wd;
 	f32 f_bottom = f_top + f_ht;
 	f32 offset_x = (4.0f / f_wd);
 	f32 offset_y = (2.0f / f_ht);
 
 	C_MTXOrtho(m, f_top, f_bottom, f_left, f_right, 0.0f, 1.0f);
-	MTXIdentity(e_m);
+	PSMTXIdentity(e_m);
 	GXSetTexCopySrc(x, y, wd, ht);
 	GXSetCopyFilter(GX_FALSE, 0, GX_TRUE, vFilter);
 	GXSetTexCopyDst(wd >> 1, ht >> 1, GX_TF_RGB565, GX_TRUE);
@@ -845,7 +930,7 @@ public:
 		GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 		                GX_TRUE, GX_TEVPREV);
 		GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
-		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+		GXSetZMode(GX_TRUE, GX_LESS, GX_FALSE);
 		GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ONE, GX_LO_NOOP);
 		GXSetColorUpdate(GX_FALSE);
 		GXSetAlphaUpdate(GX_TRUE);
@@ -864,9 +949,10 @@ public:
 		for (int i = 0; i < num; ++i) {
 			TBathWaterParams* p = params[i];
 			if (p->isVisible.get()) {
-				f32 size = p->texScale.get() * p->dropRadius.get();
-				f32 rx = r0 * size, ry = r1 * size, rz = r2 * size;
+				f32 size = p->texScale.get();
+				size *= p->dropRadius.get();
 				f32 ux = u0 * size, uy = u1 * size, uz = u2 * size;
+				f32 rx = r0 * size, ry = r1 * size, rz = r2 * size;
 				GXBegin(GX_QUADS, GX_VTXFMT0, (waters[i]->unk74 * 4) & 0xfffc);
 				for (TBathWater::TDrop* d = waters[i]->unk88;
 				     d < waters[i]->unk88 + waters[i]->unk74; ++d) {
@@ -893,6 +979,14 @@ public:
 			                                    - data.unk44 * data.unk44));
 		}
 
+		// TODO: frame 0x1e0 against the ROM's 0x258; the instruction stream
+		// is identical. The 112 bytes missing are one Mtx plus one
+		// Mtx44 -- the pair initScreen2D now owns -- and declaring a dead
+		// pair here does give 0x258, but the named locals then sit 0x5c
+		// low and the inlined matrices 0x34 low. The ROM's named region
+		// runs 0x140 (a TColor copy), 0x144 (drawCap's position, so it is
+		// a named local there and not an argument temporary), 0x150 (this
+		// colour), 0x154 (texObj), with 0x174-0x1c8 unaccounted for.
 		GXColor color = (GXColor) { 0x78, 0xFA, 0x14, unk2C->alpha.get() };
 
 		GXTexObj texObj;
@@ -936,21 +1030,7 @@ public:
 
 		s16 w2 = SMSGetGameRenderWidth();
 		s16 h2 = SMSGetGameRenderHeight();
-		TPosition3f mtx;
-		mtx.identity();
-		Mtx44 ortho;
-		C_MTXOrtho(ortho, 0.0f, (f32)h2, 0.0f, (f32)w2, -1.0f, 1.0f);
-		GXSetProjection(ortho, GX_ORTHOGRAPHIC);
-		GXSetViewport(0.0f, 0.0f, (f32)w2, (f32)h2, 0.0f, 1.0f);
-		GXSetScissor(0, 0, w2, h2);
-		GXLoadPosMtxImm(mtx, GX_PNMTX0);
-		GXSetCurrentMtx(GX_PNMTX0);
-		GXSetCullMode(GX_CULL_BACK);
-		GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
-		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA,
-		               GX_LO_NOOP);
-		GXSetColorUpdate(GX_TRUE);
-		GXSetAlphaUpdate(GX_FALSE);
+		initScreen2D(w2, h2);
 
 		GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 		GXPosition2s16(0, 0);
@@ -977,6 +1057,43 @@ public:
 	/* 0x2C */ TBathWaterGlobalParams* unk2C;
 };
 
+// The drop billboards in their own level: the loop then starts `li; mr` as in
+// the ROM (written in render() it gets two `li`).
+// TODO: the ROM gives the six row loads f31-f26 and the up-vector products
+// before the right-vector ones; as callee locals here they number upwards
+// from f20 (in render() with ux declared first the FPRs match, but not the
+// loop start).
+static inline void drawDropQuads(MtxPtr mtx, TBathWater** waters,
+                                  TBathWaterParams** params, int num)
+{
+	f32 r0 = mtx[0][0];
+	f32 r1 = mtx[0][1];
+	f32 r2 = mtx[0][2];
+	f32 u0 = mtx[1][0];
+	f32 u1 = mtx[1][1];
+	f32 u2 = mtx[1][2];
+
+	for (int i = 0; i < num; ++i) {
+		TBathWaterParams* p = params[i];
+		f32 size            = p->texScale.get() * p->dropRadius.get();
+		f32 rx = r0 * size, ry = r1 * size, rz = r2 * size;
+		f32 ux = u0 * size, uy = u1 * size, uz = u2 * size;
+		GXBegin(GX_QUADS, GX_VTXFMT0, (waters[i]->unk74 * 4) & 0xfffc);
+		for (TBathWater::TDrop* d = waters[i]->unk88;
+		     d < waters[i]->unk88 + waters[i]->unk74; ++d) {
+			GXPosition3f32(d->unk0.x + rx, d->unk0.y + ry, d->unk0.z + rz);
+			GXTexCoord2u8(0, 0);
+			GXPosition3f32(d->unk0.x + ux, d->unk0.y + uy, d->unk0.z + uz);
+			GXTexCoord2u8(0, 0x80);
+			GXPosition3f32(d->unk0.x - rx, d->unk0.y - ry, d->unk0.z - rz);
+			GXTexCoord2u8(0x80, 0x80);
+			GXPosition3f32(d->unk0.x - ux, d->unk0.y - uy, d->unk0.z - uz);
+			GXTexCoord2u8(0x80, 0);
+		}
+		GXEnd();
+	}
+}
+
 class TBathWaterMeshRenderer : public TBathWaterRenderer {
 public:
 	TBathWaterMeshRenderer(TBathWaterGlobalParams* params,
@@ -997,16 +1114,15 @@ public:
 		    J3DMLF_UseUniqueMaterials | (4 << J3DMLF_TevStageNumShift));
 		unk8013C = new JUTTexture(
 		    (const ResTIMG*)JKRGetResource("/scene/map/map/water_ball.bti"));
-		JUTTexture* warpTex = new JUTTexture(
+		unk80140 = new JUTTexture(
 		    (const ResTIMG*)JKRGetResource("/scene/map/map/water_warp.bti"));
-		unk80140 = warpTex;
 		init_tobj_resource(&unk800B4,
 		                   JKRGetResource("/scene/map/map/ball.bti"));
 		init_tobj_resource(&unk800F4,
 		                   JKRGetResource("/scene/map/map/mesh.bti"));
 
-		TScreenTexture* tex = static_cast<TScreenTexture*>(
-		    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
+		TScreenTexture* tex = JDrama::TNameRefGen::search<TScreenTexture>(
+		    "スクリーンテクスチャ");
 
 		unk80148->getTexture()->setResTIMG(1, *tex->getTexture()->getTexInfo());
 		unk80148->getMaterialNodePointer(0)->makeDisplayList();
@@ -1027,13 +1143,21 @@ public:
 		clearHeightMap();
 	}
 
-	void clearEFB(GXColor, u16, u16, bool) { }
+	void clearEFB(GXColor, u16, u16, bool);
 
 	void makeHeightMap(f32 h);
 	void makeNormalMap();
 	void calcCoord();
 	void clearHeightMap();
 
+	// TODO: frame is 0x38 short (retail -0x380): retail leaves 0x5c unused
+	// between the look-dir vector (0x158) and up (0x1c0) and 0x38 between the
+	// drop position (0x23c) and proj (0x280); moving the drop matrices (the
+	// folded `local` before pos, or both at the top of the loop body) and
+	// declaring proj first are inert or worse, and binding the getThing()
+	// results by reference or copy-init shrinks the frame further.
+	// The drop loop's param loads (0xcc/0x90/0xf4) schedule around the
+	// position copy differently; naming the scale or moving `pos` is inert.
 	virtual void prerender(JDrama::TGraphics* graphics,
 	                       const TBathtubData& data, TBathWater** waters,
 	                       TBathWaterParams** params, int num)
@@ -1044,29 +1168,7 @@ public:
 		unk800AC = unk80134->meshTexWidth.get() & ~3;
 		unk800B0 = 1.0f / (f32)unk800AC;
 
-		// Half-stripped crap
-		JGeometry::TVec3<f32> v1;
-		v1.set(data.getThing());
-		if (data.unk3C * data.unk3C - data.unk44 * data.unk44 <= 0)
-			(void)(data.unk3C * data.unk3C - data.unk44 * data.unk44);
-
-		JGeometry::TVec3<f32> v2;
-		v2.set(data.getThing());
-
-		f32 ey = v2.y + R3;
-		JGeometry::TVec3<f32> v3;
-		v3.set(data.getThing());
-
-		JGeometry::TVec3<f32> dir(v3.x - v2.x, (v3.y + negR) - ey, v3.z - v2.z);
-		JGeometry::TVec3<f32> up(0.0f, 0.0f, -1.0f);
-		tmpFake(dir, up);
-
-		unk80020.ref(0, 3) = -unk80020.at(0, 0) * v2.x - unk80020.at(0, 1) * ey
-		                     - unk80020.at(0, 2) * v2.z;
-		unk80020.ref(1, 3) = -unk80020.at(1, 0) * v2.x - unk80020.at(1, 1) * ey
-		                     - unk80020.at(1, 2) * v2.z;
-		unk80020.ref(2, 3) = -unk80020.at(2, 0) * v2.x - unk80020.at(2, 1) * ey
-		                     - unk80020.at(2, 2) * v2.z;
+		calcHeightMapView(data);
 
 		MtxPtr projMtx = gpCamera->unk16C;
 		j3dSys.drawInit();
@@ -1074,17 +1176,13 @@ public:
 		              (f32)SMSGetGameRenderHeight(), 0.0f, 1.0f);
 
 		TProjection3f proj;
-		f32 halfW = 0.5f * unk80134->meshWidth.get();
+		f32 meshWidth = unk80134->meshWidth.get();
+		f32 halfW     = 0.5f * meshWidth;
 		proj.orthographic(
-		    halfW,
-		    halfW
-		        - unk800B0
-		              * (unk80134->meshWidth.get()
-		                 * (f32)SMSGetGameRenderHeight()),
 		    -halfW,
-		    unk800B0
-		            * (unk80134->meshWidth.get() * (f32)SMSGetGameRenderWidth())
-		        - halfW,
+		    unk800B0 * (meshWidth * (f32)SMSGetGameRenderWidth()) - halfW,
+		    halfW,
+		    halfW - unk800B0 * (meshWidth * (f32)SMSGetGameRenderHeight()),
 		    0.0f, R3 - negR);
 
 		GXSetProjection(proj.mMtx, GX_ORTHOGRAPHIC);
@@ -1110,7 +1208,7 @@ public:
 		GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
 		                GX_TRUE, GX_TEVPREV);
 		GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
-		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+		GXSetZMode(GX_TRUE, GX_LESS, GX_TRUE);
 		GXSetBlendMode(GX_BM_NONE, GX_BL_ZERO, GX_BL_ZERO, GX_LO_NOOP);
 		GXSetColorUpdate(GX_FALSE);
 		GXSetAlphaUpdate(GX_FALSE);
@@ -1139,24 +1237,23 @@ public:
 				f32 rad             = p->dropRadius.get()
 				          * (t * p->modelScale.get()
 				             + (1.0f - t) * p->modelScale2.get());
-				f32 px = d->unk0.x;
-				f32 py = d->unk0.y
-				         + (p->modelScaleY.get() * p->dropRadius.get() - rad);
-				f32 pz = d->unk0.z;
+				f32 lift = -rad + p->modelScaleY.get() * p->dropRadius.get();
+				JGeometry::TVec3<f32> pos = d->unk0;
+				pos.y += lift;
 
 				TPosition3f local;
-				local.set(rad, 0.0f, 0.0f, px, 0.0f, rad, 0.0f, py, 0.0f, 0.0f,
-				          rad, pz);
+				local.set(rad, 0.0f, 0.0f, pos.x, 0.0f, rad, 0.0f, pos.y, 0.0f,
+				          0.0f, rad, pos.z);
 				TPosition3f mtx;
 				mtx.concat(unk80020, local);
 				GXLoadPosMtxImm(mtx, GX_PNMTX0);
 
-				for (u16 s = 0; s < unk80144->getShapeNum(); s++) {
-					J3DShape* shape = unk80144->getShapeNodePointer(s);
+				J3DModelData* dropModel = unk80144;
+				for (u16 s = 0; s < dropModel->getShapeNum(); s++) {
+					J3DShape* shape = dropModel->getShapeNodePointer(s);
 					for (u16 mg = 0; mg < shape->getMtxGroupNum(); mg++) {
-						J3DShapeDraw* sd = shape->getShapeDraw(mg);
-						if (sd)
-							sd->draw();
+						if (shape->getShapeDraw(mg))
+							shape->getShapeDraw(mg)->draw();
 					}
 				}
 			}
@@ -1189,16 +1286,26 @@ public:
 	                    TBathWater** waters, TBathWaterParams** params, int num)
 	{
 		CPolarSubCamera* cam = gpCamera;
-		MtxPtr r30           = cam->getUnk1EC();
+		// A reference: each use converts through `operator MtxPtr`, so the
+		// ROM copies `r30 + 0` with addi into setViewMtx's argument.
+		// TODO: the ROM computes the address into r0 and then `mr r30, r0`
+		// (`SMSGetCamera()->getUnk1EC()` does that, but then setViewMtx
+		// gets a plain `mr`).
+		TPosition3f& r30     = cam->unk1EC;
 		MtxPtr r22           = cam->unk16C;
 		s16 r28              = SMSGetGameRenderWidth();
 		s16 r29              = SMSGetGameRenderHeight();
 		clearEFB_alpha(0, 0, 0, 0, 0);
-		MtxPtr mtx = gpCamera->unk1EC.mMtx;
-		s16 r23    = SMSGetGameRenderWidth();
-		s16 r24    = SMSGetGameRenderHeight();
+		// The global is read a second time here and held across the two
+		// render-size calls, so both this matrix and the projection below
+		// come from one pointer (half-stripped duplicated setup: the render
+		// size is fetched twice as well).
+		CPolarSubCamera* cam2 = gpCamera;
+		MtxPtr mtx            = cam2->unk1EC.mMtx;
+		s16 r23               = SMSGetGameRenderWidth();
+		s16 r24               = SMSGetGameRenderHeight();
 
-		GXSetProjection(cam->getUnk16C(), GX_PERSPECTIVE);
+		GXSetProjection(cam2->getUnk16C(), GX_PERSPECTIVE);
 		GXClearVtxDesc();
 		GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
 		GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
@@ -1233,38 +1340,10 @@ public:
 		GXLoadPosMtxImm(mtx, GX_PNMTX0);
 		GXSetCurrentMtx(GX_PNMTX0);
 
-		f32 r0 = mtx[0][0];
-		f32 r1 = mtx[0][1];
-		f32 r2 = mtx[0][2];
-		f32 u0 = mtx[1][0];
-		f32 u1 = mtx[1][1];
-		f32 u2 = mtx[1][2];
+		drawDropQuads(mtx, waters, params, num);
 
-		for (int i = 0; i < num; ++i) {
-			TBathWaterParams* p = params[i];
-			f32 size            = p->texScale.get() * p->dropRadius.get();
-			f32 rx = r0 * size, ry = r1 * size, rz = r2 * size;
-			f32 ux = u0 * size, uy = u1 * size, uz = u2 * size;
-			GXBegin(GX_QUADS, GX_VTXFMT0, (waters[i]->unk74 * 4) & 0xfffc);
-			for (TBathWater::TDrop* d = waters[i]->unk88;
-			     d < waters[i]->unk88 + waters[i]->unk74; ++d) {
-				GXPosition3f32(d->unk0.x + rx, d->unk0.y + ry, d->unk0.z + rz);
-				GXTexCoord2u8(0, 0);
-				GXPosition3f32(d->unk0.x + ux, d->unk0.y + uy, d->unk0.z + uz);
-				GXTexCoord2u8(0, 0x80);
-				GXPosition3f32(d->unk0.x - rx, d->unk0.y - ry, d->unk0.z - rz);
-				GXTexCoord2u8(0x80, 0x80);
-				GXPosition3f32(d->unk0.x - ux, d->unk0.y - uy, d->unk0.z - uz);
-				GXTexCoord2u8(0x80, 0);
-			}
-			GXEnd();
-		}
-
-		if (unk80134->showsCap.get() && !data.unk65) {
-			drawCap(data.getThing(),
-			        JGeometry::TUtil<f32>::sqrt(data.unk3C * data.unk3C
-			                                    - data.unk44 * data.unk44));
-		}
+		if (unk80134->showsCap.get() && !data.unk65)
+			drawBathtubCap(data);
 
 		GXInitTexObj(&unk800D4, unk800A8, r23, r24, (GXTexFmt)1, GX_CLAMP,
 		             GX_CLAMP, GX_FALSE);
@@ -1394,7 +1473,7 @@ public:
 		                               unk80134->kRegB.get(),
 		                               unk80134->kRegA.get(),
 		                           });
-		GXSetTevColor(GX_TEVREG1, (GXColor) {
+		GXSetTevColor(GX_TEVREG0, (GXColor) {
 		                              unk80134->regR.get(),
 		                              unk80134->regG.get(),
 		                              unk80134->regB.get(),
@@ -1425,7 +1504,7 @@ public:
 		GXSetCullMode(GX_CULL_NONE);
 
 		Mtx concat;
-		MTXConcat(r30, unk80050, concat);
+		PSMTXConcat(r30, unk80050, concat);
 		DCInvalidateRange(unk800A4, unk800AC * (unk800AC * 4));
 		GXLoadPosMtxImm(concat, GX_PNMTX0);
 		GXLoadNrmMtxImm(r30, GX_PNMTX0);
@@ -1479,10 +1558,43 @@ public:
 		return unk20[i][j].y + unk80050.at(1, 3);
 	}
 
-	void tmpFake(const JGeometry::TVec3<f32>& dir,
-	             const JGeometry::TVec3<f32>& up)
+	// Never emitted, so the map cannot name it; the tell that it is a function
+	// and not the block written out is that the ROM computes -unk3C and
+	// 3 * unk3C a second time here, while prerender's own pair stays live for
+	// the projection depth and the cap. Its depth is also what keeps
+	// setLookDir a `bl`.
+	void calcHeightMapView(const TBathtubData& data)
 	{
-		unk80020.setLookDir(dir, up);
+		f32 negR = -data.unk3C;
+		f32 R3   = 3.0f * data.unk3C;
+
+		// Half-stripped: the cap radius is computed and discarded. The ROM
+		// keeps sqrt's `mag <= 0` compare with no branch after it and
+		// reloads unk44 for the next getThing().
+		JGeometry::TVec3<f32> v1;
+		v1.set(data.getThing());
+		JGeometry::TUtil<f32>::sqrt(data.unk3C * data.unk3C
+		                            - data.unk44 * data.unk44);
+
+		JGeometry::TVec3<f32> v2;
+		v2.set(data.getThing());
+
+		f32 ey = v2.y + R3;
+		JGeometry::TVec3<f32> v3;
+		v3.set(data.getThing());
+
+		// Both vectors are argument temporaries: the ROM builds `up` first
+		// (right-to-left), which named locals in either order do not give.
+		unk80020.setLookDir(
+		    JGeometry::TVec3<f32>(v3.x - v2.x, (v3.y + negR) - ey, v3.z - v2.z),
+		    JGeometry::TVec3<f32>(0.0f, 0.0f, -1.0f));
+
+		unk80020.ref(0, 3) = -unk80020.at(0, 0) * v2.x - unk80020.at(0, 1) * ey
+		                     - unk80020.at(0, 2) * v2.z;
+		unk80020.ref(1, 3) = -unk80020.at(1, 0) * v2.x - unk80020.at(1, 1) * ey
+		                     - unk80020.at(1, 2) * v2.z;
+		unk80020.ref(2, 3) = -unk80020.at(2, 0) * v2.x - unk80020.at(2, 1) * ey
+		                     - unk80020.at(2, 2) * v2.z;
 	}
 
 public:
@@ -1557,7 +1669,15 @@ void TBathWaterManager::load(JSUMemoryInputStream& stream)
 		unk14[i] = new TBathWaterParams(fileNames[i]);
 }
 
-void TBathWaterMeshRenderer::clearHeightMap()
+// `inline` so that the linkage matches the map's weak binding. It survives as
+// a symbol because its only caller is the constructor above, whose expansion
+// budget is already spent -- unlike makeHeightMap/makeNormalMap/calcCoord,
+// which the map also has weak but which render() swallows whole the moment
+// they are marked inline (measured: the three symbols vanish, render 93.83 ->
+// 51.30, the unit 96.99 -> 86.43), even though all three are far larger than
+// this one. So the lever for the remaining three linkage errors is render()'s
+// inlining budget, not their declaration.
+inline void TBathWaterMeshRenderer::clearHeightMap()
 {
 	for (int i = 0; i < 128; ++i)
 		for (int j = 0; j < 128; ++j)
@@ -1566,6 +1686,13 @@ void TBathWaterMeshRenderer::clearHeightMap()
 	unk80080.set(1.0f, 1.0f, 1.0f);
 	unk80050.identity();
 }
+
+// TODO: UNUSED, 0x3dc in the map, so this stub is 984 bytes short. It is the
+// mesh renderer's own EFB clear (colour, width, height, flag); the body is not
+// recoverable from this object because nothing in the ROM calls it. It has to
+// live out of class all the same: an UNUSED symbol is never weak, and as an
+// in-class body it was dead-stripped out of our object entirely.
+void TBathWaterMeshRenderer::clearEFB(GXColor, u16, u16, bool) { }
 
 void TBathWaterMeshRenderer::makeHeightMap(f32 h)
 {
@@ -1597,14 +1724,19 @@ void TBathWaterMeshRenderer::makeNormalMap()
 
 	for (int r = 0; r < unk800AC; ++r) {
 		for (int c = 0; c < unk800AC; ++c) {
-			f32 a  = unk20[r > 0 ? r - 1 : 0][c].y;
-			f32 b  = unk20[r < unk800AC - 1 ? r + 1 : r][c].y;
-			f32 a2 = unk20[r][c > 0 ? c - 1 : 0].y;
-			f32 b2 = unk20[r][c < unk800AC - 1 ? c + 1 : c].y;
+			// The row difference is taken inline but the column one is named,
+			// and the two products are written the opposite way round. That
+			// asymmetry is what the ROM's register use and its 0x80 frame ask
+			// for: four named heights give the wrong float registers here, and
+			// naming both differences costs 8 bytes of frame.
+			f32 prevRow = unk20[r > 0 ? r - 1 : 0][c].y;
+			f32 nextRow = unk20[r < unk800AC - 1 ? r + 1 : r][c].y;
+			f32 prevCol = unk20[r][c > 0 ? c - 1 : 0].y;
+			f32 dCol = unk20[r][c < unk800AC - 1 ? c + 1 : c].y - prevCol;
 
-			unk30020[r][c].x = scale * (b - a);
+			unk30020[r][c].x = scale * (nextRow - prevRow);
 			unk30020[r][c].y = scale * scale;
-			unk30020[r][c].z = scale * (b2 - a2);
+			unk30020[r][c].z = dCol * scale;
 			unk30020[r][c].normalize();
 		}
 	}
@@ -1660,11 +1792,11 @@ void TBathWaterMeshRenderer::calcCoord()
 
 void TBathWaterManager::loadAfter()
 {
-	TScreenTexture* tex = static_cast<TScreenTexture*>(
-	    JDrama::TNameRefGen::search("スクリーンテクスチャ"));
-	unk28[0] = unk28[1]
-	    = new TBathWaterMeshRenderer(unk18, tex->getTexture());
-	unk30 = unk28[1];
+	TScreenTexture* tex
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
+	unk28[0] = new TBathWaterFlatRenderer(unk18);
+	unk28[1] = new TBathWaterMeshRenderer(unk18, tex->getTexture());
+	unk30    = unk28[1];
 }
 
 void TBathWaterManager::wave(JGeometry::TVec3<f32>&, JGeometry::TVec3<f32>&,
@@ -1675,15 +1807,17 @@ void TBathWaterManager::wave(JGeometry::TVec3<f32>&, JGeometry::TVec3<f32>&,
 void TBathWaterManager::initializeIfYet_()
 {
 	if (unk24 == nullptr) {
-		TBathtub* bathtub
-		    = static_cast<TBathtub*>(JDrama::TNameRefGen::search("バスタブ"));
+		TBathtub* bathtub = JDrama::TNameRefGen::search<TBathtub>("バスタブ");
 		if (bathtub && bathtub->unk298) {
-			const TBathtubData& data = bathtub->getBathtubData();
+			// Fetched per call and not held in one reference: the ROM hoists
+			// two separate `this + 0x170` values into two registers.
 			for (int actor = 0; actor < 2; ++actor) {
-				unk20[actor]->initialize(unk14[actor], data);
+				unk20[actor]->initialize(unk14[actor],
+				                         bathtub->getBathtubData());
 
 				for (int iter = 0; iter < 200; iter++)
-					TBathWater::TDrop::calcWaterModel(unk20[actor], data);
+					TBathWater::TDrop::calcWaterModel(
+					    unk20[actor], bathtub->getBathtubData());
 			}
 			unk24 = bathtub;
 		}
@@ -1704,53 +1838,83 @@ f32 TBathWaterManager::getWaterHeight(f32 x, f32 z) const
 }
 
 namespace {
-void CalcJumpVelocityY(const JGeometry::TVec3<f32>&,
-                       const JGeometry::TVec3<f32>&, f32, f32, f32,
-                       JGeometry::TVec3<f32>*)
+void CalcJumpVelocityY(const JGeometry::TVec3<f32>& from,
+                       const JGeometry::TVec3<f32>& to, f32 velY,
+                       f32 gravity, f32 minVelY, JGeometry::TVec3<f32>* out)
 {
+	int count = 1;
+	f32 vy    = velY;
+	f32 y     = from.y;
+	while (true) {
+		y += vy;
+		if (vy < 0.0f && y <= to.y)
+			break;
+		vy -= gravity;
+		if (vy < minVelY)
+			vy = minVelY;
+		count++;
+	}
+
+	out->set((to.x - from.x) / count, velY, (to.z - from.z) / count);
 }
 } // namespace
+
+// TVec3::setLength with the squared length handed in, in the same two-level
+// shape as the header's setLength(f32) -> setLength(v, f32) pair: the ROM
+// computes horiz.squared() once for both the distance test and the rescale,
+// and inv_sqrt must still sit three levels down to stay the `bl` it is.
+// TODO: this belongs next to setLength in JGVec3.hpp (shared header).
+static inline void setLengthFromSquared(JGeometry::TVec3<f32>& v,
+                                        const JGeometry::TVec3<f32>& src,
+                                        f32 sq, f32 length)
+{
+	if (sq <= JGeometry::TUtil<f32>::epsilon()) {
+		v.zero();
+		return;
+	}
+	v.scale(length * JGeometry::TUtil<f32>::inv_sqrt(sq), src);
+}
+
+static inline void setLengthFromSquared(JGeometry::TVec3<f32>& v, f32 sq,
+                                        f32 length)
+{
+	setLengthFromSquared(v, v, sq, length);
+}
 
 void TBathWaterManager::throwMario(f32 param_1)
 {
 	const TBathtubData& data = unk24->getBathtubData();
 
-	JGeometry::TVec3<f32> diff;
-	diff.sub(SMS_GetMarioPos(), data.mPos);
-
-	JGeometry::TVec3<f32> local;
-	data.unk18.mult33(diff, local);
-
-	JGeometry::TVec3<f32> horiz;
-	horiz   = local;
-	horiz.y = 0.0f;
-
 	JGeometry::TVec3<f32> vel;
-	if (horiz.length() < 4500.0) {
-		horiz.setLength(4150.0f);
+	JGeometry::TVec3<f32> horiz = data.getLocalPos(SMS_GetMarioPos());
+	horiz.y                     = 0.0f;
 
+	// One squared() shared by the distance test and the rescale: the ROM
+	// never recomputes it (length() then setLength() leaves nine extra
+	// instructions).
+	f32 sq = horiz.squared();
+	if (JGeometry::TUtil<f32>::sqrt(sq) < 4500.0) {
+		setLengthFromSquared(horiz, sq, 4150.0f);
+
+		// Local -> world, and only through the X and Z axes: the ROM never
+		// reads horiz.y here (it is the zero from above, but setLength has
+		// already stored it, so this is a source-level choice).
 		JGeometry::TVec3<f32> w;
-		data.unk18.mult33(horiz, w);
-		w += data.mPos;
+		w.x = data.unk18.mMtx[0][0] * horiz.x + data.mPos.x;
+		w.y = data.unk18.mMtx[0][1] * horiz.x + data.mPos.y;
+		w.z = data.unk18.mMtx[0][2] * horiz.x + data.mPos.z;
+		w.x += data.unk18.mMtx[2][0] * horiz.z;
+		w.y += data.unk18.mMtx[2][1] * horiz.z;
+		w.z += data.unk18.mMtx[2][2] * horiz.z;
 		w.y += 120.0f;
 
-		f32 gravity = SMS_GetMarioGravity();
-		int count   = 1;
-		f32 vy      = 100.0f;
-		f32 y       = gpMarioPos->y;
-		while (true) {
-			y += vy;
-			if (vy < 0.0f && y <= w.y)
-				break;
-			vy -= gravity;
-			if (vy < -75.0f)
-				vy = -75.0f;
-			count++;
-		}
-
-		vel.x = (w.x - gpMarioPos->x) / (f32)count;
-		vel.y = 100.0f;
-		vel.z = (w.z - gpMarioPos->z) / (f32)count;
+		// TODO: frame 0x98 against the ROM's 0xb0. The instruction stream
+		// only differs in register numbering: the ROM computes the X-axis
+		// terms into scratch registers (y, x, z) before adding the Z-axis
+		// terms into f30/f31/f29; a single expression per component is
+		// worse (98.8 -> 94.9).
+		CalcJumpVelocityY(*gpMarioPos, w, 100.0f, SMS_GetMarioGravity(),
+		                  -75.0f, &vel);
 	} else {
 		vel.x = 0.0f;
 		vel.y = param_1;
@@ -1760,17 +1924,24 @@ void TBathWaterManager::throwMario(f32 param_1)
 	SMS_ThrowMario(vel, vel.length());
 }
 
-// TODO: needs more matching
+// TODO: needs more matching. Retail starts a sqrt of the squared axis length
+// and discards it (a compare against 0.0f with no branch); a discarded
+// `TUtil<f32>::sqrt(sq);` reproduces it (perform 98.06 -> 98.41) but is not
+// applied as a statement with no effect.
 static inline bool fakeCalcPos(const TBathtubData& data, f32 radius, f32 rnd1,
                                JGeometry::TVec3<f32>* out)
 {
 
 	JGeometry::TVec3<f32> axis;
-	axis.set(data.unk18.at(1, 0), 0.0f, data.unk18.at(1, 2));
+	axis.set(data.unk18.at(0, 1), 0.0f, data.unk18.at(2, 1));
 
 	if (axis.isZero())
 		return false;
 
+	// TODO: retail has a dead `fcmpo/cror` against 0.0f on the squared length
+	// here, with no branch and with isZero's inlined squared CSE'd into it --
+	// i.e. one more discarded computation over `axis`. A plain
+	// `axis.length();` is not it (that emits a real `bl dot` at this depth).
 	JGeometry::TVec3<f32> nAxis;
 	nAxis.normalize(axis);
 
@@ -1786,12 +1957,12 @@ static inline bool fakeCalcPos(const TBathtubData& data, f32 radius, f32 rnd1,
 	f32 h = 0.9f * (data.unk3C - radius);
 	nAxis.setLength(h);
 
-	JGeometry::TVec3<f32> up2(0.0f, 1.0f, 0.0f);
-	JGeometry::TVec3<f32> center;
-	center.set(data.getThing());
-	out->set(up2.x * radius + nAxis.x + center.x,
-	         up2.y * radius + nAxis.y + center.y,
-	         up2.z * radius + nAxis.z + center.z);
+	// scaleAdd and not the three products written out: binding `up` to a
+	// const reference is what keeps it in memory, and that is what stops MWCC
+	// folding its 0.0f and 1.0f components away (the ROM reads all three back
+	// and multiplies each by the radius).
+	out->scaleAdd(radius, JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f), nAxis);
+	*out += data.getThing();
 	return true;
 }
 
@@ -1804,8 +1975,7 @@ void TBathWaterManager::perform(u32 cue, JDrama::TGraphics* graphics)
 
 	if (cue & CUE_MOVE) {
 		unk30 = unk28[unk18->displaysMesh.get()];
-		unk1C += 1;
-		if (!(unk1C & 3)) {
+		if (!(++unk1C & 3)) {
 			for (int actor = 0; actor < 2; ++actor) {
 				TBathWater* bw           = unk20[actor];
 				const TBathtubData& data = unk24->getBathtubData();
@@ -1828,28 +1998,36 @@ void TBathWaterManager::perform(u32 cue, JDrama::TGraphics* graphics)
 						throwMario(unk14[0]->jump.get());
 				}
 			}
-
-			// Periodic jump-drop spawn.
-			if ((unk1C & 7) == 4 && unk24->getBathtubData().unk64) {
-				const TBathtubData& data = unk24->getBathtubData();
-
-				JGeometry::TVec3<f32> vel;
-				if (fakeCalcPos(data, unk14[1]->dropRadius.get(),
-				                unk10.get_float(-1.0f, 1.0f), &vel))
-					unk20[1]->addDrop(vel, unk10.get_float01());
-			}
-
-			TBathWater* soundBw = unk20[0];
-			JGeometry::TVec3<f32> avg;
-			avg.set(soundBw->unk78);
-			f32 tmp = soundBw->unk84;
-			if (tmp > 0.0f)
-				SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_KOOPA_FLOOD,
-				                                        &avg, nullptr, tmp, 0,
-				                                        0, nullptr, 0, 4);
 		}
+
+		// Outside `!(unk1C & 3)`: retail's bne from that test lands on
+		// this spawn, so it (and the flood sound) run every CUE_MOVE.
+		if ((unk1C & 7) == 4 && unk24->getBathtubData().unk64) {
+			// The bathtub data is fetched as an argument and not held in
+			// a reference beforehand: arguments go right to left, so the
+			// ROM draws the random spread first, reads the radius second
+			// and only then re-reads unk24 (the draw's store to the seed
+			// is what forces the second load).
+			JGeometry::TVec3<f32> vel;
+			if (fakeCalcPos(unk24->getBathtubData(),
+			                unk14[1]->dropRadius.get(),
+			                unk10.get_float(-1.0f, 1.0f), &vel))
+				// The upward speed is drawn from [0, 10): 10.0f is the
+				// TU's `@3424` literal, which nothing else accounts for.
+				unk20[1]->addDrop(vel, unk10.get_float(10.0f));
+		}
+
+		TBathWater* soundBw = unk20[0];
+		JGeometry::TVec3<f32> avg;
+		avg.set(soundBw->unk78);
+		f32 tmp = soundBw->unk84;
+		if (tmp > 0.0f)
+			SMSGetMSound()->startSoundActorWithInfo(MSD_SE_BS_KOOPA_FLOOD,
+			                                        &avg, nullptr, tmp, 0, 0,
+			                                        nullptr, 0, 4);
 	}
 
+	// Slot 0xc on the 0x14 renderer vtable (0x8 prerender, 0xc render).
 	if (cue & CUE_DRAW)
-		unk30->prerender(graphics, unk24->getBathtubData(), unk20, unk14, 2);
+		unk30->render(graphics, unk24->getBathtubData(), unk20, unk14, 2);
 }

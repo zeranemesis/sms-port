@@ -1,7 +1,3 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Enemy/Amenbo.hpp>
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <JSystem/JUtility/JUTNameTab.hpp>
@@ -11,12 +7,17 @@
 #include <Strategic/MirrorActor.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MarioUtil/RandomUtil.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <Map/MapMirror.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapData.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/ModelWaterManager.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and this unit's own strings (c-r35).
+#include <Map/MapCollisionEntry.hpp>
 
 static const char* amenbo_bastable[] = {
 	nullptr, "/scene/amenbo/bas/amenbo_hit1_loop.bas",
@@ -45,9 +46,9 @@ TAmenbo::TAmenbo(const char* name)
 void TAmenbo::init(TLiveManager* manager)
 {
 	mManager = manager;
-	mManager->manageActor(this);
-	mMActorKeeper = new TMActorKeeper(mManager, 1);
-	mMActor       = mMActorKeeper->createMActor("amenbo_model1.bmd", 0);
+	getManager()->manageActor(this);
+	mMActorKeeper = new TMActorKeeper(getManager(), 1);
+	mMActor       = getActorKeeper()->createMActor("amenbo_model1.bmd", 0);
 
 	mSpine->initWith(&TNerveAmenboWalk::theNerve());
 
@@ -56,7 +57,7 @@ void TAmenbo::init(TLiveManager* manager)
 	initAnmSound();
 	unk1E8 = new TMirrorActor("アメンボくんin鏡");
 	unk1E8->init(getModel(), 0x18);
-	mInitialPosition.set(mPosition);
+	mInitialPosition.set(getPosition());
 	mQuat.set(0.0f, 0.0f, 0.0f, 1.0f);
 	mIsChasingMario        = false;
 	mWaterGunHitCooldown   = 0;
@@ -64,7 +65,7 @@ void TAmenbo::init(TLiveManager* manager)
 	mOutOfWaterDeathTimer  = 0;
 	for (int i = 0; i < 4; ++i) {
 		unk1EC[i].mJointIdx
-		    = getModel()->getModelData()->getMaterialName()->getIndex(
+		    = getModel()->getModelData()->getJointName()->getIndex(
 		        cJointNames[i]);
 	}
 }
@@ -91,6 +92,9 @@ void TAmenbo::initParticle()
 	SMS_LoadParticle("/scene/amenbo/jpa/ms_ame_hamon.jpa", 0x18E);
 }
 
+// TODO: the `local_14 - mPosition` temporary sits at 0x28 vs retail 0x10 (the
+// open `a = b - c` class). Inert: getPosition() at either site, .set(),
+// operator-=, a named position copy.
 void TAmenbo::bind()
 {
 	if (checkLiveFlag(LIVE_FLAG_UNK10))
@@ -138,17 +142,15 @@ void TAmenbo::bind()
 
 void TAmenbo::control()
 {
-	if (mWaterGunHitCooldown > 0)
+	if (((const TAmenbo*)this)->mWaterGunHitCooldown > 0)
 		mWaterGunHitCooldown--;
 
-	if (mSearchDisableCooldown > 0)
+	if (((const TAmenbo*)this)->mSearchDisableCooldown > 0)
 		mSearchDisableCooldown--;
 
 	updateCollision();
 
-	if (SMS_AskJumpIntoWaterEffectExist()) {
-		checkMarioWaterIn();
-	}
+	checkMarioWaterIn();
 
 	TLiveActor::control();
 }
@@ -168,15 +170,21 @@ void TAmenbo::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 }
 
+// UNUSED in the map (0x2d4). The water-entry test is the helper's own guard:
+// with it here and the spine read through getSpine(), the standalone copy is
+// the map size and control()'s inlined copy lands its 0x88 frame.
 void TAmenbo::checkMarioWaterIn()
 {
+	if (!SMS_AskJumpIntoWaterEffectExist())
+		return;
+
 	JGeometry::TVec3<f32> local_60;
 
 	if (!isOverTerritory(&local_60) && mSearchDisableCooldown <= 0) {
-		if (isFreeze() && isChangedBlock()) {
+		if (isFreeze() && !isChangedBlock()) {
 			decideTargetOnFingingMario();
-			mSpine->reset();
-			mSpine->setNext(&TNerveAmenboTurn::theNerve());
+			getSpine()->reset();
+			getSpine()->setNext(&TNerveAmenboTurn::theNerve());
 			mVelocity = JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f);
 		}
 	}
@@ -208,13 +216,10 @@ BOOL TAmenbo::receiveMessage(THitActor* sender, u32 message)
 
 void TAmenbo::behaveToWater(THitActor* param_1)
 {
-
-	
-	
 	if (mWaterGunHitCooldown <= 0 && isWaterFromWaterGun(param_1)) {
 		mWaterGunHitCooldown = 45;
-		mSpine->reset();
-		mSpine->setNext(&TNerveAmenboHitWater::theNerve());
+		getSpine()->reset();
+		getSpine()->setNext(&TNerveAmenboHitWater::theNerve());
 	}
 }
 
@@ -229,7 +234,8 @@ void TAmenbo::calcRootMatrix()
 	mtx.setQT(mQuat, mPosition);
 	getModel()->setBaseScale(mScaling);
 	getModel()->setBaseTRMtx(mtx);
-	getModel()->getBaseTRMtx()[1][3] += mHeadHeight;
+	MtxPtr m = getModel()->getBaseTRMtx();
+	m[1][3] += mHeadHeight;
 
 	updateRipple();
 }
@@ -248,17 +254,12 @@ void TAmenbo::forceKill()
 
 bool TAmenbo::isCollidMove(THitActor* param_1) { return param_1 != this; }
 
-bool TAmenbo::doKeepDistance() {
-
-	
-	 return !isAttacking(); }
+bool TAmenbo::doKeepDistance() { return !isAttacking(); }
 
 void TAmenbo::attackToMario()
 {
-
-	
-	
-	if (isAttacking())
+	bool attacking = isAttacking();
+	if (attacking)
 		sendAttackMsgToMario();
 }
 
@@ -336,7 +337,9 @@ void TAmenbo::doAdjustTarget()
 	vel *= 0.9f;
 	mVelocity = vel;
 
-	unk1E0 = mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame() * (1.0f / 63.0f);
+	// The reciprocal is folded at compile time into the 1.0f / 63.0f the
+	// map keeps as @2944; a plain `/ 63` would allocate 63.0f instead.
+	unk1E0 = (1.0f / 63.0f) * mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
 
 	if (1.0f <= unk1E0)
 		unk1E0 = 1.0f;
@@ -345,16 +348,19 @@ void TAmenbo::doAdjustTarget()
 	mQuat.normalize();
 }
 
-void TAmenbo::doChangeWaitAnm()
+bool TAmenbo::doChangeWaitAnm()
 {
-	if (checkCurAnmEnd(ANM_TYPE_BCK)) {
-		if (mMActor->checkCurAnm("amenbo_wait1_start", ANM_TYPE_BCK))
-			changeBck("amenbo_wait1_loop", 1.0f);
-		else if (mMActor->checkCurAnm("amenbo_wait1_loop", ANM_TYPE_BCK))
-			changeBck("amenbo_wait1_end", 1.0f);
-		else
-			changeBck("amenbo_wait1_start", 1.0f);
-	}
+	if (!checkCurAnmEnd(ANM_TYPE_BCK))
+		return false;
+
+	if (mMActor->checkCurAnm("amenbo_wait1_start", ANM_TYPE_BCK))
+		changeBck("amenbo_wait1_loop", 1.0f);
+	else if (mMActor->checkCurAnm("amenbo_wait1_loop", ANM_TYPE_BCK))
+		changeBck("amenbo_wait1_end", 1.0f);
+	else
+		changeBck("amenbo_wait1_start", 1.0f);
+
+	return true;
 }
 
 void TAmenbo::decideTarget()
@@ -375,6 +381,17 @@ void TAmenbo::decideTarget()
 	}
 
 	JGeometry::TQuat4<f32> q;
+	// TODO: literal-pool order. The target asks for 1.5f (@3161) before
+	// pi (@3162); ours reverses the pair, so this expression is not yet
+	// spelled the way retail spells it (same instructions either way).
+	// Retail also multiplies MsRandF()'s scale into f31 before the axis
+	// temporary's set<f> call and subtracts from 1.5f after it; ours hoists
+	// the subtraction too. Inert (cc48): a named r or angle, M_PI first,
+	// (f32)M_PI, a literal pi, -(r - 1.5f); a named axis is worse.
+	// 2026-09-27: JGQuat4's setRotate(axis, angle) with one named
+	// `f32 halfAngle = pAngle * 0.5f;` fixes every instruction here (Search
+	// 97.9 -> 99.75, Kumokun Search 98.3 -> 99.8) but costs Kazekun Attack,
+	// makeQuat, makeKillerVelocity, moveCoaster (constant angle reloads).
 	q.setRotate(JGeometry::TVec3<f32>(0.0f, 1.0f, 0.0f),
 	            (1.5f - MsRandF()) * M_PI);
 	setWalkDir(q);
@@ -400,6 +417,11 @@ void TAmenbo::setWalkDir(const JGeometry::TVec3<f32>& param_1)
 	unk1E0 = 0.0f;
 }
 
+// TODO: 0x9c vs the map's 0xbc. A one-argument unk1D0.mul(mQuat) whose
+// terms follow the two-argument order (x*o.w + w*o.x + ...) compiles to
+// exactly 0xbc; the header's one-argument mul orders them w*o.x first,
+// which costs TNerveAmenboSearch::execute 0.8%. Needs a header change.
+// Inlined into the search nerve, retail still loads mQuat.z before .y.
 void TAmenbo::setWalkDir(const JGeometry::TQuat4<f32>& param_1)
 {
 	unk1C0 = getQuat();
@@ -444,13 +466,14 @@ bool TAmenbo::isOverTerritory(JGeometry::TVec3<f32>* param_1) const
 	*param_1 -= mPosition;
 	param_1->y = 0.0f;
 	f32 range  = getSaveParam2()->mTerritoryRange.get();
-	return param_1->squared() < range * range;
+	return range * range < param_1->squared();
 }
 
 bool TAmenbo::isAttacking() const
 {
 	bool result;
-	if (mSpine->getLatestNerve() != &TNerveAmenboHitWater::theNerve())
+	const TNerveBase<TLiveActor>* nerve = mSpine->getLatestNerve();
+	if (nerve != &TNerveAmenboHitWater::theNerve())
 		result = true;
 	else if (mMActor->checkCurAnm("amenbo_hit1_end", ANM_TYPE_BCK))
 		result = true;
@@ -567,17 +590,25 @@ DEFINE_NERVE(TNerveAmenboSearch, TLiveActor)
 	return false;
 }
 
+// Binding level over a raw member read, worth +16 of low region in
+// TNerveAmenboTurn::execute (batch 127).
+static inline bool AmenboIsChasingMario(const TAmenbo* p)
+{
+	bool isChasingMario = p->mIsChasingMario;
+	return isChasingMario;
+}
+
 DEFINE_NERVE(TNerveAmenboTurn, TLiveActor)
 {
 	TAmenbo* self = (TAmenbo*)spine->getBody();
 	if (spine->getTime() == 0) {
-		self->changeBck("amenbo_run1", self->mIsChasingMario ? 3.0f : 1.0f);
+		self->changeBck("amenbo_run1", AmenboIsChasingMario(self) ? 3.0f : 1.0f);
 	}
 
 	self->doAdjustTarget();
 
 	if (self->isStartMoving()) {
-		if (self->mIsChasingMario) {
+		if (AmenboIsChasingMario(self)) {
 			spine->pushAfterCurrent(&TNerveAmenboPreAttack::theNerve());
 		} else {
 			spine->pushAfterCurrent(&TNerveAmenboWalk::theNerve());
@@ -605,6 +636,11 @@ DEFINE_NERVE(TNerveAmenboPreAttack, TLiveActor)
 	return false;
 }
 
+// TODO: GPRs rotate (retail: string base r31, self r30, spine r29) and the
+// frame is 8 long (0xa0 vs 0x98), both from prepareWalk's quaternion: a
+// struct copy `q = mQuat` fixes both but adds the word copy retail lacks.
+// Inert: getQuat() (direct, ref, set), a const ref, set/ctor of four floats,
+// mQuat.getZDir directly (frame 0x88).
 DEFINE_NERVE(TNerveAmenboWalk, TLiveActor)
 {
 	TAmenbo* self = (TAmenbo*)spine->getBody();
@@ -623,6 +659,12 @@ DEFINE_NERVE(TNerveAmenboWalk, TLiveActor)
 	return false;
 }
 
+// TODO: callee-saved GPRs rotate (retail: string base r31, self r30,
+// spine r29; ours spine r31) and the frame is 0x58 vs 0x70. Inert or worse
+// (cc48): a getBody() binder or fork, TVec3 zero spellings, .value for
+// mHitWaterTimer, self->getSpine() at any of the three spine uses, raw
+// mMActor, a named zero vector, an empty-then-else start arm. The same 0x18
+// low-region gap appears in TNerveAmenboSearch::execute.
 DEFINE_NERVE(TNerveAmenboHitWater, TLiveActor)
 {
 	TAmenbo* self = (TAmenbo*)spine->getBody();

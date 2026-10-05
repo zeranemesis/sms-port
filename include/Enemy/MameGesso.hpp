@@ -44,6 +44,7 @@ public:
 class TMameGesso : public TWalkerEnemy {
 public:
 	TMameGesso(const char* name = "まめゲッソー");
+	virtual ~TMameGesso() { }
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual void init(TLiveManager*);
@@ -53,9 +54,9 @@ public:
 	virtual f32 getGravityY() const;
 	virtual const char** getBasNameTable() const;
 	virtual void reset();
+	virtual bool changeByJuice() { return false; }
 	virtual bool isEatenByYosshi() { return false; }
 	virtual void behaveToWater(THitActor*);
-	virtual bool changeByJuice() { return false; }
 	virtual void behaveToTaken(THitActor*);
 	virtual void behaveToRelease();
 	virtual void setDeadAnm();
@@ -69,8 +70,10 @@ public:
 	virtual BOOL isInhibitedForceMove();
 	virtual bool doKeepDistance();
 
+	void rebirth();
 	void calcObjCollision();
 	void entryObjCollision();
+	void checkMarioState();
 
 	TMameGessoSaveLoadParams* getSaveLoadParam() const
 	{

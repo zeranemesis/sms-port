@@ -46,7 +46,10 @@ public:
 	/* 0x141 */ u8 unk141;
 	/* 0x142 */ u8 unk142;
 	/* 0x144 */ f32 unk144;
-	/* 0x148 */ GXColorS10 unk148;
+	/* 0x148 */ s16 unk148;
+	/* 0x14A */ s16 unk14A;
+	/* 0x14C */ s16 unk14C;
+	/* 0x14E */ s16 unk14E;
 	/* 0x150 */ TRouletteSw* unk150;
 };
 
@@ -269,6 +272,7 @@ public:
 	TPictureTelesa(const char* name = "テルサの絵")
 	    : TWaterHitPictureHideObj(name)
 	{
+		unk174 = false;
 	}
 
 	virtual void control();

@@ -40,7 +40,7 @@ static asm void Run(register void (*addr)())
 #endif // clang-format on
 }
 
-inline void ReadApploader(DVDCommandBlock* dvdCmd, void* addr, u32 offset,
+void ReadApploader(DVDCommandBlock* dvdCmd, void* addr, u32 offset,
                           u32 numBytes)
 {
 	/* Not sure if this inline is correct - might need to call other inlines */
@@ -118,4 +118,25 @@ void __OSReboot(u32 resetCode, u32 bootDol)
 
 	ICInvalidateRange(OS_BOOTROM_ADDR, numBytes);
 	Run(OS_BOOTROM_ADDR);
+}
+
+void OSSetSaveRegion(void* start, void* end)
+{
+	SaveStart = start;
+	SaveEnd   = end;
+}
+
+void OSGetSaveRegion(void** start, void** end)
+{
+	*start = SaveStart;
+	*end   = SaveEnd;
+}
+
+extern void* __OSSavedRegionStart;
+extern void* __OSSavedRegionEnd;
+
+void OSGetSavedRegion(void** start, void** end)
+{
+	*start = __OSSavedRegionStart;
+	*end   = __OSSavedRegionEnd;
 }

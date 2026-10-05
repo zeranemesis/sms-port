@@ -66,6 +66,15 @@ void TLauncher::init(TLiveManager* param_1)
 	offHitFlag(0x1);
 }
 
+// A TU-local binding level over the raw member read: retail's frame is 8 bytes
+// of dead low region above ours, and this is the only rung that pays exactly +8
+// here (the same binder over `getActorType()` is +16, as is one over `mState`).
+static inline u32 LauncherSenderType(const THitActor* p)
+{
+	u32 type = p->mActorType;
+	return type;
+}
+
 BOOL TLauncher::receiveMessage(THitActor* sender, u32 message)
 {
 	if (checkLiveFlag(LIVE_FLAG_DEAD))
@@ -74,14 +83,12 @@ BOOL TLauncher::receiveMessage(THitActor* sender, u32 message)
 	if (mState == STATE_DIE)
 		return false;
 
-	if (sender->getActorType() == 0x1000001) {
+	if (LauncherSenderType(sender) == 0x1000001) {
 		if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 			gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
-			                             &sender->mPosition, 0,
-			                             nullptr);
+			                             &sender->mPosition, 0, nullptr);
 			gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK,
-			                        &sender->mPosition, 0,
-			                        0.0f, 0, 0, 4);
+			                        &sender->mPosition, 0, 0.0f, 0, 0, 4);
 			if (mState == STATE_HITBYWATER)
 				return true;
 
@@ -225,15 +232,21 @@ void TCommonLauncher::init(TLiveManager* param_1)
 	mMActor       = mMActorKeeper->createMActor("generator_model1.bmd", 0);
 	mSpine->initWith(&TNerveWaitForever<TLiveActor>::theNerve());
 
-	mLaunchCooldown = mLaunchPeriod * MsRandF();
+	s32 launchPeriod = mLaunchPeriod;
+	mLaunchCooldown  = launchPeriod * MsRandF();
 
 	mMActor->setLightType(LIGHT_TYPE_OBJECT);
 	initHitActor(0x10000014, 1, -0x7f000000, 150.0f, 100.0f, 150.0f, 100.0f);
 	offHitFlag(0x1);
 
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
-	    ->getChildren()
-	    .push_back(this);
+	// The named TList_pointer& is the research-211 packing knob that drops
+	// the insert block 4 without renaming the searched object (that costs
+	// the addi rD, r3, 0x10 bind and the frame). Unnamed
+	// search<>()->getChildren().push_back(this) is 7 stack slots high.
+	JGadget::TList_pointer<THitActor*>& list
+	    = JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
+	          ->getChildren();
+	list.push_back(this);
 
 	onLiveFlag(LIVE_FLAG_UNK8);
 	onLiveFlag(LIVE_FLAG_UNK10);
@@ -250,7 +263,7 @@ void TCommonLauncher::init(TLiveManager* param_1)
 	mHitPoints = getSaveParam() ? getSaveParam()->mSLHitPointMax.get() : 1;
 	mHitPoints = 5;
 
-	mRotation.x = MsWrap(mRotation.x + 270.0f, 0.0f, 360.0f);
+	mRotation.x = MsWrap(getRotation().x + 270.0f, 0.0f, 360.0f);
 }
 
 void TCommonLauncher::load(JSUMemoryInputStream& stream)
@@ -268,17 +281,22 @@ void TCommonLauncher::changeBck(int param_1)
 
 void TCommonLauncher::stateInitial() { changeState(STATE_NORMAL); }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TCommonLauncher::stateHitByWater (batch 127).
+static inline MActor* LauncherMActor(const TCommonLauncher* p)
+{
+	MActor* mActor = p->mMActor;
+	return mActor;
+}
+
 void TCommonLauncher::stateHitByWater()
 {
-
-	
-	
 	if (mTicksSpentInCurState == 0) {
 		changeBck(1);
 		decHitPoints();
 	}
 
-	if (mMActor->curAnmEndsNext()) {
+	if (LauncherMActor(this)->curAnmEndsNext()) {
 		if (mHitPoints == 0)
 			changeState(STATE_DIE);
 		else
@@ -323,9 +341,10 @@ void TCommonLauncher::stateLaunch()
 
 			local_14.x = MsWrap(local_14.x - 270.0f, 0.0f, 360.0f);
 
+			JGeometry::TVec3<f32> local_20;
 			Mtx mtx;
 			MsMtxSetRotRPH(mtx, local_14.x, local_14.y, local_14.z);
-			JGeometry::TVec3<f32> local_20(0.0f, 4.0f, 0.0f);
+			local_20.set(0.0f, 4.0f, 0.0f);
 			local_14.set(0.0f, 0.0f, 0.0f);
 			MTXMultVec(mtx, &local_20, &local_20);
 			enemy->resetSRTV(mPosition, local_14, enemy->mScaling, local_20);
@@ -379,22 +398,19 @@ const char** TCommonLauncher::getBasNameTable() const
 
 void TCommonLauncher::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	TSpineEnemy::perform(cue, graphics);
-	if ((cue & CUE_CALC_ANIM) && mMActor->checkCurBckFromIndex(1)) {
-		MtxPtr mtx = mMActor->getModel()->getAnmMtx(0);
+	if ((cue & CUE_CALC_ANIM) && getMActor()->checkCurBckFromIndex(1)) {
+		MtxPtr mtx = getMActor()->getModel()->getAnmMtx(0);
 
 		if (JPABaseEmitter* emitter
 		    = gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_GENE_HIT,
 		                                                  mtx, 1, this)) {
 			SMSSetEmitterPolColor(emitter, 6);
-			emitter->setGlobalScale(mScaling);
+			emitter->setGlobalScale(getScaling());
 		}
 	}
 
-	if ((cue & CUE_MOVE) && mState == STATE_NORMAL && mHitPoints < 5) {
+	if ((cue & CUE_MOVE) && mState == STATE_NORMAL && getHitPoints() < 5) {
 		mRegenTimer += 1;
 		if (mRegenTimer > 1200) {
 			mRegenTimer = 0;
@@ -403,7 +419,7 @@ void TCommonLauncher::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & CUE_MOVE) {
-		for (int i = 0; i < mColCount; ++i)
+		for (int i = 0; i < getColNum(); ++i)
 			if (mCollisions[i]->isActorType(0x80000001))
 				SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK);
 	}

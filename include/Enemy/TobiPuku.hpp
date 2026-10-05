@@ -1,83 +1,75 @@
-#ifndef ENEMY_TOBIPUKU_HPP
-#define ENEMY_TOBIPUKU_HPP
+#ifndef ENEMY_TOBI_PUKU_HPP
+#define ENEMY_TOBI_PUKU_HPP
 
-#include <Enemy/SmallEnemy.hpp>
 #include <Enemy/WalkerEnemy.hpp>
-#include <JSystem/JDrama/JDRGraphics.hpp>
-#include <JSystem/JGeometry/JGVec3.hpp>
 #include <Strategic/Nerve.hpp>
-#include <Strategic/Spine.hpp>
-#include <dolphin/types.h>
 
-class JSUMemoryInputStream;
-class THitActor;
-class TLiveManager;
-class TMoePuku;
-class TPukuPuku;
-class TTobiPuku;
-class TMoePukuLaunchPad;
+// The flying pukupuku. TMoePuku and TPukuPuku are variants that share its
+// whole animation interface and differ only in their vtable.
+// Names and defaults are the ones PARAM_INIT stringified into .rodata and the
+// ones TTobiPukuManager::load stores, not guesses.
+class TTobiPukuSaveLoadParams : public TWalkerEnemyParams {
+public:
+	TTobiPukuSaveLoadParams(const char* prm);
+
+	// Each TParamRT holds its value at +0x10, which is where the accesses
+	// at 0x33C, 0x350 and 0x364 land.
+	/* 0x32C */ TParamRT<s32> mSLBoundNum;
+	/* 0x340 */ TParamRT<f32> mSLBoundVal;
+	/* 0x354 */ TParamRT<s32> mSLLifeTimer;
+	/* 0x368 */ TParamRT<f32> mSLFlyGravityY;
+	/* 0x37C */ TParamRT<f32> mSLPowerFromWater;
+	/* 0x390 */ u8 unk390[0];
+};
+
+// The launch pad loads a different .prm class from the puku itself: the map
+// lists UNUSED __ct__32TTobiPukuLaunchPadSaveLoadParams alongside
+// __ct__23TTobiPukuSaveLoadParams. It cannot derive from TWalkerEnemyParams,
+// because the slot at 0x2D4 that holds the float mSLZigzagCycle there is read
+// as an int here. 0x2D4 is exactly where TSmallEnemyParams ends.
+class TTobiPukuLaunchPadSaveLoadParams : public TSmallEnemyParams {
+public:
+	TTobiPukuLaunchPadSaveLoadParams(const char* prm);
+
+	/* 0x2D4 */ TParamRT<s32> mSLLaunchInterval;
+	/* 0x2E8 */ TParamRT<f32> mSLLaunchVelocityY;
+	/* 0x2FC */ TParamRT<f32> mSLFlyDist;
+	/* 0x310 */ TParamRT<f32> mSLFlySpeed;
+	/* 0x324 */ TParamRT<f32> mSLLaunchAngle;
+};
+
 class TTobiPukuLaunchPad;
-class TMoePukuManager;
-class TTobiPukuManager;
-class TMoePukuLaunchPadManager;
-class TTobiPukuLaunchPadManager;
-class TTobiPukuSaveLoadParams;
-class TTobiPukuLaunchPadSaveLoadParams;
-
-DECLARE_NERVE(TNerveTobiPukuSwimWander, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuReturnLaunch, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuPrepareFly, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuBound, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuLand, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuPitiPiti, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuDie, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuFall, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuHitWater, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuAttack, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuFly, TLiveActor);
-
-DECLARE_NERVE(TNerveTobiPukuGenerate, TLiveActor);
 
 class TTobiPuku : public TWalkerEnemy {
 public:
-	TTobiPuku(const char*);
+	TTobiPuku(const char* name);
 
-	virtual void init(TLiveManager*);
-	virtual void calcRootMatrix();
-	virtual void moveObject();
-	virtual void kill();
-	virtual f32 getGravityY() const;
-	virtual const char** getBasNameTable() const;
-	virtual void reset();
-	virtual void genEventCoin();
-	virtual void behaveToWater(THitActor*);
-	virtual void scalingChangeActor();
-	virtual void changeOut();
-	virtual void setDeadAnm();
-	virtual void attackToMario();
-	virtual void forceKill();
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TTobiPuku() { }
+
+	// Overrides of base virtuals; these occupy inherited slots.
 	virtual void initAttacker(THitActor*);
 	virtual BOOL isInhibitedForceMove()
 	{
-		if (checkLiveFlag(LIVE_FLAG_AIRBORNE))
-			return 1;
-		return 0;
+		return checkLiveFlag(LIVE_FLAG_AIRBORNE) ? TRUE : FALSE;
 	}
 	virtual void generateEffectColumWater();
 	virtual void walkBehavior(int, f32);
+	virtual void scalingChangeActor();
+	virtual void changeOut();
+	virtual void reset();
+	virtual void kill();
+	virtual void forceKill();
+	virtual void attackToMario();
+	virtual void behaveToWater(THitActor*);
+	virtual void calcRootMatrix();
+
+	// New virtuals, declared in the order the vtable lists them
+	// (0x1b8 onwards).
 	virtual bool isPichiEffect();
 	virtual bool isJumpBck();
-	virtual bool isDeadBck();
+	virtual BOOL isDeadBck();
 	virtual bool isJumpStartBck();
 	virtual bool isAttackBck();
 	virtual bool isFallEndLandBck();
@@ -93,62 +85,81 @@ public:
 	virtual void swimEffect();
 	virtual bool isReachedToGoalXZ();
 	virtual void hitWater();
-
+	virtual const char** getBasNameTable() const;
+	virtual f32 getGravityY() const;
+	void genEventCoin();
+	void init(TLiveManager*);
+	virtual void moveObject();
+	void hitWall();
+	bool isRoll();
+	// UNUSED in the map (0x74 / 0x90 / 0x2c / 0xc8); their emission
+	// positions bracket hitWater, setJumpStartAnm and calcRootMatrix.
 	void fallStart();
 	void flyStart();
-	bool isRoll();
 	bool canBound();
 	void bound();
-	void hitWall();
-	static f32 mLandAngle;
-	static bool mBoundSw;
-	static f32 mBoundVelocityY;
-	static bool mReturnLaunchSw;
 
-public:
+
+	// Overrides the base slot at 0x154.
+	virtual void setDeadAnm();
+
+	// fabricated
+	TTobiPukuSaveLoadParams* getSaveParam2() const
+	{
+		return (TTobiPukuSaveLoadParams*)getSaveParam();
+	}
+
+	static f32 mLandAngle;
+	static u8 mBoundSw;
+	static f32 mBoundVelocityY;
+	static u8 mReturnLaunchSw;
+
 	/* 0x194 */ u8 unk194;
-	/* 0x195 */ char unk195[0x3];
-	/* 0x198 */ s32 unk198;
+	/* 0x198 */ int mBoundCount;
 	/* 0x19C */ TTobiPukuSaveLoadParams* unk19C;
-	/* 0x1A0 */ JGeometry::TVec3<f32> unk1A0;
+	/* 0x1A0 */ JGeometry::TVec3<f32> mFlamePos;
 	/* 0x1AC */ u8 unk1AC;
 	/* 0x1AD */ u8 unk1AD;
 	/* 0x1AE */ u8 unk1AE;
-	/* 0x1AF */ char unk1AF[0x1];
+	/* 0x1AF */ u8 unk1AF;
 	/* 0x1B0 */ f32 unk1B0;
-	/* 0x1B4 */ f32 unk1B4;
-	/* 0x1B8 */ JGeometry::TVec3<f32> unk1B8[2];
-	/* 0x1D0 */ JGeometry::TVec3<f32> unk1D0;
-	/* 0x1DC */ TTobiPukuLaunchPad* unk1DC;
-	/* 0x1E0 */ f32 unk1E0;
-	/* 0x1E4 */ f32 unk1E4;
-	/* 0x1E8 */ f32 unk1E8;
+	// 0x1B4 is a scalar, not a vector: the Land nerve uses 0x1B8 onwards as
+	// its own landing position and delta.
+	/* 0x1B4 */ f32 mLaunchAngle;
+	// Retail's constructor default-constructs these two through
+	// __construct_array with a count of 2, so they are one array member.
+	/* 0x1B8 */ JGeometry::TVec3<f32> mLand[2];
+	/* 0x1D0 */ JGeometry::TVec3<f32> mLaunchVelocity;
+	/* 0x1DC */ TTobiPukuLaunchPad* mLaunchPad;
+	/* 0x1E0 */ f32 mSwimBaseY;
+	/* 0x1E4 */ f32 mFlyVelocityY;
+	/* 0x1E8 */ f32 mReturnPitchStep;
 	/* 0x1EC */ f32 unk1EC;
-	/* 0x1F0 */ f32 unk1F0;
-};
-
-class TPukuPuku : public TTobiPuku {
-public:
-	TPukuPuku(const char*);
-
-	virtual void load(JSUMemoryInputStream&);
-	virtual void init(TLiveManager*);
-	virtual void reset();
+	/* 0x1F0 */ f32 mRotStep;
 };
 
 class TMoePuku : public TTobiPuku {
 public:
-	TMoePuku(const char* name = "モエプク")
+	TMoePuku(const char* name)
 	    : TTobiPuku(name)
 	{
 	}
-	virtual void calcRootMatrix();
-	virtual const char** getBasNameTable() const;
-	virtual void setDeadAnm();
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TMoePuku() { }
+
+	// Overrides of base virtuals; these occupy inherited slots.
 	virtual void generateEffectColumWater();
+	virtual void calcRootMatrix();
+
+	// Overrides of TTobiPuku's animation-state virtuals, in vtable
+	// order. The map lists no TMoePuku copy of initAttacker,
+	// isInhibitedForceMove, walkBehavior, isReachedToGoalXZ,
+	// getGravityY or genEventCoin, so TMoePuku inherits those.
 	virtual bool isPichiEffect();
 	virtual bool isJumpBck();
-	virtual bool isDeadBck();
+	virtual BOOL isDeadBck();
 	virtual bool isJumpStartBck();
 	virtual bool isAttackBck();
 	virtual bool isFallEndLandBck();
@@ -163,95 +174,124 @@ public:
 	virtual void setFallEndLandAnm();
 	virtual void swimEffect() { }
 	virtual void hitWater();
+	virtual const char** getBasNameTable() const;
+
+
+	// Overrides the base slot at 0x154.
+	virtual void setDeadAnm();
+};
+
+class TPukuPuku : public TTobiPuku {
+public:
+	TPukuPuku(const char* name);
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TPukuPuku() { }
+	virtual void load(JSUMemoryInputStream&);
+	virtual void init(TLiveManager*);
+	virtual void reset();
 };
 
 class TTobiPukuLaunchPad : public TSmallEnemy {
 public:
-	TTobiPukuLaunchPad(const char*);
+	TTobiPukuLaunchPad(const char* name);
 
-	virtual void load(JSUMemoryInputStream&);
-	virtual void perform(u32, JDrama::TGraphics*);
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TTobiPukuLaunchPad() { }
 	virtual void init(TLiveManager*);
 	virtual void reset();
 	virtual void launch();
+	virtual void load(JSUMemoryInputStream&);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 
 	void forceLaunch(TTobiPuku*);
 
-public:
-	/* 0x194 */ s32 unk194;
+	/* 0x194 */ int unk194;
 	/* 0x198 */ TTobiPukuLaunchPadSaveLoadParams* unk198;
 	/* 0x19C */ f32 unk19C;
-	/* 0x1A0 */ char unk1A0[0x8];
+	/* 0x1A0 */ u8 unk1A0[0x1A8 - 0x1A0];
 	/* 0x1A8 */ TTobiPuku* unk1A8;
 };
 
 class TMoePukuLaunchPad : public TTobiPukuLaunchPad {
 public:
-	TMoePukuLaunchPad(const char* name = "モエプク発射台")
+	TMoePukuLaunchPad(const char* name)
 	    : TTobiPukuLaunchPad(name)
 	{
 	}
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TMoePukuLaunchPad() { }
 	virtual void launch();
 };
 
 class TTobiPukuManager : public TSmallEnemyManager {
 public:
-	TTobiPukuManager(const char*);
+	TTobiPukuManager(const char* name);
 
-	virtual void load(JSUMemoryInputStream&);
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TTobiPukuManager() { }
 	virtual TSpineEnemy* createEnemyInstance();
+	virtual void load(JSUMemoryInputStream&);
 };
 
 class TMoePukuManager : public TTobiPukuManager {
 public:
-	TMoePukuManager(const char* name = "モエプクマネージャー")
+	TMoePukuManager(const char* name)
 	    : TTobiPukuManager(name)
 	{
 	}
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TMoePukuManager() { }
 	virtual TSpineEnemy* createEnemyInstance();
 };
 
 class TTobiPukuLaunchPadManager : public TSmallEnemyManager {
 public:
-	TTobiPukuLaunchPadManager(const char*);
+	TTobiPukuLaunchPadManager(const char* name);
 
-	virtual void load(JSUMemoryInputStream&);
-	virtual void perform(u32, JDrama::TGraphics*);
-	virtual TSpineEnemy* createEnemyInstance();
-
-public:
 	/* 0x60 */ u8 unk60;
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TTobiPukuLaunchPadManager() { }
+	virtual TSpineEnemy* createEnemyInstance();
+	virtual void load(JSUMemoryInputStream&);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 };
 
 class TMoePukuLaunchPadManager : public TTobiPukuLaunchPadManager {
 public:
-	TMoePukuLaunchPadManager(const char* name = "モエプク発射台マネージャー")
+	TMoePukuLaunchPadManager(const char* name)
 	    : TTobiPukuLaunchPadManager(name)
 	{
 	}
+
+	// Implicit in retail: the map has this dtor weak, so the body is
+	// in-class.
+	virtual ~TMoePukuLaunchPadManager() { }
 	virtual TSpineEnemy* createEnemyInstance();
 };
 
-class TTobiPukuSaveLoadParams : public TWalkerEnemyParams {
-public:
-	TTobiPukuSaveLoadParams(const char*);
 
-	/* 0x32C */ TParamRT<s32> mSLBoundNum;
-	/* 0x340 */ TParamRT<f32> mSLBoundVal;
-	/* 0x354 */ TParamRT<s32> mSLLifeTimer;
-	/* 0x368 */ TParamRT<f32> mSLFlyGravityY;
-	/* 0x37C */ TParamRT<f32> mSLPowerFromWater;
-};
+DECLARE_NERVE(TNerveTobiPukuSwimWander, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuReturnLaunch, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuPrepareFly, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuBound, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuLand, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuDie, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuPitiPiti, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuFall, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuHitWater, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuAttack, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuFly, TLiveActor)
+DECLARE_NERVE(TNerveTobiPukuGenerate, TLiveActor)
 
-class TTobiPukuLaunchPadSaveLoadParams : public TSmallEnemyParams {
-public:
-	TTobiPukuLaunchPadSaveLoadParams(const char*);
 
-	/* 0x2D4 */ TParamRT<s32> mSLLaunchInterval;
-	/* 0x2E8 */ TParamRT<f32> mSLLaunchVelocityY;
-	/* 0x2FC */ TParamRT<f32> mSLFlyDist;
-	/* 0x310 */ TParamRT<f32> mSLFlySpeed;
-	/* 0x324 */ TParamRT<f32> mSLLaunchAngle;
-};
-
-#endif // ENEMY_TOBIPUKU_HPP
+#endif

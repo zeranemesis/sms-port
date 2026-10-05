@@ -1,72 +1,79 @@
 #include <Enemy/AmiNoko.hpp>
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair and the four MtxCalcType names from M3DUtil/InfectiousStrings.hpp;
-// without it every string offset in this object is shifted.
-#include <M3DUtil/InfectiousStrings.hpp>
-#include <Strategic/ObjManager.hpp>
+#include <Enemy/Enemy.hpp>
+#include <Enemy/PathNode.hpp>
+#include <Enemy/WalkerEnemy.hpp>
+#include <Strategic/LiveActor.hpp>
 #include <Strategic/Spine.hpp>
-#include <Strategic/ObjModel.hpp> // TMActorKeeper
+#include <Strategic/ObjManager.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/Strategy.hpp>
 #include <M3DUtil/MActor.hpp>
 #include <MarioUtil/MathUtil.hpp>
-#include <Strategic/Strategy.hpp> // TIdxGroupObj
-#include <System/MarDirector.hpp>
 #include <Map/Map.hpp>
-#include <Map/MapData.hpp> // TBGCheckData::mNormal, for attackToMario
-#include <Map/MapCollisionData.hpp> // TBGWallCheckRecord, for calcDirection
-#include <Player/MarioAccess.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapCollisionData.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JParticle/JPAEmitter.hpp>
+#include <Player/MarioAccess.hpp>
+#include <System/MarDirector.hpp>
 #include <System/Particles.hpp>
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <Enemy/Enemy.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
 
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
-// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
-// (see the same block in src/Enemy/effectObj.cpp).
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
-#include <MSound/MSound.hpp> // gpMSound, for emitEffects
-#include <System/EmitterViewObj.hpp> // gpMarioParticleManager, for emitEffects
 
-// All four sqrt/inv_sqrt call sites in this ROM (WalkOnFence, Turn,
-// TAmiHit::perform, calcDirection) are out-of-line calls to the weak copies
-// in Animal.a boid.cpp, while TNerveAmiNokoDie expands the same body at its
-// one site - so the default inline in JGUtil.hpp is right for Die and wrong
-// for the other four. The header cannot serve both (one spelling, one
-// mangled name), hence this TU-local non-inlined wrapper.
-// FABRICATED: the callee is orig_inv_sqrt, not
-// inv_sqrt__Q29JGeometry8TUtil<f>Ff, so the `bl` still shows as one
-// mismatched instruction. Making JGUtil.hpp out-of-line and adding a
-// *_inline twin was MEASURED across the repo: it is 7 units better and
-// ~40 units worse, -32.2 points summed. See docs/AGENT_MATCHING_TIPS.md.
-#pragma dont_inline on
-static f32 orig_sqrt(f32 v) { return JGeometry::TUtil<f32>::sqrt(v); }
-static f32 orig_inv_sqrt(f32 v) { return JGeometry::TUtil<f32>::inv_sqrt(v); }
-#pragma dont_inline off
-
-// This TU is -inline deferred: the definition order below is the reverse of
-// the .text layout in mario.MAP.
-
-static const char* amiNoko_bastable[] = {
-	0,
-	"/scene/amiNoko/bas/aminoko_flying1_start.bas",
-	"/scene/amiNoko/bas/aminoko_hit1.bas",
-	0,
-	"/scene/amiNoko/bas/aminoko_run1_loop.bas",
-	0,
-	0,
-	"/scene/amiNoko/bas/aminoko_run2_loop.bas",
-	0,
-	0,
-	"/scene/amiNoko/bas/aminoko_turn1_loop.bas",
-	0,
-	0,
-	"/scene/amiNoko/bas/aminoko_turn2_loop.bas",
-	0,
-	0,
+// The model's .bck list, in the alphabetical order the model data gives it.
+// Every ground animation exists twice, three indices apart: TAmiNoko::
+// mUseAnmSet1 picks between the "1" and the "2" variant.
+enum {
+	AMINOKO_ANM_FLYING1_LOOP  = 0,
+	AMINOKO_ANM_FLYING1_START = 1,
+	AMINOKO_ANM_HIT1          = 2,
+	AMINOKO_ANM_RUN1_END      = 3,
+	AMINOKO_ANM_RUN1_LOOP     = 4,
+	AMINOKO_ANM_RUN1_START    = 5,
+	AMINOKO_ANM_RUN2_END      = 6,
+	AMINOKO_ANM_RUN2_LOOP     = 7,
+	AMINOKO_ANM_RUN2_START    = 8,
+	AMINOKO_ANM_TURN1_END     = 9,
+	AMINOKO_ANM_TURN1_LOOP    = 10,
+	AMINOKO_ANM_TURN1_START   = 11,
+	AMINOKO_ANM_TURN2_END     = 12,
+	AMINOKO_ANM_TURN2_LOOP    = 13,
+	AMINOKO_ANM_TURN2_START   = 14,
+	AMINOKO_ANM_WAIT1         = 15,
 };
 
+static const char* amiNoko_bastable[] = {
+	nullptr,
+	"/scene/amiNoko/bas/aminoko_flying1_start.bas",
+	"/scene/amiNoko/bas/aminoko_hit1.bas",
+	nullptr,
+	"/scene/amiNoko/bas/aminoko_run1_loop.bas",
+	nullptr,
+	nullptr,
+	"/scene/amiNoko/bas/aminoko_run2_loop.bas",
+	nullptr,
+	nullptr,
+	"/scene/amiNoko/bas/aminoko_turn1_loop.bas",
+	nullptr,
+	nullptr,
+	"/scene/amiNoko/bas/aminoko_turn2_loop.bas",
+	nullptr,
+	nullptr,
+};
+
+TAmiNokoSaveLoadParams::TAmiNokoSaveLoadParams(const char* prm)
+    : TWalkerEnemyParams(prm)
+    , PARAM_INIT(mSLElecRange, 200.0f)
+    , PARAM_INIT(mSLMtxRotSpeed, 0.05f)
+{
+	TParams::load(mPrmPath);
+}
 
 TAmiNokoManager::TAmiNokoManager(const char* name)
     : TSmallEnemyManager(name)
@@ -75,112 +82,118 @@ TAmiNokoManager::TAmiNokoManager(const char* name)
 
 void TAmiNokoManager::load(JSUMemoryInputStream& stream)
 {
-	unk38 = new TAmiNokoParams("/enemy/amiNoko.prm");
+	unk38 = new TAmiNokoSaveLoadParams("/enemy/amiNoko.prm");
 	TSmallEnemyManager::load(stream);
 }
 
-// TODO: 0x10220000 flags not fully decoded (J3DMLF_* bitfield)
 void TAmiNokoManager::createModelData()
 {
 	static TModelDataLoadEntry entry[] = {
 		{ "aminoko_model1.bmd", 0x10220000, 0 },
-		{ 0, 0, 0 },
+		{ nullptr, 0, 0 },
 	};
 	createModelDataArray(entry);
 }
 
-TSmallEnemy* TAmiNokoManager::createEnemyInstance() { return 0; }
+// The amiNoko is never spawned from the manager; the fence it rides creates it.
+TSpineEnemy* TAmiNokoManager::createEnemyInstance() { return nullptr; }
+
+TAmiHit::TAmiHit(TAmiNoko* owner, const char* name)
+    : THitActor(name)
+    , mOwner(owner)
+{
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
+	    ->getChildren()
+	    .push_back(this);
+	initHitActor(0x10000021, 1, 0x80000000, 120.0f, 240.0f, 120.0f, 240.0f);
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+}
 
 BOOL TAmiHit::receiveMessage(THitActor* sender, u32 message)
 {
-	return mParent->receiveMessage(sender, message);
+	return mOwner->receiveMessage(sender, message);
 }
 
+// TODO: instruction-identical, but our local vector lands 4 bytes low, i.e.
+// the original allocates one more 4-byte compiler temporary in here.
 void TAmiHit::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (cue & CUE_MOVE) {
-		JGeometry::TVec3<f32> v = mParent->unk19C;
-		// TVec3::setLength() spelled out so the inv_sqrt call and the two
-		// epsilon tests survive verbatim.
-		f32 lsq = v.x * v.x + v.y * v.y + v.z * v.z;
-		if (lsq <= JGeometry::TUtil<f32>::epsilon())
-			v.zero();
-		else
-			v.scale(1.0f * orig_inv_sqrt(lsq), v);
-		v.scale(100.0f, v);
+		JGeometry::TVec3<f32> up = mOwner->mUp;
+		up.normalize();
+		up.scale(100.0f);
 
-		mPosition = mParent->mPosition;
-		mPosition.x += v.x;
-		mPosition.y += v.y;
-		mPosition.z += v.z;
-		mPosition.y -= 0.5f * mAttackHeight;
+		mPosition = mOwner->mPosition;
+		mPosition.add(up);
+		f32 attackHeight = getAttackHeight();
+		mPosition.y -= 0.5f * attackHeight;
 
-		// Raw bit test (clrlwi), not checkLiveFlag(): MWCC turns the single-bit
-		// mask into a rlwinm. on the loaded word.
-		if (!(mParent->mLiveFlag & LIVE_FLAG_DEAD)) {
-			for (int i = 0; i < (int)mColCount; i++) {
-				if (mCollisions[i]->mActorType == 0x80000001)
-					mParent->attackToMario();
+		if (!mOwner->checkLiveFlag(LIVE_FLAG_DEAD)) {
+			for (int i = 0; i < getColNum(); ++i) {
+				if (getCollision(i)->getActorType() == 0x80000001)
+					mOwner->attackToMario();
 			}
 		}
 	}
-
 	THitActor::perform(cue, graphics);
 }
-
 
 TAmiNoko::TAmiNoko(const char* name)
     : TWalkerEnemy(name)
 {
-	unk194 = 0;
-	unk198 = 0;
-	unk20C = 1;
-	unk19C.set(0.0f, 1.0f, 0.0f);
-	unk1A8.set(0.0f, 0.0f, 1.0f);
-	unk1B4 = unk19C;
-	unk1C0 = unk1A8;
+	mFencePlane  = nullptr;
+	mFenceKind   = AMINOKO_SURFACE_GROUND;
+	mUseAnmSet1  = 1;
+	mUp.set(0.0f, 1.0f, 0.0f);
+	mFront.set(0.0f, 0.0f, 1.0f);
+	mPrevUp    = mUp;
+	mPrevFront = mFront;
 }
 
 void TAmiNoko::load(JSUMemoryInputStream& stream)
 {
 	TSpineEnemy::load(stream);
-	stream.read(&mCoinId, 4);
+	stream >> mCoinId;
 }
 
+// Binding level worth +8 of low region, landing TAmiNoko::init's frame at
+// 0x98 (batch 121).
+static inline u8 AmiNokoGetCurrentMap(TMarDirector* p)
+{
+	u8 currentMap = p->getCurrentMap();
+	return currentMap;
+}
+
+// TODO: instruction-identical, frame exact. TAmiHit's push_back puts the
+// search's TNameRefGen binder after the insert temps where retail has it
+// before; the named-group form in TAmiHit fixes that order but adds a dead
+// group slot and loses one bottom optimizer temp (frame +8).
 void TAmiNoko::init(TLiveManager* manager)
 {
 	TWalkerEnemy::init(manager);
 	mActorType = 0x10000021;
 	unk150     = 0x11;
-	mSpine->initWith(&TNerveAmiNokoWalkOnFence::theNerve());
-	unk208 = getSaveParam();
+	getSpine()->initWith(&TNerveAmiNokoWalkOnFence::theNerve());
+	mSaveParams = (TAmiNokoSaveLoadParams*)getSaveParam();
 	reset();
-	setMActorAndKeeper();
+	setWalkAnm();
 	onLiveFlag(LIVE_FLAG_UNK10);
 	initialGraphNode();
-	if (gpMarDirector->mMap == 8)
-		unk20C = 0;
-	unkE8    = 0;
-	TAmiHit* amiHit = new TAmiHit("アミノコ当り判定");
-	amiHit->mParent = this;
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
-	    ->getChildren()
-	    .push_back(amiHit);
-	amiHit->initHitActor(0x10000021, 1, 0x80000000, 120.0f, 240.0f, 120.0f,
-	                     240.0f);
-	amiHit->offHitFlag(HIT_FLAG_NO_COLLISION);
-	mAmiHit = amiHit;
+	if (AmiNokoGetCurrentMap(SMSGetMarDirector()) == 8)
+		mUseAnmSet1 = 0;
+	unkE8   = 0;
+	mAmiHit = new TAmiHit(this, "アミノコ当り判定");
 }
 
 void TAmiNoko::setMActorAndKeeper()
 {
 	mMActorKeeper = new TMActorKeeper(mManager, 1);
-	mMActor = mMActorKeeper->createMActor("aminoko_model1.bmd", 3);
+	mMActor       = mMActorKeeper->createMActor("aminoko_model1.bmd", 3);
 }
 
 void TAmiNoko::reset() { TWalkerEnemy::reset(); }
 
-void TAmiNoko::behaveToWater(THitActor*)
+void TAmiNoko::behaveToWater(THitActor* param_1)
 {
 	if (mSpine->getCurrentNerve() != &TNerveAmiNokoFreeze::theNerve()) {
 		mSpine->pushNerve(&TNerveAmiNokoFreeze::theNerve());
@@ -188,394 +201,377 @@ void TAmiNoko::behaveToWater(THitActor*)
 	}
 }
 
+// TODO: instruction-identical, frame 8 bytes short.
 void TAmiNoko::attackToMario()
 {
 	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyChange::theNerve())
 		return;
-	if (unk194 == nullptr)
+	if (mFencePlane == nullptr)
 		return;
 
-	// not a bool: the original tests it with cmpwi, not the bool clrlwi trick
-	int canAttack = 1;
-	switch (unk198) {
-	case 0:
-		if (SMS_GetMarioRfPlane() != nullptr
-		    && gpMarioPos->y < mPosition.y) {
-			canAttack = 0;
-		}
+	BOOL canAttack = TRUE;
+	switch (mFenceKind) {
+	case AMINOKO_SURFACE_GROUND:
+		// Standing on the floor: Mario has to be above us to get zapped.
+		if (SMS_GetMarioRfPlane() != nullptr && gpMarioPos->y < getPosition().y)
+			canAttack = FALSE;
 		break;
-	case 1:
+	case AMINOKO_SURFACE_ROOF:
 		if (SMS_GetMarioGrPlane() != nullptr
-		    && 5.0f + gpMarioPos->y > mPosition.y) {
-			canAttack = 0;
-		}
+		    && 5.0f + gpMarioPos->y > getPosition().y)
+			canAttack = FALSE;
 		break;
-	case 2: {
-		const TBGCheckData* plane = SMS_GetMarioWlPlane();
-		if (plane != nullptr
-		    && plane->mNormal.dot(unk194->mNormal) < 0.0f) {
-			canAttack = 0;
-		}
-		break;
-	}
-	default:
+	case AMINOKO_SURFACE_WALL: {
+		// Only Mario on the same side of the wall can be reached.
+		const TBGCheckData* wall = SMS_GetMarioWlPlane();
+		if (wall != nullptr
+		    && wall->getNormal().dot(mFencePlane->getNormal()) < 0.0f)
+			canAttack = FALSE;
 		break;
 	}
+	}
 
-	if (!canAttack)
-		return;
-	if (!SMS_SendMessageToMario(this, 9))
-		return;
-	if (mSpine->getCurrentNerve() == &TNerveAmiNokoFreeze::theNerve())
-		return;
-
-	mSpine->pushNerve(&TNerveAmiNokoFreeze::theNerve());
+	if (canAttack) {
+		if (SMS_SendMessageToMario(this, HIT_MESSAGE_ELECTRIC_SHOCK)) {
+			if (mSpine->getCurrentNerve()
+			    != &TNerveAmiNokoFreeze::theNerve()) {
+				mSpine->pushNerve(&TNerveAmiNokoFreeze::theNerve());
+			}
+		}
+	}
 }
+
 void TAmiNoko::setWalkAnm()
 {
-	if (unk20C)
-		setBckAnm(5);
+	if (mUseAnmSet1)
+		setBckAnm(AMINOKO_ANM_RUN1_START);
 	else
-		setBckAnm(5);
+		setBckAnm(AMINOKO_ANM_RUN2_START);
 }
 
-bool TAmiNoko::isHitValid(u32 cue)
+// Binding level over the address of a struct member, worth +16 of low region
+// in TAmiNoko::isHitValid (batch 130).
+static inline const JGeometry::TVec3<f32>* AmiNokoUp(const TAmiNoko* p)
 {
-	if (cue == 0xC || cue == 1) {
-		// the y component is 0.0f in the original, which is why the dot
-		// product keeps a `fmuls` for the 0.0f * unk19C.y term
-		JGeometry::TVec3<f32> d(mPosition.x - gpMarioPos->x, 0.0f,
-		                        mPosition.z - gpMarioPos->z);
+	const JGeometry::TVec3<f32>* up = &p->mUp;
+	return up;
+}
 
-		// dead call in the original: the result is never read.
-		matan(unk19C.z, unk19C.x);
+static inline f32 AmiNokoSqrt(f32 value)
+{
+	f32 r = JGeometry::TUtil<f32>::sqrt(value);
+	return r;
+}
 
-		if (d.dot(unk19C) > 0.0f || cue == 1)
+// The named mUp components are live in f1/f2 across the dx/dz loads, which
+// pushes that block to f5/f4/f3 as retail has it.
+bool TAmiNoko::isHitValid(u32 message)
+{
+	if (message == HIT_MESSAGE_PUNCH || message == HIT_MESSAGE_HIP_DROP) {
+		f32 dx = mPosition.x - gpMarioPos->x;
+		f32 dz = mPosition.z - gpMarioPos->z;
+		f32 upZ = mUp.z;
+		f32 upX = mUp.x;
+		JGeometry::TVec3<f32> toMario(dx, 0.0f, dz);
+		// TODO: the result is discarded; presumably a leftover from an earlier
+		// version that compared the fence facing against this angle.
+		matan(upZ, upX);
+		if (toMario.dot(*AmiNokoUp(this)) > 0.0f
+		    || message == HIT_MESSAGE_HIP_DROP)
 			mSpine->pushNerve(&TNerveAmiNokoDie::theNerve());
 	}
-
-	if (cue == 0xB)
-		return true;
-	return false;
+	return message == HIT_MESSAGE_UNKB ? true : false;
 }
 
-
+// TODO: 99.5%, every instruction in place. The named block is laid out as
+// retail's but the whole frame sits 0x50 low (0x170 vs 0x1c0; getPlaneDistance()
+// at the three distances took it from 0x148 and 8 of 22 register mismatches),
+// and the three plane distances keep the dot product in f1 where retail uses
+// f2, plus one FPR swap in the side cross product. Inert on the FPRs: a shared distance helper,
+// `dist += mPlaneDistance` as its own statement, fabsf on a named dist.
+// c-m18: distance-first sums inert; mPosition.dot(normal) is worse (99.3).
 void TAmiNoko::calcDirection()
 {
-	// TODO(nonmatching) 78.6%. The inv_sqrt part is solved (see the
-	// orig_inv_sqrt wrapper at the top of the file).
-	// What is left is almost entirely the stack
-	// frame: ours is 0x108, the original 0x1C0. The used locals line up
-	// (dir at 0xE8 vs 0x1A4, the TBGWallCheckRecord at 0xAC vs 0x174) so the
-	// difference is 0xB8 bytes of frame MWCC reserved and never touched -
-	// the per-unused-class-local quirk, ~15 TVec3 worth. Padding it with a
-	// dummy array is a fakematch, so it stays. The rest is register/schedule
-	// noise in the six clamp blocks (MWCC negates `t <= b` and spends a cror
-	// instead of a ble - same instruction count).
-	JGeometry::TVec3<f32> dir = getUnkF4().getPoint();
-	dir.x -= mPosition.x;
-	dir.y -= mPosition.y;
-	dir.z -= mPosition.z;
+	JGeometry::TVec3<f32> toGoal = getUnkF4().getPoint();
+	toGoal.sub(mPosition);
+	if (toGoal.isZero())
+		toGoal.set(1.0f, 0.0f, 0.0f);
+	else
+		toGoal.normalize();
 
-	// isZero() + setLength(one()) spelled out: the target computes
-	// squared() once (MWCC CSEs the copy inside setLength), re-tests it
-	// against epsilon(), and only then calls the out-of-line inv_sqrt.
-	f32 lsq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-	if (lsq <= JGeometry::TUtil<f32>::epsilon()) {
-		dir.set(1.0f, 0.0f, 0.0f);
-	} else if (lsq <= JGeometry::TUtil<f32>::epsilon()) {
-		dir.zero();
-	} else {
-		dir.scale(1.0f * orig_inv_sqrt(lsq), dir);
-	}
-
-	TBGWallCheckRecord rec;
-	rec.mCenter.set(mPosition.x, mPosition.y, mPosition.z);
-	rec.mRadius     = 10.0f;
-	rec.mMaxResults = 4;
-	rec.mFlags      = 0;
-	int wallCount = gpMap->isTouchedWallsAndMoveXZ(&rec);
-
-	const TBGCheckData* best = nullptr;
-	int bestIndex            = -1;
-	f32 bestDist             = -1.0f;
-
-	for (int i = 0; i < wallCount; i++) {
-		f32 d = rec.mResultWalls[i]->mNormal.dot(mPosition)
-		        + rec.mResultWalls[i]->mPlaneDistance;
-		d = fabsf(d);
-		if (bestDist > d || bestDist < 0.0f) {
-			bestDist  = d;
-			unk198    = 2;
-			bestIndex = i;
+	// Find the surface we are crawling on: the nearest wall around us, the
+	// ground under us or the roof above us, whichever is closest.
+	TBGWallCheckRecord record(mPosition.x, mPosition.y, mPosition.z, 10.0f, 4,
+	                          0);
+	const TBGCheckData* plane;
+	int wallNum    = gpMap->isTouchedWallsAndMoveXZ(&record);
+	f32 nearest    = -1.0f;
+	int nearestIdx = -1;
+	for (int i = 0; i < wallNum; ++i) {
+		plane    = record.mResultWalls[i];
+		f32 dist = fabsf(record.mResultWalls[i]->getNormal().dot(mPosition)
+		                 + record.mResultWalls[i]->getPlaneDistance());
+		if (nearestIdx < 0 || nearest > dist || nearest < 0.0f) {
+			mFenceKind = AMINOKO_SURFACE_WALL;
+			nearest    = dist;
+			nearestIdx = i;
 		}
 	}
-	// NB: with bestIndex still -1 this reads mResultWalls[-1], which lands on
-	// the mFlags word the constructor just wrote to 0 - i.e. nullptr.
-	best = rec.mResultWalls[bestIndex];
+	const TBGCheckData* found = record.mResultWalls[nearestIdx];
 
-	const TBGCheckData* plane;
 	gpMap->checkGround(mPosition.x, mPosition.y + getHeadHeight(),
 	                   mPosition.z, &plane);
 	mGroundPlane = plane;
-
-	if (mGroundPlane) {
-		f32 d = mGroundPlane->mNormal.dot(mPosition)
-		        + mGroundPlane->mPlaneDistance;
-		if (d >= 0.0f && (bestDist > d || bestDist < 0.0f)) {
-			bestDist = d;
-			unk198   = 0;
-			best     = mGroundPlane;
+	if (mGroundPlane != nullptr) {
+		plane    = mGroundPlane;
+		f32 dist = plane->getNormal().dot(mPosition) + plane->getPlaneDistance();
+		if (dist >= 0.0f) {
+			if (nearest > dist || nearest < 0.0f) {
+				found      = plane;
+				mFenceKind = AMINOKO_SURFACE_GROUND;
+				nearest    = dist;
+			}
 		}
 	}
 
 	gpMap->checkRoof(mPosition, &plane);
-	if (plane) {
-		f32 d = plane->mNormal.dot(mPosition) + plane->mPlaneDistance;
-		if (d >= 0.0f && (bestDist > d || bestDist < 0.0f)) {
-			bestDist = d;
-			unk198   = 1;
-			best     = plane;
+	if (plane != nullptr) {
+		f32 dist = plane->getNormal().dot(mPosition) + plane->getPlaneDistance();
+		if (dist >= 0.0f) {
+			if (nearest > dist || nearest < 0.0f) {
+				found      = plane;
+				mFenceKind = AMINOKO_SURFACE_ROOF;
+			}
 		}
 	}
-	if (best)
-		unk194 = best;
+	if (found != nullptr)
+		mFencePlane = found;
 
-	// mSLMtxRotSpeed is the per-frame nudge the two basis vectors get towards
-	// the new normal.
-	f32 step = static_cast<TAmiNokoParams*>(getSaveParam())
-	               ->mSLMtxRotSpeed.get();
+	f32 rotSpeed = getSaveParams()->getSLMtxRotSpeed();
 
-	JGeometry::TVec3<f32> n;
-	if (unk194)
-		n = unk194->mNormal;
+	// Creep the up vector towards the surface normal.
+	JGeometry::TVec3<f32> normal;
+	if (mFencePlane != nullptr)
+		normal = mFencePlane->getNormal();
 	else
-		n.set(0.0f, 1.0f, 0.0f);
+		normal.set(0.0f, 1.0f, 0.0f);
 
-	if (n.dot(unk19C) <= -1.0f)
-		unk19C = n;
-
-	PSVECNormalize(&unk19C, &unk19C);
-
-	if (unk19C.x < n.x) {
-		f32 t = unk19C.x + step;
-		unk19C.x = t <= n.x ? t : n.x;
+	if (normal.dot(mUp) <= -1.0f) {
+		mUp = normal;
 	} else {
-		f32 t = unk19C.x - step;
-		unk19C.x = t <= n.x ? n.x : t;
-	}
-	if (unk19C.y < n.y) {
-		f32 t = unk19C.y + step;
-		unk19C.y = t <= n.y ? t : n.y;
-	} else {
-		f32 t = unk19C.y - step;
-		unk19C.y = t <= n.y ? n.y : t;
-	}
-	if (unk19C.z < n.z) {
-		f32 t = unk19C.z + step;
-		unk19C.z = t <= n.z ? t : n.z;
-	} else {
-		f32 t = unk19C.z - step;
-		unk19C.z = t <= n.z ? n.z : t;
-	}
-	if (dir.dot(unk1A8) < -0.1f) {
-		Mtx mtx;
-		PSMTXRotAxisRad(mtx, &n, JGeometry::TUtil<f32>::halfPI());
-		PSMTXMultVec(mtx, &dir, &dir);
+		mUp.x = mUp.x < normal.x
+		            ? (mUp.x + rotSpeed > normal.x ? normal.x
+		                                           : mUp.x + rotSpeed)
+		            : (mUp.x - rotSpeed > normal.x ? mUp.x - rotSpeed
+		                                           : normal.x);
+		mUp.y = mUp.y < normal.y
+		            ? (mUp.y + rotSpeed > normal.y ? normal.y
+		                                           : mUp.y + rotSpeed)
+		            : (mUp.y - rotSpeed > normal.y ? mUp.y - rotSpeed
+		                                           : normal.y);
+		mUp.z = mUp.z < normal.z
+		            ? (mUp.z + rotSpeed > normal.z ? normal.z
+		                                           : mUp.z + rotSpeed)
+		            : (mUp.z - rotSpeed > normal.z ? mUp.z - rotSpeed
+		                                           : normal.z);
+		VECNormalize(&mUp, &mUp);
 	}
 
-	if (unk1A8.x < dir.x) {
-		f32 t = unk1A8.x + step;
-		unk1A8.x = t <= dir.x ? t : dir.x;
-	} else {
-		f32 t = unk1A8.x - step;
-		unk1A8.x = t <= dir.x ? dir.x : t;
+	// Creep the facing direction towards the goal. Going straight backwards
+	// would be ambiguous, so turn sideways around the surface normal first.
+	if (mFront.dot(toGoal) < -0.1f) {
+		Mtx rot;
+		MTXRotAxisRad(rot, normal, 1.5707964f);
+		MTXMultVec(rot, toGoal, toGoal);
 	}
-	if (unk1A8.y < dir.y) {
-		f32 t = unk1A8.y + step;
-		unk1A8.y = t <= dir.y ? t : dir.y;
-	} else {
-		f32 t = unk1A8.y - step;
-		unk1A8.y = t <= dir.y ? dir.y : t;
-	}
-	if (unk1A8.z < dir.z) {
-		f32 t = unk1A8.z + step;
-		unk1A8.z = t <= dir.z ? t : dir.z;
-	} else {
-		f32 t = unk1A8.z - step;
-		unk1A8.z = t <= dir.z ? dir.z : t;
-	}
-	PSVECNormalize(&unk1A8, &unk1A8);
+	mFront.x = mFront.x < toGoal.x
+	               ? (mFront.x + rotSpeed > toGoal.x
+	                      ? toGoal.x
+	                      : mFront.x + rotSpeed)
+	               : (mFront.x - rotSpeed > toGoal.x
+	                      ? mFront.x - rotSpeed
+	                      : toGoal.x);
+	mFront.y = mFront.y < toGoal.y
+	               ? (mFront.y + rotSpeed > toGoal.y
+	                      ? toGoal.y
+	                      : mFront.y + rotSpeed)
+	               : (mFront.y - rotSpeed > toGoal.y
+	                      ? mFront.y - rotSpeed
+	                      : toGoal.y);
+	mFront.z = mFront.z < toGoal.z
+	               ? (mFront.z + rotSpeed > toGoal.z
+	                      ? toGoal.z
+	                      : mFront.z + rotSpeed)
+	               : (mFront.z - rotSpeed > toGoal.z
+	                      ? mFront.z - rotSpeed
+	                      : toGoal.z);
+	VECNormalize(&mFront, &mFront);
 
-	// perpendicular of the (unk19C, unk1A8) plane, back on unk19C
-	JGeometry::TVec3<f32> m;
-	m.cross(unk19C, unk1A8);
-	dir.cross(m, unk19C);
-	if (!dir.isZero()) {
-		unk1B4 = unk19C;
-		unk1C0 = unk1A8;
+	// Re-orthogonalise: remember the last frame that had a valid frame, then
+	// rebuild the facing direction from the side vector and the up vector.
+	JGeometry::TVec3<f32> side;
+	side.cross(mUp, mFront);
+	if (!side.isZero()) {
+		mPrevUp    = mUp;
+		mPrevFront = mFront;
 	}
-	if (!dir.isZero())
-		unk1A8 = dir;
+	toGoal.cross2(side, mUp);
+	if (!toGoal.isZero())
+		mFront = toGoal;
 }
 
 void TAmiNoko::emitEffects()
 {
-	// NB: the gateCheck is explicit and the *static* startSoundActor is
-	// called; MSound::startSoundActor() would gate a second time.
-	if (gpMSound->gateCheck(0x20F1))
-		MSoundSESystem::MSoundSE::startSoundActor(0x20F1, &mPosition, 0,
-		                                          nullptr, 0, 4);
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_AMINOKO_SPARK, &mPosition, 0,
+	                                nullptr, 0, 4);
 
+	// Three arcs bound to three joints. The owner key has to differ per arc
+	// or the particle manager would reuse a single slot for all of them.
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x180, getMActor()->getModel()->getAnmMtx(11), 1, this);
+	    PARTICLE_MS_AMN_BIRI, getMActor()->getModel()->getAnmMtx(11), 1,
+	    this);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x180, getMActor()->getModel()->getAnmMtx(10), 1,
-	    (void*)((u8*)this + 0x214));
+	    PARTICLE_MS_AMN_BIRI, getMActor()->getModel()->getAnmMtx(10), 1,
+	    this + 1);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x180, getMActor()->getModel()->getAnmMtx(9), 1,
-	    (void*)((u8*)this + 0x428));
+	    PARTICLE_MS_AMN_BIRI, getMActor()->getModel()->getAnmMtx(9), 1,
+	    this + 2);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x182, getMActor()->getModel()->getAnmMtx(11), 1, this);
+	    PARTICLE_MS_AMN_SPARK_R, getMActor()->getModel()->getAnmMtx(11), 1,
+	    this);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x181, getMActor()->getModel()->getAnmMtx(11), 1, this);
+	    PARTICLE_MS_AMN_SPARK_L, getMActor()->getModel()->getAnmMtx(11), 1,
+	    this);
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x183, getMActor()->getModel()->getAnmMtx(11), 1, this);
+	    PARTICLE_MS_AMN_SPARK_M, getMActor()->getModel()->getAnmMtx(11), 1,
+	    this);
 
-	// positive form: the original branches over the body, it does not
-	// short-circuit out of a negated condition
 	if (mSpine->getCurrentNerve() == &TNerveAmiNokoFreeze::theNerve()
 	    && mSpine->getTime() < 46) {
-		JPABaseEmitter* emitter
-		    = gpMarioParticleManager->emitAndBindToMtxPtr(
-		        0x17D, getMActor()->getModel()->getAnmMtx(0), 1, this);
-		if (emitter) {
-			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+		JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    PARTICLE_MS_DNK_SHIBIRE_A, getMActor()->getModel()->getAnmMtx(0),
+		    1, this);
+		if (emitter)
 			emitter->setGlobalScale(scale);
-		}
 
-		// the original reads +0xC/+0x1C/+0x2C of node matrix 6 (a 0x10
-		// stride) into unk1FC, then emits at &unk1FC
-		const f32* src = (const f32*)getMActor()->getModel()->getAnmMtx(6);
-		unk1FC.set(src[3], src[7], src[11]);
-
+		MtxPtr mtx = getMActor()->getModel()->getAnmMtx(6);
+		mSparkPos.set(mtx[0][3], mtx[1][3], mtx[2][3]);
 		emitter = gpMarioParticleManager->emitAndBindToPosPtr(
-		    0x17E, &unk1FC, 1, this);
-		if (emitter) {
-			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+		    PARTICLE_MS_DNK_HIBANA, &mSparkPos, 1, this);
+		if (emitter)
 			emitter->setGlobalScale(scale);
-		}
 	}
 }
+
 void TAmiNoko::calcRootMatrix()
 {
 	emitEffects();
 
-	if (isBckAnm(0)) {
-		MtxPtr m = reinterpret_cast<MtxPtr>(&unk1CC);
-		m[0][3] = mPosition.x;
-		m[1][3] = mPosition.y;
-		m[2][3] = mPosition.z;
-
-		PSMTXCopy(m, getModel()->getBaseTRMtx());
+	// TODO: the original keeps this pointer in r31 and `this` in r30; we get
+	// the opposite. front is a plain Vec (frame exact, and the fallback
+	// cross product reloads it for z as retail does); retail also reloads
+	// up.x there, which `Vec up` reproduces at +0x10 frame. Inert: cross2 on
+	// the fallback, the root copy inlined into setBaseTRMtx, mtx declared
+	// first or per branch; else-branch first is worse.
+	// c-m17 (regalloc): `this` (deg 35) is deferred; the getBaseTRMtx web
+	// (@1940/@1964) has deg 28, one short of being deferred too and so
+	// coloured first (r31). `Vec up` with an inline set() instead of cross
+	// gives the up.x reload at -0x10 frame; an else arm, no named mtx in
+	// the first branch, and TVec3/Vec mixes are all inert or worse.
+	MtxPtr mtx;
+	if (isBckAnm(AMINOKO_ANM_FLYING1_LOOP)) {
+		// While falling the orientation is frozen, only the position moves.
+		mRootMtx[0][3] = mPosition.x;
+		mRootMtx[1][3] = mPosition.y;
+		mRootMtx[2][3] = mPosition.z;
+		mtx            = mRootMtx;
+		getModel()->setBaseTRMtx(mtx);
 		getModel()->setBaseScale(mScaling);
 		return;
 	}
 
-	// Column 0 is the normal of the (unk19C, unk1A8) plane. When that pair
-	// is degenerate the (unk1B4, unk1C0) backup plane is used instead, and if
-	// that one is degenerate too the normal falls back to +X. The two basis
-	// vectors written into columns 1/2 follow whichever pair was picked, but
-	// the translation is always built from unk19C - quirk of the original.
-	MtxPtr mtx = getModel()->getBaseTRMtx();
+	mtx = getModel()->getBaseTRMtx();
 
-	JGeometry::TVec3<f32> nrm;
 	JGeometry::TVec3<f32> side;
-	JGeometry::TVec3<f32> fwd;
-
-	nrm.cross(unk19C, unk1A8);
-	if (nrm.isZero()) {
-		side = unk1B4;
-		fwd  = unk1C0;
-		nrm.cross(side, fwd);
-		if (nrm.isZero())
-			nrm.set(1.0f, 0.0f, 0.0f);
+	JGeometry::TVec3<f32> up;
+	Vec front;
+	side.cross2(mUp, mFront);
+	if (side.isZero()) {
+		up    = mPrevUp;
+		front = mPrevFront;
+		side.cross(up, front);
+		if (side.isZero())
+			side.set(1.0f, 0.0f, 0.0f);
 	} else {
-		side = unk19C;
-		fwd  = unk1A8;
+		up    = mUp;
+		front = mFront;
 	}
+	VECNormalize(side, side);
 
-	// TODO(nonmatching): the original's frame is 0x68, ours 0x58 - it has one
-	// more 12-byte class local at 0x2c that emits no code (MWCC reserves stack
-	// for unused class locals). Probing with an extra unused TVec3 lands all
-	// three real slots on the target offsets and takes the score to 92.3%, so
-	// the body is right; the padding itself is deliberately not committed.
-	// That extra pressure also seems to be what makes the original spill and
-	// reload side.x/fwd.x for the third component of the second cross()
-	// (2 extra lfs there) and park `this` in r30 instead of r31.
-	PSVECNormalize(&nrm, &nrm);
-
-	mtx[0][0] = nrm.x;
-	mtx[1][0] = nrm.y;
-	mtx[2][0] = nrm.z;
-	mtx[0][1] = side.x;
-	mtx[1][1] = side.y;
-	mtx[2][1] = side.z;
-	mtx[0][2] = fwd.x;
-	mtx[1][2] = fwd.y;
-	mtx[2][2] = fwd.z;
-	mtx[0][3] = mPosition.x - 30.0f * unk19C.x;
-	mtx[1][3] = mPosition.y - 30.0f * unk19C.y;
-	mtx[2][3] = mPosition.z - 30.0f * unk19C.z;
+	mtx[0][0] = side.x;
+	mtx[1][0] = side.y;
+	mtx[2][0] = side.z;
+	mtx[0][1] = up.x;
+	mtx[1][1] = up.y;
+	mtx[2][1] = up.z;
+	mtx[0][2] = front.x;
+	mtx[1][2] = front.y;
+	mtx[2][2] = front.z;
+	mtx[0][3] = mPosition.x - 30.0f * mUp.x;
+	mtx[1][3] = mPosition.y - 30.0f * mUp.y;
+	mtx[2][3] = mPosition.z - 30.0f * mUp.z;
 
 	getModel()->setBaseScale(mScaling);
-	PSMTXCopy(mtx, unk1CC);
+	MTXCopy(mtx, mRootMtx);
 }
 
+// TODO: instruction-identical; the operator- temporary lands at 0x20 instead
+// of 0x10, so the original has fewer temporaries below it.
 void TAmiNoko::bind()
 {
-	if (isBckAnm(0)) {
-		JGeometry::TVec3<f32> v = mPosition;
-		v += mLinearVelocity;
-		v += mVelocity;
+	if (isBckAnm(AMINOKO_ANM_FLYING1_LOOP)) {
+	// Same as TLiveActor::bind() minus the wall push-out: while the amiNoko is
+	// tumbling off its fence it should fall straight through walls.
+	JGeometry::TVec3<f32> nextPos = mPosition;
+	nextPos += mLinearVelocity;
+	nextPos += mVelocity;
 
-		mVelocity.y -= getGravityY();
-		if (mVelocity.y < mVelocityMinY)
-			mVelocity.y = mVelocityMinY;
+	mVelocity.y -= getGravityY();
+	if (mVelocity.y < TLiveActor::mVelocityMinY)
+		mVelocity.y = TLiveActor::mVelocityMinY;
 
-		if (checkLiveFlag(LIVE_FLAG_UNK1000)) {
-			mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
-			    v.x, v.y + mHeadHeight, v.z, &mGroundPlane);
-		} else {
-			mGroundHeight = gpMap->checkGround(
-			    v.x, v.y + mHeadHeight, v.z, &mGroundPlane);
-		}
+	if (checkLiveFlag(LIVE_FLAG_UNK1000)) {
+		mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
+		    nextPos.x, nextPos.y + mHeadHeight, nextPos.z, &mGroundPlane);
+	} else {
+		mGroundHeight = gpMap->checkGround(
+		    nextPos.x, nextPos.y + mHeadHeight, nextPos.z, &mGroundPlane);
+	}
+	mGroundHeight += 1.0f;
 
-		mGroundHeight += 1.0f;
-		if (v.y <= 0.05f + mGroundHeight) {
-			if (mGroundPlane->isIllegalData())
-				kill();
+	if (nextPos.y <= mGroundHeight + 0.05f) {
+		if (mGroundPlane->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+			kill();
+		offLiveFlag(LIVE_FLAG_AIRBORNE);
+		mVelocity.set(0.0f, 0.0f, 0.0f);
+		nextPos.y = mGroundHeight;
+	} else {
+		onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
 
-			offLiveFlag(LIVE_FLAG_AIRBORNE);
-			// TODO: the original stores x/y/z in order here; .zero() stores
-			// them in reverse and a batched ctor costs two extra lfs.
-			mVelocity.zero();
-			v.y = mGroundHeight;
-		} else {
-			onLiveFlag(LIVE_FLAG_AIRBORNE);
-		}
-
-		mLinearVelocity = v - mPosition;
+	mLinearVelocity = nextPos - mPosition;
 	} else {
 		TLiveActor::bind();
 	}
 }
 
-
 void TAmiNoko::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	if (cue & 0x2)
+	if (cue & CUE_CALC_ANIM)
 		calcDirection();
+
 	TSmallEnemy::perform(cue, graphics);
 	mAmiHit->perform(cue, graphics);
 }
@@ -584,276 +580,241 @@ f32 TAmiNoko::getGravityY() const
 {
 	if (mSpine->getCurrentNerve() == &TNerveAmiNokoDie::theNerve())
 		return 0.0f;
-
 	return mGravity;
+}
+
+// Tiny size mismatch: 516 bytes compiled, the map records 492.
+// TODO: every local of this inlined body lands 4 bytes above the original's
+// in both nerves, i.e. we allocate one 4-byte compiler temporary too many
+// somewhere in here. The instruction stream is otherwise identical.
+void TAmiNoko::creepToCurPathNode(f32 max_speed)
+{
+	JGeometry::TVec3<f32> toGoal = getUnkF4().getPoint();
+	toGoal.sub(mPosition);
+	if (toGoal.isZero())
+		return;
+
+	f32 speed = JGeometry::TUtil<f32>::sqrt(toGoal.squared());
+	speed     = max_speed > speed ? speed : max_speed;
+
+	toGoal.normalize();
+	toGoal.scale(speed);
+
+	JGeometry::TVec3<f32> velocity = mLinearVelocity;
+	velocity.add(toGoal);
+	mLinearVelocity = velocity;
+}
+
+// Tiny size mismatch
+bool TAmiNoko::isDeadByWall()
+{
+	if (gpMap->isTouchedOneWallAndMoveXZ(&mPosition.x, mPosition.y,
+	                                     &mPosition.z, 3.0f * mBodyRadius)) {
+		JGeometry::TVec3<f32> stop(0.0f, 0.0f, 0.0f);
+		mVelocity = stop;
+
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitWithRotate(
+		    PARTICLE_MS_ENM_WALLHIT, &mPosition, 0,
+		    (s16)(182.04445f * mRotation.y), 0, 0, nullptr);
+		if (emitter)
+			emitter->setGlobalScale(mScaling);
+
+		emitter = gpMarioParticleManager->emitWithRotate(
+		    PARTICLE_MS_ENM_WALLHIT_O, &mPosition, 0,
+		    (s16)(182.04445f * mRotation.y), 0, 0, nullptr);
+		if (emitter)
+			SMSSetEmitterPolColor(emitter, 6);
+
+		return true;
+	}
+	return false;
 }
 
 const char** TAmiNoko::getBasNameTable() const { return amiNoko_bastable; }
 
-// Not marked inline on purpose: MWCC has to see the body at the call sites so
-// that both TNerveAmiNokoWalkOnFence and TNerveAmiNokoTurn get the expansion.
-// The map lists this as UNUSED (0x1EC) because the original compiler emitted a
-// standalone copy it then inlined away at both sites.
-inline void TAmiNoko::creepToCurPathNode(f32 maxStep, f32 scale)
-{
-	JGeometry::TVec3<f32> dir = getUnkF4().getPoint();
-	dir.x -= mPosition.x;
-	dir.y -= mPosition.y;
-	dir.z -= mPosition.z;
-
-	f32 dist2 = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-	if (dist2 <= JGeometry::TUtil<f32>::epsilon())
-		return;
-
-	f32 len = orig_sqrt(dist2);
-	if (maxStep <= len)
-		len = maxStep;
-
-	f32 d = dir.dot(dir);
-	if (d <= JGeometry::TUtil<f32>::epsilon()) {
-		dir.zero();
-	} else {
-		dir.scale(1.0f * orig_inv_sqrt(d), dir);
-	}
-	dir.x *= len;
-	dir.y *= len;
-	dir.z *= len;
-	mLinearVelocity += dir;
-}
-
 DEFINE_NERVE(TNerveAmiNokoWalkOnFence, TLiveActor)
 {
-	TAmiNoko* self = (TAmiNoko*)spine->getBody();
+	TAmiNoko* amiNoko = (TAmiNoko*)spine->getBody();
 
 	if (spine->getTime() == 0)
-		self->setWalkAnm();
+		amiNoko->setWalkAnm();
 
-	if (self->isBckAnm(5) || self->isBckAnm(8)) {
-		if (self->checkCurAnmEnd(0)) {
-			if (self->unk20C)
-				self->setBckAnm(4);
+	if (amiNoko->isBckAnm(AMINOKO_ANM_RUN1_START)
+	    || amiNoko->isBckAnm(AMINOKO_ANM_RUN2_START)) {
+		if (amiNoko->checkCurAnmEnd(0)) {
+			if (amiNoko->mUseAnmSet1)
+				amiNoko->setBckAnm(AMINOKO_ANM_RUN1_LOOP);
 			else
-				self->setBckAnm(7);
+				amiNoko->setBckAnm(AMINOKO_ANM_RUN2_LOOP);
 		}
 	}
 
-	JGeometry::TVec3<f32> dir = self->getUnkF4().getPoint();
-	dir.x -= self->mPosition.x;
-	dir.y -= self->mPosition.y;
-	dir.z -= self->mPosition.z;
-
-	f32 dist = orig_sqrt(dir.z * dir.z
-	                      + (dir.x * dir.x + dir.y * dir.y));
-	if (dist < 1.5f) {
-		if (self->checkCurAnmEnd(0)) {
-			if (self->isBckAnm(3) || self->isBckAnm(6)) {
-				self->goToRandomNextGraphNode();
-				self->mSpine->pushAfterCurrent(&TNerveAmiNokoTurn::theNerve());
-				return TRUE;
-			}
-			if (self->isBckAnm(4)) {
-				self->setBckAnm(3);
-			} else if (self->isBckAnm(7)) {
-				self->setBckAnm(6);
-			}
+	const JGeometry::TVec3<f32>& goal = amiNoko->unkF4.getPoint();
+	JGeometry::TVec3<f32> toGoal = goal;
+	toGoal.sub(amiNoko->mPosition);
+	if (AmiNokoSqrt(toGoal.squared()) < 1.5f
+	    && amiNoko->checkCurAnmEnd(0)) {
+		if (amiNoko->isBckAnm(AMINOKO_ANM_RUN1_END)
+		    || amiNoko->isBckAnm(AMINOKO_ANM_RUN2_END)) {
+			amiNoko->goToRandomNextGraphNode();
+			spine->pushAfterCurrent(&TNerveAmiNokoTurn::theNerve());
+			return TRUE;
 		}
+		if (amiNoko->isBckAnm(AMINOKO_ANM_RUN1_LOOP))
+			amiNoko->setBckAnm(AMINOKO_ANM_RUN1_END);
+		else if (amiNoko->isBckAnm(AMINOKO_ANM_RUN2_LOOP))
+			amiNoko->setBckAnm(AMINOKO_ANM_RUN2_END);
 	}
 
-	self->creepToCurPathNode(3.0f, 1.0f);
-
+	amiNoko->creepToCurPathNode(3.0f);
 	return FALSE;
 }
 
 DEFINE_NERVE(TNerveAmiNokoTurn, TLiveActor)
 {
-	TAmiNoko* self = (TAmiNoko*)spine->getBody();
+	TAmiNoko* amiNoko = (TAmiNoko*)spine->getBody();
 
-	if (spine->getTime() == 0) {
-		if (self->unk20C)
-			self->setBckAnm(0xB);
+	if (!spine->getTime()) {
+		if (amiNoko->mUseAnmSet1)
+			amiNoko->setBckAnm(AMINOKO_ANM_TURN1_START);
 		else
-			self->setBckAnm(0xE);
+			amiNoko->setBckAnm(AMINOKO_ANM_TURN2_START);
 	}
 
-	if (self->isBckAnm(0xB) || self->isBckAnm(0xE)) {
-		if (self->checkCurAnmEnd(0)) {
-			if (self->unk20C)
-				self->setBckAnm(0xA);
+	if (amiNoko->isBckAnm(AMINOKO_ANM_TURN1_START)
+	    || amiNoko->isBckAnm(AMINOKO_ANM_TURN2_START)) {
+		if (amiNoko->checkCurAnmEnd(0)) {
+			if (amiNoko->mUseAnmSet1)
+				amiNoko->setBckAnm(AMINOKO_ANM_TURN1_LOOP);
 			else
-				self->setBckAnm(0xD);
+				amiNoko->setBckAnm(AMINOKO_ANM_TURN2_LOOP);
 		}
 	}
 
-	JGeometry::TVec3<f32> dir = self->getUnkF4().getPoint();
-	dir.x -= self->mPosition.x;
-	dir.y -= self->mPosition.y;
-	dir.z -= self->mPosition.z;
-	if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-		dir.x = 1.0f;
-	PSVECNormalize(&dir, &dir);
+	JGeometry::TVec3<f32> toGoal = amiNoko->getUnkF4().getPoint();
+	toGoal.sub(amiNoko->getPosition());
+	if (toGoal.x == 0.0f && toGoal.y == 0.0f && toGoal.z == 0.0f)
+		toGoal.x = 1.0f;
+	VECNormalize(toGoal, toGoal);
 
-	if (dir.dot(self->unk1A8) > 0.8f && self->checkCurAnmEnd(0)) {
-		if (self->isBckAnm(9) || self->isBckAnm(0xC)) {
-			if (self->unk20C)
-				self->setBckAnm(0xF);
+	if (toGoal.dot(amiNoko->mFront) > 0.8f && amiNoko->checkCurAnmEnd(0)) {
+		if (amiNoko->isBckAnm(AMINOKO_ANM_TURN1_END)
+		    || amiNoko->isBckAnm(AMINOKO_ANM_TURN2_END)) {
+			if (amiNoko->mUseAnmSet1)
+				amiNoko->setBckAnm(AMINOKO_ANM_WAIT1);
 			else
-				self->setBckAnm(0xF);
-		} else if (self->isBckAnm(0xF)) {
-			self->mSpine->pushAfterCurrent(&TNerveAmiNokoWalkOnFence::theNerve());
+				amiNoko->setBckAnm(AMINOKO_ANM_WAIT1);
+		} else if (amiNoko->isBckAnm(AMINOKO_ANM_WAIT1)) {
+			spine->pushAfterCurrent(
+			    &TNerveAmiNokoWalkOnFence::theNerve());
 			return TRUE;
-		} else if (self->unk20C) {
-			self->setBckAnm(9);
+		} else if (amiNoko->mUseAnmSet1) {
+			amiNoko->setBckAnm(AMINOKO_ANM_TURN1_END);
 		} else {
-			self->setBckAnm(0xC);
+			amiNoko->setBckAnm(AMINOKO_ANM_TURN2_END);
 		}
 	}
 
-	self->creepToCurPathNode(0.0f, 1.0f);
-
+	amiNoko->creepToCurPathNode(0.0f);
 	return FALSE;
 }
 
-// UNUSED in the original: the class is never instantiated, so the map only
-// records the three symbols below. The .bss singleton theNerve() declares is
-// not - it is what puts the .sdata2 global-object table of __sinit_amiNoko
-// _cpp at the right offsets.
-// TODO: reconstructed, no ground truth (the original body was dead-stripped).
-// TNerveAmiNokoAttack is dead code in the original: nothing in the TU ever
-// references the class, so the map lists execute/theNerve/__dt__ as UNUSED.
-// What is NOT dead is the 12-byte .bss singleton theNerve() declares - it is
-// the fifth one, and it is what puts the global-object table walked by
-// __sinit_amiNoko_cpp at the right offsets (without it that function sits at
-// 99.9% with every addi r5, r31, 0x3c off by 0xC).
-//
-// TODO: the body itself is a reconstruction - the original was dead-stripped
-// before it reached the map, so there is no ground truth. It compiles to
-// 0x68 bytes against the 0x6C the map records, i.e. one instruction short.
-// Twelve natural shapes were measured (ternary index, early return, shared
-// virtual call, three-way isBckAnm, else-arm, flat conditions, ...): they
-// land on 0x58 / 0x68 / 0x70 / 0x74 / 0x94 and never on 0x6C. Closing the gap
-// would mean inserting an instruction with no reason to exist, so it stays.
+// TODO: fabricated. Every symbol of this nerve is UNUSED, so only the compiled
+// size (0x6C) constrains the body; nothing ever pushes it.
 DEFINE_NERVE(TNerveAmiNokoAttack, TLiveActor)
 {
-	TAmiNoko* self = (TAmiNoko*)spine->getBody();
+	TAmiNoko* amiNoko = (TAmiNoko*)spine->getBody();
 
-	if (spine->getTime() == 0) {
-		if (self->unk20C)
-			self->setBckAnm(0x11);
-		else
-			self->setBckAnm(0x12);
-	}
+	if (spine->getTime() == 0)
+		amiNoko->setBckAnm(AMINOKO_ANM_HIT1);
+
+	if (amiNoko->checkCurAnmEnd(0))
+		return TRUE;
 
 	return FALSE;
 }
 
+// TODO: 99.9%. Declaring mtx ahead of jump puts jump on retail's slot; toMario
+// still sits 4 above retail and both operator- temporaries sit 0x44 above theirs.
 DEFINE_NERVE(TNerveAmiNokoDie, TLiveActor)
 {
-	TAmiNoko* self = (TAmiNoko*)spine->getBody();
+	TAmiNoko* amiNoko = (TAmiNoko*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->setBckAnm(1);
-		self->onHitFlag(HIT_FLAG_NO_COLLISION);
-		self->mAmiHit->onHitFlag(HIT_FLAG_NO_COLLISION);
+		amiNoko->setBckAnm(AMINOKO_ANM_FLYING1_START);
+		amiNoko->onHitFlag(HIT_FLAG_NO_COLLISION);
+		amiNoko->mAmiHit->onHitFlag(HIT_FLAG_NO_COLLISION);
 	}
 
-	if (self->checkCurAnmEnd(0) && self->isBckAnm(1)) {
-		JGeometry::TVec3<f32> dir = self->mPosition - *gpMarioPos;
-		if (dir.x == 0.0f && dir.y == 0.0f && dir.z == 0.0f)
-			dir.x = 1.0f;
+	if (amiNoko->checkCurAnmEnd(0)) {
+		if (amiNoko->isBckAnm(AMINOKO_ANM_FLYING1_START)) {
+			// TODO: this direction away from Mario is overwritten right away
+			// by the model's own Y axis; the original kept an older attempt at
+			// picking the tumble direction.
+			MtxPtr mtx;
+			JGeometry::TVec3<f32> jump(amiNoko->getPosition() - *gpMarioPos);
+			if (jump.x == 0.0f && jump.y == 0.0f && jump.z == 0.0f)
+				jump.x = 1.0f;
 
-		MtxPtr mtx = self->mMActor->getModel()->getBaseTRMtx();
-		JGeometry::TVec3<f32> up;
-		up.x = mtx[0][1];
-		up.y = mtx[1][1];
-		up.z = mtx[2][1];
-		MsVECNormalize(&up, &up);
-		up.x *= 20.0f;
-		up.y *= 20.0f;
-		up.z *= 20.0f;
-		self->mPosition.y += 10.0f;
-		self->mVelocity = up;
-		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
-		self->setBckAnm(0);
+			mtx = amiNoko->getMActor()->getModel()->getBaseTRMtx();
+			jump.x     = mtx[0][1];
+			jump.y     = mtx[1][1];
+			jump.z     = mtx[2][1];
+			MsVECNormalize(jump, jump);
+			jump.scale(20.0f);
+
+			amiNoko->mPosition.y += 10.0f;
+			amiNoko->mVelocity = jump;
+			amiNoko->onLiveFlag(LIVE_FLAG_AIRBORNE);
+			amiNoko->setBckAnm(AMINOKO_ANM_FLYING1_LOOP);
+		}
 	}
 
 	gpMarioParticleManager->emitAndBindToMtxPtr(
-	    0x174, self->mMActor->getModel()->getBaseTRMtx(), 1, self);
+	    PARTICLE_MS_KIL_SMOKE,
+	    amiNoko->getMActor()->getModel()->getBaseTRMtx(), 1, amiNoko);
 
-	if (self->isBckAnm(0) && spine->getTime() > 30) {
-		JGeometry::TVec3<f32> toMario = self->mPosition - *gpMarioPos;
-		bool hitWall = gpMap->isTouchedOneWallAndMoveXZ(
-		    &self->mPosition.x, self->mPosition.y, &self->mPosition.z,
-		    3.0f * self->mBodyRadius);
-		if (hitWall) {
-			self->mVelocity = JGeometry::TVec3<f32>(0.0f, 0.0f, 0.0f);
-			JPABaseEmitter* emitter = gpMarioParticleManager->emitWithRotate(
-			    0xE2, &self->mPosition, 0,
-			    (s16)(182.04445f * self->mRotation.y), 0, 0, 0);
-			if (emitter) {
-				emitter->mGlobalDynamicsScale.set(self->mScaling);
-				emitter->mGlobalParticleScale.set(self->mScaling);
-			}
-			emitter = gpMarioParticleManager->emitWithRotate(
-			    0xE3, &self->mPosition, 0,
-			    (s16)(182.04445f * self->mRotation.y), 0, 0, 0);
-			if (emitter)
-				SMSSetEmitterPolColor(emitter, 6);
+	if (amiNoko->isBckAnm(AMINOKO_ANM_FLYING1_LOOP)
+	    && spine->getTime() > 30) {
+		JGeometry::TVec3<f32> toMario(amiNoko->mPosition - *gpMarioPos);
+		if (amiNoko->isDeadByWall() || !amiNoko->isAirborne()
+		    || toMario.length() > 10000.0f) {
+			amiNoko->onHitFlag(HIT_FLAG_NO_COLLISION);
+			amiNoko->onLiveFlag(LIVE_FLAG_DEAD);
+			amiNoko->onLiveFlag(LIVE_FLAG_UNK8);
+			amiNoko->offLiveFlag(LIVE_FLAG_HIDDEN);
+			amiNoko->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+			amiNoko->mHolder = nullptr;
+			amiNoko->stopAnmSound();
+			spine->reset();
+			spine->setNext(&TNerveSmallEnemyDie::theNerve());
+			spine->pushAfterCurrent(spine->getDefault());
+			amiNoko->genRandomItem();
+			return TRUE;
 		}
-		if (!hitWall) {
-			if (self->isAirborne()) {
-				// the one call site the ROM expands inline rather than calling
-				f32 dist = JGeometry::TUtil<f32>::sqrt(
-				    toMario.z * toMario.z
-				    + (toMario.x * toMario.x + toMario.y * toMario.y));
-				if (dist <= 10000.0f)
-					return FALSE;
-			}
-		}
-
-		self->onHitFlag(HIT_FLAG_NO_COLLISION);
-		self->onLiveFlag(LIVE_FLAG_DEAD);
-		self->onLiveFlag(LIVE_FLAG_UNK8);
-		self->offLiveFlag(LIVE_FLAG_HIDDEN);
-		self->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
-		self->mHolder = nullptr;
-		self->stopAnmSound();
-
-		spine->reset();
-		spine->setNext(&TNerveSmallEnemyDie::theNerve());
-		spine->pushAfterCurrent(spine->getDefault());
-
-		self->genRandomItem();
-		return TRUE;
 	}
-
 	return FALSE;
 }
 
 DEFINE_NERVE(TNerveAmiNokoFreeze, TLiveActor)
 {
-	TAmiNoko* self = (TAmiNoko*)spine->getBody();
+	TAmiNoko* amiNoko = (TAmiNoko*)spine->getBody();
 
 	if (spine->getTime() == 0) {
-		self->setBckAnm(2);
-		J3DModel* model = self->getMActor()->getModel();
-		JPABaseEmitter* emitter
-		    = gpMarioParticleManager->emitAndBindToMtxPtr(
-		        0xCA, model->getAnmMtx(0), 0, nullptr);
-		if (emitter) {
-			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
-			emitter->setGlobalScale(scale);
-		}
+		amiNoko->setBckAnm(AMINOKO_ANM_HIT1);
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    PARTICLE_MS_DNK_SHIBIRE_B,
+		    amiNoko->getMActor()->getModel()->getAnmMtx(0), 0, nullptr);
+		if (emitter)
+			emitter->setGlobalScale(JGeometry::TVec3<f32>(2.0f, 2.0f, 2.0f));
 	}
 
-	if (self->checkCurAnmEnd(0)) {
-		if (self->isBckAnm(2)) {
-			self->setBckAnm(0xF);
-		} else {
-			TSmallEnemyParams* params
-			    = (TSmallEnemyParams*)self->getSaveParam();
-			if (spine->getTime() > params->mSLFreezeWait.value) {
-				return TRUE;
-			}
+	if (amiNoko->checkCurAnmEnd(0)) {
+		if (amiNoko->isBckAnm(AMINOKO_ANM_HIT1)) {
+			amiNoko->setBckAnm(AMINOKO_ANM_WAIT1);
+		} else if (spine->getTime()
+		           > amiNoko->getSaveParams()->getSLFreezeWait()) {
+			return TRUE;
 		}
 	}
 	return FALSE;

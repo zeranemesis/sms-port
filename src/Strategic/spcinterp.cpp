@@ -228,6 +228,24 @@ void TSpcInterp::execdec()
 	mProcessStack.push(mStorageStack.getFromBottom(layer + arg2));
 }
 
+// TODO: execadd/sub/mul/div: the else arm's TSpcSlice(int) temporary sits at
+// 0x20, retail 0x24 (4 bytes of pool missing below it). Tried (inert or worse):
+// push(TSpcSlice(..)), mProcessStack.push, named slice or int, pushInt forks,
+// operator int casts, pop() over mProcessStack.pop(), raw mType tests (-4
+// each), function-scope result, raw float stores, typeof() in the header
+// getters, push(int) body spellings; float arm as push(f32), push(TSpcSlice(f)),
+// `TSpcSlice result(f)` or push(result) (c-strat, all inert or worse).
+// Debugger (c-d13): the 4-byte object above the else temp is setDataFloat's
+// argument binding; retail has nothing there and one more word below the
+// temp. Direct field writes drop the binding but schedule the mType store
+// early; a named `f32 f` keeps the schedule but sits above the pop temps.
+// c-k9: retail's temp is the first object after @190, so setDataFloat's
+// binding must be created after push(int)'s temp (a depth-2 setter) or not
+// at all. The int arm cannot be a parse-time temporary: any
+// `mProcessStack.push(TSpcSlice(sum))` or implicit `push(sum)` leaves both
+// getDataInt calls out of line (78.6%; a switch-bodied inline is not
+// expanded inside a temporary's constructor argument). Also inert: data
+// before type, `result = TSpcSlice(f)` (frame +0x10), push(result).
 void TSpcInterp::execadd()
 {
 	TSpcSlice arg2 = mProcessStack.pop();
@@ -273,6 +291,9 @@ void TSpcInterp::execmul()
 	}
 }
 
+// TODO: the int arm's push(int) temporary sits at 0x20 vs retail 0x24 (same
+// in execmul). Inert: mProcessStack.push(TSpcSlice(..)), a named int or
+// slice result, setDataInt, operator int/float casts, a named f32 quotient.
 void TSpcInterp::execdiv()
 {
 	TSpcSlice arg2 = mProcessStack.pop();
@@ -407,7 +428,7 @@ void TSpcInterp::execcall()
 {
 	u32 address = fetchU32();
 	s32 argNum  = fetchS32();
-	u32 counter = mProgramCounter;
+	int counter = mProgramCounter;
 
 	mContextStack.push(counter);
 	mContextStack.push(mStorageStack.size());
@@ -415,15 +436,8 @@ void TSpcInterp::execcall()
 	for (int i = 0; i < argNum; ++i)
 		mStorageStack.push(TSpcSlice());
 	for (int i = 0; i < argNum; ++i)
-		mStorageStack.setFromTop(i, mProcessStack.pop());
+		mStorageStack.getFromTop(i) = pop();
 	mProgramCounter = address;
-
-	// Every diff marker of this function is a stack offset sitting 0x20 above
-	// ours (target frame 0x88 against 0x68). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
 void TSpcInterp::execfunc()

@@ -21,6 +21,15 @@ public:
 	int direct();
 	void setFixedStageValue();
 
+	// Same shape as TSelectDir::getGamePad(): the named pointer is the
+	// dead depth-2 word setup's `getGamePad()->setFlag(1)` leaves in retail
+	// (research c-r28).
+	TMarioGamePad* getGamePad()
+	{
+		TMarioGamePad* gamePad = unk2C;
+		return gamePad;
+	}
+
 public:
 	/* 0x18 */ u8 unk18;
 	/* 0x1C */ void* unk1C;
@@ -37,6 +46,9 @@ public:
 	/* 0x48 */ u32 unk48;
 	/* 0x4C */ u32 unk4C;
 	/* 0x50 */ bool unk50;
+	// TODO: name this. Nothing in the binary reads it; it exists only because
+	// the `new TMenuDirector` in TApplication::proc asks for 0x58 bytes and
+	// the constructor's last store is the `bool` at 0x50.
 	/* 0x54 */ u32 unk54;
 };
 

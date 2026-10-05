@@ -1,5 +1,23 @@
 #include <System/MarNameRefGen.hpp>
 
+// rogue includes needed for matching the .rodata string pool: retail's blob
+// opens with the System/DummyStrings.hpp pair, then the four
+// M3DUtil/InfectiousStrings.hpp mtx-calc names, then the pollution-texture
+// pair below.
+#include <M3DUtil/InfectiousStrings.hpp>
+
+// TODO: retail has these two as (object,local) here as well, from the same
+// unidentified shared Player header as in the other nineteen TUs that carry
+// them; parked so the leading .rodata block lines up.
+#include <Player/MarioDirtyStrings.hpp>
+
+// The 12-byte zero and one vectors that MapCollisionEntry.hpp's setUpTrans
+// parks in .rodata, plus the MSound pair that supplies the fifteen 12-byte
+// .bss nodes and the 764-byte __sinit.
+#include <Map/MapCollisionManager.hpp>
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
 #include <JSystem/JDrama/JDRSmJ3DScn.hpp>
 #include <System/StageEventInfo.hpp>
 #include <System/TalkCursor.hpp>
@@ -29,10 +47,10 @@
 #include <GC2D/Guide.hpp>
 #include <GC2D/SunGlass.hpp>
 #include <Map/MapMirror.hpp>
-#include <Map/MapEventSink.hpp>
-#include <Map/MapEventSirena.hpp>
 #include <Map/MapEventDolpic.hpp>
 #include <Map/MapEventMare.hpp>
+#include <Map/MapEventSink.hpp>
+#include <Map/MapEventSirena.hpp>
 #include <Enemy/Conductor.hpp>
 #include <Enemy/EffectObj.hpp>
 #include <Enemy/AreaCylinder.hpp>
@@ -46,23 +64,47 @@
 #include <Camera/Camera.hpp>
 #include <Camera/CameraMapTool.hpp>
 #include <JSystem/JDrama/JDRViewObjPtrList.tpp>
+#include <Strategic/NameRefPtrAry.tpp>
+#include <Strategic/NameRefAry.tpp>
 
-// rogue includes needed for matching sinit & bss
-#include <MSound/MSSetSound.hpp>
-#include <MSound/MSoundBGM.hpp>
-#include <M3DUtil/InfectiousStrings.hpp>
-
-const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-const char cDirtyTexName[]  = "H_ma_rak_dummy";
-
-static void dummy(Vec* v)
-{
-	*v = (Vec) { 0.0f, 0.0f, 0.0f };
-	*v = (Vec) { 1.0f, 1.0f, 1.0f };
-}
+// The order is the map's, read off the .text layout and reversed (the TU is
+// -inline deferred, so emission is reverse source order): retail emits the
+// groups StagePositionInfo, PtrAry<CubeGeneralInfo>, TViewObjPtrListT,
+// CameraMapTool, PtrAry<Ary<ScenarioArchiveName>>, ScenarioArchiveName,
+// PtrAry<StageEventInfo> and finally Ary<StageEventInfo> -- the last of which
+// is still implicit, instantiated by getNameRef itself, and already lands in
+// the right place. With this order and the declaration order in
+// JDRViewObjPtrList.hpp, validate-symbol-order.py passes the unit outright
+// (18/18 UNUSED sizes included). Do not sort these.
+//
+// PtrAry<StageEventInfo>'s three members are UNUSED in the map: retail's
+// object defined them and the linker stripped them, which is exactly what an
+// explicit instantiation of an unreferenced specialisation gives.
+template class TNameRefPtrAryT<TStageEventInfo>;
+template class TNameRefAryT<TScenarioArchiveName>;
+template class TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >;
+template class TNameRefAryT<TCameraMapTool>;
 
 namespace JDrama {
 template class TViewObjPtrListT<THitActor, TViewObj>;
+}
+
+template class TNameRefPtrAryT<TCubeGeneralInfo>;
+template class TNameRefAryT<TStagePositionInfo>;
+
+// Mario is built through an inline level of its own: its `mario` is then a
+// callee local, created with the other depth-1 inline objects between
+// TSplashManager's and TSmplFader's, rather than a named local of
+// getNameRef at the top of the frame. That single move is what puts the
+// TSMSSmplChara and TSplashManager `this` slots at retail's 0x158/0x148.
+// The name is ours (a fully inlined static leaves no map symbol). The same
+// level around the MLight block instead moves every later slot and the frame.
+static inline TMario* NameRefNewMario()
+{
+	TMario* mario   = new TMario;
+	gpMarioOriginal = mario;
+	gpMarioAddress  = mario;
+	return mario;
 }
 
 JDrama::TNameRef* TMarNameRefGen::getNameRef(const char* name) const
@@ -142,12 +184,8 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef(const char* name) const
 	if (strcmp(name, "MirrorCamera") == 0)
 		return new TMirrorCamera;
 
-	if (strcmp(name, "Mario") == 0) {
-		TMario* mario   = new TMario;
-		gpMarioOriginal = mario;
-		gpMarioAddress  = mario;
-		return mario;
-	}
+	if (strcmp(name, "Mario") == 0)
+		return NameRefNewMario();
 
 	if (strcmp(name, "MLight") == 0) {
 		TLightMario* light          = new TLightMario;
@@ -206,6 +244,11 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef(const char* name) const
 	if (strcmp(name, "Guide") == 0)
 		return new TGuide;
 
+	// TODO: the map emits TSunGlass's in-class constructor as a weak 0xb0
+	// body in this TU and *calls* it here, so MWCC refused the expansion.
+	// We expand it. Same shape as TTelesaSlot in MarNameRefGen_MapObj: both
+	// refused callees are in-class bodies whose generated form is ~40
+	// instructions, which is the only property they share.
 	if (strcmp(name, "SunGlass") == 0)
 		return new TSunGlass;
 
@@ -268,25 +311,25 @@ JDrama::TNameRef* TMarNameRefGen::getNameRef(const char* name) const
 		return new TMapEventSinkShadowMario;
 
 	if (strcmp(name, "MapEventSirenaSink") == 0)
-		return new TMapEventSirenaSink;
+		return new TMapEventSirenaSink("ホテル沈む");
 
 	if (strcmp(name, "MapEventSinkBianco") == 0)
 		return new TMapEventSinkBianco;
 
 	if (strcmp(name, "DolpicEventBiancoGate") == 0)
-		return new TDolpicEventBiancoGate;
+		return new TDolpicEventBiancoGate("イベント（ビアンコゲート）");
 
 	if (strcmp(name, "DolpicEventRiccoGate") == 0)
-		return new TDolpicEventRiccoMammaGate;
+		return new TDolpicEventRiccoMammaGate("イベント（リコ、マンマゲート）");
 
 	if (strcmp(name, "DolpicEventMammaGate") == 0)
-		return new TDolpicEventRiccoMammaGate;
+		return new TDolpicEventRiccoMammaGate("イベント（リコ、マンマゲート）");
 
 	if (strcmp(name, "MareEventBumpyWall") == 0)
-		return new TMareEventBumpyWall;
+		return new TMareEventBumpyWall("凸凹壁");
 
 	if (strcmp(name, "MareEventWallRock") == 0)
-		return new TMareEventWallRock;
+		return new TMareEventWallRock("イベント（マーレ壁の岩）");
 
 	if (strcmp(name, "StageEnemyInfoHeader") == 0)
 		return new TStageEnemyInfoTable;

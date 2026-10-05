@@ -62,7 +62,7 @@ public:
 	virtual void load(JSUMemoryInputStream&);
 
 public:
-	/* 0x158 */ u32 unk158;
+	/* 0x158 */ s32 unk158;
 };
 
 class TCoinEmpty : public TCoin {
@@ -73,8 +73,6 @@ public:
 	virtual void appear();
 	virtual void makeObjAppeared();
 
-	// The link map lists warning__10TCoinEmptyFv as an UNUSED 0x4-byte method
-	// of this class, i.e. an empty body that was always inlined away.
 	void warning();
 };
 
@@ -201,9 +199,9 @@ public:
 
 	virtual void load(JSUMemoryInputStream&);
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
+	virtual void calcRootMatrix();
 	virtual void control();
 	virtual void initMapObj();
-	virtual void calcRootMatrix();
 	virtual void touchPlayer(THitActor*);
 	virtual void appearing();
 	virtual void put();

@@ -41,6 +41,12 @@ TObjManager::TObjManager(const char* name)
 {
 }
 
+void TObjManager::initObjArray(int capacity)
+{
+	mCapacity = capacity;
+	unk18 = new THitActor*[mCapacity];
+}
+
 void TObjManager::manageObj(THitActor* obj)
 {
 	unk18[mObjNum] = obj;
@@ -56,8 +62,9 @@ void TObjManager::load(JSUMemoryInputStream& stream)
 	unk1C = (TObjChara*)JDrama::TNameRefGen::getInstance()
 	            ->getRootNameRef()
 	            ->search(buffer);
-	mCapacity = stream.readU32();
-	unk18     = new THitActor*[mCapacity];
+	s32 capacity;
+	stream >> capacity;
+	initObjArray(capacity);
 }
 
 MActorAnmData* TObjManager::getMActorAnmData()
@@ -70,13 +77,13 @@ MActorAnmData* TObjManager::getMActorAnmData()
 void TObjManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	if (unk30 & 1)
-		TTimeRec::snapCPUTime(JUtility::TColor(0xff, 0xff, 0xff, 0xff));
+		TTimeRec::startTimer();
 
 	for (int i = 0; i < mObjNum; ++i)
 		unk18[i]->testPerform(cue, graphics);
 
 	if (unk30 & 1)
-		TTimeRec::snapCPUTime(0);
+		TTimeRec::endTimer();
 }
 
 void TObjManager::createModelDataArray(const TModelDataLoadEntry* entries)

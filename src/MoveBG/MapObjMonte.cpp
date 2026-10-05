@@ -1,65 +1,207 @@
-
 #include <MoveBG/MapObjMonte.hpp>
-
-
-// rogue include: the original TU opens .rodata with the dummy string
-// pair from System/DummyStrings.hpp; without it every string offset in
-// this object is shifted.
+#include <System/DummyMactorString.hpp>
 #include <System/DummyStrings.hpp>
-
-// rogue include: pulls in JALList.hpp's JSUList<T>::smList template
-// statics, which is what marioEU.dol registers from __sinit_<TU>_cpp
-// (see the same block in src/Enemy/effectObj.cpp).
-#include <MSound/MSSetSound.hpp>
-#include <MSound/MSoundBGM.hpp>
-
-// rand() only: TSwingBoard::load() converts its result straight to f32,
-// which is the double lowering, not MsRandF()'s single fmuls.
-#include <stdlib.h>
-
-#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
-#include <MarioUtil/MathUtil.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
 #include <Map/MapCollisionManager.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/JAudio/JAInterface/JAISound.hpp>
+#include <JSystem/JGeometry.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapCollisionData.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <MarioUtil/DrawUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MoveBG/MapObjManager.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
 #include <Player/MarioAccess.hpp>
 #include <Player/WaterGun.hpp>
 #include <Player/Yoshi.hpp>
+#include <System/EmitterViewObj.hpp>
 #include <System/FlagManager.hpp>
 #include <System/MarDirector.hpp>
+#include <System/Particles.hpp>
+#include <dolphin/gx.h>
+#include <math.h>
+#include <stdlib.h>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
 
 void TMapObjMonteRoot::initMapObj()
 {
 	TMapObjBase::initMapObj();
-	f32 damageHeight = 1400.0f * mScaling.y;
-	mDamageHeight = damageHeight;
+	mDamageHeight = 1400.0f * getScaling().y;
 	calcEntryRadius();
-	f32 y = mInitialPosition.y + mYOffset;
-	mPosition.y = y;
+	mPosition.y = getInitialPosition().y + getObjCollisionHeightOffset();
 }
 
-BOOL TJumpMushroom::receiveMessage(THitActor*, unsigned long)
+BOOL TJumpMushroom::receiveMessage(THitActor* sender, u32 message)
 {
 	startAnim(1);
 	return TRUE;
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TJumpMushroom::load (batch 127).
+static inline TMapCollisionManager* MapObjMonteMapCollisionManager(const TJumpMushroom* p)
+{
+	TMapCollisionManager* mapCollisionManager = p->mMapCollisionManager;
+	return mapCollisionManager;
+}
+
 void TJumpMushroom::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
-	int value;
-	stream.read(&value, 4);
-	if (mMapCollisionManager) {
-		mMapCollisionManager->getUnk8()->setAllData(value);
+
+	s32 data;
+	stream >> data;
+	if (mMapCollisionManager)
+		MapObjMonteMapCollisionManager(this)->unk8->setAllData((s16)data);
+}
+
+f32 THangingBridgeBoard::mMarioAccelY        = 0.15f;
+f32 THangingBridgeBoard::mMarioHipDropAccelY = 2.0f;
+f32 THangingBridgeBoard::mReturnAccelRate    = 0.005f;
+f32 THangingBridgeBoard::mSpeedDownRate      = 0.98f;
+f32 THangingBridgeBoard::mRopeWidthX         = 10.0f;
+f32 THangingBridgeBoard::mRopeWidthZ         = 7.0f;
+f32 THangingBridgeBoard::mTexPosRate         = 0.01f;
+
+static inline TMarDirector* MapObjMonteMarDirector()
+{
+	TMarDirector* director = SMSGetMarDirector();
+	return director;
+}
+
+// The frame is retail's 0x78 via MapObjMonteMarDirector; the named `y`
+// colours top.y into f4 as retail does.
+void THangingBridgeBoard::drawOneRope(const JGeometry::TVec3<f32>& top) const
+{
+	f32 y      = top.y;
+	f32 hookY  = y + THangingBridge::mRopeHeight;
+	f32 bottom = y;
+
+	f32 xPlus  = top.x + mRopeWidthX;
+	f32 xMinus = top.x - mRopeWidthX;
+	f32 zPlus  = top.z + mRopeWidthZ;
+	f32 zMinus = top.z - mRopeWidthZ;
+
+	if (MapObjMonteMarDirector()->mMap == 0xD)
+		bottom -= 60.0f;
+
+	f32 texTop    = mTexPosRate * (hookY - y);
+	f32 texBottom = mTexPosRate * (bottom - y);
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
+	GXPosition3f32(top.x, hookY, zPlus);
+	GXTexCoord2f32(0.0f, texTop);
+	GXPosition3f32(top.x, bottom, zPlus);
+	GXTexCoord2f32(0.0f, texBottom);
+
+	GXPosition3f32(xMinus, hookY, zMinus);
+	GXTexCoord2f32(1.0f, texTop);
+	GXPosition3f32(xMinus, bottom, zMinus);
+	GXTexCoord2f32(1.0f, texBottom);
+
+	GXPosition3f32(xPlus, hookY, zMinus);
+	GXTexCoord2f32(2.0f, texTop);
+	GXPosition3f32(xPlus, bottom, zMinus);
+	GXTexCoord2f32(2.0f, texBottom);
+
+	GXPosition3f32(top.x, hookY, zPlus);
+	GXTexCoord2f32(3.0f, texTop);
+	GXPosition3f32(top.x, bottom, zPlus);
+	GXTexCoord2f32(3.0f, texBottom);
+	GXEnd();
+}
+
+// UNUSED (0x6c): the pair of rope draws THangingBridge::perform expands.
+void THangingBridgeBoard::drawRopes() const
+{
+	JGeometry::TVec3<f32> top;
+	top = mRopeTop[0];
+	drawOneRope(top);
+	top = mRopeTop[1];
+	drawOneRope(top);
+}
+
+// UNUSED (0x10).
+// The bridge pointer is reloaded at every site in retail, so this is a pure
+// frame rung: the binder is +8 per expansion inside pushNeighbor and +12 at a
+// control-tail site. Which four of the six tail sites carry it is unobservable.
+static inline THangingBridge* HangingBridgeBoardBridge(const THangingBridgeBoard* board)
+{
+	THangingBridge* bridge = board->mBridge;
+	return bridge;
+}
+
+// fp_contract folds `y -= accel * rate` into one fnmsubs; retail keeps the
+// fmuls and the fsubs apart, so the product is named out of the statement.
+static inline f32 HangingBridgeBoardPush(f32 accel, f32 rate)
+{
+	return accel * rate;
+}
+
+void THangingBridgeBoard::push(f32 accel) { mVelocity.y -= accel; }
+
+// UNUSED (0x94): the neighbour chain control expands twice.
+void THangingBridgeBoard::pushNeighbor(f32 accel)
+{
+	if (mPrev) {
+		mPrev->mVelocity.y -= HangingBridgeBoardPush(accel, HangingBridgeBoardBridge(this)->mNeighborRate);
+		if (mPrev2)
+			mPrev2->mVelocity.y -= HangingBridgeBoardPush(accel, HangingBridgeBoardBridge(this)->mNeighbor2Rate);
 	}
+
+	if (mNext) {
+		mNext->mVelocity.y -= HangingBridgeBoardPush(accel, HangingBridgeBoardBridge(this)->mNeighborRate);
+		if (mNext2)
+			mNext2->mVelocity.y -= HangingBridgeBoardPush(accel, HangingBridgeBoardBridge(this)->mNeighbor2Rate);
+	}
+}
+
+void THangingBridgeBoard::control()
+{
+	TLeanBlock::control();
+
+	if (marioIsOn()) {
+		push(mMarioAccelY);
+		pushNeighbor(mMarioAccelY);
+	}
+
+	if (marioHipAttack()) {
+		push(mMarioHipDropAccelY);
+		pushNeighbor(mMarioHipDropAccelY);
+	}
+
+	mPosition.y += mVelocity.y;
+	mVelocity.y += mReturnAccelRate * (mInitialPosition.y - mPosition.y);
+	mVelocity.y *= mSpeedDownRate;
+
+	MtxPtr mtx      = getModel()->getAnmMtx(0);
+	mRopeTop[0].x   = mPosition.x - mtx[0][0] * mBridge->mRopeOffset;
+	mRopeTop[0].y   = 70.0f + (mPosition.y - mtx[1][0] * mBridge->mRopeOffset);
+	mRopeTop[0].z   = mPosition.z - mtx[2][0] * HangingBridgeBoardBridge(this)->mRopeOffset;
+	mRopeTop[1].x   = mtx[0][0] * HangingBridgeBoardBridge(this)->mRopeOffset + mPosition.x;
+	mRopeTop[1].y   = 70.0f + (mtx[1][0] * HangingBridgeBoardBridge(this)->mRopeOffset + mPosition.y);
+	mRopeTop[1].z   = mtx[2][0] * HangingBridgeBoardBridge(this)->mRopeOffset + mPosition.z;
 }
 
 void THangingBridgeBoard::calcDefaultMtx()
 {
 	Mtx rotX;
-	Mtx rotY;
 	makeRootMtxRotX(rotX);
+	Mtx rotY;
 	makeRootMtxRotY(rotY);
-	PSMTXConcat(rotY, rotX, rotY);
+	MTXConcat(rotY, rotX, rotY);
 	mDefaultMtx.set(rotY);
+
 	mVelocity.y = 0.0f;
 	mPosition.y = mInitialPosition.y;
 }
@@ -71,14 +213,9 @@ void THangingBridgeBoard::setGroundCollision()
 	    && mPosition.x + mBodyRadius > SMS_GetYoshi()->getTranslation().x
 	    && mPosition.z - mBodyRadius < SMS_GetYoshi()->getTranslation().z
 	    && mPosition.z + mBodyRadius > SMS_GetYoshi()->getTranslation().z) {
-		// TODO: 99.9% - frame 0x48 vs target 0x40. Naming `col` shrinks the frame
-		// to 0x40 but allocates it to r0 (extra mr r3,r0); leaving it unnamed
-		// puts it in r3 (exact instructions) but adds an 8-byte temp slot.
-		J3DModel* model = getModel();
-		MtxPtr anmMtx = model->getAnmMtx(0);
-		if (mMapCollisionManager->getUnk8()) {
-			mMapCollisionManager->getUnk8()->moveMtx(anmMtx);
-		}
+		MtxPtr mtx = getModel()->getAnmMtx(0);
+		if (mMapCollisionManager->unk8)
+			mMapCollisionManager->unk8->moveMtx(mtx);
 	} else {
 		TMapObjBase::setGroundCollision();
 	}
@@ -95,722 +232,1145 @@ void THangingBridgeBoard::initMapObj()
 THangingBridgeBoard::THangingBridgeBoard(const char* name)
     : TLeanBlock(name)
 {
-	unk1BC = nullptr;
-	unk194 = 0;
-	unk198 = 0;
-	unk19C = 0;
-	unk1A0 = 0;
-	unk1A4[0].zero();
-	unk1A4[1].zero();
+	mBridge = nullptr;
+	mPrev   = nullptr;
+	mNext   = nullptr;
+	mPrev2  = nullptr;
+	mNext2  = nullptr;
+	mRopeTop[0].zero();
+	mRopeTop[1].zero();
 }
 
-// Same reason as the THangingBridge helpers below: perform() calls this twice
-// per board and the ROM keeps it out of line.
-#pragma dont_inline on
-// One rope segment: two GX quads spanning the board's mRopeWidthX either side
-// in x and mRopeWidthZ in z, mRopeHeight tall, textured along y by
-// mTexPosRate. In scenario 0xD the lower edge is dropped by 60 units.
-void THangingBridgeBoard::drawOneRope(const JGeometry::TVec3<f32>& pos) const
+f32 THangingBridge::mRopeWidthBetweenBoards  = 10.0f;
+f32 THangingBridge::mRopeWidthBetweenBoardsY = 10.0f;
+int THangingBridge::mPointNumBetweenBoards   = 10;
+f32 THangingBridge::mBetweenBoardsTexPosRate = 0.01f;
+f32 THangingBridge::mRopeHeight;
+
+void THangingBridge::drawLowerMinus(const JGeometry::TVec3<f32>& from,
+                                    const JGeometry::TVec3<f32>& to,
+                                    const JGeometry::TVec2<f32>& width,
+                                    int divide) const
 {
-	f32 top = pos.y + THangingBridge::mRopeHeight;
-	f32 bot = pos.y;
-	f32 right = pos.x + THangingBridgeBoard::mRopeWidthX;
-	f32 left = pos.x - THangingBridgeBoard::mRopeWidthX;
-	f32 front = pos.z + THangingBridgeBoard::mRopeWidthZ;
-	f32 back = pos.z - THangingBridgeBoard::mRopeWidthZ;
-	if (gpMarDirector->mMap == 0xD) {
-		bot -= 60.0f;
-	}
-	f32 vTop = THangingBridgeBoard::mTexPosRate * (top - pos.y);
-	f32 vBot = THangingBridgeBoard::mTexPosRate * (bot - pos.y);
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
-	GXPosition3f32(pos.x, top, front);
-	GXTexCoord2f32(0.0f, vTop);
-	GXPosition3f32(pos.x, bot, front);
-	GXTexCoord2f32(0.0f, vBot);
-	GXPosition3f32(left, top, back);
-	GXTexCoord2f32(1.0f, vTop);
-	GXPosition3f32(left, bot, back);
-	GXTexCoord2f32(1.0f, vBot);
-	GXPosition3f32(right, top, back);
-	GXTexCoord2f32(2.0f, vTop);
-	GXPosition3f32(right, bot, back);
-	GXTexCoord2f32(2.0f, vBot);
-	GXPosition3f32(pos.x, top, front);
-	GXTexCoord2f32(3.0f, vTop);
-	GXPosition3f32(pos.x, bot, front);
-	GXTexCoord2f32(3.0f, vBot);
-}
-#pragma dont_inline off
+	f32 x        = from.x;
+	f32 y        = from.y;
+	f32 z        = from.z;
+	f32 step     = 1.0f / divide;
+	f32 dx       = step * (to.x - from.x);
+	f32 dy       = step * (to.y - from.y);
+	f32 dz       = step * (to.z - from.z);
 
-void THangingBridgeBoard::drawRopes() const {}
-
-void THangingBridgeBoard::push(f32) {}
-
-void THangingBridgeBoard::pushNeighbor(f32) {}
-
-// Physics for one plank: Mario's weight and hip attack both accelerate the
-// board (and, through the owner's accel rates, its two side neighbours), then
-// the swing velocity is integrated into the board's y offset and damped.
-void THangingBridgeBoard::control()
-{
-	TLeanBlock::control();
-	// Each neighbour is nudged by accel * the owner's own accel rate. Naming
-	// the product keeps MWCC from contracting the pair into one fnmsubs.
-	f32 accelY = THangingBridgeBoard::mMarioAccelY;
-	f32 hipY = THangingBridgeBoard::mMarioHipDropAccelY;
-	if (!marioIsOn()) {
-		goto neighbourPass;
-	}
-	mVelocity.y -= THangingBridgeBoard::mMarioAccelY;
-	if (unk194) {
-		f32 d = accelY * unk1BC->unk40;
-		unk194->mVelocity.y -= d;
-	}
-	if (unk19C) {
-		f32 d = accelY * unk1BC->unk44;
-		unk19C->mVelocity.y -= d;
-	}
-neighbourPass:
-	if (unk198) {
-		f32 d = accelY * unk1BC->unk40;
-		unk198->mVelocity.y -= d;
-	}
-	if (unk1A0) {
-		f32 d = accelY * unk1BC->unk44;
-		unk1A0->mVelocity.y -= d;
-	}
-	if (marioHipAttack()) {
-		mVelocity.y -= THangingBridgeBoard::mMarioHipDropAccelY;
-		if (unk194) {
-			f32 d = hipY * unk1BC->unk40;
-			unk194->mVelocity.y -= d;
-		}
-		if (unk19C) {
-			f32 d = hipY * unk1BC->unk44;
-			unk19C->mVelocity.y -= d;
-		}
-		if (unk198) {
-			f32 d = hipY * unk1BC->unk40;
-			unk198->mVelocity.y -= d;
-		}
-		if (unk1A0) {
-			f32 d = hipY * unk1BC->unk44;
-			unk1A0->mVelocity.y -= d;
-		}
-	}
-	// Integrate and damp.
-	mPosition.y += mVelocity.y;
-	// Spring back towards the rope's rest length, then damp.
-	f32 pull = mInitialPosition.y - mPosition.y;
-	mVelocity.y = mVelocity.y + THangingBridgeBoard::mReturnAccelRate * pull;
-	mVelocity.y = mVelocity.y * THangingBridgeBoard::mSpeedDownRate;
-	// The four rope points follow the board's own rotation, so they sit on a
-	// circle of radius unk1BC->unk3C about the plank's centre.
-	MtxPtr mtx = getModel()->getAnmMtx(0);
-	unk1A4[0].x = mPosition.x - mtx[0][0] * unk1BC->unk3C;
-	unk1A4[0].y = mPosition.y + 70.0f - mtx[1][0] * unk1BC->unk3C;
-	unk1A4[0].z = mPosition.z - mtx[2][0] * unk1BC->unk3C;
-	unk1A4[1].x = mPosition.x + mtx[0][0] * unk1BC->unk3C;
-	unk1A4[1].y = mPosition.y + 70.0f + mtx[0][0] * unk1BC->unk3C;
-	unk1A4[1].z = mPosition.z + mtx[2][0] * unk1BC->unk3C;
-}
-
-f32 THangingBridge::mRopeWidthBetweenBoards = 0.0f;
-f32 THangingBridge::mRopeWidthBetweenBoardsY = 0.0f;
-int THangingBridge::mPointNumBetweenBoards = 0;
-f32 THangingBridge::mBetweenBoardsTexPosRate = 0.0f;
-f32 THangingBridge::mRopeHeight = 0.0f;
-
-// The drawing helpers below are still empty stubs. MWCC happily inlines an
-// empty body, which erases every `bl` the ROM actually emits from perform().
-// dont_inline keeps the call sites; it goes away once the bodies are real.
-#pragma dont_inline on
-
-// One sub-segment of the rope between boards, "minus" strand: n sub-segments,
-// each stepping from `a` towards `b` by 1/n, and each emitting two vertices
-// of a triangle strip. unk38[i] is the per-index vertical sag.
-void THangingBridge::drawLowerMinus(const JGeometry::TVec3<f32>& a,
-                                    const JGeometry::TVec3<f32>& b,
-                                    const JGeometry::TVec2<f32>& uv,
-                                    int n) const
-{
-	f32 ax = a.x, ay = a.y, az = a.z;
-	f32 step = 1.0f / (f32)n;
-	f32 dx = step * (b.x - a.x);
-	f32 dy = step * (b.y - a.y);
-	f32 dz = step * (b.z - a.z);
-	f32 rate = THangingBridge::mBetweenBoardsTexPosRate;
-	f32 widthY = THangingBridge::mRopeWidthBetweenBoardsY;
-	for (int i = 0; i < n; ++i) {
-		f32 y = ay - unk38[i];
-		f32 v = rate * (ax + az);
-		GXPosition3f32(ax - uv.x, y, az - uv.y);
-		GXTexCoord2f32(0.0f, v);
-		GXPosition3f32(ax, y - widthY, az);
-		GXTexCoord2f32(1.0f, v);
-		ax += dx;
-		ay += dy;
-		az += dz;
+	for (int i = 0; i < divide; i++) {
+		f32 sag = y - mRopeSag[i];
+		f32 tex = mBetweenBoardsTexPosRate * (x + z);
+		GXPosition3f32(x - width.x, sag, z - width.y);
+		GXTexCoord2f32(0.0f, tex);
+		GXPosition3f32(x, sag - mRopeWidthBetweenBoardsY, z);
+		GXTexCoord2f32(1.0f, tex);
+		x += dx;
+		y += dy;
+		z += dz;
 	}
 }
 
-// "plus" strand: same stepping as drawLowerMinus(), but the second vertex of
-// each pair goes off the uv offset instead of down widthY.
-void THangingBridge::drawLowerPlus(const JGeometry::TVec3<f32>& a,
-                                   const JGeometry::TVec3<f32>& b,
-                                   const JGeometry::TVec2<f32>& uv,
-                                   int n) const
+void THangingBridge::drawLowerPlus(const JGeometry::TVec3<f32>& from,
+                                   const JGeometry::TVec3<f32>& to,
+                                   const JGeometry::TVec2<f32>& width,
+                                   int divide) const
 {
-	f32 ax = a.x, ay = a.y, az = a.z;
-	f32 step = 1.0f / (f32)n;
-	f32 dx = step * (b.x - a.x);
-	f32 dy = step * (b.y - a.y);
-	f32 dz = step * (b.z - a.z);
-	f32 rate = THangingBridge::mBetweenBoardsTexPosRate;
-	f32 widthY = THangingBridge::mRopeWidthBetweenBoardsY;
-	for (int i = 0; i < n; ++i) {
-		f32 y = ay - unk38[i];
-		f32 v = rate * (ax + az);
-		GXPosition3f32(ax, y - widthY, az);
-		GXTexCoord2f32(0.0f, v);
-		GXPosition3f32(ax + uv.x, y, az + uv.y);
-		GXTexCoord2f32(1.0f, v);
-		ax += dx;
-		ay += dy;
-		az += dz;
+	f32 x        = from.x;
+	f32 y        = from.y;
+	f32 z        = from.z;
+	f32 step     = 1.0f / divide;
+	f32 dx       = step * (to.x - from.x);
+	f32 dy       = step * (to.y - from.y);
+	f32 dz       = step * (to.z - from.z);
+
+	for (int i = 0; i < divide; i++) {
+		f32 sag = y - mRopeSag[i];
+		f32 tex = mBetweenBoardsTexPosRate * (x + z);
+		GXPosition3f32(x, sag - mRopeWidthBetweenBoardsY, z);
+		GXTexCoord2f32(0.0f, tex);
+		GXPosition3f32(x + width.x, sag, z + width.y);
+		GXTexCoord2f32(1.0f, tex);
+		x += dx;
+		y += dy;
+		z += dz;
 	}
 }
 
-// Upper strand: both vertices sit at the same height (no widthY drop), and the
-// second one flips the uv offset's sign.
-void THangingBridge::drawUpper(const JGeometry::TVec3<f32>& a,
-                               const JGeometry::TVec3<f32>& b,
-                               const JGeometry::TVec2<f32>& uv,
-                               int n) const
+void THangingBridge::drawUpper(const JGeometry::TVec3<f32>& from,
+                               const JGeometry::TVec3<f32>& to,
+                               const JGeometry::TVec2<f32>& width,
+                               int divide) const
 {
-	f32 ax = a.x, ay = a.y, az = a.z;
-	f32 step = 1.0f / (f32)n;
-	f32 dx = step * (b.x - a.x);
-	f32 dy = step * (b.y - a.y);
-	f32 dz = step * (b.z - a.z);
-	f32 rate = THangingBridge::mBetweenBoardsTexPosRate;
-	for (int i = 0; i < n; ++i) {
-		f32 y = ay - unk38[i];
-		f32 v = rate * (ax + az);
-		GXPosition3f32(ax + uv.x, y, az + uv.y);
-		GXTexCoord2f32(0.0f, v);
-		GXPosition3f32(ax - uv.x, y, az - uv.y);
-		GXTexCoord2f32(1.0f, v);
-		ax += dx;
-		ay += dy;
-		az += dz;
+	f32 x       = from.x;
+	f32 y       = from.y;
+	f32 z       = from.z;
+	f32 step    = 1.0f / divide;
+	f32 dx      = step * (to.x - from.x);
+	f32 dy      = step * (to.y - from.y);
+	f32 dz      = step * (to.z - from.z);
+
+	for (int i = 0; i < divide; i++) {
+		f32 sag = y - mRopeSag[i];
+		f32 tex = mBetweenBoardsTexPosRate * (x + z);
+		GXPosition3f32(x + width.x, sag, z + width.y);
+		GXTexCoord2f32(0.0f, tex);
+		GXPosition3f32(x - width.x, sag, z - width.y);
+		GXTexCoord2f32(1.0f, tex);
+		x += dx;
+		y += dy;
+		z += dz;
 	}
 }
 
-void THangingBridge::setDrawPos(int, f32, JGeometry::TVec3<f32>*) const {}
-
-// Six triangular strips make up the rope that spans the gap between the first
-// and the last board: the three strands (lower -z, lower +z, upper) for the
-// +offset column of rope points, then the same three for the -offset column.
-//
-// Each strip walks the board list, drawing a quad between the running point
-// and each board's rope point in turn, then closes with two more quads at the
-// far end so the rope reaches the bridge's own anchor point.
-void THangingBridge::drawRopeBetweenBoards(f32 dy, int n) const
+static inline int HangingBridgeBoardNum(const THangingBridge* bridge)
 {
-	// Cross-section of the rope, in board-local units scaled by unk3C.
-	f32 ox = unk30 * unk3C;
-	f32 oz = unk34 * unk3C;
-	// The ROM's frame is 0x108 with its local block ending at 0xcc, so it has
-	// 8 bytes of (unreferenced) local above `uv` that we have to reproduce to
-	// get both the frame size and every slot offset right. Unnamed, so it
-	// costs no instructions.
-	char localPad_top[8];
-	(void)localPad_top;
-	// The rope's texture coordinate pair, used by all six strips.
-	JGeometry::TVec2<f32> uv;
-	uv.x = unk30;
-	uv.y = unk34;
-	uv.x *= mRopeWidthBetweenBoards;
-	uv.y *= mRopeWidthBetweenBoards;
-	// unk10 boards plus the two closing quads, repeated n times over.
-	u16 count = (u16)(((int)unk10 + 2) * n);
-	JGeometry::TVec3<f32> v0;
-	JGeometry::TVec3<f32> v1;
-	// Local-slot padding: the ROM's v1/v0/uv sit at 0xac/0xb8/0xc4, ours sit
-	// 0x80 lower. Unnamed, so it costs no instructions.
-	char localPad_80[0x80];
-	(void)localPad_80;
-
-	// --- strip 1: lower rope, -z side, +offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x + ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z + oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[0];
-		v1.y += dy;
-		drawLowerMinus(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x + ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z + oz;
-	drawLowerMinus(v0, v1, uv, n);
-	v0 = v1;
-	drawLowerMinus(v0, v1, uv, n);
-
-	// --- strip 2: lower rope, +z side, +offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x + ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z + oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[0];
-		v1.y += dy;
-		drawLowerPlus(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x + ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z + oz;
-	drawLowerPlus(v0, v1, uv, n);
-	v0 = v1;
-	drawLowerPlus(v0, v1, uv, n);
-
-	// --- strip 3: upper rope, +offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x + ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z + oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[0];
-		v1.y += dy;
-		drawUpper(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x + ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z + oz;
-	drawUpper(v0, v1, uv, n);
-	v0 = v1;
-	drawUpper(v0, v1, uv, n);
-
-	// --- strip 4: lower rope, -z side, -offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x - ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z - oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[1];
-		v1.y += dy;
-		drawLowerMinus(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x - ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z - oz;
-	drawLowerMinus(v0, v1, uv, n);
-	v0 = v1;
-	drawLowerMinus(v0, v1, uv, n);
-
-	// --- strip 5: lower rope, +z side, -offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x - ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z - oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[1];
-		v1.y += dy;
-		drawLowerPlus(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x - ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z - oz;
-	drawLowerPlus(v0, v1, uv, n);
-	v0 = v1;
-	drawLowerPlus(v0, v1, uv, n);
-
-	// --- strip 6: upper rope, -offset ---
-	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, count);
-	v0.x = unk18.x - ox;
-	v0.y = unk18.y + dy;
-	v0.z = unk18.z - oz;
-	for (int i = 0; i < (int)unk10; ++i) {
-		v1 = unk14[i]->unk1A4[1];
-		v1.y += dy;
-		drawUpper(v0, v1, uv, n);
-		v0 = v1;
-	}
-	v1.x = unk24.x - ox;
-	v1.y = unk24.y + dy;
-	v1.z = unk24.z - oz;
-	drawUpper(v0, v1, uv, n);
-	v0 = v1;
-	drawUpper(v0, v1, uv, n);
+	return bridge->mBoardNum;
 }
 
-void THangingBridge::initDraw() const {}
-
-void THangingBridge::perform(u32 cue, JDrama::TGraphics*)
+static inline THangingBridgeBoard* HangingBridgeBoardAt(const THangingBridge* bridge,
+                                                       int i)
 {
-	// The ROM's `beq` after the rlwinm. goes straight to the epilogue, so the
-	// bit test guards the whole body, not just initDraw().
-	//
-	// MWCC 1.2.5e encodes a test of bit b as `rlwinm rD, rS, 0, 31-b, 31-b`
-	// -- the mask is the *complement* of the bit index. The ROM's single
-	// `rlwinm. r0, r4, 0, 28, 28` therefore tests bit 31-28 = 3, and
-	// `CUE_DRAW = 0x8` (libs/JSystem/include/JSystem/JDrama/JDRViewObj.hpp:16)
-	// is that bit. This was previously written as `cue & 0x10000000`, which
-	// was a misreading of the mask as if it were the bit index: it emitted
-	// mb=me=3 and gated drawing on an unrelated cue bit.
-	if (!(cue & CUE_DRAW)) {
-		return;
+	THangingBridgeBoard* board = bridge->mBoards[i];
+	return board;
+}
+
+// Nested fork inside the binder is the +4 pool rung perform needs;
+// drawRopeBetweenBoards keeps the flat binder (sites are not additive).
+static inline THangingBridgeBoard** HangingBridgeBoards(const THangingBridge* bridge)
+{
+	return bridge->mBoards;
+}
+
+static inline THangingBridgeBoard* HangingBridgeBoardAtPerform(const THangingBridge* bridge,
+                                                              int i)
+{
+	THangingBridgeBoard* board = HangingBridgeBoards(bridge)[i];
+	return board;
+}
+
+// UNUSED (0x10): the board-position fetch drawRopeBetweenBoards expands.
+void THangingBridge::setDrawPos(int i, f32 yOffset,
+                                JGeometry::TVec3<f32>* out) const
+{
+	out->y += yOffset;
+}
+
+// TODO: every local slot matches; retail's frame is 0x108 against our 0x100,
+// 8 bytes of dead region above the class-object block that no pool or binder
+// rung reaches (two-local binder subsets all land 0x108 but 8 bytes too low).
+// The board-number fork is also what swaps `mullw r0, r0, r30`'s operands.
+// Priced: raw mBoardNum is 0xf8 (slots shift), the fork 0x100, a name-and-
+// return binder 0x108 with shifted slots; fork in any loop condition, `<< 1`,
+// `divide *` first, `* 2 * divide`, and inlining setDrawPos are inert/worse.
+void THangingBridge::drawRopeBetweenBoards(f32 yOffset, int divide) const
+{
+	f32 offsetX = mSideDir.x * mRopeOffset;
+	f32 offsetZ = mSideDir.y;
+	offsetZ *= mRopeOffset;
+
+	JGeometry::TVec2<f32> width(mSideDir);
+	width.scale(mRopeWidthBetweenBoards);
+
+	u16 vertexNum = (HangingBridgeBoardNum(this) + 2) * divide * 2;
+
+	JGeometry::TVec3<f32> from;
+	JGeometry::TVec3<f32> to;
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x + offsetX, mStart.y + yOffset, mStart.z + offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[0];
+		setDrawPos(i, yOffset, &to);
+		drawLowerMinus(from, to, width, divide);
+		from = to;
 	}
-	initDraw();
-	// One local, reused: the ROM reloads the same sp+0x34 slot for both calls.
-	JGeometry::TVec3<f32> vec;
-	// Frame padding: the ROM's frame is 0x50, ours 0x30, and every local slot
-	// is 0x20 below where the ROM puts it.
-	
-	
-	for (int i = 0; i < (int)unk10; ++i) {
-		THangingBridgeBoard* board = unk14[i];
-		vec = board->unk1A4[0];
-		board->drawOneRope(vec);
-		vec = board->unk1A4[1];
-		board->drawOneRope(vec);
+	to.set(mEnd.x + offsetX, mEnd.y + yOffset, mEnd.z + offsetZ);
+	drawLowerMinus(from, to, width, divide);
+	from = to;
+	drawLowerMinus(from, to, width, divide);
+	GXEnd();
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x + offsetX, mStart.y + yOffset, mStart.z + offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[0];
+		setDrawPos(i, yOffset, &to);
+		drawLowerPlus(from, to, width, divide);
+		from = to;
 	}
-	// ROM reads 0x7c(gpMarDirector) here, i.e. mMap, not mState (0x64).
-	if (gpMarDirector->mMap == 0xD) {
-		drawRopeBetweenBoards(-60.0f, mPointNumBetweenBoards);
+	to.set(mEnd.x + offsetX, mEnd.y + yOffset, mEnd.z + offsetZ);
+	drawLowerPlus(from, to, width, divide);
+	from = to;
+	drawLowerPlus(from, to, width, divide);
+	GXEnd();
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x + offsetX, mStart.y + yOffset, mStart.z + offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[0];
+		setDrawPos(i, yOffset, &to);
+		drawUpper(from, to, width, divide);
+		from = to;
+	}
+	to.set(mEnd.x + offsetX, mEnd.y + yOffset, mEnd.z + offsetZ);
+	drawUpper(from, to, width, divide);
+	from = to;
+	drawUpper(from, to, width, divide);
+	GXEnd();
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x - offsetX, mStart.y + yOffset, mStart.z - offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[1];
+		setDrawPos(i, yOffset, &to);
+		drawLowerMinus(from, to, width, divide);
+		from = to;
+	}
+	to.set(mEnd.x - offsetX, mEnd.y + yOffset, mEnd.z - offsetZ);
+	drawLowerMinus(from, to, width, divide);
+	from = to;
+	drawLowerMinus(from, to, width, divide);
+	GXEnd();
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x - offsetX, mStart.y + yOffset, mStart.z - offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[1];
+		setDrawPos(i, yOffset, &to);
+		drawLowerPlus(from, to, width, divide);
+		from = to;
+	}
+	to.set(mEnd.x - offsetX, mEnd.y + yOffset, mEnd.z - offsetZ);
+	drawLowerPlus(from, to, width, divide);
+	from = to;
+	drawLowerPlus(from, to, width, divide);
+	GXEnd();
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, vertexNum);
+	from.set(mStart.x - offsetX, mStart.y + yOffset, mStart.z - offsetZ);
+	for (int i = 0; i < mBoardNum; i++) {
+		to = HangingBridgeBoardAt(this, i)->mRopeTop[1];
+		setDrawPos(i, yOffset, &to);
+		drawUpper(from, to, width, divide);
+		from = to;
+	}
+	to.set(mEnd.x - offsetX, mEnd.y + yOffset, mEnd.z - offsetZ);
+	drawUpper(from, to, width, divide);
+	from = to;
+	drawUpper(from, to, width, divide);
+	GXEnd();
+}
+
+// fabricated names. Returning the TColor from a helper keeps the colour out
+// of initDraw's named block and puts the parameter copy under the TColor
+// temporary; the manager fork is the +4 rung next to SMSGetMapObjManager's +0xc.
+static inline JUtility::TColor MonteRopeColor()
+{
+	GXColor color = { 0, 0, 100, 255 };
+	return JUtility::TColor(color);
+}
+
+static inline TMapObjManager* MonteMapObjManager() { return gpMapObjManager; }
+
+void THangingBridge::initDraw() const
+{
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL,
+	              GX_DF_NONE, GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_DISABLE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL,
+	              GX_DF_NONE, GX_AF_NONE);
+	GXSetChanMatColor(GX_COLOR0A0, MonteRopeColor());
+	GXSetNumTexGens(1);
+	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
+
+	if (SMSGetMarDirector()->mMap == 0xD) {
+		JUTTexture texture(SMSGetMapObjManager()->unkCC);
+		texture.load(GX_TEXMAP0);
 	} else {
-		drawRopeBetweenBoards(0.0f, mPointNumBetweenBoards);
+		JUTTexture texture(MonteMapObjManager()->unkCC);
+		texture.load(GX_TEXMAP0);
 	}
-	drawRopeBetweenBoards(mRopeHeight, 1);
+
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_TEXA, GX_CA_ZERO, GX_CA_ZERO,
+	                GX_CA_ZERO);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetCullMode(GX_CULL_BACK);
 }
 
-void THangingBridge::loadAfter() {}
+void THangingBridge::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & 8) {
+		initDraw();
 
-void THangingBridge::initMonte() {}
+		for (int i = 0; i < HangingBridgeBoardNum(this); i++) {
+			HangingBridgeBoardAtPerform(this, i)->drawRopes();
+		}
+
+		if (MapObjMonteMarDirector()->mMap == 0xD)
+			drawRopeBetweenBoards(-60.0f, mPointNumBetweenBoards);
+		else
+			drawRopeBetweenBoards(0.0f, mPointNumBetweenBoards);
+
+		drawRopeBetweenBoards(mRopeHeight, 1);
+	}
+}
+
+// UNUSED (0x120): the Monte (map 8) board placement table loadAfter expands.
+void THangingBridge::initMonte()
+{
+	f32 board[21][4] = {
+		{ 0.0f, -130.0f, 11965.0f, 30.0f },
+		{ 0.0f, -275.0f, 12225.0f, 29.0f },
+		{ 0.0f, -415.0f, 12490.0f, 28.0f },
+		{ 0.0f, -540.0f, 12760.0f, 26.0f },
+		{ 0.0f, -660.0f, 13035.0f, 24.0f },
+		{ 0.0f, -770.0f, 13315.0f, 22.0f },
+		{ 0.0f, -875.0f, 13595.0f, 20.0f },
+		{ 0.0f, -960.0f, 13895.0f, 12.0f },
+		{ 0.0f, -1020.0f, 14190.0f, 8.0f },
+		{ 0.0f, -1060.0f, 14490.0f, 4.0f },
+		{ 0.0f, -1090.0f, 14790.0f, 2.0f },
+		{ 0.0f, -1090.0f, 15090.0f, 0.0f },
+		{ 0.0f, -1080.0f, 15395.0f, -4.0f },
+		{ 0.0f, -1040.0f, 15695.0f, -6.0f },
+		{ 0.0f, -995.0f, 15990.0f, -8.0f },
+		{ 0.0f, -945.0f, 16285.0f, -8.0f },
+		{ 0.0f, -900.0f, 16580.0f, -8.0f },
+		{ 0.0f, -855.0f, 16880.0f, -8.0f },
+		{ 0.0f, -800.0f, 17175.0f, -10.0f },
+		{ -1.0f, 0.0f, 0.0f, 0.0f },
+		{ -99999.0f, 0.0f, 0.0f, 0.0f },
+	};
+
+	for (int i = 0; i < mBoardNum; i++) {
+		if (board[i][0] == -1.0f)
+			break;
+		if (board[i][0] == -1.0f)
+			continue;
+
+		mBoards[i]->mInitialPosition.set(board[i][0], board[i][1],
+		                                 board[i][2]);
+		mBoards[i]->mPosition.set(mBoards[i]->mInitialPosition);
+		mBoards[i]->mRotation.x = board[i][3];
+		mBoards[i]->calcDefaultMtx();
+	}
+}
+
+// TODO: every instruction matches but the frame is 0x2a8 against our 0x228
+// (0x208 before getCurrentMap() at all six map tests),
+// and the board-fixup loop counter lands in r25 where retail uses r27.
+// Retail puts the two unit-scale temporaries at 0x208/0x214 just under
+// `rot`, leaves 0x18 above the board table (0xa0) and 0x94 below it; ours
+// put the scale temporaries low at 0x1c/0x28. A named scale and rot declared
+// first fail. With initMonte() holding the board table (map size exact) the
+// scale temporaries sit high like retail's; the board is at 0xc against
+// retail's 0x98, so 0x8c of low region still has no carrier.
+void THangingBridge::loadAfter()
+{
+	JDrama::TNameRef::loadAfter();
+
+	f32 pitch = 0.0f;
+	if (gpMarDirector->getCurrentMap() == 0xD) {
+		mBoardNum = 14;
+		mStart.set(1550.0f, 2980.0f, -9410.0f);
+		mEnd.set(3570.0f, 2455.0f, -9410.0f);
+		pitch          = 90.0f;
+		mRopeHeight    = 150.0f;
+		mNeighborRate  = 0.8f;
+		mNeighbor2Rate = 0.5f;
+		mRopeOffset    = 160.0f;
+	} else if (gpMarDirector->getCurrentMap() == 8) {
+		mBoardNum = 19;
+		mStart.set(0.0f, 0.0f, 11356.0f);
+		mEnd.set(0.0f, -750.0f, 17743.0f);
+		mRopeHeight    = 1000.0f;
+		mNeighborRate  = 1.0f;
+		mNeighbor2Rate = 0.5f;
+		mRopeOffset    = 315.0f;
+	}
+
+	mSideDir.set(mEnd.x - mStart.x, mEnd.z - mStart.z);
+	mSideDir.setLength(1.0f);
+
+	f32 cosQ = cosf(1.5707964f);
+	f32 sinQ = sinf(1.5707964f);
+	mSideDir.set(mSideDir.x * cosQ - mSideDir.y * sinQ,
+	             mSideDir.x * sinQ + mSideDir.y * cosQ);
+
+	mBoards = new THangingBridgeBoard*[mBoardNum];
+	for (int i = 0; i < mBoardNum; i++) {
+		f32 t = (f32)i / (f32)(mBoardNum - 1);
+		JGeometry::TVec3<f32> pos;
+		pos.x = t * (mEnd.x - mStart.x) + mStart.x;
+		pos.y = (t * (mEnd.y - mStart.y) + mStart.y)
+		    - 0.0f * sinf(3.14f * t);
+		pos.z = t * (mEnd.z - mStart.z) + mStart.z;
+
+		JGeometry::TVec3<f32> rot(15.0f, pitch, 0.0f);
+		if (gpMarDirector->getCurrentMap() == 8) {
+			mBoards[i] = (THangingBridgeBoard*)
+			    TMapObjManager::newAndRegisterObj(
+			        "HangingBridgeBoard", pos, rot,
+			        JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+		} else {
+			mBoards[i] = (THangingBridgeBoard*)
+			    TMapObjManager::newAndRegisterObj(
+			        "PinnaHangingBridgeBoard", pos, rot,
+			        JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+		}
+		mBoards[i]->mBridge = this;
+		mBoards[i]->appear();
+	}
+
+	if (gpMarDirector->getCurrentMap() == 8)
+		initMonte();
+
+	if (gpMarDirector->getCurrentMap() == 0xD) {
+		mStart.set(1436.32f, 3201.477f - mRopeHeight, -9417.205f);
+		mEnd.set(3656.32f, 2631.477f - mRopeHeight, -9417.205f);
+	} else if (gpMarDirector->getCurrentMap() == 8) {
+		mEnd.z -= 120.0f;
+	}
+
+	for (int i = 0; i < mBoardNum; i++) {
+		if (i > 0)
+			mBoards[i]->mPrev = mBoards[i - 1];
+		if (i > 1)
+			mBoards[i]->mPrev2 = mBoards[i - 2];
+		if (i < mBoardNum - 1)
+			mBoards[i]->mNext = mBoards[i + 1];
+		if (i < mBoardNum - 2)
+			mBoards[i]->mNext2 = mBoards[i + 2];
+	}
+
+	mRopeSag  = new f32[mPointNumBetweenBoards];
+	f32 tStep = 1.0f / mPointNumBetweenBoards;
+	f32 t     = 0.0f;
+	for (int i = 0; i < mPointNumBetweenBoards; i++) {
+		mRopeSag[i] = 50.0f * sinf(3.14f * t);
+		t += tStep;
+	}
+}
 
 THangingBridge::THangingBridge(const char* name)
-    : TViewObj(name)
+    : JDrama::TViewObj(name)
 {
-	unk10 = 0;
-	unk14 = 0;
-	unk38 = 0;
-	unk3C = 0.0f;
-	unk40 = 0.0f;
-	unk44 = 0.0f;
+	mBoardNum      = 0;
+	mBoards        = nullptr;
+	mRopeSag       = nullptr;
+	mRopeOffset    = 0.0f;
+	mNeighborRate  = 0.0f;
+	mNeighbor2Rate = 0.0f;
 }
 
-// One rope segment running from `a` to `b`, drawn as two quads. The row on
-// the +z side is textured with unk138 * mTexPosRate, the -z row gets a
-// constant zero v coordinate.
-void TSwingBoard::drawOneRope(const JGeometry::TVec3<f32>& a,
-                              const JGeometry::TVec3<f32>& b) const
+f32 TSwingBoard::mBoardWidth      = 315.0f;
+f32 TSwingBoard::mRopeWidthX      = 10.0f;
+f32 TSwingBoard::mRopeWidthZ      = 7.0f;
+f32 TSwingBoard::mTexPosRate      = 0.01f;
+f32 TSwingBoard::mReturnAccelRate = 0.0001f;
+f32 TSwingBoard::mSpeedDownRate   = 0.998f;
+
+void TSwingBoard::drawOneRope(const JGeometry::TVec3<f32>& bottom,
+                              const JGeometry::TVec3<f32>& top) const
 {
-	f32 v = unk138 * TSwingBoard::mTexPosRate;
-	f32 w = TSwingBoard::mRopeWidthX;
-	f32 bx = b.x, ax = a.x, bz = b.z, az = a.z;
-	f32 br = bx + w, ar = ax + w;
-	f32 d = TSwingBoard::mRopeWidthZ;
-	f32 bf = bz + d, bb = bz - d, af = az + d, ab = az - d;
+	f32 topXPlus     = top.x + mRopeWidthX;
+	f32 topZPlus     = top.z + mRopeWidthZ;
+	f32 topZMinus    = top.z - mRopeWidthZ;
+	f32 bottomXPlus  = bottom.x + mRopeWidthX;
+	f32 bottomZPlus  = bottom.z + mRopeWidthZ;
+	f32 bottomZMinus = bottom.z - mRopeWidthZ;
+	f32 texPos       = mRopeLength * mTexPosRate;
+	f32 widthX       = mRopeWidthX;
+	f32 topX         = top.x;
+	f32 bottomX      = bottom.x;
+
 	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
-	GXPosition3f32(ax, a.y, af);
-	GXTexCoord2f32(0.0f, v);
-	GXPosition3f32(bx, b.y, bf);
+	GXPosition3f32(bottom.x, bottom.y, bottomZPlus);
+	GXTexCoord2f32(0.0f, texPos);
+	GXPosition3f32(top.x, top.y, topZPlus);
 	GXTexCoord2f32(0.0f, 0.0f);
-	GXPosition3f32(ar, a.y, ab);
-	GXTexCoord2f32(1.0f, v);
-	GXPosition3f32(br, b.y, bb);
+
+	GXPosition3f32(bottomXPlus, bottom.y, bottomZMinus);
+	GXTexCoord2f32(1.0f, texPos);
+	GXPosition3f32(topXPlus, top.y, topZMinus);
 	GXTexCoord2f32(1.0f, 0.0f);
-	GXPosition3f32(ax - w, a.y, ab);
-	GXTexCoord2f32(2.0f, v);
-	GXPosition3f32(bx - w, b.y, bb);
+
+	GXPosition3f32(bottomX - widthX, bottom.y, bottomZMinus);
+	GXTexCoord2f32(2.0f, texPos);
+	GXPosition3f32(topX - widthX, top.y, topZMinus);
 	GXTexCoord2f32(2.0f, 0.0f);
-	GXPosition3f32(ax, a.y, af);
-	GXTexCoord2f32(3.0f, v);
-	GXPosition3f32(bx, b.y, bf);
+
+	GXPosition3f32(bottom.x, bottom.y, bottomZPlus);
+	GXTexCoord2f32(3.0f, texPos);
+	GXPosition3f32(top.x, top.y, topZPlus);
 	GXTexCoord2f32(3.0f, 0.0f);
+	GXEnd();
 }
 
-void TSwingBoard::initDraw() const {}
+static const GXColor sSwingBoardColor = { 0, 0, 100, 255 };
 
-// Two drawOneRope() calls, one per side of the board: the first rope runs
-// from the board's current position to its saved one, the second mirrors it
-// about the board's local origin so the pair straddles the plank.
+void TSwingBoard::initDraw() const
+{
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_DISABLE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL,
+	              GX_DF_NONE, GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_DISABLE, GX_SRC_REG, GX_SRC_REG, GX_LIGHT_NULL,
+	              GX_DF_NONE, GX_AF_NONE);
+	// The colour is a file-scope constant: a local GXColor is a dead named
+	// slot above the texture (frame 0x88), and the constant folds to the
+	// same immediate.
+	GXSetChanMatColor(GX_COLOR0A0, JUtility::TColor(sSwingBoardColor));
+	GXSetNumTexGens(1);
+	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
+
+	JUTTexture texture(gpMapObjManager->unkCC);
+	texture.load(GX_TEXMAP0);
+
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_TEXA, GX_CA_ZERO, GX_CA_ZERO,
+	                GX_CA_ZERO);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetCullMode(GX_CULL_BACK);
+}
+
+// TODO: 99.8%. Every instruction matches and the frame is retail's 0x58, but
+// the `bottom`/`top` block sits 8 bytes low: we carry 8 bytes too few of pool
+// and 8 too many above the block. The getInitialPosition()/getPosition()
+// component rungs saturate at +0x10 and all land above the block.
 void TSwingBoard::draw() const
 {
 	initDraw();
+
+	JGeometry::TVec3<f32> bottom;
+
+	JGeometry::TVec3<f32> top;
 	MtxPtr mtx = getModel()->getAnmMtx(0);
-	f32 w = TSwingBoard::mBoardWidth;
-	// Saved end of the rope: the initial position, offset by the board's
-	// world-space x/z axis and lifted by unk138.
-	JGeometry::TVec3<f32> a;
-	a.x = mInitialPosition.x + w * mtx[0][0];
-	a.y = mInitialPosition.y + unk138;
-	a.z = mInitialPosition.z + w * mtx[2][0];
-	// Live end: same construction from the current position.
-	JGeometry::TVec3<f32> b;
-	b.x = mPosition.x + w * mtx[0][0];
-	b.y = mPosition.y + 60.0f;
-	b.z = mPosition.z + w * mtx[2][0];
-	drawOneRope(a, b);
-	a.x = mInitialPosition.x - w * mtx[0][0];
-	a.z = mInitialPosition.z - w * mtx[2][0];
-	b.x = mPosition.x - w * mtx[0][0];
-	b.z = mPosition.z - w * mtx[2][0];
-	drawOneRope(a, b);
+
+	f32 width = mBoardWidth;
+	top.x     = width * mtx[0][0] + getInitialPosition().x;
+	top.y     = mRopeLength + getInitialPosition().y;
+	top.z     = width * mtx[2][0] + getInitialPosition().z;
+	bottom.x  = width * mtx[0][0] + getPosition().x;
+	bottom.y  = 60.0f + mPosition.y;
+	bottom.z  = width * mtx[2][0] + mPosition.z;
+	drawOneRope(bottom, top);
+
+	width    = mBoardWidth;
+	top.x    = getInitialPosition().x - width * mtx[0][0];
+	top.z    = getInitialPosition().z - width * mtx[2][0];
+	bottom.x = mPosition.x - width * mtx[0][0];
+	bottom.z = mPosition.z - width * mtx[2][0];
+	drawOneRope(bottom, top);
 }
 
-void TSwingBoard::swing() {}
+// UNUSED (0xa8): the water-jet push at the head of control, which retail
+// reaches behind its own marioIsOn() guard (control tests it twice). The
+// component stores into `dir` make its scalar temporaries in x, y, z order,
+// so x is coloured first and takes f31 as in retail; the constructor (args
+// right to left) or three named floats (dirZ created first) swap f31/f30.
+void TSwingBoard::swing()
+{
+	if (marioIsOn() && SMS_GetMarioWaterGun()->isEmitWater()) {
+		MtxPtr emit = SMS_GetMarioWaterGun()->getEmitMtx(0);
+		JGeometry::TVec3<f32> dir;
+		dir.x = -emit[0][0];
+		dir.y = 0.0f;
+		dir.z = -emit[2][0];
+		MtxPtr mtx = getModel()->getAnmMtx(0);
+		JGeometry::TVec3<f32> axis(mtx[0][2], mtx[1][2], mtx[2][2]);
+		mAngleSpeed += mAccelRate * axis.dot(dir);
+	}
+}
 
-// Swing physics. Mario standing on the board accelerates it away from the
-// water gun's nozzle axis; then a spring/damper pair keeps it swinging, and
-// the plank's position is recomputed from the swing matrix each frame.
+// TODO: 99.9%, every instruction exact; frame 0x118 against our 0xb0
+// (getInitialPosition() at all three reads gave +8). With
+// swing() inlined, rot sits at the top as in retail (0xd0) but 29 words of
+// dead objects created after it are missing; the discarded cosf/sinf of
+// mAngle are their likely source. Inert or wrong: named unused cos/sin
+// (+8), a TVec3 of them (+0x20/+0x28), a TVec3 `top` for the position (code).
 void TSwingBoard::control()
 {
 	TMapObjBase::control();
-	if (marioIsOn() && marioIsOn()
-	    && SMS_GetMarioWaterGun()->mIsEmitWater != 0) {
-		// The water jet pushes the board along the nozzle's negated x/z.
-		MtxPtr emit = SMS_GetMarioWaterGun()->getEmitMtx(0);
-		f32 nx = -emit[0][0];
-		f32 nz = -emit[0][2];
-		MtxPtr mtx = getModel()->getAnmMtx(0);
-		unk144 = unk140 + (mtx[0][3] * nx + mtx[1][3] * nz) * unk144;
-	}
-	// Spring towards the rest angle.
-	unk13C = unk13C + unk144;
-	f32 vel = unk144;
-	f32 rest = unk13C;
-	unk144 = rest - TSwingBoard::mReturnAccelRate * vel;
-	// Hard limit: past mSpeedDownRate the swing velocity is clamped to that
-	// fraction of the current angle.
-	if (fabs(unk144) > TSwingBoard::mSpeedDownRate) {
-		unk144 = unk144 * TSwingBoard::mSpeedDownRate;
-	}
-	// The swing has come back to vertical: stop the creak sound if it is
-	// playing, otherwise start the rising/falling variant by sign.
-	if (!(vel * unk144 != 0.0f)) {
-		if (unk188) {
-			unk188->stop(1);
-		}
-	} else if (unk144 > 0.0f) {
-		f32 pitch = fabs(unk13C);
-		if (gpMSound->gateCheck(0x3867)) {
-			MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-			    0x3867, &mPosition, nullptr, pitch, 0, 0, &unk188, 0, 4);
-		}
-	} else {
-		f32 pitch = fabs(unk13C);
-		if (gpMSound->gateCheck(0x3868)) {
-			MSoundSESystem::MSoundSE::startSoundActorWithInfo(
-			    0x3868, &mPosition, nullptr, pitch, 0, 0, &unk188, 0, 4);
+
+	if (marioIsOn())
+		swing();
+
+	mAngle += mAngleSpeed;
+	f32 previousSpeed = mAngleSpeed;
+	mAngleSpeed       = previousSpeed - mAngle * mReturnAccelRate;
+	if (fabsf(mAngleSpeed) > mAngleSpeedMax)
+		mAngleSpeed *= mSpeedDownRate;
+
+	if (previousSpeed * mAngleSpeed <= 0.0f) {
+		if (mSound)
+			mSound->stop(1);
+
+		if (mAngleSpeed > 0.0f) {
+			gpMSound->startSoundActorWithInfo(MSD_SE_OBJ_SWING1,
+			                                  &mPosition, nullptr,
+			                                  fabsf(mAngle), 0, 0, &mSound, 0,
+			                                  4);
+		} else {
+			gpMSound->startSoundActorWithInfo(MSD_SE_OBJ_SWING2,
+			                                  &mPosition, nullptr,
+			                                  fabsf(mAngle), 0, 0, &mSound, 0,
+			                                  4);
 		}
 	}
-	// Recompute the plank's world position from its swing matrix, then copy
-	// it into the model's node matrices for rendering.
-	unk140 = -unk13C;
-	f32 s = sinf(3.14f * (unk140 / 180.0f));
-	f32 c = cosf(3.14f * (unk140 / 180.0f));
-	// A RotZ by the current swing angle, composed onto the swing matrix.
-	Mtx axis;
-	axis[0][0] = 1.0f;
-	axis[0][1] = 0.0f;
-	axis[0][2] = 0.0f;
-	axis[0][3] = 0.0f;
-	axis[1][0] = 0.0f;
-	axis[1][1] = c;
-	axis[1][2] = s;
-	axis[1][3] = 0.0f;
-	axis[2][0] = 0.0f;
-	axis[2][1] = -s;
-	axis[2][2] = c;
-	axis[2][3] = 0.0f;
-	axis[3][0] = 0.0f;
-	axis[3][1] = 0.0f;
-	axis[3][2] = 0.0f;
-	axis[3][3] = 1.0f;
+
+	mRotation.x = -mAngle;
+	f32 sinA    = sinf(3.14f * (mRotation.x / 180.0f));
+	f32 cosA    = cosf(3.14f * (mRotation.x / 180.0f));
+
+	Mtx rot;
+	rot[0][0] = 1.0f;
+	rot[0][1] = 0.0f;
+	rot[0][2] = 0.0f;
+	rot[0][3] = 0.0f;
+	rot[1][0] = 0.0f;
+	rot[1][1] = cosA;
+	rot[1][2] = -sinA;
+	rot[1][3] = 0.0f;
+	rot[2][0] = 0.0f;
+	rot[2][1] = sinA;
+	rot[2][2] = cosA;
+	rot[2][3] = 0.0f;
+
 	MtxPtr mtx = getModel()->getAnmMtx(0);
-	PSMTXConcat(mMatrix, axis, mtx);
-	f32 c2 = cosf(3.14f * (unk13C / 180.0f));
-	f32 s2 = sinf(3.14f * (unk13C / 180.0f));
-	mPosition.x = mInitialPosition.x - mtx[0][1] * unk138;
-	mPosition.y = mInitialPosition.y + unk138 - mtx[1][1] * unk138;
-	mPosition.z = mInitialPosition.z - mtx[2][1] * unk138;
-	mtx[0][3] = mPosition.x;
-	mtx[1][3] = mPosition.y;
-	mtx[2][3] = mPosition.z;
+	MTXConcat(mBaseMtx, rot, mtx);
+
+	cosf(3.14f * (mAngle / 180.0f));
+	sinf(3.14f * (mAngle / 180.0f));
+
+	mPosition.x = getInitialPosition().x - mtx[0][1] * mRopeLength;
+	mPosition.y = (mRopeLength + getInitialPosition().y) - mtx[1][1] * mRopeLength;
+	mPosition.z = getInitialPosition().z - mtx[2][1] * mRopeLength;
+	mtx[0][3]   = mPosition.x;
+	mtx[1][3]   = mPosition.y;
+	mtx[2][3]   = mPosition.z;
 }
 
 void TSwingBoard::load(JSUMemoryInputStream& stream)
 {
 	TMapObjBase::load(stream);
-	stream.read(&unk138, 4);
-	if (unk138 == -1.0f) {
-		unk138 = 5000.0f;
-	}
-	stream.read(&unk140, 4);
-	if (unk140 > 10.0f || unk140 == 0.0f) {
-		unk140 = 0.003f;
-	}
-	// unk17C is the board's rest orientation; its y picks up the rope's
-	// current height so the board hangs at the right level.
-	unk17C.x = mPosition.x;
-	unk17C.y = mPosition.y + unk138;
-	unk17C.z = mPosition.z;
-	// rand() as a float goes through a double (MWCC's int->float lowering),
-	// so this is NOT MsRandF(), which would be a single fmuls.
-	const f32 kInv = 0.000030517578f;
-	const f32 r1 = (f32)rand();
-	f32 t148 = kInv * r1;
-	t148 = t148 + 1.0f;
-	unk148 = (t148 * 0.5f) * 0.05f;
-	const f32 r2 = (f32)rand();
-	f32 t13C = kInv * r2;
-	unk13C = (t13C - 0.5f) * 20.0f;
-	if (unk13C > 0.0f) {
-		unk144 = unk148 * -(kInv * (f32)rand());
-	} else {
-		unk144 = unk148 * (kInv * (f32)rand());
-	}
-	// The swing matrix is built in place: MsMtxSetRotY() inlined with a
-	// destination of mMatrix. The trailing stores are MsMtxSetRotY's own
-	// constant writes, not separate statements.
-	MsMtxSetRotY(mMatrix, 182.04445f * mRotation.y);
-}
 
-#pragma dont_inline off
+	stream >> mRopeLength;
+	if (mRopeLength == -1.0f)
+		mRopeLength = 5000.0f;
+
+	stream >> mAccelRate;
+	if (mAccelRate > 10.0f || mAccelRate == 0.0f)
+		mAccelRate = 0.003f;
+
+	mAnchor.set(mPosition.x, mPosition.y + mRopeLength, mPosition.z);
+
+	mAngleSpeedMax = 0.05f * ((1.0f + MsRandF()) / 2.0f);
+	mAngle         = 20.0f * (MsRandF() - 0.5f);
+	if (mAngle > 0.0f)
+		mAngleSpeed = mAngleSpeedMax * -MsRandF();
+	else
+		mAngleSpeed = mAngleSpeedMax * MsRandF();
+
+	// The base matrix is written through one MtxPtr (all ref() is 0x68,
+	// raw mMtx 0x38 against retail's 0x40).
+	s16 yaw  = (s16)(182.04445f * mRotation.y);
+	f32 sinY = JMASSin(yaw);
+	f32 cosY = JMASCos(yaw);
+	MtxPtr m = mBaseMtx;
+	m[0][0] = cosY;
+	m[0][1] = 0.0f;
+	m[0][2] = sinY;
+	m[0][3] = 0.0f;
+	m[1][0] = 0.0f;
+	m[1][1] = 1.0f;
+	m[1][2] = 0.0f;
+	m[1][3] = 0.0f;
+	m[2][0] = -sinY;
+	m[2][1] = 0.0f;
+	m[2][2] = cosY;
+	m[2][3] = 0.0f;
+}
 
 TSwingBoard::TSwingBoard(const char* name)
     : TMapObjBase(name)
 {
-	unk138 = 5000.0f;
-	unk13C = 0.0f;
-	unk140 = 0.0f;
-	unk144 = 0.0f;
-	unk148 = 0.0f;
-	unk188 = 0;
-	mMatrix[2][3] = 0.0f;
-	mMatrix[1][3] = 0.0f;
-	mMatrix[0][3] = 0.0f;
-	mMatrix[1][2] = 0.0f;
-	mMatrix[0][2] = 0.0f;
-	mMatrix[2][1] = 0.0f;
-	mMatrix[0][1] = 0.0f;
-	mMatrix[2][0] = 0.0f;
-	mMatrix[1][0] = 0.0f;
-	mMatrix[2][2] = 1.0f;
-	mMatrix[1][1] = 1.0f;
-	mMatrix[0][0] = 1.0f;
-	unk17C.z = 0.0f;
-	unk17C.y = 0.0f;
-	unk17C.x = 0.0f;
+	mRopeLength    = 5000.0f;
+	mAngle         = 0.0f;
+	mAccelRate     = 0.0f;
+	mAngleSpeed    = 0.0f;
+	mAngleSpeedMax = 0.0f;
+	mSound         = nullptr;
+
+	mBaseMtx.ref(0, 3) = mBaseMtx.ref(1, 3) = mBaseMtx.ref(2, 3) = 0.0f;
+	mBaseMtx.ref(0, 2) = mBaseMtx.ref(1, 2) = 0.0f;
+	mBaseMtx.ref(0, 1) = mBaseMtx.ref(2, 1) = 0.0f;
+	mBaseMtx.ref(1, 0) = mBaseMtx.ref(2, 0) = 0.0f;
+	mBaseMtx.ref(0, 0) = mBaseMtx.ref(1, 1) = mBaseMtx.ref(2, 2) = 1.0f;
+
+	mAnchor.zero();
 }
 
+// The guard reads the manager through SMSGetFlagManagerBound, the setter
+// does not: the binder is +8 at one site and +0x10 (and a register reshuffle) at both,
+// and retail's 0x28 frame wants exactly one.
 void TGoalFlag::touchActor(THitActor* actor)
 {
 	if (actor->isActorType(0x80000001)) {
-		if (!TFlagManager::getInstance()->getBool(0x00050005)) {
-			TFlagManager::getInstance()->setBool(true, 0x00050005);
-		}
-		actor->receiveMessage(this, HIT_MESSAGE_ATTACK);
-	} else if (actor->isActorType(0x08000002)) {
-		actor->receiveMessage(this, HIT_MESSAGE_ATTACK);
+		if (!SMSGetFlagManagerBound()->getBool(0x50005))
+			TFlagManager::getInstance()->setBool(true, 0x50005);
+
+		actor->receiveMessage(this, 0xE);
+		return;
 	}
+
+	if (actor->isActorType(0x08000002))
+		actor->receiveMessage(this, 0xE);
 }
 
 void TGoalFlag::initMapObj() { TMapObjBase::initMapObj(); }
 
+f32 TFluff::mScaleUpSpeed   = 0.05f;
+f32 TFluff::mScaleDownSpeed = 0.01f;
+
 u32 TFluff::touchWater(THitActor* actor)
 {
-	const JGeometry::TVec3<f32>& waterPos = getWaterPos(actor);
-	JGeometry::TVec3<f32> normal;
-	getNormalVecFromTarget(waterPos.x, waterPos.y, waterPos.z, &normal);
-	mVelocity.x -= normal.x * unk160;
-	mVelocity.y -= normal.y * unk160;
-	mVelocity.z -= normal.z * unk160;
+	const JGeometry::TVec3<f32>& water = getWaterPos(actor);
+
+	JGeometry::TVec3<f32> push;
+	getNormalVecFromTarget(water.x, water.y, water.z, &push);
+
+	mVelocity.x = mVelocity.x - push.x * mWaterPushRate;
+	mVelocity.y = mVelocity.y - push.y * mWaterPushRate;
+	mVelocity.z = mVelocity.z - push.z * mWaterPushRate;
+
 	return 1;
 }
 
-void TFluff::move() {}
+// TODO: 99.9%, every instruction matches; retail's frame is 0x78 against
+// our 0x38 (0x28 before getVelocity() and getInitialPosition(), c-hs5).
+// isZero is called on unkD0 itself (lfsu); the missing 0x40 is
+// an unidentified carrier, not another wind copy. c-m20: 20 words are
+// created after `velocity` (the top slot); add()/scale()/+=/*= are inert,
+// a TVec3 holding the swing offset is +0x18 at equal code (not landed).
+void TFluff::move()
+{
+	mPosition.y -= mFallSpeed;
+	if (mPosition.y < 0.0f) {
+		mPosition.y = 5000.0f;
+		if (mHeldObject) {
+			mHeldObject->receiveMessage(this, 8);
+			mHeldObject->mHolder = nullptr;
+			mHeldObject          = nullptr;
+		}
+	}
+
+	mDrift.x += mWindRate * gpMapObjManager->unkD0.x;
+	mDrift.z += mWindRate * gpMapObjManager->unkD0.z;
+
+	JGeometry::TVec3<f32> velocity = getVelocity();
+	mDrift.x += velocity.x;
+	mDrift.y += velocity.y;
+	mDrift.z += velocity.z;
+
+	f32 down = mSpeedDownRate;
+	mVelocity.x *= down;
+	mVelocity.y *= down;
+	mVelocity.z *= down;
+
+	f32 swing   = mSwingRadius * sinf(3.14f * mSwingAngle / 180.0f);
+	mPosition.x = mDrift.x + (swing * (mSwingCos + mSwingSin)
+	                          + getInitialPosition().x);
+	mPosition.y += mWindRate * gpMapObjManager->unkD0.y;
+	mPosition.z = mDrift.z + (swing * (mSwingSin - mSwingCos)
+	                          + getInitialPosition().z);
+
+	if (gpMapObjManager->unkD0.isZero()) {
+		mSwingAngle += mSwingAngleSpeed;
+		if (mSwingAngle > 360.0f)
+			mSwingAngle -= 360.0f;
+	}
+
+	if (mHeldObject && mHeldObject->isActorType(0x80000001))
+		gpMarioPos->y -= mFallSpeed;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TFluff::kill (batch 127).
+static inline TTakeActor* MapObjMonteHeldObject(const TFluff* p)
+{
+	TTakeActor* heldObject = p->mHeldObject;
+	return heldObject;
+}
 
 void TFluff::kill()
 {
 	if (mHeldObject) {
-		mHeldObject->receiveMessage(this, HIT_MESSAGE_UNK8);
+		MapObjMonteHeldObject(this)->receiveMessage(this, 8);
 		mHeldObject->mHolder = nullptr;
-		mHeldObject = nullptr;
+		mHeldObject          = nullptr;
 	}
-	setState(3);
+
+	mState = STATE_VANISHING;
 }
 
-void TFluff::control() {}
+static inline TMap* MapObjMonteMapRaw() { return gpMap; }
 
-void TFluff::appear() {}
+static inline TMap* MapObjMonteMapNested()
+{
+	TMap* map = MapObjMonteMapRaw();
+	return map;
+}
+
+void TFluff::control()
+{
+	TMapObjBase::control();
+	move();
+
+	switch (mState) {
+	case STATE_APPEARING:
+		mScaling.x += mScaleUpSpeed;
+		mScaling.y += mScaleUpSpeed;
+		mScaling.z += mScaleUpSpeed;
+		if (mScaling.x > 1.0f) {
+			mScaling.set(1.0f, 1.0f, 1.0f);
+			setObjHitData(0);
+			mState = STATE_FLYING;
+		}
+		break;
+
+	case STATE_FLYING: {
+		mGroundHeight
+		    = MapObjMonteMapNested()->checkGround(mPosition, &mGroundPlane);
+		JGeometry::TVec3<f32> velocity = mVelocity;
+		if (velocity.y < 0.0f
+		    && (mGroundHeight > mPosition.y - mFallSpeed
+		        || mPosition.y < -1000.0f))
+			kill();
+
+		if (gpMap->isTouchedOneWall(mPosition.x, mPosition.y,
+		                           mPosition.z, 100.0f))
+			kill();
+
+		if (mPosition.x < -14848.0f || 14848.0f < mPosition.x
+		    || mPosition.z < -19968.0f || 19968.0f < mPosition.z)
+			kill();
+		break;
+	}
+
+	case STATE_VANISHING:
+		mScaling.x -= mScaleDownSpeed;
+		mScaling.y -= mScaleDownSpeed;
+		mScaling.z -= mScaleDownSpeed;
+		if (mScaling.x < 0.1f) {
+			gpMarioParticleManager->emitAndBindToPosPtr(0xE5, &mPosition, 0,
+			                                            nullptr);
+			gpMSound->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition);
+			mScaling.set(0.0001f, 0.0001f, 0.0001f);
+			mStateTimer = 240;
+			mState      = STATE_WAIT_APPEAR;
+		}
+		break;
+
+	case STATE_WAIT_APPEAR:
+		if (!isStateTimerEngaged()) {
+			appear();
+			mRotation.set(0.0f, 360.0f * MsRandF(), 0.0f);
+			mInitialRotation = mRotation;
+			mIsRideable = false;
+			mManager->registerNextFluff(this);
+		}
+		break;
+	}
+}
+
+void TFluff::appear()
+{
+	makeObjAppeared();
+
+	mPosition.set(mManager->getRandomX(),
+	              mManager->mPosition.y * MsRandF(),
+	              mManager->getRandomZ());
+	mInitialPosition = mPosition;
+
+	mScaling.set(0.0001f, 0.0001f, 0.0001f);
+	mDrift.zero();
+	mSwingAngle = 0.0f;
+
+	mWindRate   = 0.8f * MsRandF() + 0.2f;
+	mSwingSin   = sinf(3.14f * mRotation.y / 180.0f);
+	mSwingCos   = cosf(3.14f * mRotation.y / 180.0f);
+	mSwingAngle = 360.0f * MsRandF();
+	mSwingAngleSpeed = 0.3f;
+	mState      = STATE_APPEARING;
+}
 
 void TFluff::initMapObj()
 {
 	TMapObjBase::initMapObj();
-	unk138 = 300.0f;
-	unk13C = 0.5f;
+	mSwingRadius = 300.0f;
+	mFallSpeed   = 0.5f;
 }
 
 TFluff::TFluff(const char* name)
     : TMapObjBase(name)
 {
-	unk138 = 0.0f;
-	unk13C = 0.0f;
-	unk140 = 0.0f;
-	unk144 = 0.0f;
-	unk148 = 0.0f;
-	unk14C = 0.0f;
-	unk150 = 0.0f;
-	unk160 = 1.0f;
-	unk164 = 0.95f;
-	unk168 = nullptr;
-	unk16C = 0;
-	unk15C = 0.0f;
-	unk158 = 0.0f;
-	unk154 = 0.0f;
+	mSwingRadius     = 0.0f;
+	mFallSpeed       = 0.0f;
+	mSwingSin        = 0.0f;
+	mSwingCos        = 0.0f;
+	mSwingAngle      = 0.0f;
+	mSwingAngleSpeed = 0.0f;
+	mWindRate        = 0.0f;
+	mWaterPushRate   = 1.0f;
+	mSpeedDownRate   = 0.95f;
+	mManager         = nullptr;
+	mIsRideable      = false;
+	mDrift.zero();
 }
 
-void TFluffManager::findNextFluff() {}
+f32 TFluffManager::mWindMin = 1.0f;
 
-void TFluffManager::control() {}
+// UNUSED (0x118, ours 0xf4): the search control's STATE_WAIT branch expands.
+//
+// The distance test is `mPosition.distance(*gpMarioPos)`, not the class's own
+// `getDistance(*gpMarioPos)`: retail's expansion in TFluffManager::control
+// subtracts `mPosition - marioPos` off an advancing base (`lfsu f3, 0x10(r3)`)
+// with no `mYOffset` term and ends in `bl TUtil<f32>::sqrt`, while
+// getDistance's own out-of-line body (MapObjLib.cpp, map 0x7c, 99.9% here)
+// subtracts the other way, reads 0x108 and expands the `frsqrte` refinement.
+// Worth +6.4 on control (90.0 -> 96.4); no change to MapObjBase.hpp is needed.
+void TFluffManager::findNextFluff()
+{
+	for (int i = 3; i < mFluffMax; i++) {
+		if (!mFluffs[i]->mIsRideable && !mFluffs[i]->mHeldObject
+		    && mFluffs[i]->mPosition.distance(*gpMarioPos) > 3000.0f) {
+			mNextFluff = mFluffs[i];
+			mFluffs[i]->kill();
+			return;
+		}
+	}
+}
 
-void TFluffManager::registerNextFluff(TFluff*) {}
+// TODO: 99.9%, every instruction exact; frame 0xa0 against our 0x78, i.e.
+// 10 words of dead objects missing (the two-argument sound is +8, c-hs5;
+// iro.py before it: ours had 4 P, 4 inline and 3 named dead words). findNextFluff's own body is 0xf4 against the map's
+// 0x118, so the WAIT branch's expansion may be the carrier; the calcDist /
+// `a - b` / length() spellings of its distance all change control's code.
+void TFluffManager::control()
+{
+	switch (mState) {
+	case STATE_WAIT:
+		if (!mNextFluff
+		    && mRideFluff->mPosition.y - 100.0f < mPosition.y - mBlowHeight)
+			findNextFluff();
 
-void TFluffManager::setUpNextFluff() {}
+		if (mRideFluff->mPosition.y < mPosition.y - mBlowHeight) {
+			gpMSound->startSoundActor(MSD_SE_OBJ_WATAGE_WIND,
+			                          &mRideFluff->mPosition);
+			mStateTimer = mBlowTime;
+			mState      = STATE_BLOW;
+		}
+		break;
 
-void TFluffManager::newFluff(const char*) {}
+	case STATE_BLOW: {
+		JGeometry::TVec3<f32> wind;
+		wind.set(gpMapObjManager->unkD0);
+		wind.add(mWind);
+		TMapObjManager* man = gpMapObjManager;
+		man->unkD0.set(wind);
+		if (!isStateTimerEngaged())
+			mState = STATE_CALM;
+		break;
+	}
 
-f32 TFluffManager::getRandomX() const { return 0.0f; }
+	case STATE_CALM: {
+		JGeometry::TVec3<f32> wind;
+		wind.set(gpMapObjManager->unkD0);
+		wind.scale(mWindDownRate);
 
-f32 TFluffManager::getRandomZ() const { return 0.0f; }
+		if (fabsf(wind.x) < mWindMin && fabsf(wind.y) < mWindMin
+		    && fabsf(wind.z) < mWindMin) {
+			wind.set(0.0f, 0.0f, 0.0f);
+			mRideFluff = mNextFluff;
 
-void TFluffManager::loadAfter() {}
+			mRideFluff->mRotation.set(mRotation);
+			mRideFluff->mInitialRotation = mRotation;
+			mRideFluff->appear();
+			mRideFluff->mPosition.set(mPosition);
+			mRideFluff->mInitialPosition = mPosition;
+			mRideFluff->mRotation.set(0.0f, 0.0f, 0.0f);
+			mRideFluff->mInitialRotation = mRideFluff->mRotation;
+			mRideFluff->mSwingAngle = 0.0f;
+			mRideFluff->mWindRate   = 1.0f;
+			mRideFluff->mIsRideable = true;
+			mNextFluff              = nullptr;
+			mState                  = STATE_WAIT;
+		}
 
-void TFluffManager::load(JSUMemoryInputStream&) {}
+		TMapObjManager* man = gpMapObjManager;
+		man->unkD0.set(wind);
+		break;
+	}
+	}
+}
+
+// UNUSED (0x40): the wait-appear branch of TFluff::control expands it.
+void TFluffManager::registerNextFluff(TFluff* fluff)
+{
+	if (!mNextFluff) {
+		mNextFluff = fluff;
+		mNextFluff->makeObjDead();
+	}
+}
+
+// UNUSED (0x10c): matches the map size only without a rotation copy, so
+// loadAfter's seeds (which copy mRotation in between) spell it out.
+void TFluffManager::setUpNextFluff()
+{
+	mNextFluff->mPosition.set(mPosition);
+	mNextFluff->mInitialPosition.set(getRandomX(), mPosition.y * MsRandF(),
+	                                 getRandomZ());
+}
+
+// UNUSED (0x6c).
+TFluff* TFluffManager::newFluff(const char* name)
+{
+	TFluff* fluff = new TFluff(name);
+	fluff->initAndRegister("Fluff");
+	fluff->mManager = this;
+	return fluff;
+}
+
+// UNUSED (0x64 each).
+f32 TFluffManager::getRandomX() const
+{
+	return mRangeX * (2.0f * MsRandF() - 1.0f);
+}
+
+f32 TFluffManager::getRandomZ() const
+{
+	return mRangeZ * (2.0f * MsRandF() - 1.0f);
+}
+
+// TODO: 99.8%. registerNextFluff is the mNextFluff registration
+// TFluff::control expands (0x40 exactly), so the seeds and the tail loop
+// spell their mFluffs appends out. Both named seeds now word-copy a stack TVec3 into
+// mInitialPosition (`stfs` then `lwz`/`stw`); retail's frame is 0x78
+// against our 0x88. The extra 0x10 is not absorbed by a ctor temporary
+// (two slots, 0x98) or an inlined assign helper (97.8%, extra fluff
+// pointer load). Now 0x80 against 0x78: retail's initPos is at 0x30 with
+// one 4-byte object above it, ours at 0x3c on top; the dead set is initPos,
+// the loop's fluff, the newFluff locals and set()/operator= bindings.
+// Inert: initPos, fluff or i declared at the top, an unnamed loop fluff, a
+// TVec3 temporary or a constructor spelling for either seed.
+void TFluffManager::loadAfter()
+{
+	mFluffNum = 0;
+	mFluffMax = 32;
+	mFluffs   = new TFluff*[mFluffMax];
+
+	mRideFluff = newFluff("１つ目のわた毛");
+	mRideFluff->mIsRideable = true;
+	mRideFluff->appear();
+	mRideFluff->mPosition.set(mPosition);
+	mRideFluff->mRotation.set(mRotation);
+	JGeometry::TVec3<f32> initPos;
+	initPos.set(getRandomX(), mPosition.y * MsRandF(), getRandomZ());
+	mRideFluff->mInitialPosition = initPos;
+	mFluffs[mFluffNum] = mRideFluff;
+	mFluffNum++;
+
+	mNextFluff = newFluff("２つ目のわた毛");
+	mNextFluff->mPosition.set(mPosition);
+	mNextFluff->mRotation.set(mRotation);
+	initPos.set(getRandomX(), mPosition.y * MsRandF(), getRandomZ());
+	mNextFluff->mInitialPosition = initPos;
+	mNextFluff->makeObjDead();
+	mFluffs[mFluffNum] = mNextFluff;
+	mFluffNum++;
+
+	for (int i = 2; i < mFluffMax; i++) {
+		TFluff* fluff      = newFluff("わた毛");
+		mFluffs[mFluffNum] = fluff;
+		mFluffs[mFluffNum]->appear();
+		mFluffNum++;
+	}
+}
+
+void TFluffManager::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+
+	stream >> mBlowHeight;
+
+	f32 power;
+	stream >> power;
+	power *= 0.01f;
+
+	stream >> mBlowTime;
+
+	mRangeX       = 5000.0f;
+	mRangeZ       = 5000.0f;
+	mWindDownRate = 0.998f;
+
+	JGeometry::TMatrix34<JGeometry::SMatrix34C<f32> > mtx;
+	MsMtxSetXYZRPH(mtx, 0.0f, 0.0f, 0.0f, mRotation.x, mRotation.y,
+	               mRotation.z);
+
+	mWind.set(0.0f, 0.0f, 1.0f);
+	mtx.mult(mWind, mWind);
+	mWind.scale(power);
+}
 
 TFluffManager::TFluffManager(const char* name)
     : TMapObjBase(name)
 {
-	unk138 = 0.0f;
-	unk13C = 0.0f;
-	unk140 = 0.0f;
-	unk144 = 0;
-	unk154 = 0.0f;
-	unk158 = 0;
-	unk15C = 0;
-	unk160 = 0;
-	unk164 = 0;
-	unk148.x = 0.0f;
-	unk148.y = 0.0f;
-	unk148.z = 0.0f;
+	mRangeX       = 0.0f;
+	mRangeZ       = 0.0f;
+	mBlowHeight   = 0.0f;
+	mBlowTime     = 0;
+	mWindDownRate = 0.0f;
+	mRideFluff    = nullptr;
+	mNextFluff    = nullptr;
+	mFluffNum     = 0;
+	mFluffMax     = 0;
+	mWind.set(0.0f, 0.0f, 0.0f);
 }

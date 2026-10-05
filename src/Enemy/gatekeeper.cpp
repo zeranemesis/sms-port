@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <Enemy/GateKeeper.hpp>
 #include <JSystem/JMath.hpp>
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
@@ -5,6 +6,7 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DCluster.hpp>
 #include <System/Particles.hpp>
 #include <System/MarDirector.hpp>
+#include <System/MSoundMainSide.hpp>
 #include <System/FlagManager.hpp>
 #include <System/EmitterViewObj.hpp>
 #include <Strategic/Strategy.hpp>
@@ -73,16 +75,21 @@ TGKHitObj::TGKHitObj(TGateKeeperBase* owner, int joint_idx, const char* name)
 {
 	initHitActor(0x10000022, 1, 0x80000000, 0.0f, 0.0f, 150.0f, 200.0f);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// TGKHitObj::receiveMessage (batch 127).
+static inline TGateKeeperBase* GatekeeperOwner(const TGKHitObj* p)
+{
+	TGateKeeperBase* owner = p->mOwner;
+	return owner;
+}
+
 BOOL TGKHitObj::receiveMessage(THitActor* sender, u32 message)
 {
-
-	
-	
 	if (sender->getActorType() == 0x1000001
 	    && message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		if (mVulnerable)
@@ -93,7 +100,7 @@ BOOL TGKHitObj::receiveMessage(THitActor* sender, u32 message)
 		                              &sender->mPosition, 0, 0.0f, 0, 0, 4);
 		return true;
 	}
-	return mOwner->receiveMessage(sender, message);
+	return GatekeeperOwner(this)->receiveMessage(sender, message);
 }
 
 void TGKHitObj::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -132,7 +139,7 @@ BOOL TGateKeeperBase::receiveMessage(THitActor* sender, u32 message)
 	if (sender->getActorType() == 0x1000001) {
 		if (mVulnerable && message == HIT_MESSAGE_SPRAYED_BY_WATER)
 			unk154++;
-		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
+		SMSGetParticleManagerBound()->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
 		                             0, nullptr);
 		SMSGetMSound()->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK,
 		                              &sender->mPosition, 0, 0.0f, 0, 0, 4);
@@ -207,7 +214,7 @@ void TBiancoGateKeeperManager::createModelData()
 }
 
 TBGKMtxCalc::TBGKMtxCalc(TBiancoGateKeeper* owner)
-    : M3UMtxCalcSIAnmBlendQuat(false)
+    : M3UMtxCalcSIAnmBlendQuat(true)
     , mOwner(owner)
 {
 }
@@ -215,14 +222,14 @@ TBGKMtxCalc::TBGKMtxCalc(TBiancoGateKeeper* owner)
 void TBGKMtxCalc::joinAnm(int param_1)
 {
 	M3UMtxCalcSIAnmBlendQuat::joinAnm(
-	    mOwner->getActorKeeper()->getMActorAnmData()->mBckAnms->getAnmPtr(
+	    mOwner->mMActorKeeper->getMActorAnmData()->getUnk2C()->getAnmPtr(
 	        param_1));
 }
 
 void TBGKMtxCalc::setAnm(int param_1)
 {
 	M3UMtxCalcSIAnmBlendQuat::setAnm(
-	    mOwner->getActorKeeper()->getMActorAnmData()->mBckAnms->getAnmPtr(
+	    mOwner->mMActorKeeper->getMActorAnmData()->getUnk2C()->getAnmPtr(
 	        param_1));
 }
 
@@ -238,15 +245,17 @@ void TBGKMtxCalc::calc(u16 param_1)
 		MTXCopy(mtx, J3DSys::mCurrentMtx);
 	} else if (param_1 == 0) {
 		MtxPtr mtx = mOwner->getMActor()->getModel()->getAnmMtx(param_1);
+		JGeometry::TVec3<f32> diff;
+		Mtx rot;
 		if (!gpMarDirector->isDemoModeNow()) {
-			if (!gpMarDirector->isTalkModeNow()
+			if (!SMSGetMarDirectorBound()->isTalkModeNow()
 			    && (mOwner->getMActor()->checkCurBckFromIndex(0xB)
 			        || mOwner->getMActor()->checkCurBckFromIndex(0x12)
 			        || mOwner->getMActor()->checkCurBckFromIndex(0xF)
 			        || mOwner->getMActor()->checkCurBckFromIndex(0x10)
 			        || mOwner->getMActor()->checkCurBckFromIndex(0xC))) {
-				JGeometry::TVec3<f32> diff = SMS_GetMarioPos();
-				diff -= mOwner->mPosition;
+				diff = SMS_GetMarioPos();
+				diff -= mOwner->getPosition();
 
 				f32 yaw2 = MsGetRotFromZaxisY(diff);
 				f32 cur2 = mOwner->mRotation.y + mOwner->getUnk180();
@@ -255,19 +264,35 @@ void TBGKMtxCalc::calc(u16 param_1)
 				f32 cur = MsWrap(cur2, -180.0f, 180.0f);
 
 				f32 delta = MsAngleDiff(yaw, cur);
+				// std::min/std::max rather than a ternary: the
+				// const-reference parameters are what put 3.0f
+				// and -3.0f in .sdata instead of .sdata2.
 				f32 turn;
 				if (0.0f < delta)
-					turn = MsMin(3.0f, delta);
+					turn = std::min(3.0f, delta);
 				else
-					turn = MsMax(-3.0f, delta);
+					turn = std::max(-3.0f, delta);
 
-				f32 newYaw     = (turn + cur) - mOwner->mRotation.y;
+				turn += cur;
+				f32 newYaw     = turn - mOwner->mRotation.y;
 				mOwner->unk180 = MsWrap(newYaw, 0.0f, 360.0f);
 			}
 		}
 
-		Mtx rot;
-		MsMtxSetRotY(rot, mOwner->unk180);
+		f32 s = JMASin(mOwner->unk180);
+		f32 c = JMACos(mOwner->unk180);
+		rot[0][0] = c;
+		rot[0][1] = 0.0f;
+		rot[0][2] = s;
+		rot[0][3] = 0.0f;
+		rot[1][0] = 0.0f;
+		rot[1][1] = 1.0f;
+		rot[1][2] = 0.0f;
+		rot[1][3] = 0.0f;
+		rot[2][0] = -s;
+		rot[2][1] = 0.0f;
+		rot[2][2] = c;
+		rot[2][3] = 0.0f;
 		MTXConcat(mtx, rot, mtx);
 		MTXCopy(mtx, J3DSys::mCurrentMtx);
 	}
@@ -280,7 +305,7 @@ TBGKObstacle::TBGKObstacle(TBiancoGateKeeper* owner, const char* name)
 	mPosition.y -= 1000.0f;
 	initHitActor(0x10000022, 1, 0x80000000, 800.0f, 800.0f, 800.0f, 800.0f);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 }
@@ -307,6 +332,36 @@ TBiancoGateKeeper::TBiancoGateKeeper(const char* name)
 	mRumblePower = 0.0f;
 }
 
+// TODO: frame 0x190 vs retail 0x1c8.  c-hs7: getName() in both strcmp tests
+// (MapObjBianco's spelling) and getMActor() at every read put `this` back in
+// r30 and took the frame from 0x178.  Every instruction else matches;
+// the slots are the three push_back pools (this body plus the pasted
+// TBGKObstacle/TGKHitObj ctors), per-site object counts between depth
+// groups (not a header property):
+// the Obstacle group's internal spacing already equals retail's, the
+// HitObj and own groups differ by 4-8 per group.  Naming the searched
+// TIdxGroupObj at any subset of the three sites moves 0 or +8 (cc32).
+// cc42 coordinate descent over the three push sites (named-reference and
+// pointer-then-reference child-list forks, a named-result search fork) plus
+// ~30 accessor/raw/named spellings of the distant statements: best is the
+// pointer-then-reference fork at the HitObj and Obstacle sites,
+// `GKList1(GKGroup())` at this body's own site, `getModel()->` in the
+// `SMS_ChangeTextureAll` argument, `owner->getPosition()` in the Obstacle
+// ctor and `getActorKeeper()` for the anmData fetch -- frame 0x1c8 exact but
+// the pool still 0x1c low at the bottom and one word short above the own-site
+// group (score 288 from 2000+), and `this` stays in r28. Not applied.
+// c-k31 slot map (hsearch dbg + statement tagger, gap 22): every mapped
+// iterator group sits 11-14 words higher in retail, with nine one-word
+// boundaries. Depth 1: retail has one more object before the own push
+// (lines 355-389), one fewer between it and the TBGKObstacle `new` (ours:
+// the initWith/getMActor/getMActorAnmData/getAnmPtr bindings), and one more
+// between that `new` and the TGKHitObj `new` (ours: only the
+// SMS_ChangeTextureAll argument's getMActor()/getModel() bindings).
+// Deeper: retail has none of the three search chains' TNameRefGen
+// bindings where ours puts them (just above each push's deepest iterator
+// pair), and one more word after the own push's depth-2 group, after the
+// initWith nerve's deeper binding and after the HitObj list binding; 13
+// words more below everything.
 void TBiancoGateKeeper::init(TLiveManager* manager)
 {
 	mManager = manager;
@@ -314,11 +369,11 @@ void TBiancoGateKeeper::init(TLiveManager* manager)
 	mMActorKeeper = new TMActorKeeper(mManager, 3);
 	mMActor       = mMActorKeeper->createMActor("gene_pakkun_model1.bmd", 3);
 
-	if (strcmp(mName, "ゲートキーパー（リコ）") == 0) {
+	if (strcmp(getName(), "ゲートキーパー（リコ）") == 0) {
 		mVariant = VARIANT_RICO_GATEKEEPER;
 		if (!TFlagManager::smInstance->getBool(0x50001))
 			onLiveFlag(LIVE_FLAG_DEAD);
-	} else if (strcmp(mName, "ゲートキーパー（マンマ）") == 0) {
+	} else if (strcmp(getName(), "ゲートキーパー（マンマ）") == 0) {
 		mVariant = VARIANT_MAMMA_GATEKEEPER;
 		if (!TFlagManager::smInstance->getBool(0x50002))
 			onLiveFlag(LIVE_FLAG_DEAD);
@@ -344,25 +399,25 @@ void TBiancoGateKeeper::init(TLiveManager* manager)
 	}
 
 	initHitActor(0x10000022, 5, 0x81000000, 400.0f, 150.0f, 400.0f, 150.0f);
-	static_cast<TIdxGroupObj*>(JDrama::TNameRefGen::search("敵グループ"))
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
 	    ->getChildren()
 	    .push_back(this);
 	offHitFlag(HIT_FLAG_NO_COLLISION);
 
 	mSpine->initWith(&TNerveBGKSleep::theNerve());
 
-	J3DModel* model = mMActor->getModel();
+	J3DModel* model = getMActor()->getModel();
 	if (model->getSkinDeform() == NULL)
 		model->setSkinDeform(new J3DSkinDeform, (J3DDeformAttachFlag)1);
 
 	unk178 = new TBGKMtxCalc(this);
-	mMActor->setCalcForBck(unk178);
+	getMActor()->setCalcForBck(unk178);
 	mHitPoints = 3;
-	mMActor->offMakeDL();
+	getMActor()->offMakeDL();
 
 	MActorAnmData* anmData = mMActorKeeper->getMActorAnmData();
 	mMultiBtk              = new TMultiBtk(2, getModel()->getModelData());
-	for (int i = 0; i < 2; i++)
+	for (int i = 0; i <= 1; i++)
 		mMultiBtk->setNthData(i, anmData->getUnk38()->getAnmPtr(i));
 
 	mObstacle = new TBGKObstacle(this, "TBGKObstacle");
@@ -370,7 +425,7 @@ void TBiancoGateKeeper::init(TLiveManager* manager)
 	ResTIMG* tex = (ResTIMG*)JKRFileLoader::getGlbResource(
 	    "/scene/map/pollution/H_ma_rak.bti");
 	if (tex != NULL)
-		SMS_ChangeTextureAll(mMActor->getModel()->getModelData(),
+		SMS_ChangeTextureAll(getMActor()->getModel()->getModelData(),
 		                     "Q_kepper_dummy_128IA4", *tex);
 
 	initAnmSound();
@@ -378,7 +433,7 @@ void TBiancoGateKeeper::init(TLiveManager* manager)
 
 	mHead = new TGKHitObj(this, 0xA, "頭ヒット");
 
-	mMActor->calc();
+	getMActor()->calc();
 	if (mStampModel != NULL)
 		mStampModel->calc();
 
@@ -436,11 +491,11 @@ void TBiancoGateKeeper::launchGorogoro()
 
 void TBiancoGateKeeper::launchNamekuri()
 {
-	TNameKuriManager* mgr = static_cast<TNameKuriManager*>(
-	    JDrama::TNameRefGen::search("拡散ナメクリマネージャー"));
+	TNameKuriManager* mgr = JDrama::TNameRefGen::search<TNameKuriManager>(
+	    "拡散ナメクリマネージャー");
 	if (mgr == NULL)
-		mgr = static_cast<TNameKuriManager*>(
-		    JDrama::TNameRefGen::search("ナメクリマネージャー"));
+		mgr = JDrama::TNameRefGen::search<TNameKuriManager>(
+		    "ナメクリマネージャー");
 
 	if (mgr != NULL) {
 		for (int i = 0; i < 10; i++) {
@@ -448,14 +503,16 @@ void TBiancoGateKeeper::launchNamekuri()
 			if (enemy == NULL)
 				break;
 
-			JGeometry::TVec3<f32> pos = mPosition;
+			JGeometry::TVec3<f32> pos = getPosition();
 			pos.y += 100.0f;
 			JGeometry::TVec3<f32> rot = mRotation;
 			JGeometry::TVec3<f32> scale;
 			scale.set(1.0f, 1.0f, 1.0f);
 			s16 angle = (s16)(182.04445f * (36.0f * (f32)i));
 			JGeometry::TVec3<f32> vel;
-			vel.set(4.0f * JMASSin(angle), 12.0f, 4.0f * JMASCos(angle));
+			vel.x = 4.0f * JMASSin(angle);
+			vel.y = 12.0f;
+			vel.z = 4.0f * JMASCos(angle);
 
 			enemy->reset();
 			enemy->mPosition  = pos;
@@ -467,7 +524,7 @@ void TBiancoGateKeeper::launchNamekuri()
 			enemy->offLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_UNK8);
 			enemy->onLiveFlag(LIVE_FLAG_UNK8000);
 			enemy->offHitFlag(HIT_FLAG_NO_COLLISION);
-			enemy->mSpine->pushNerve(&TNerveNameKuriDiffuse::theNerve());
+			enemy->getSpine()->pushNerve(&TNerveNameKuriDiffuse::theNerve());
 		}
 	}
 }
@@ -475,7 +532,7 @@ void TBiancoGateKeeper::launchNamekuri()
 f32 TBiancoGateKeeper::getRumblePow()
 {
 	JGeometry::TVec3<f32> diff = mPosition;
-	diff -= SMS_GetMarioPos();
+	diff -= *gpMarioPos;
 	f32 dist = diff.length();
 	if (dist == 0.0f)
 		return 1.0f;
@@ -498,7 +555,8 @@ void TBiancoGateKeeper::deathRumble()
 	if (SMS_IsMarioTouchGround4cm()) {
 		J3DFrameCtrl* fc = mMActor->getFrameCtrl(ANM_TYPE_BCK);
 		if (fc != NULL) {
-			f32 t        = 1.0f - fc->getFrame() / (f32)fc->getEnd();
+			f32 t = fc->getFrame() / (f32)fc->getEnd();
+			t     = 1.0f - t;
 			mRumblePower = t * getRumblePow();
 			SMSRumbleMgr->start(8, &mRumblePower);
 		}
@@ -524,9 +582,19 @@ void TBiancoGateKeeper::startBGM()
 {
 	MSBgm::setTrackVolume(0, 0.0f, 0xA, 0);
 	MSBgm::startBGM(0x8001000B);
+	MSMainProc::setGateKeeperBGMPlayFlag(mVariant, true);
 }
 
-void TBiancoGateKeeper::stopBGM() { MSBgm::stopTrackBGM(1, 0xA); }
+// The second gate keeper must not silence the BGM while the first one is
+// still alive, so the track is only stopped once both play flags are clear.
+void TBiancoGateKeeper::stopBGM()
+{
+	MSMainProc::setGateKeeperBGMPlayFlag(mVariant, false);
+	if (MSMainProc::getGateKeeperBGMStopFlag())
+		MSBgm::stopTrackBGM(1, 0xA);
+	else
+		MSBgm::setTrackVolume(1, 0.0f, 1, 0);
+}
 
 void TBiancoGateKeeper::startAppearDemo()
 {
@@ -549,6 +617,10 @@ void TBiancoGateKeeper::startFinishDemo()
 	stopBGM();
 }
 
+// Retail calls this from TNerveBGKWait::execute: the `else if` chain (each
+// `else` one statement, the same bytes as independent `if`s after returns)
+// takes the body over the depth-1 budget. Measured and rejected: a named
+// `MActor* actor` or `f32 frame` (each +8 of frame).
 BOOL TBiancoGateKeeper::isHeadHitActive() const
 {
 	J3DFrameCtrl* fc = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
@@ -556,15 +628,14 @@ BOOL TBiancoGateKeeper::isHeadHitActive() const
 		if (50.0f < fc->getFrame() && fc->getFrame() < 160.0f)
 			return true;
 		return false;
-	}
-	if (getMActor()->checkCurBckFromIndex(0xF)) {
+	} else if (getMActor()->checkCurBckFromIndex(0xF)) {
 		if (fc->getFrame() > 40.0f)
 			return true;
 		return false;
-	}
-	if (getMActor()->checkCurBckFromIndex(0x10)
-	    || getMActor()->checkCurBckFromIndex(0xC))
+	} else if (getMActor()->checkCurBckFromIndex(0x10)
+	           || getMActor()->checkCurBckFromIndex(0xC)) {
 		return true;
+	}
 	return false;
 }
 
@@ -598,13 +669,10 @@ const char** TBiancoGateKeeper::getBasNameTable() const
 
 void TBiancoGateKeeper::emitParticles()
 {
-
-	
-	
 	const TNerveBase<TLiveActor>* sleep = &TNerveBGKSleep::theNerve();
-	if (mSpine->getLatestNerve() != sleep) {
+	if (getSpine()->getLatestNerve() != sleep) {
 		const TNerveBase<TLiveActor>* goro = &TNerveBGKLaunchGoro::theNerve();
-		if (mSpine->getLatestNerve() != goro) {
+		if (getSpine()->getLatestNerve() != goro) {
 			J3DModel* model = getModel();
 			JPABaseEmitter* emitter;
 			emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
@@ -621,7 +689,7 @@ void TBiancoGateKeeper::emitParticles()
 			    (u8*)this + 2);
 			if (emitter)
 				SMSSetEmitterPolColor(emitter, 6);
-			emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+			emitter = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 			    GATEKEEPER_JPA_MS_GKPA_YODARE_S, model->getAnmMtx(8), 1,
 			    (u8*)this + 3);
 			if (emitter)
@@ -630,18 +698,22 @@ void TBiancoGateKeeper::emitParticles()
 	}
 }
 
+// Binding level over a raw member read, worth +8 of low region per site.
+static inline MActor* GateKeeperMActor(const TBiancoGateKeeper* p)
+{
+	MActor* actor = p->mMActor;
+	return actor;
+}
+
 void TBiancoGateKeeper::controlCollision()
 {
-
-	
-	
-	if (mMActor->checkCurBckFromIndex(0xB)
-	    || mMActor->checkCurBckFromIndex(7)) {
+	if (GateKeeperMActor(this)->checkCurBckFromIndex(0xB)
+	    || GateKeeperMActor(this)->checkCurBckFromIndex(7)) {
 		mHead->mVulnerable = TRUE;
 		mVulnerable        = FALSE;
 		return;
 	}
-	if (mMActor->checkCurBckFromIndex(0x12)) {
+	if (GateKeeperMActor(this)->checkCurBckFromIndex(0x12)) {
 		mHead->mVulnerable = TRUE;
 		mVulnerable        = FALSE;
 		return;
@@ -668,6 +740,18 @@ void TBiancoGateKeeper::controlCollision()
 	}
 	mHead->mVulnerable = FALSE;
 	mVulnerable        = FALSE;
+}
+
+static inline TBGKMtxCalc* GateKeeperMtxCalc(const TBiancoGateKeeper* p)
+{
+	TBGKMtxCalc* calc = p->unk178;
+	return calc;
+}
+
+static inline TGKHitObj* GateKeeperHead(const TBiancoGateKeeper* p)
+{
+	TGKHitObj* head = p->mHead;
+	return head;
 }
 
 void TBiancoGateKeeper::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -706,7 +790,7 @@ void TBiancoGateKeeper::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if (cue & CUE_MOVE) {
-		unk178->advanceMotionBlend(-unk158);
+		GateKeeperMtxCalc(this)->advanceMotionBlend(-unk158);
 	}
 
 	if (cue & CUE_MOVE)
@@ -717,33 +801,33 @@ void TBiancoGateKeeper::perform(u32 cue, JDrama::TGraphics* graphics)
 		                                0, nullptr, 0, 4);
 
 	if (cue & CUE_CALC_ANIM) {
-		mMActor->getModel()->getModelData()->getJointNodePointer(0)->setMtxCalc(
-		    unk178);
+		getMActor()->getModel()->getModelData()->getJointNodePointer(0)->setMtxCalc(
+		    GateKeeperMtxCalc(this));
 	}
 
 	if (cue & CUE_ENTRY) {
 		if (isDamageFogSituation()) {
-			mMActor->offMakeDL();
-			SMS_AddDamageFogEffect(mMActor->getModel()->getModelData(),
+			getMActor()->offMakeDL();
+			SMS_AddDamageFogEffect(getMActor()->getModel()->getModelData(),
 			                       mPosition, graphics);
 		} else {
-			SMS_ResetDamageFogEffect(mMActor->getModel()->getModelData());
+			SMS_ResetDamageFogEffect(getMActor()->getModel()->getModelData());
 		}
 	}
 
-	mHead->perform(cue, graphics);
+	GateKeeperHead(this)->perform(cue, graphics);
 	mObstacle->perform(cue, graphics);
 
 	if (cue & CUE_CALC_ANIM)
 		mMultiBtk->update();
 
-	if (cue & CUE_MOVE && !mHintShown && mMActor->checkCurBckFromIndex(7)
+	if (cue & CUE_MOVE && !mHintShown && getMActor()->checkCurBckFromIndex(7)
 	    && unk154 > 0) {
 		mHintTimer += 1;
 		if (mHintTimer > 160) {
 			mHintTimer = 0;
 			mHintShown = TRUE;
-			gpMarDirector->getConsole()->startAppearBalloon(0xE002E, true);
+			gpMarDirector->getConsole()->startAppearBalloon(0x2B, true);
 		}
 	}
 
@@ -753,15 +837,24 @@ void TBiancoGateKeeper::perform(u32 cue, JDrama::TGraphics* graphics)
 		emitParticles();
 }
 
+// Binding level worth +8 of low region, landing
+// TNerveBGKLaunchGoro::execute's frame at 0x40 (batch 121).
+static inline MActor* GatekeeperGetMActor(const TBiancoGateKeeper* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
 DEFINE_NERVE(TNerveBGKSleep, TLiveActor)
 {
-	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
+	TLiveActor* body        = spine->getBody();
+	TBiancoGateKeeper* self = (TBiancoGateKeeper*)body;
 
 	if (spine->getTime() == 0) {
 		self->changeBck(0xA);
 		self->offHitFlag(HIT_FLAG_NO_COLLISION);
-		self->getMActor()->setBpkFromIndex(0);
-		J3DFrameCtrl* fc = self->getMActor()->getFrameCtrl(ANM_TYPE_BPK);
+		GatekeeperGetMActor(self)->setBpkFromIndex(0);
+		J3DFrameCtrl* fc = GatekeeperGetMActor(self)->getFrameCtrl(ANM_TYPE_BPK);
 		if (fc != NULL) {
 			fc->setFrame(0.0f);
 			fc->setRate(0.0f);
@@ -772,8 +865,9 @@ DEFINE_NERVE(TNerveBGKSleep, TLiveActor)
 		if (self->unk298 > 0)
 			self->unk298--;
 		if (self->unk298 == 0) {
-			int timer    = self->getSaveParams()->mSLLaunchTimerNormal.get();
-			self->unk298 = (s32)(240.0f * MsRandF()) + timer - 120;
+			int timer = self->getSaveParams()->getSLLaunchTimerNormal();
+			timer += (s32)(240.0f * MsRandF()) - 120;
+			self->unk298 = timer;
 			spine->pushAfterCurrent(&TNerveBGKLaunchGoro::theNerve());
 			return true;
 		}
@@ -809,18 +903,18 @@ DEFINE_NERVE(TNerveBGKAppear, TLiveActor)
 		if (self->unk28A < 0xFF)
 			self->unk28A++;
 		if (self->unk28A == 2)
-			gpMarDirector->getConsole()->startAppearBalloon(0xE0047, true);
+			SMSGetMarDirectorBound()->getConsole()->startAppearBalloon(0x4A, true);
 	}
 
 	if (spine->getTime() == 8) {
-		gpMarioParticleManager->emitAndBindToMtxPtr(
+		SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 		    GATEKEEPER_JPA_MS_GKPA_KEMURI, self->getModel()->getAnmMtx(12), 2,
 		    nullptr);
 		self->rumblePad();
 	}
 
 	if (self->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
-		if (gpMarDirector->getCurrentMap() == 0)
+		if (SMSGetMarDirectorBound()->getCurrentMap() == 0)
 			spine->pushAfterCurrent(&TNerveBGKWait2::theNerve());
 		else
 			spine->pushAfterCurrent(&TNerveBGKWait::theNerve());
@@ -832,16 +926,13 @@ DEFINE_NERVE(TNerveBGKAppear, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKWait, TLiveActor)
 {
-
-	
-	
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
-	MActor* actor           = self->getMActor();
+	MActor* actor           = GatekeeperGetMActor(self);
 
 	if (spine->getTime() == 0)
 		self->changeBck(0x11);
 
-	if (self->unk154 > 0 && self->getMActor()->checkCurBckFromIndex(0x12)
+	if (self->unk154 > 0 && GatekeeperGetMActor(self)->checkCurBckFromIndex(0x12)
 	    && !self->isHeadHitActive()) {
 		self->changeBck(7);
 		return false;
@@ -866,7 +957,7 @@ DEFINE_NERVE(TNerveBGKWait, TLiveActor)
 	if (self->unk154 > 0 && actor->checkCurBckFromIndex(7))
 		self->resetUnk290();
 
-	if (spine->getTime() > self->getSaveParams()->mSLDiveTimer.get()
+	if (spine->getTime() > self->getSaveParams()->getSLDiveTimer()
 	    && !actor->checkCurBckFromIndex(0xD)) {
 		if (self->curBckFinished())
 			self->changeBck(0xD);
@@ -907,11 +998,8 @@ DEFINE_NERVE(TNerveBGKWait, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKWait2, TLiveActor)
 {
-
-	
-	
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
-	MActor* actor           = self->getMActor();
+	MActor* actor           = GatekeeperGetMActor(self);
 
 	if (spine->getTime() == 0)
 		self->changeBck(0x11);
@@ -933,9 +1021,9 @@ DEFINE_NERVE(TNerveBGKWait2, TLiveActor)
 		} else if (actor->checkCurBckFromIndex(0x10)) {
 			self->unk288++;
 			if (self->unk288 == 2 && self->unk28A == 1
-			    && gpMarDirector->getCurrentMap() == 0)
-				gpMarDirector->getConsole()->startAppearBalloon(0xE0000, true);
-			if (self->unk288 > self->getSaveParams()->mSLLoop2Dive.get()) {
+			    && SMSGetMarDirectorBound()->getCurrentMap() == 0)
+				SMSGetMarDirectorBound()->getConsole()->startAppearBalloon(0, true);
+			if (self->unk288 > self->getSaveParams()->getSLLoop2Dive()) {
 				self->changeBck(0xC);
 				self->unk288 = 0;
 			}
@@ -952,7 +1040,8 @@ DEFINE_NERVE(TNerveBGKWait2, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKSleepDamage, TLiveActor)
 {
-	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
+	TLiveActor* body        = spine->getBody();
+	TBiancoGateKeeper* self = (TBiancoGateKeeper*)body;
 
 	if (spine->getTime() == 0)
 		self->changeBck(4);
@@ -961,14 +1050,15 @@ DEFINE_NERVE(TNerveBGKSleepDamage, TLiveActor)
 		if (self->unk298 > 0)
 			self->unk298--;
 		if (self->unk298 == 0) {
-			int timer    = self->getSaveParams()->mSLLaunchTimerDamage.get();
-			self->unk298 = (s32)(240.0f * MsRandF()) - 120 + timer;
+			int timer = self->getSaveParams()->getSLLaunchTimerDamage();
+			timer += (s32)(240.0f * MsRandF()) - 120;
+			self->unk298 = timer;
 			self->launchGorogoro();
 			self->rumblePad();
 		}
 	}
 
-	if (self->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+	if (GatekeeperGetMActor(self)->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 		spine->pushAfterCurrent(&TNerveBGKSleep::theNerve());
 		return true;
 	}
@@ -976,18 +1066,29 @@ DEFINE_NERVE(TNerveBGKSleepDamage, TLiveActor)
 	return false;
 }
 
+// Binding level worth +8 of low region, landing
+// TNerveBGKAwakeDamage::execute's frame at 0x68 (batch 121).
+static inline u8 GatekeeperGetCurrentMapInner(TMarDirector* p)
+{
+	u8 currentMap = p->getCurrentMap();
+	return currentMap;
+}
+
+static inline u8 GatekeeperGetCurrentMap(TMarDirector* p)
+{
+	u8 currentMap = GatekeeperGetCurrentMapInner(p);
+	return currentMap;
+}
+
 DEFINE_NERVE(TNerveBGKAwakeDamage, TLiveActor)
 {
-
-	
-	
 	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
 
 	if (spine->getTime() == 0)
 		self->changeBck(3);
 
 	if (self->curBckFinished()) {
-		if (gpMarDirector->getCurrentMap() == 0)
+		if (GatekeeperGetCurrentMap(gpMarDirector) == 0)
 			spine->pushAfterCurrent(&TNerveBGKWait2::theNerve());
 		else
 			spine->pushAfterCurrent(&TNerveBGKWait::theNerve());
@@ -995,6 +1096,13 @@ DEFINE_NERVE(TNerveBGKAwakeDamage, TLiveActor)
 	}
 
 	return false;
+}
+
+// A by-value read of the guard member: retail reloads unk296 for the
+// increment, so the test must not share the load (fireWanwan ladder 322).
+static inline s8 GateKeeperReviveCount(const TBiancoGateKeeper* p)
+{
+	return p->unk296;
 }
 
 DEFINE_NERVE(TNerveBGKDie, TLiveActor)
@@ -1007,19 +1115,19 @@ DEFINE_NERVE(TNerveBGKDie, TLiveActor)
 		      && self->mVariant != TBiancoGateKeeper::VARIANT_MAMMA_GATEKEEPER)
 		     || self->unk296 != 0)) {
 			self->startFinishDemo();
-			self->getMActor()->setBpkFromIndex(0);
-			J3DFrameCtrl* fc = self->getMActor()->getFrameCtrl(ANM_TYPE_BPK);
+			GatekeeperGetMActor(self)->setBpkFromIndex(0);
+			J3DFrameCtrl* fc = GatekeeperGetMActor(self)->getFrameCtrl(ANM_TYPE_BPK);
 			if (fc != NULL) {
 				fc->setFrame(0.0f);
 				fc->setRate(SMSGetAnmFrameRate());
 			}
 			JPABaseEmitter* emitter
-			    = gpMarioParticleManager->emitAndBindToMtxPtr(
+			    = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 			        GATEKEEPER_JPA_MS_GKPA_DEAD, self->getModel()->getAnmMtx(6),
 			        0, nullptr);
 			if (emitter)
 				SMSSetEmitterPolColor(emitter, 6);
-			gpMarioParticleManager->emitAndBindToMtxPtr(
+			SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
 			    GATEKEEPER_JPA_MS_GKPA_DEADSMOKE,
 			    self->getModel()->getAnmMtx(0), 0, nullptr);
 		}
@@ -1030,7 +1138,7 @@ DEFINE_NERVE(TNerveBGKDie, TLiveActor)
 		    GATEKEEPER_JPA_MS_GKPA_KEMURI, self->getModel()->getAnmMtx(0), 2,
 		    nullptr);
 		SMSGetMSound()->startSoundActor(MSD_SE_DM_OSEN_DISAPPEAR,
-		                                &self->mPosition, 0, nullptr, 0, 4);
+		                                &self->mPosition);
 		self->rumblePad();
 	}
 
@@ -1039,7 +1147,7 @@ DEFINE_NERVE(TNerveBGKDie, TLiveActor)
 	if (self->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 		if ((self->mVariant == TBiancoGateKeeper::VARIANT_RICO_GATEKEEPER
 		     || self->mVariant == TBiancoGateKeeper::VARIANT_MAMMA_GATEKEEPER)
-		    && self->unk296 == 0) {
+		    && GateKeeperReviveCount(self) == 0) {
 			self->unk296 += 1;
 			self->mHitPoints = 3;
 			if (self->mVariant == TBiancoGateKeeper::VARIANT_MAMMA_GATEKEEPER)
@@ -1058,7 +1166,8 @@ DEFINE_NERVE(TNerveBGKDie, TLiveActor)
 
 DEFINE_NERVE(TNerveBGKDive, TLiveActor)
 {
-	TBiancoGateKeeper* self = (TBiancoGateKeeper*)spine->getBody();
+	TLiveActor* body        = spine->getBody();
+	TBiancoGateKeeper* self = (TBiancoGateKeeper*)body;
 
 	if (spine->getTime() == 0)
 		self->changeBck(6);
@@ -1070,10 +1179,11 @@ DEFINE_NERVE(TNerveBGKDive, TLiveActor)
 		self->rumblePad();
 	}
 
-	if (self->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+	if (GatekeeperGetMActor(self)->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 		if (self->mVariant == TBiancoGateKeeper::VARIANT_GENERIC) {
-			int timer    = self->getSaveParams()->mSLLaunchTimerNormal.get();
-			self->unk298 = (s32)(240.0f * MsRandF()) + timer - 120;
+			int timer = self->getSaveParams()->getSLLaunchTimerNormal();
+			timer += (s32)(240.0f * MsRandF()) - 120;
+			self->unk298 = timer;
 			self->launchGorogoro();
 			self->rumblePad();
 		}
@@ -1101,7 +1211,7 @@ DEFINE_NERVE(TNerveBGKLaunchGoro, TLiveActor)
 		return true;
 	}
 
-	if (self->getMActor()->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
+	if (GatekeeperGetMActor(self)->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
 		spine->pushAfterCurrent(&TNerveBGKSleep::theNerve());
 		return true;
 	}

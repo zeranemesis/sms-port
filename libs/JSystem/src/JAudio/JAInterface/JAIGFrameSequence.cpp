@@ -36,10 +36,21 @@ void JAIBasic::stopSeq(JAISound* param_1)
 	unk0->mSeqTrackInfo[param_1->mTrack].mSound = nullptr;
 }
 
+// Binding level over the sequence track info lookup, worth +8 of low region:
+// it is what lands JAIBasic::checkEntriedSeq's frame at retail's 0x50 (every
+// instruction already matched at 0x48).  Structural pass 167; do *not* also
+// route JAIBasic::checkPlayingSeqTrack's identical first statement through it,
+// that one is already 8 bytes over and the level costs it 95.7%.
+static inline JAISeqUpdateData* JAISeqTrackInfoPtr(JAIBasic* basic, int track)
+{
+	JAISeqUpdateData* sud = &basic->unk0->mSeqTrackInfo[track];
+	return sud;
+}
+
 void JAIBasic::checkEntriedSeq()
 {
 	for (int i = 0; i < JAIGlobalParameter::seqPlayTrackMax; ++i) {
-		JAISeqUpdateData* sud = &unk0->mSeqTrackInfo[i];
+		JAISeqUpdateData* sud = JAISeqTrackInfoPtr(this, i);
 		JAISoundHandle& sound = unk0->mSeqTrackInfo[i].mSound;
 		u32& r27              = unk0->mSeqTrackInfo[i].unk8;
 
@@ -119,10 +130,10 @@ void JAIBasic::checkEntriedSeq()
 				param = (i | ((soundId & JAISoundID_IndexMask) << 16)) | param;
 
 				unk0->setAutoHeapLoadedFlag(pos, 1);
+				sud->mLoadingFlag = true;
 				JASystem::Vload::loadFileAsync(
 				    mSeqArchiveHandle + (soundId & JAISoundID_IndexMask), ptr,
 				    0, size, checkDvdLoadArc, param);
-				sud->mLoadingFlag = true;
 			} else {
 				JASystem::Vload::loadFile(
 				    mSeqArchiveHandle
@@ -154,6 +165,53 @@ void JAIBasic::checkEntriedSeq()
 	}
 }
 
+// TODO: 99.6%.  All 936 instructions match; the only residue is 8 bytes of
+// frame (0xa0 against retail's 0x98).  Structural pass 167 mapped both low
+// regions from every `(r1)` access.  Retail: 4 dead bytes at 0xc, the f32
+// store/reload temp at 0x10, `readVal` in a four-byte slot at 0x14 (the u16
+// lands at 0x16, big-endian low half), then the four eight-byte int-to-float
+// conversion slots at 0x18/0x20/0x28/0x30, `stmw r19` at 0x3c.  Ours: 8 dead
+// bytes at 0xc, the f32 at 0x14, `readVal` in a two-byte slot at 0x18, six
+// bytes of alignment padding, the four conversion slots at 0x20..0x3f.  So the
+// single difference is 4 dead bytes at the bottom of the low region, which
+// alignment then doubles.  Measured: dropping the `r30` reference gives the
+// exact frame 0x98 but costs the r19 register and rotates every callee-saved
+// assignment (96.8%, ~452 operand diffs), so the reference is real -- retail
+// computes it as `addi r30, r26, 8` -- and costs 4 bytes here.  Inert (all
+// leave 0xa0 and the same 35 markers): a `u32*` instead of the `u32&`, a
+// `JAISoundHandle*` instead of the `JAISoundHandle&`, dropping the
+// `JAISound* snd = sound` copy, and declaring `readVal` at block or function
+// scope.  Hoisting `seqParam` above the `mPauseMode` test is worse (99.2%,
+// 937 instructions).  The remaining 4 bytes are a second dead binding-sized
+// slot we have and retail does not; `JAISoundHandle` is only a typedef for
+// `JAISound*`, so no accessor temp is involved.
+//
+// Re-pass 172 located the second slot: it is the `u32* portFlags =
+// sud->mTrackUpdate;` binding.  Removing it (writing `sud->mTrackUpdate[...]`
+// at all thirteen uses) gives retail's frame 0x98 exactly, at the price of
+// sixteen extra reload instructions -- so retail holds that pointer in a
+// callee-saved register with no dead pool slot, while every spelling of a
+// caller-side pointer binding we know reserves one.  The two dead slots are
+// therefore `r30` (4) and `portFlags` (4), and retail pays for exactly one of
+// them.  Also measured and still 0xa0 with the same 35 markers: `&sud
+// ->mTrackUpdate[0]` instead of the plain decay.  Worse: declaring both in one
+// comma declaration as `u32 *r30 = &sud->unk8, *portFlags = sud
+// ->mTrackUpdate;` (937 instructions -- two bindings in one *statement* do not
+// share a slot the way two bindings in one inlined *level* do); swapping the
+// `seqParam`/`portFlags` declaration order (937); hoisting `portFlags` above
+// the `mPauseMode` test (217 markers); binding `portFlags` after the zeroing
+// loop with `sud->mTrackUpdate[j] = 0` inside it (939); hoisting `u32& r30`
+// above the `mPauseMode` test (242 markers); and `sud` as a
+// `JAISeqUpdateData&` with `sud.` at every use (two opcode diffs).
+//
+// Pass c-jai (2026-09-23): the instruction residue is in the 0x1000 block, not
+// the frame. Retail computes `seqParam + (u8)j * 32` into r23 before the
+// `mTrackPortUpdate` test and reads the port as `lhzx r23, (k * 2 + 0x1354)`;
+// our `u16* ports` folds 0x1354 into r23 instead. Inert or worse: `ports` as
+// an array reference, a row pointer, `&...[j][0]`, `[0] + j * 16`, a u16* cast,
+// declared inside the `if`, no `ports` (base computed after the `if`), a named
+// `bit`, and a `dataUpdate` pointer. Also inert: `portFlags` from `unk0->`,
+// swapped `seqParam`/`portFlags`, split `portFlags` declaration, named `dist`.
 void JAIBasic::checkPlayingSeqTrack(u32 trackID)
 {
 	JAISeqUpdateData* sud = &unk0->mSeqTrackInfo[trackID];
@@ -662,11 +720,16 @@ void JAIBasic::checkReadSeq()
 	}
 }
 
+// Binding level over a raw member read, worth +8 of low region in
+// JAIBasic::checkSeqWave (batch 127).
+static inline u32 JAIGFrameSequenceFinishedSceneSet(const JAIBasic* p)
+{
+	u32 finishedSceneSet = p->mFinishedSceneSet;
+	return finishedSceneSet;
+}
+
 void JAIBasic::checkSeqWave()
 {
-
-	
-	
 	for (int i = 0; i < JAIGlobalParameter::seqPlayTrackMax; ++i) {
 		JAISeqUpdateData* sud = &unk0->mSeqTrackInfo[i];
 		JAISoundHandle& sound = sud->mSound;
@@ -676,7 +739,7 @@ void JAIBasic::checkSeqWave()
 			continue;
 		if (sound->getSeqParameter()->mWaitSceneSet == 0xffffffff)
 			continue;
-		if (mFinishedSceneSet == 0xffffffff)
+		if (JAIGFrameSequenceFinishedSceneSet(this) == 0xffffffff)
 			continue;
 
 		u32 id = sound->getSeqParameter()->mWaitSceneSet;

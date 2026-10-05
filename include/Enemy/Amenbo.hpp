@@ -12,6 +12,10 @@ class TAmenbo : public TSmallEnemy {
 public:
 	TAmenbo(const char* name = "アメンボくん");
 
+	// getBasNameTable is declared first so that it is the key function (the
+	// first non-inline virtual): it is defined after the manager, and retail
+	// emits this vtable after the manager's (c-u12).
+	virtual const char** getBasNameTable() const;
 	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
 	virtual BOOL receiveMessage(THitActor*, u32);
 	virtual void init(TLiveManager*);
@@ -19,7 +23,6 @@ public:
 	virtual void control();
 	virtual void bind();
 	virtual void kill();
-	virtual const char** getBasNameTable() const;
 	virtual void reset();
 	virtual void behaveToWater(THitActor*);
 	virtual bool changeByJuice();
@@ -38,7 +41,7 @@ public:
 	void prepareWalk();
 	bool doWalk();
 	void doAdjustTarget();
-	void doChangeWaitAnm();
+	bool doChangeWaitAnm();
 	void decideTarget();
 	void decideTargetOnFingingMario();
 	void setWalkDir(const JGeometry::TVec3<f32>&);

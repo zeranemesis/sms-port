@@ -45,7 +45,7 @@ struct TNpcKeepAnm {
 	void keep(EnumNpcAnmKind anm, EnumNpcStopMotionBlendOnOff blend)
 	{
 		mKind    = anm;
-		mBlendOn = blend != NPC_STOP_MOTION_BLEND_OFF;
+		mBlendOn = blend;
 	}
 
 	EnumNpcAnmKind getKind() const { return mKind; }
@@ -87,6 +87,7 @@ public:
 	bool isNerveCanGoToWet() const;
 	bool isNerveCanGoToSink() const;
 	bool isNerveCanGoToTaken() const;
+	bool isNerveCanGoToThrow() const;
 	bool isNerveCanGoToMad() const;
 	bool isNerveCanGoToBlown() const;
 
@@ -137,7 +138,7 @@ public:
 	void setDummyConnectActor(const JDrama::TActor*);
 	void setBalloonMessage(u32, s32);
 	const GXColor* getPtrInitPollutionColor() const;
-	void isNowMotionBlend() const;
+	bool isNowMotionBlend() const;
 	void offStopMotionBlend();
 	void onStopMotionBlend();
 	void npcWaitIn();
@@ -203,12 +204,19 @@ public:
 
 	bool isClean() const { return mPollutionAmount == 0.0f; }
 
+	// Fabricated name. The level is worth +8 of frame with no instruction
+	// change at the angle2 read of execTurnToFirstState and is +0 (and costs
+	// 1-3 instructions) at that function's two other unk1A0 reads, so it is
+	// applied per site. execTurnToFirstState is still 8 bytes short with it:
+	// see its TODO in src/NPC/NpcWalkTurn.cpp.
+	const JGeometry::TVec3<f32>& getUnk1A0() const { return unk1A0; }
+
 	enum {
-		LIVE_FLAG_DONT_TALK = VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000)),
+		LIVE_FLAG_DONT_TALK = VERSION_SELECT(GMSJ01(0x10000), GMSP01(0x20000), GMSE01(0x10000)),
 		LIVE_FLAG_SINK_BOTTOM
-		= VERSION_SELECT(GMSJ01(0x800000), GMSP01(0x1000000)),
+		= VERSION_SELECT(GMSJ01(0x800000), GMSP01(0x1000000), GMSE01(0x800000)),
 		LIVE_FLAG_DONT_THROW
-		= VERSION_SELECT(GMSJ01(0x20000000), GMSP01(0x40000000)),
+		= VERSION_SELECT(GMSJ01(0x20000000), GMSP01(0x40000000), GMSE01(0x20000000)),
 	};
 
 private:
@@ -219,6 +227,7 @@ private:
 	void setMtxEffect_();
 	void initSinkNpc_();
 	void changeNerveFromTalk_();
+	void changeNerveToWet_();
 	void changeNerveToMad_();
 	void releaseTaken_();
 	void behaveToBeTaken_(THitActor*);
@@ -239,7 +248,10 @@ private:
 		if (mDamageParticleForbidCount != 0)
 			mDamageParticleForbidCount -= 1;
 	}
-	f32 getAnmOffDist_();
+	inline f32 getAnmOffDist_();
+	inline f32 getAnmOffDistSquared_();
+	inline bool calcAnmOff_();
+	inline void performMove_();
 	void setNpcAnm_(EnumNpcAnmKind, EnumNpcStopMotionBlendOnOff);
 	void requestNpcAnm_(EnumNpcAnmKind, EnumNpcStopMotionBlendOnOff);
 	void setKeepAnm_();
@@ -267,6 +279,7 @@ private:
 	bool isPolWaitLEffectEmitTime_() const;
 	bool isPolWaitREffectEmitTime_() const;
 	void emitParticle_();
+	void emitWaveParticle_(); // fabricated
 
 	void peachParasolIn_();
 	void peachParasolOut_();
@@ -404,7 +417,7 @@ public:
 		{
 		}
 
-		void doThing()
+		void resetGraphWanderTimer()
 		{
 			int maxFrame = mPtrSaveNormal->mSLGraphWanderMaxFrame.get();
 			int minFrame = mPtrSaveNormal->mSLGraphWanderMinFrame.get();
@@ -413,11 +426,22 @@ public:
 			unk4 = MsRandI(minFrame, maxFrame);
 		}
 
-		void startGraphWait()
+		// Retail reads both frames before clearing unk0 and ranks the timer
+		// pointer above them in callee-saved registers, so the reads are
+		// arguments of a further level rather than named locals here. The
+		// min read is raw `.value` and the max read `.get()` (either both
+		// raw or both `.get()` is 8 bytes of frame off), while
+		// resetGraphWanderTimer above keeps named `.get()` reads in
+		// max-then-min order: TNerveNPCGraphWander breaks with this shape.
+		// The asymmetry is retail's.
+		void resetGraphWaitTimer()
 		{
-			int maxFrame = mPtrSaveNormal->mSLGraphWaitMaxFrame.get();
-			int minFrame = mPtrSaveNormal->mSLGraphWaitMinFrame.get();
+			resetRandom(mPtrSaveNormal->mSLGraphWaitMinFrame.value,
+			            mPtrSaveNormal->mSLGraphWaitMaxFrame.get());
+		}
 
+		void resetRandom(int minFrame, int maxFrame)
+		{
 			unk0 = 0;
 			unk4 = MsRandI(minFrame, maxFrame);
 		}

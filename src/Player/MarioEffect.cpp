@@ -17,9 +17,20 @@
 #include <MSound/MSoundBGM.hpp>
 #include <M3DUtil/InfectiousStrings.hpp>
 
-static const char cDirtyFileName[] = "/scene/map/pollution/H_ma_rak.bti";
-static const char cDirtyTexName[]  = "H_ma_rak_dummy";
+#include <Player/MarioDirtyStrings.hpp>
 
+// TODO: init is the last non-exact function: a one-step rotation of the
+// callee-saved GPRs (retail `this` r31, loop offset r30, `.rodata` base r29;
+// ours base r31, `this` r30, offset r29) plus one `addi r4, r25, 0` where we
+// emit `mr r4, r25` before the second setModel. The frame is exact. Tried and
+// inert on the rotation: one shared `anmData`/`bmd`/`model` variable (closure
+// batch 152), an unnamed `flag` (-8 frame), an unnamed waterboost model, a
+// split `model` declaration, a function-scope `int i` (one or two counters),
+// a named string local, a TU-local `setModel(MActor*, J3DModel*)` level, and
+// each half of the body as a TU-local helper taking `this`. Both
+// setJumpIntoWaterEffect* closed by open-coding getThing()'s index (the header
+// inline's own named `idx` ranked above the base) plus MarioEffectMario
+// binders.
 void TMarioEffect::init(TMario* mario)
 {
 	unk68    = mario;
@@ -36,9 +47,8 @@ void TMarioEffect::init(TMario* mario)
 	    = JKRFileLoader::getGlbResource("/mario/04_tobikomi/04_tobikomi.bmd");
 	u32 flag = J3DMLF_MaterialPEFull | (4 << J3DMLF_TevStageNumShift);
 	for (int i = 0; i < 2; ++i) {
-		J3DModel* model = new J3DModel(
-		    J3DModelLoaderDataBase::load(tobikomiBmd, flag), 0, 1);
-		unk74[i]->setModel(model, 0);
+		unk74[i]->setModel(new J3DModel(
+		    J3DModelLoaderDataBase::load(tobikomiBmd, flag), 0, 1), 0);
 	}
 
 	MActorAnmData* anmDataWaterboost = new MActorAnmData;
@@ -49,12 +59,10 @@ void TMarioEffect::init(TMario* mario)
 
 	void* waterboostBmd = JKRFileLoader::getGlbResource(
 	    "/mario/01_waterboost/01_waterboost.bmd");
-	J3DModel* waterboostModel
-	    = new J3DModel(J3DModelLoaderDataBase::load(
+	unk80->setModel(new J3DModel(J3DModelLoaderDataBase::load(
 	                       waterboostBmd, J3DMLF_MaterialPEFull
 	                                          | (4 << J3DMLF_TevStageNumShift)),
-	                   0, 1);
-	unk80->setModel(waterboostModel, 0);
+	                   0, 1), 0);
 	unk80->setBck("01_waterboost_in");
 	unk80->setBtk("01_waterboost");
 	unk80->getFrameCtrl(ANM_TYPE_BCK)->setRate(SMSGetAnmFrameRate());
@@ -63,26 +71,38 @@ void TMarioEffect::init(TMario* mario)
 	gpConductor->registerOtherObj(this);
 }
 
+// fabricated
+static inline TMario* MarioEffectMario(TMarioEffect* p)
+{
+	TMario* mario = p->unk68;
+	return mario;
+}
+
 void TMarioEffect::setJumpIntoWaterEffect()
 {
-	f32 absVelY = unk68->mVel.y;
-	if (absVelY < 0.0f)
-		absVelY = -absVelY;
+	f32 velY = MarioEffectMario(this)->mVel.y;
+	f32 absVelY = velY;
+	if (velY < 0.0f)
+		absVelY = -velY;
 
-	if (absVelY < unk68->mWaterEffectParams.mJumpIntoMdlEffectSpY.get())
+	if (absVelY < MarioEffectMario(this)->mWaterEffectParams.mJumpIntoMdlEffectSpY.get())
 		return;
 
-	if (unk68->mFloorPosition.z - unk68->mFloorPosition.y < 50.0f)
+	if (MarioEffectMario(this)->mFloorPosition.z - MarioEffectMario(this)->mFloorPosition.y < 50.0f)
 		return;
 
-	int idx = getThing();
+	int idx = -1;
+	if (unk6C[0] == 0)
+		idx = 0;
+	if (unk6C[1] == 0)
+		idx = 1;
 	if (idx < 0)
 		return;
 
 	Mtx localMtx;
-	MTXCopy(unk68->unk220, localMtx);
+	MTXCopy(MarioEffectMario(this)->unk220, localMtx);
 
-	f32 minY = unk68->mWaterEffectParams.mJumpIntoMinY.get();
+	f32 minY = MarioEffectMario(this)->mWaterEffectParams.mJumpIntoMinY.get();
 	f32 maxY = unk68->mWaterEffectParams.mJumpIntoMaxY.get();
 
 	f32 ratio;
@@ -122,13 +142,17 @@ void TMarioEffect::setJumpIntoWaterEffect()
 
 void TMarioEffect::setJumpIntoWaterEffectSmall()
 {
-	int idx = getThing();
+	int idx = -1;
+	if (unk6C[0] == 0)
+		idx = 0;
+	if (unk6C[1] == 0)
+		idx = 1;
 	if (idx < 0)
 		return;
 
 	Mtx localMtx;
 	Mtx scaleMtx;
-	MTXCopy(unk68->unk220, localMtx);
+	MTXCopy(MarioEffectMario(this)->unk220, localMtx);
 	MTXScale(scaleMtx, 0.8f, 0.4f, 0.8f);
 	MTXConcat(localMtx, scaleMtx, localMtx);
 
@@ -151,6 +175,14 @@ void TMarioEffect::setJumpIntoWaterEffectSmall()
 	unk6C[idx] = 1;
 }
 
+// UNUSED (map 0x10): four instructions, i.e. three chained loads and a `blr`.
+// unk74[0] (+0x74), MActor::getModel() (+0x4) and J3DModel::getModelData()
+// (+0x0) are exactly that chain and its size.
+J3DModelData* TMarioEffect::getJumpIntoWaterModelData()
+{
+	return unk74[0]->getModel()->getModelData();
+}
+
 void TMarioEffect::startDashEffect()
 {
 	unk80->setBck("01_waterboost_in");
@@ -165,15 +197,25 @@ void TMarioEffect::endDashEffect()
 	unk80->getFrameCtrl(ANM_TYPE_BCK)->setFrame(0.0f);
 }
 
+// Closure batch 226: perform references no stack slot of its own, and its
+// 0x30 of low region is six binding levels -- one per `unk68->mWaterGun` read
+// (five, now TMario::getFludd()'s receiver binding, c-k13) plus one more. The sixth is +8 wherever it sits: the case-0
+// `checkFlag` receiver below, any single `unk80` receiver, or the second
+// `checkFlag`; taking two of them overshoots by 8. Kept on the mario read
+// because the gun binder already reads through it.
+// fabricated
+static inline TMario* PerformMario(const TMarioEffect* p)
+{
+	TMario* m = p->unk68;
+	return m;
+}
+
 void TMarioEffect::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	if (cue & CUE_MOVE) {
 		switch (unk7C) {
 		case 0:
-			if (unk68->checkFlag(MARIO_FLAG_FLUDD_EMITTING)) {
+			if (PerformMario(this)->checkFlag(MARIO_FLAG_FLUDD_EMITTING)) {
 				startDashEffect();
 				unk7C = 1;
 			}
@@ -181,11 +223,11 @@ void TMarioEffect::perform(u32 cue, JDrama::TGraphics* graphics)
 
 		case 1:
 			if (unk68->checkFlag(MARIO_FLAG_FLUDD_EMITTING) == true) {
-				if (unk68->mWaterGun->getEmitMtx(0) != nullptr) {
+				if (unk68->getFludd()->getEmitMtx(0) != nullptr) {
 					gpMarioParticleManager->emitAndBindToMtxPtr(
-					    0xFE, unk68->mWaterGun->getEmitMtx(0), 1, this);
+					    0xFE, unk68->getFludd()->getEmitMtx(0), 1, this);
 					gpMarioParticleManager->emitAndBindToMtxPtr(
-					    0xFF, unk68->mWaterGun->getEmitMtx(0), 1, this);
+					    0xFF, unk68->getFludd()->getEmitMtx(0), 1, this);
 				}
 			} else {
 				endDashEffect();
@@ -203,8 +245,8 @@ void TMarioEffect::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 
 	if ((cue & CUE_CALC_ANIM) && unk7C != 0) {
-		if (unk68->mWaterGun->getEmitMtx(0) != nullptr) {
-			unk80->getModel()->setBaseTRMtx(unk68->mWaterGun->getEmitMtx(0));
+		if (unk68->getFludd()->getEmitMtx(0) != nullptr) {
+			unk80->getModel()->setBaseTRMtx(unk68->getFludd()->getEmitMtx(0));
 			unk80->perform(CUE_CALC_ANIM, graphics);
 		}
 	}

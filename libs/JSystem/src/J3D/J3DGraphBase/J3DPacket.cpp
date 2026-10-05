@@ -98,12 +98,17 @@ u32 J3DDrawPacket::endPatch()
 J3DMatPacket::J3DMatPacket()
 {
 	mpMaterial = 0;
-	unk3C      = 0xffffffff;
+	unk3C      = (uintptr_t)-1;
 	mTexture   = 0;
 	unk44      = 0;
 }
 
 J3DMatPacket::~J3DMatPacket() { }
+
+inline bool J3DMatPacket::isSame(J3DMatPacket* other) const
+{
+	return unk3C == other->unk3C && (unk3C >> DIFF_BIT) == 0;
+}
 
 void J3DMatPacket::addShapePacket(J3DShapePacket* packet)
 {

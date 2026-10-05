@@ -47,9 +47,6 @@ public:
 
 	static u32 cNodeRadius;
 
-	// fabricated
-	Node* getNode(int idx) { return &unk0[idx * 0.25f * 4.0f]; }
-
 public:
 	/* 0x0 */ ArrayWrapper<Node> unk0;
 	/* 0x8 */ bool mFixHeadPos;
@@ -164,9 +161,9 @@ public:
 	void clipNodes(JDrama::TGraphics*);
 	void movementBody(const JGeometry::TVec3<f32>&);
 	void bindBody();
-	JGeometry::TVec3<f32> getBodyNthPos(int) const;
-	f32 getBodyTailPow() const;
-	f32 getBodyHeadPow() const;
+	const JGeometry::TVec3<f32>& getBodyNthPos(int) const;
+	JGeometry::TVec3<f32> getBodyTailPow() const;
+	JGeometry::TVec3<f32> getBodyHeadPow() const;
 	f32 calcApartPow();
 	void onFireEffect();
 	void offFireEffect();
@@ -257,6 +254,7 @@ public:
 	               const JGeometry::TVec3<f32>&, f32, TBGWallCheckRecord*);
 	bool checkWalls(JGeometry::TVec3<f32>*, TBGWallCheckRecord*, f32);
 	bool behaveHitWallOnFlying(const TBGCheckData*);
+	void calcShadowPos();
 	void calcRipplePos();
 	f32 getGravityY() const;
 	MtxPtr getTailMtx() const;

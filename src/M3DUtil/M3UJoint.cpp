@@ -3,6 +3,28 @@
 #include <M3DUtil/M3UJoint.hpp>
 #include <JSystem/JMath.hpp>
 
+// Copies the 3x4 matrix at q to p, scaling each row's first three columns.
+static inline void M3UScaleMtxCopy(f32* p, const f32* q, const Vec& s)
+{
+	*p++   = *q++ * s.x;
+	*p++   = *q++ * s.y;
+	*p++   = *q++ * s.z;
+	*p++   = *q++;
+	*p++   = *q++ * s.x;
+	*p++   = *q++ * s.y;
+	*p++   = *q++ * s.z;
+	*p++   = *q++;
+	*p++   = *q++ * s.x;
+	*p++   = *q++ * s.y;
+	*p++   = *q++ * s.z;
+	*p++   = *q++;
+}
+
+// The scaled copy is an inline level: as named locals of this body, `p` and
+// `q` are numbered below the `&j3dSys.mModel` temporary and are pushed before
+// it in the first simplify sweep, which leaves it one short of K (28) so it
+// is coloured last (r25). As the helper's parameter bindings they are numbered
+// above it; it meets the sweep at 30, is deferred, and takes retail's r30.
 void M3UMtxCalcBlendAux(u16 param_1, J3DTransformInfo* param_2,
                         J3DTransformInfo* param_3, f32 param_4, bool basic)
 {
@@ -72,20 +94,7 @@ void M3UMtxCalcBlendAux(u16 param_1, J3DTransformInfo* param_2,
 		if (bVar5) {
 			j3dSys.getModel()->setAnmMtx(param_1, J3DSys::mCurrentMtx);
 		} else {
-			f32* p = local_7c[0];
-			f32* q = J3DSys::mCurrentMtx[0];
-			*p++   = *q++ * currentS.x;
-			*p++   = *q++ * currentS.y;
-			*p++   = *q++ * currentS.z;
-			*p++   = *q++;
-			*p++   = *q++ * currentS.x;
-			*p++   = *q++ * currentS.y;
-			*p++   = *q++ * currentS.z;
-			*p++   = *q++;
-			*p++   = *q++ * currentS.x;
-			*p++   = *q++ * currentS.y;
-			*p++   = *q++ * currentS.z;
-			*p++   = *q++;
+			M3UScaleMtxCopy(local_7c[0], J3DSys::mCurrentMtx[0], currentS);
 
 			j3dSys.getModel()->setAnmMtx(param_1, local_7c);
 		}

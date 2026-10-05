@@ -3,6 +3,7 @@
 
 #include <MoveBG/MapObjBase.hpp>
 #include <MoveBG/MapObjHide.hpp>
+#include <MoveBG/MapObjTurn.hpp>
 
 class TSharedParts;
 
@@ -81,6 +82,25 @@ public:
 	virtual void control();
 };
 
+// Dead in the shipped game: the "DolWeathercock" factory entry builds a plain
+// TMapObjTurn, so every TWeathercock symbol is UNUSED in the map. The base is
+// TMapObjTurn on two pieces of evidence: __vt__12TWeathercock is 0x174, the
+// exact size of __vt__11TMapObjTurn (so the class adds no virtual of its own,
+// which is also why the map lists no other TWeathercock method), and
+// __dt__12TWeathercockFv is 0x9c, the size of a dtor below the direct
+// TMapObjBase children.
+// TODO: control() is 0x20, i.e. a prologue, one non-virtual call and an
+// epilogue. TMapObjTurn::control() is the parsimonious reading; skipping a
+// level with TMapObjBase::control() (a weathercock turns with the wind, not
+// with water) compiles to the same eight instructions, so the map cannot tell
+// them apart.
+// No constructor is declared: the map has no __ct__12TWeathercock, and a
+// fabricated default name would add a string literal to the pool.
+class TWeathercock : public TMapObjTurn {
+public:
+	virtual void control();
+};
+
 class TDemoCannon : public TMapObjBase {
 public:
 	TDemoCannon(const char* name = "デモ砲台")
@@ -110,7 +130,7 @@ public:
 	    : TMapObjBase(name)
 	    , unk144(nullptr)
 	{
-		unk138.zero();
+		unk138.x = unk138.y = unk138.z = 0.0f;
 	}
 
 	virtual void loadAfter();
@@ -118,7 +138,7 @@ public:
 
 public:
 	/* 0x138 */ JGeometry::TVec3<f32> unk138;
-	/* 0x144 */ TLiveActor* unk144;
+	/* 0x144 */ TMapObjBase* unk144;
 };
 
 #endif

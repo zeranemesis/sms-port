@@ -11,6 +11,7 @@
 #include <Player/MarioFlags.hpp>
 
 class TLiveActor;
+class TWaterGun;
 class TBGCheckData;
 class J3DAnmTexPattern;
 class J3DModelData;
@@ -176,6 +177,8 @@ public:
 		TParamRT<f32> mWaistPitch;
 		TParamRT<s16> mWaistRollMax;
 		TParamRT<s16> mWaistPitchMax;
+		// f32, not s32: its PARAM_INIT default is -0.45f and both
+		// TMario::calcBaseMtx branches read it with lfs.
 		TParamRT<f32> mRoll;
 		TParamRT<f32> mPitch;
 		TParamRT<s16> mRollMax;
@@ -559,7 +562,7 @@ public:
 	public:
 		TDeParams();
 
-		TParamRT<s16> mHpMax;
+		TParamRT<s16> mHPMax;
 		TParamRT<f32> mRunningMax;
 		TParamRT<f32> mDashMax;
 		TParamRT<f32> mDashAcc;
@@ -689,7 +692,7 @@ public:
 
 	// Draw stuff
 	void getJumpIntoWaterModelData();
-	void getHeadRot();
+	s16 getHeadRot();
 	Mtx* getRootAnmMtx();
 	MtxPtr getCenterAnmMtx();
 	f32 getPumpFrame() const;
@@ -703,7 +706,7 @@ public:
 	u32 getTrampleCt();
 	void calcBodyPos(JGeometry::TVec3<f32>*);
 	MtxPtr getTakenMtx();
-	void getRailMtx() const;
+	MtxPtr getRailMtx() const;
 	f32 getCurrentFrame(int);
 	J3DFrameCtrl& getMotionFrameCtrl();
 	BOOL isLast1AnimeFrame();
@@ -775,10 +778,12 @@ public:
 
 	// Jump stuff
 	BOOL startJumpWall();
+	void checkJumpingThrowStart();
 	void doSlipJumping();
 	void doSpinJumping();
 	void setJumpingAttackArea();
 	void doJumping();
+	bool askStrongGroundTouch();
 	BOOL jumpingBasic(int, int, int);
 	BOOL considerJumpRotate();
 	BOOL checkBackTrig();
@@ -793,6 +798,7 @@ public:
 	BOOL jumpCatch();
 	BOOL jumpingThrow();
 	BOOL jumpDownCommon(int, int, f32);
+	void checkWallJumping();
 	BOOL jumpShortBackDown();
 	BOOL jumpShortForeDown();
 	BOOL jumpBackDown();
@@ -838,7 +844,7 @@ public:
 	void warpRequest(const JGeometry::TVec3<f32>&, f32);
 	void flowMove(const JGeometry::TVec3<f32>&);
 	void windMove(const JGeometry::TVec3<f32>&);
-	void getGroundJumpPower() const;
+	f32 getGroundJumpPower() const;
 	BOOL onYoshi() const;
 	void addVelocity(f32);
 	BOOL considerRotateJumpStart();
@@ -883,9 +889,9 @@ public:
 	void checkEnforceJump();
 	void doReturn();
 	void checkThrowObject();
-	void getDizzyAngle();
-	void getDizzyPower();
-	void getLRLevel(u8);
+	int getDizzyAngle();
+	f32 getDizzyPower();
+	f32 getLRLevel(u8);
 	int checkStickRotate(int*);
 	void checkStickSmash();
 	void makeHistory();
@@ -937,7 +943,7 @@ public:
 	void changePlayerPower(f32, u32, u32);
 	BOOL isRunningSlipStart();
 	BOOL isRunningTurnning();
-	void changePlayerCatching();
+	BOOL changePlayerCatching();
 	bool isRunningInWater();
 	f32 getRunningInWaterBrake();
 	BOOL doRunningAnimation();
@@ -954,8 +960,8 @@ public:
 	TSurfingParams* getSurfingParamsWater();
 	TSurfingParams* getSurfingParamsGround();
 	void doSurfing();
-	void doBraking(f32);
-	void changePlayerWaiting();
+	BOOL doBraking(f32);
+	BOOL changePlayerWaiting();
 	void doPushingAnimation(const Vec&);
 	BOOL running();
 	BOOL rotating();
@@ -1013,7 +1019,7 @@ public:
 	BOOL kickRoofRollDown();
 	BOOL startHangLanding(u32);
 	void hangingCommon(int, int);
-	void findNearestWall(const TBGWallCheckRecord&);
+	TBGCheckData* findNearestWall(const TBGWallCheckRecord&);
 	BOOL hanging();
 	BOOL ascend();
 	BOOL descend();
@@ -1025,7 +1031,7 @@ public:
 	BOOL wireSWait();
 	BOOL wireWaitToSWaitL();
 	BOOL wireWaitToSWaitR();
-	void changeWireHanging();
+	BOOL changeWireHanging();
 	BOOL wireWaitToHang();
 	BOOL wireSWaitToHang();
 	BOOL wireReturn();
@@ -1108,6 +1114,7 @@ public:
 	BOOL startTalking();
 	bool canSleep();
 	BOOL canPut();
+	void checkPutStart();
 	BOOL waitingCommonEvents();
 	void stopCommon(int anim_id, int status_on_end);
 	void changeMontemanWaitingAnim();
@@ -1136,7 +1143,7 @@ public:
 	BOOL waitMain();
 
 	// Swim stuff
-	void isSwimWaiting();
+	bool isSwimWaiting();
 	void doSwimming();
 	BOOL checkSwimJump();
 	BOOL checkSwimToHangFence();
@@ -1159,6 +1166,7 @@ public:
 	void stageSetting();
 	void resetHistory();
 	void hitNoKeepPull(THitActor*);
+	void hitSurfingBoard(THitActor*);
 	void hitPickUpEnemy(THitActor*);
 	void hangPole(THitActor*);
 	void hitBrakable(THitActor*);
@@ -1166,8 +1174,10 @@ public:
 	void hitBarrel(THitActor*);
 	void hitWantToTake(THitActor*);
 	void wantToTakeActor(THitActor*);
+	void hitPool(THitActor*);
 	void hitNpc(THitActor*);
 	void hitMario(THitActor*);
+	void hitPull(THitActor*);
 	void hitPushup(THitActor*);
 	void hitHipDrop(THitActor*);
 	void hitNormal(THitActor*);
@@ -1181,9 +1191,16 @@ public:
 	u32 startVoiceIfNoVoice(u32);
 	u32 startVoice(u32);
 	void soundTorocco();
-void animSound();
+	void soundHitBound();
+	void animSound();
 	void soundMovement();
-	inline bool checkStatusType(s32 flag) const { return mStatus & flag ? true : false; }
+	void startVoiceYoshi(u32);
+	bool checkStatusType(s32 flag) const
+	{
+		if (mStatus & flag)
+			return true;
+		return false;
+	}
 
 	// fabricated
 	f32 getIntendedMag() const { return mIntendedMag; }
@@ -1191,6 +1208,15 @@ void animSound();
 	THitActor* getFloorHitActor() { return &mFloorHitActor; }
 	s16 getHealth() const { return mHealth; }
 	s16 getAir() const { return mAir; }
+
+	// fabricated: header round 20 accessor candidates (batch 117)
+	f32 getForwardVel() const { return mForwardVel; }
+	const JGeometry::TVec3<f32>& getVel() const { return mVel; }
+	u32 getInput() const { return mInput; }
+	u16 getStatusTimer() const { return mStatusTimer; }
+	s16 getSlopeAngle() const { return mSlopeAngle; }
+	u16 getStatusState() const { return mStatusState; }
+	const TBGCheckData* getWallPlane() const { return mWallPlane; }
 
 	// fabricated
 	bool isTouchGround4cm() const
@@ -1295,6 +1321,47 @@ void animSound();
 	{
 		return mPrevPosition;
 	}
+
+	// Fabricated name. The accessor level is load-bearing: TMario::
+	// checkPumpEnable is instruction-identical to retail with either
+	// spelling, but retail's frame is 0x50 against 0x40 for the raw member,
+	// and the level buys two 8-byte inline-expansion slots in the low region.
+	// It saturates at two, so checkPumpEnable routes only its first four
+	// reads through it; using it for the two nozzle-switch predicates as well
+	// makes MWCC reload mSwitchToSecondNozzleSpeed instead of reusing f1
+	// across the pair.
+	TWaterGun* getFludd() const { return mWaterGun; }
+	// Rejected in header round 21: making this accessor bind its result
+	// (`TWaterGun* fludd = mWaterGun; return fludd;`) breaks the DOL, because
+	// a binding inside a shared accessor is paid by every caller, including
+	// the linked Player units. A second, binding accessor beside it is no
+	// use either: both spellings put TMario::perform at 0x148 against
+	// retail's 0x168, while MarioMain's parked free function over the
+	// receiver reaches it. A member accessor cannot reach that rung -- the
+	// free function's by-pointer parameter binding is a separate 8 bytes on
+	// top of the bound result, so perform's carrier is not an accessor.
+
+	// The binding is load-bearing, and it is a separate rung from the plain
+	// read: TMario::stopCommon needs the named pointer (frame 0x28 -> 0x30,
+	// byte-exact) and the other yoshi reads do not, so this is applied per
+	// site like the three levels above. Header round 21.
+	TYoshi* getYoshi() const
+	{
+		TYoshi* yoshi = mYoshi;
+		return yoshi;
+	}
+
+	// Retail reads mModel through one extra inline level. It is worth exactly
+	// +8 bytes of low-region frame per site with no instruction change, and
+	// it is what closes TMario::loadAfter (0x40 -> 0x48, two sites) and
+	// TMario::initValues (0x38 -> 0x40). The lever is per site, so the raw
+	// `mModel->` spellings elsewhere are only converted where they measure.
+	M3UModelMario* getM3UModel() const { return mModel; }
+
+	// Fabricated name. Retail reads the pad through one extra inline level at
+	// four of the five pad reads in TMario::squating (12 bytes of low region
+	// plus 4 named); the fifth stays raw. Per site, like the two levels above.
+	TMarioGamePad* getGamePad() const { return mGamePad; }
 
 public:
 	/* 0x74 */ u32 mInput;
@@ -1556,11 +1623,13 @@ public:
 	/* 0xF8 */ s16 mLightID;
 	/* 0xFA */ u16 mAnimationId;
 
-	/* 0xFC */ s16 unkFC;
-	/* 0xFE */ s16 unkFE;
-
-	/* 0x100 */ s16 unk100;
-	/* 0x102 */ s16 unk102;
+	// One array, not four members: MarioHeadCtrl, MarioWaistCtrl and
+	// getHeadRot all form `addi rN, this, 0xfc` once and index it (+0 for
+	// the camera pitch, +4 for the value the head and waist rotations are
+	// built from), which four separate members cannot produce. Slot 3 is
+	// only ever written, with the 0xAD sentinel MarioInit puts in several
+	// unused fields.
+	/* 0xFC */ s16 unkFC[4];
 	/* 0x104 */ f32 unk104;
 
 	/* 0x108 */ TMarioControllerWork* unk108;
@@ -1711,8 +1780,8 @@ public:
 	/* 0x3B0 */ J3DModel* mHandModels[2][2];  // Hand models
 	/* 0x3C0 */ J3DModel* mRHand4ndModel;
 	/* 0x3C4 */ u8 mJointIdCenter;
-	/* 0x3C5 */ u8 mJointIdChnChest;
-	/* 0x3C6 */ u8 mJointIdChest;
+	/* 0x3C5 */ u8 mJointIdChest;    // "jnt_chest"
+	/* 0x3C6 */ u8 mJointIdChnChest; // "chn_chest"
 	/* 0x3C7 */ u8 mJointIdArmR1;
 	/* 0x3C8 */ u8 mJointIdArmL1;
 	/* 0x3C9 */ u8 mJointIdHandR;
@@ -1799,61 +1868,65 @@ public:
 	/* 0x56C */ f32 unk56C;
 	/* 0x570 */ f32 unk570;
 
+	// Offsets below are measured, not guessed: retail's `new TMario` asks for
+	// 0x4290 bytes (MarNameRefGen), which is what this declaration compiles to,
+	// and `mMotorParams.mMotorWall.get()` lands on retail's 0x27f8 read. The
+	// comments used to run 8 bytes low from mBodyAngleParamsFree onwards.
 	/* 0x574 */ TDeParams mDeParams;
 
 	// TODO: Should these be an array indexed by an enum?
-	/* 0x998 */ TBodyAngleParams mBodyAngleParamsFree;
-	/* 0xA18 */ TBodyAngleParams mBodyAngleParamsWaterGun;
+	/* 0x9A0 */ TBodyAngleParams mBodyAngleParamsFree;
+	/* 0xA20 */ TBodyAngleParams mBodyAngleParamsWaterGun;
 
-	/* 0xA98 */ TAttackParams mAttackParamsFencePunch;
-	/* 0xAC8 */ TAttackParams mAttackParamsKickRoof;
-	/* 0xAF8 */ TJumpParams mJumpParams;
-	/* 0xE98 */ TRunParams mRunParams;
-	/* 0x1044 */ TSwimParams mSwimParams;
-	/* 0x1290 */ THangingParams mHangingParams;
-	/* 0x1310 */ THangRoofParams mHangRoofParams;
-	/* 0x132C */ TWireParams mWireParams;
+	/* 0xAA0 */ TAttackParams mAttackParamsFencePunch;
+	/* 0xAD0 */ TAttackParams mAttackParamsKickRoof;
+	/* 0xB00 */ TJumpParams mJumpParams;
+	/* 0xEA0 */ TRunParams mRunParams;
+	/* 0x104C */ TSwimParams mSwimParams;
+	/* 0x1298 */ THangingParams mHangingParams;
+	/* 0x1318 */ THangRoofParams mHangRoofParams;
+	/* 0x1334 */ TWireParams mWireParams;
 
 	// TODO: Should these be an array indexed by an enum?
-	/* 0x1474 */ TPullParams mPullParamsBGBeak;
+	/* 0x147C */ TPullParams mPullParamsBGBeak;
 	TPullParams mPullParamsBGTentacle;
 	TPullParams mPullParamsBGFireWanWanBossTail;
 	TPullParams mPullParamsFireWanWanTail;
 
 	TBarParams mBarParams;
 
-	/* 0x1640 */ TSurfingParams mSurfingParamsWaterRed;
-	/* 0x1814 */ TSurfingParams mSurfingParamsGroundRed;
-	/* 0x19E8 */ TSurfingParams mSurfingParamsWaterYellow;
-	/* 0x1BBC */ TSurfingParams mSurfingParamsGroundYellow;
-	/* 0x1D90 */ TSurfingParams mSurfingParamsWaterGreen;
-	/* 0x1F64 */ TSurfingParams mSurfingParamsGroundGreen;
+	/* 0x1648 */ TSurfingParams mSurfingParamsWaterRed;
+	/* 0x181C */ TSurfingParams mSurfingParamsGroundRed;
+	/* 0x19F0 */ TSurfingParams mSurfingParamsWaterYellow;
+	/* 0x1BC4 */ TSurfingParams mSurfingParamsGroundYellow;
+	/* 0x1D98 */ TSurfingParams mSurfingParamsWaterGreen;
+	/* 0x1F6C */ TSurfingParams mSurfingParamsGroundGreen;
 
-	/* 0x2138 */ THHoverParams mHoverParams;
-	/* 0x217C */ TDivingParams mDivingParams;
-	/* 0x21E8 */ TYoshiParams mYoshiParams;
-	/* 0x22A4 */ TWaterEffectParams mWaterEffectParams;
-	/* 0x2338 */ TControllerParams mControllerParams;
-	/* 0x2408 */ TGraffitoParams mGraffitoParams;
-	/* 0x25B4 */ TDirtyParams mDirtyParams;
-	/* 0x279C */ TMotorParams mMotorParams;
+	/* 0x2140 */ THHoverParams mHoverParams;
+	/* 0x2184 */ TDivingParams mDivingParams;
+	/* 0x21F0 */ TYoshiParams mYoshiParams;
+	/* 0x22AC */ TWaterEffectParams mWaterEffectParams;
+	/* 0x2340 */ TControllerParams mControllerParams;
+	/* 0x2410 */ TGraffitoParams mGraffitoParams;
+	/* 0x25BC */ TDirtyParams mDirtyParams;
+	/* 0x27A4 */ TMotorParams mMotorParams;
 	TParticleParams mParticleParams;
 	TEffectParams mEffectParams;
 
 	// TODO: Should these be an array indexed by an enum?
-	/* 0x2944 */ TSlipParams mSlipParamsNormal;
-	/* 0x2A28 */ TSlipParams mSlipParamsOil;
-	/* 0x2B0C */ TSlipParams mSlipParamsAll;
-	/* 0x2BF0 */ TSlipParams mSlipParamsAllSlider;
-	/* 0x2CD4 */ TSlipParams mSlipParams45;
-	/* 0x2DB8 */ TSlipParams mSlipParamsWaterSlope;
-	/* 0x2E9C */ TSlipParams mSlipParamsWaterGround;
-	/* 0x2F80 */ TSlipParams mSlipParamsYoshi;
+	/* 0x294C */ TSlipParams mSlipParamsNormal;
+	/* 0x2A30 */ TSlipParams mSlipParamsOil;
+	/* 0x2B14 */ TSlipParams mSlipParamsAll;
+	/* 0x2BF8 */ TSlipParams mSlipParamsAllSlider;
+	/* 0x2CDC */ TSlipParams mSlipParams45;
+	/* 0x2DC0 */ TSlipParams mSlipParamsWaterSlope;
+	/* 0x2EA4 */ TSlipParams mSlipParamsWaterGround;
+	/* 0x2F88 */ TSlipParams mSlipParamsYoshi;
 
 	TUpperParams mUpperBodyParams;
 
 	// TODO: Should these be an array indexed by an enum?
-	/* 0x30D0 */ TEParams mDmgParamsEnemyCommon;
+	/* 0x30D8 */ TEParams mDmgParamsEnemyCommon;
 	TEParams mDmgParamsHamakuri;
 	TEParams mDmgParamsNamekuri;
 	TEParams mDmgParamsHinokuri;
@@ -1873,8 +1946,8 @@ public:
 	TEParams mDmgParamsGraffitoLava;
 	TEParams mDmgParamsWaterSurface;
 
-	/* 0x3BCC */ TEParams mDmgMapParams0;
-	/* 0x3C60 */ TEParams mDmgMapParams1;
+	/* 0x3BD4 */ TEParams mDmgMapParams0;
+	/* 0x3C68 */ TEParams mDmgMapParams1;
 	TEParams mDmgMapParams2;
 	TEParams mDmgMapParams3;
 	TEParams mDmgMapParams4;
@@ -1884,12 +1957,31 @@ public:
 	TEParams mDmgMapParams8;
 	TEParams mDmgMapParams9;
 
-	/* 0x4194 */ TAutoDemoParams mAutoDemoParams;
-	/* 0x4228 */ TSoundParams mSoundParams;
-	/* 0x4244 */ TOptionParams mOptionParams;
+	/* 0x419C */ TAutoDemoParams mAutoDemoParams;
+	/* 0x4230 */ TSoundParams mSoundParams;
+	/* 0x424C */ TOptionParams mOptionParams;
 };
 
 extern TMario* gpMarioOriginal;
+
+// Fabricated: the player bound to a named local before it is returned, +8 of
+// low region per expansion over a raw gpMarioOriginal read. Formerly parked
+// TU-locally in four units.
+inline TMario* SMSGetMarioBound()
+{
+	TMario* mario = gpMarioOriginal;
+	return mario;
+}
 extern TMario* gpMarioForCallBack;
+
+// The binding is load-bearing, unlike the other SMSGet* globals: an expansion
+// reserves 16 bytes of low region for the named pointer, which is what
+// TBubbleCallBack::execute's guard read wants (forking all three reads in that
+// body overshoots by 0x18, so it is applied per site). Header round 21.
+inline TMario* SMSGetMarioOriginal()
+{
+	TMario* mario = gpMarioOriginal;
+	return mario;
+}
 
 #endif

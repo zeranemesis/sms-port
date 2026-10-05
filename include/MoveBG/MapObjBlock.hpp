@@ -27,11 +27,13 @@ public:
 		STATE_GONE      = 5
 	};
 
+	// The map has no out-of-line copy of this constructor, and the object
+	// factory expands it (base ctor plus the two vtable stores), so it was
+	// defined in the class.
 	TSandBlock(const char* name = "砂ブロック")
 	    : TMapObjBase(name)
 	{
 	}
-
 	virtual void initMapObj();
 	virtual void control();
 	virtual void touchPlayer(THitActor*);
@@ -74,7 +76,6 @@ public:
 	    : TMapObjBase(name)
 	{
 	}
-
 	virtual void initMapObj();
 	virtual void calc();
 	virtual void control();
@@ -93,7 +94,6 @@ public:
 	    : THideObjBase(name)
 	{
 	}
-
 	virtual void initMapObj();
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	virtual void kill();
@@ -109,11 +109,11 @@ public:
 	}
 
 	virtual void kill();
+#if defined(VERSION_GMSP01) || defined(VERSION_GMSE01)
+	virtual void touchActor(THitActor* actor);
+#endif
 	virtual void moveObject();
 	virtual void initMapObj();
-#ifdef VERSION_GMSP01
-	virtual void touchActor(THitActor*);
-#endif
 
 	JGeometry::TVec3<f32>& getUnk140() { return unk140; }
 
@@ -142,7 +142,6 @@ public:
 	    , mMonteBlockBroken(false)
 	{
 	}
-
 	virtual void loadAfter();
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 

@@ -72,7 +72,7 @@ public:
 	int getWidth() const { return mBounds.getWidth(); }
 	JSUTree<J2DPane>* getFirstChild() { return mPaneTree.getFirstChild(); }
 	JSUTree<J2DPane>* getEndChild() { return mPaneTree.getEndChild(); }
-	const JSUTree<J2DPane>* getPaneTree() { return &mPaneTree; }
+	JSUTree<J2DPane>* getPaneTree() { return &mPaneTree; }
 	u8 getAlpha() const { return mAlpha; }
 	void setAlpha(u8 alpha) { mAlpha = alpha; }
 

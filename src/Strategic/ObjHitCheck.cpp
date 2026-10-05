@@ -50,7 +50,7 @@ void TObjHitCheck::checkActorsInList(THitActor* actor, TObjCheckList* list)
 		    && !candidate->checkHitFlag(HIT_FLAG_CANNOT_GET_HIT)
 		    && actor->canAttack(candidate)
 		    && checkDistance(actor->mPosition, actor->getAttackRadius(),
-		                     actor->getAttackHeight(), candidate->mPosition,
+		                     actor->getAttackHeight(), candidate->getPosition(),
 		                     candidate->getDamageRadius(),
 		                     candidate->getDamageHeight())) {
 			suffererIsInAttackArea(actor, candidate);
@@ -59,7 +59,8 @@ void TObjHitCheck::checkActorsInList(THitActor* actor, TObjCheckList* list)
 		if (!candidate->checkHitFlag(HIT_FLAG_CANNOT_ATTACK)
 		    && !actor->checkHitFlag(HIT_FLAG_CANNOT_GET_HIT)
 		    && candidate->canAttack(actor)
-		    && checkDistance(candidate->mPosition, candidate->getAttackRadius(),
+		    && checkDistance(candidate->getPosition(),
+		                     candidate->getAttackRadius(),
 		                     candidate->getAttackHeight(), actor->mPosition,
 		                     actor->getDamageRadius(),
 		                     actor->getDamageHeight())) {
@@ -93,9 +94,23 @@ TObjHitCheck::checkWaterWithActorsInList(const JGeometry::TVec3<f32>& pos,
 	return nullptr;
 }
 
-#pragma dont_inline on
+// Retail calls this from checkActorsHit: the body costs 15 statements, one
+// over the depth-1 budget, and the named `hit` result is the fifteenth.
+// The particle's alive test is a named bool: it lands the frame and every slot.
+// TODO: saved GPRs rotated: retail gives pos r30 above
+// particlePositions r29, particleHitActors r28 and i r27, as if pos were a
+// base temp. The C-style top pointer puts i in r27 (99.3 -> 99.5); ours
+// still has particlePositions r30, particleHitActors r29, pos r28. Inert on
+// top of it: swapping the two pointers, pos declared after them, all three
+// or also i declared at the top, fVar2 moved below them; unnamed pos -0x8.
+// c-k9 regalloc.py: moving `pos` to colouring position 1 (before @1176, the
+// particle pointer's IRO temporary) replays retail exactly, so pos is an `@`
+// object in retail (an inline binding or split temporary created early), not
+// a named web. Inert: pos as a loop-scope pointer or reference, or
+// `particlePositions + i`.
 void TObjHitCheck::checkWater()
 {
+	const JGeometry::TVec3<f32>* pos;
 	f32 fVar2 = TModelWaterManager::mStaticHitActor.getEntryRadius();
 
 	const JGeometry::TVec3<f32>* particlePositions
@@ -103,21 +118,23 @@ void TObjHitCheck::checkWater()
 	THitActor** particleHitActors = gpModelWaterManager->getParticleUnk2514();
 
 	for (int i = 0; i < gpModelWaterManager->getParticleCount(); ++i) {
-		if (!gpModelWaterManager->checkFlagBottom4Bits(i, 0x1))
+		bool alive = gpModelWaterManager->checkFlagBottom4Bits(i, 0x1);
+		if (!alive)
 			continue;
 
-		const JGeometry::TVec3<f32>& pos = particlePositions[i];
+		pos = &particlePositions[i];
 
 		u32 e;
-		u32 j = getTableIndex(pos, fVar2, &e);
+		u32 j = getTableIndex(*pos, fVar2, &e);
 
 		TObjCheckList& list = unk0[j];
 
-		if (j != e)
-			particleHitActors[i] = checkWaterWithActorsInList(pos, list.unk0);
+		if (j != e) {
+			THitActor* hit = checkWaterWithActorsInList(*pos, list.unk0);
+			particleHitActors[i] = hit;
+		}
 	}
 }
-#pragma dont_inline off
 
 void TObjHitCheck::entryActor(THitActor* actor, TObjCheckList* head)
 {
@@ -133,8 +150,8 @@ void TObjHitCheck::entryActor(THitActor* actor, TObjCheckList* head)
 	}
 }
 
-inline u32 TObjHitCheck::getTableIndex(const JGeometry::TVec3<f32>& pos,
-                                       f32 entry_radius, u32* out)
+u32 TObjHitCheck::getTableIndex(const JGeometry::TVec3<f32>& pos,
+                                f32 entry_radius, u32* out)
 {
 	f32 fVar1 = abs(pos.x) + abs(pos.y) + abs(pos.z);
 
@@ -146,6 +163,9 @@ inline u32 TObjHitCheck::getTableIndex(const JGeometry::TVec3<f32>& pos,
 	return i & 0xff;
 }
 
+// TODO: the iterator temporaries sit 0x14 high and two checkDistance
+// argument registers swap. Inert: a named children reference (frame -8),
+// getEntryRadius() (+8), raw/accessor positions in checkActorsInList.
 void TObjHitCheck::checkAndEntryGroup(TIdxGroupObj* group)
 {
 	TIdxGroupObj::iterator end = group->getChildren().end();
@@ -172,10 +192,16 @@ void TObjHitCheck::checkAndEntryGroup(TIdxGroupObj* group)
 	}
 }
 
+// TODO: frame and instructions match; the six loop iterator copies sit 4
+// high: retail has one more depth-1 compiler temp from the loop body (the
+// checkHitFlag/getPosition/getEntryRadius/getTableIndex/entryActor binders),
+// not an iterator property. Inert: `unk0 + i`, named pos/radius/list/out,
+// a named result in getTableIndex (dead named slots land at the top), it++.
 void TObjHitCheck::entryGroup(TIdxGroupObj* group)
 {
-	TIdxGroupObj::iterator end = group->getChildren().end();
-	for (TIdxGroupObj::iterator it = group->getChildren().begin(); it != end;
+	JGadget::TList_pointer<THitActor*>& children = group->getChildren();
+	TIdxGroupObj::iterator end                   = children.end();
+	for (TIdxGroupObj::iterator it = children.begin(); it != end;
 	     ++it) {
 		(*it)->mColCount = 0;
 
@@ -183,7 +209,7 @@ void TObjHitCheck::entryGroup(TIdxGroupObj* group)
 			continue;
 
 		u32 e;
-		u32 i = getTableIndex((*it)->mPosition, (*it)->getEntryRadius(), &e);
+		u32 i = getTableIndex((*it)->getPosition(), (*it)->getEntryRadius(), &e);
 
 		while (i != e) {
 			entryActor(*it, &unk0[i]);
@@ -194,30 +220,24 @@ void TObjHitCheck::entryGroup(TIdxGroupObj* group)
 				i += 1;
 		}
 	}
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0xe0 against 0xd8). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
-inline void TObjHitCheck::clearGroup(TIdxGroupObj* group)
+void TObjHitCheck::clearGroup(TIdxGroupObj* group)
 {
-	TIdxGroupObj::iterator end = group->getChildren().end();
+	JGadget::TList_pointer<THitActor*>& children = group->getChildren();
+	TIdxGroupObj::iterator end                   = children.end();
 
-	for (TIdxGroupObj::iterator it = group->getChildren().begin(); it != end;
-	     ++it)
+	for (TIdxGroupObj::iterator it = children.begin(); it != end; ++it)
 		(*it)->mColCount = 0;
 }
 
 void TObjHitCheck::checkGroupPlayer(TIdxGroupObj* group)
 {
-	TIdxGroupObj::iterator end = group->getChildren().end();
+	JGadget::TList_pointer<THitActor*>& children = group->getChildren();
+	TIdxGroupObj::iterator end                   = children.end();
 	THitActor* mario           = (THitActor*)gpMarioAddress;
 
-	for (TIdxGroupObj::iterator it = group->getChildren().begin(); it != end;
+	for (TIdxGroupObj::iterator it = children.begin(); it != end;
 	     ++it) {
 		(*it)->mColCount = 0;
 		if ((*it)->checkHitFlag(HIT_FLAG_NO_COLLISION))
@@ -225,12 +245,42 @@ void TObjHitCheck::checkGroupPlayer(TIdxGroupObj* group)
 
 		if (checkDistance((*it)->mPosition, (*it)->getAttackRadius(),
 		                  (*it)->getAttackHeight(), mario->mPosition,
-		                  mario->getAttackRadius(), mario->getAttackHeight())) {
+		                  mario->getDamageRadius(),
+		                  mario->getDamageHeight())) {
 			suffererIsInAttackArea(*it, mario);
 		}
 	}
 }
 
+// Only the map records this (UNUSED, 0x274): checkAndEntryGroup without the
+// entryActor step compiles to exactly that size.
+void TObjHitCheck::checkGroup(TIdxGroupObj* group)
+{
+	TIdxGroupObj::iterator end = group->getChildren().end();
+	for (TIdxGroupObj::iterator it = group->getChildren().begin(); it != end;
+	     ++it) {
+		(*it)->mColCount = 0;
+
+		if ((*it)->checkHitFlag(HIT_FLAG_NO_COLLISION))
+			continue;
+
+		u32 e;
+		u32 i = getTableIndex((*it)->mPosition, (*it)->mEntryRadius, &e);
+
+		while (i != e) {
+			checkActorsInList(*it, unk0[i].unk0);
+
+			if (i == 0xff)
+				i = 0;
+			else
+				i += 1;
+		}
+	}
+}
+
+// TODO: frame 0x20 short: checkGroupPlayer's iterator block sits 4 lower than
+// retail; a per-expansion missing object in the inlined bodies, not a
+// JGadget header property (research c-r4).
 void TObjHitCheck::checkActorsHit()
 {
 	initTable();
@@ -251,9 +301,14 @@ void TObjHitCheck::checkActorsHit()
 		checkWater();
 
 	if (!(gpStrategy->unk50 & 0x800))
-		checkGroupPlayer(gpStrategy->unk10[3]);
+		checkGroupPlayer(gpStrategy->unk10[5]);
 }
 
+// TODO: frame 0x30 short: each clearGroup expansion is one object short in
+// its depth-1 block and one in its depth-2 block (after the operator==
+// copies). `THitActor* actor;` first in clearGroup with `actor = *it;` fixes
+// the depth-1 block (0x210); the depth-2 word is still unfound (inert:
+// unnamed children, begin before end, while loop, pointer children, it++).
 void TObjHitCheck::clearHitNum()
 {
 	if (!(gpStrategy->unk50 & 0x100))

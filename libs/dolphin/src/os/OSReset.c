@@ -64,7 +64,6 @@
 
 static struct OSResetFunctionQueue ResetFunctionQueue;
 
-static int CallResetFunctions(int final);
 static asm void Reset(unsigned long resetCode);
 
 void OSRegisterResetFunction(struct OSResetFunctionInfo* info)
@@ -77,16 +76,19 @@ void OSUnregisterResetFunction(struct OSResetFunctionInfo* info)
 	DEQUEUE_INFO(info, &ResetFunctionQueue);
 }
 
-static int CallResetFunctions(int final)
+BOOL __OSCallResetFunctions(BOOL arg0)
 {
-	struct OSResetFunctionInfo* info;
-	int err = 0;
+	OSResetFunctionInfo* iter;
+	s32 retCode = 0;
+	s32 temp;
 
-	for (info = ResetFunctionQueue.head; info; info = info->next) {
-		err |= !info->func(final);
+	for (iter = ResetFunctionQueue.head; iter != NULL;) {
+		temp = !iter->func(arg0);
+		iter = iter->next;
+		retCode |= temp;
 	}
-	err |= !__OSSyncSram();
-	if (err) {
+	retCode |= !__OSSyncSram();
+	if (retCode) {
 		return 0;
 	}
 	return 1;
@@ -136,33 +138,7 @@ L_00000208:
 #endif // clang-format on
 }
 
-void __OSDoHotReset(s32 arg0)
-{
-	OSDisableInterrupts();
-	__VIRegs[1] = 0;
-	ICFlashInvalidate();
-	Reset(arg0 * 8);
-}
-
-inline BOOL __OSCallResetFunctions(BOOL arg0)
-{
-	OSResetFunctionInfo* iter;
-	s32 retCode = 0;
-	s32 temp;
-
-	for (iter = ResetFunctionQueue.head; iter != NULL;) {
-		temp = !iter->func(arg0);
-		iter = iter->next;
-		retCode |= temp;
-	}
-	retCode |= !__OSSyncSram();
-	if (retCode) {
-		return 0;
-	}
-	return 1;
-}
-
-inline static void KillThreads(void)
+static void KillThreads(void)
 {
 	OSThread* thread;
 	OSThread* next;
@@ -180,11 +156,21 @@ inline static void KillThreads(void)
 	}
 }
 
+void __OSDoHotReset(s32 arg0)
+{
+	OSDisableInterrupts();
+	__VIRegs[1] = 0;
+	ICFlashInvalidate();
+	Reset(arg0 * 8);
+}
+
 extern u8 OS_REBOOT_BOOL AT_ADDRESS(0x800030E2);
 
 void OSResetSystem(int reset, unsigned long resetCode, int forceMenu)
 {
-	char trash[0x10]; // Either more inlines or more local vars, idk
+	// TODO: frame 0x30 against 0x40 without this pad, every instruction
+	// matching with both reset-function loops expanding __OSCallResetFunctions.
+	char trash[0x10];
 	s32 padThing;
 
 	OSDisableScheduler();
@@ -194,7 +180,7 @@ void OSResetSystem(int reset, unsigned long resetCode, int forceMenu)
 		padThing = __PADDisableRecalibration(1);
 
 	do {
-	} while (CallResetFunctions(0) == 0);
+	} while (__OSCallResetFunctions(FALSE) == 0);
 
 	if ((reset == OS_RESET_HOTRESET && (forceMenu != 0))) {
 		__OSLockSram()->flags |= 0x40;

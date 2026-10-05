@@ -1,11 +1,6 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Map/MapEventDolpic.hpp>
 #include <Map/Map.hpp>
 #include <Map/MapModel.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <Map/PollutionManager.hpp>
 #include <MoveBG/MapObjBase.hpp>
 #include <Camera/CameraShake.hpp>
@@ -23,8 +18,14 @@
 #include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
 #include <string.h>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+// MapCollisionEntry's setUpTrans compound literals emit the zero/one
+// vector pair at parse time; retail has them after the InfectiousStrings
+// block, so this include must stay below it (docs/catalog/linking.md).
+#include <Map/MapCollisionEntry.hpp>
 
 bool TDolpicEventBiancoGate::isFinishedAll() const
 {
@@ -36,7 +37,7 @@ bool TDolpicEventBiancoGate::isFinishedAll() const
 bool TDolpicEventBiancoGate::control()
 {
 	unk20->mPosition.y += unk24;
-	gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 1.0f);
+	gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 1.0f);
 	SMSRumbleMgr->start(0, (f32*)nullptr);
 	{
 		JGeometry::TVec3<f32>& pos = unk20->mPosition;
@@ -64,7 +65,7 @@ bool TDolpicEventBiancoGate::watch()
 void TDolpicEventBiancoGate::loadAfter()
 {
 	JDrama::TNameRef::loadAfter();
-	unk20 = static_cast<TMapObjBase*>(JDrama::TNameRefGen::search("dptKing"));
+	unk20 = JDrama::TNameRefGen::search<TMapObjBase>("dptKing");
 	unk20->kill();
 	unk20->mPosition.y -= 1800.0f;
 }
@@ -85,14 +86,15 @@ bool TDolpicEventRiccoMammaGate::isFinishedAll() const
 
 void TDolpicEventRiccoMammaGate::rising()
 {
-	f32 scale = TMapObjBase::getJointScaleY(unk20) + unk34;
+	f32 scale = TMapObjBase::getJointScaleY(unk20);
+	scale += unk34;
 
 	TPosition3f mtx;
 	mtx.identity();
 	mtx.ref(1, 1) = scale;
 	unk24->moveMtx(mtx.mMtx);
 
-	gpCameraShake->keepShake(CAM_SHAKE_MODE_UNK5, 1.0f);
+	gpCameraShake->keepShake(CAM_SHAKE_MODE_BUILDING_APPEAR, 1.0f);
 	SMSRumbleMgr->start(0, (f32*)nullptr);
 	TMapObjBase::setJointScaleY(unk20, scale);
 	TMapObjBase::setJointTransY(unk20, 300.0f * (1.0f - scale));
@@ -106,15 +108,7 @@ bool TDolpicEventRiccoMammaGate::control()
 
 	if (unk44 > unk40) {
 		SMSRumbleMgr->start(0x13, (f32*)nullptr);
-		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk48, 0, nullptr, 0,
-		                                4);
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+		SMSGetMSound()->startSoundActor(MSD_SE_OBJ_QUAKE, &unk48);
 	}
 
 	if (unk44 > 0) {
@@ -134,7 +128,7 @@ bool TDolpicEventRiccoMammaGate::control()
 bool TDolpicEventRiccoMammaGate::watch()
 {
 	if (!TFlagManager::getInstance()->getBool(unk2C)) {
-		SMS_ShowJoint(unk20->getMesh(), true);
+		SMS_ShowJoint(getJoint()->getMesh(), true);
 		TMapObjBase::setJointScaleY(unk20, unk34);
 
 		TPosition3f mtx;
@@ -146,7 +140,7 @@ bool TDolpicEventRiccoMammaGate::watch()
 
 		unk44 = unk38;
 
-		if (unk2C == 0x50001) {
+		if (getEventFlag() == 0x50001) {
 			SMSGetMarDirector()->fireStartDemoCamera(
 			    "マニ屋上げデモカメラ", &unk48, -1, 0.0f, false, nullptr, 0,
 			    nullptr, JDrama::TFlagT<u16>(0));
@@ -154,7 +148,7 @@ bool TDolpicEventRiccoMammaGate::watch()
 			                             this);
 			gpMarioParticleManager->emit(MAP_MAP_MS_OBJUP_MANIYA_B, &unk48, 2,
 			                             this);
-			gpPollution->getLayer(0)->startDecay();
+			SMSGetPollutionLayer(0)->startDecay();
 		} else {
 			SMSGetMarDirector()->fireStartDemoCamera(
 			    "灯台上げデモカメラ", &unk48, -1, 0.0f, false, nullptr, 0,
@@ -163,19 +157,12 @@ bool TDolpicEventRiccoMammaGate::watch()
 			                             this);
 			gpMarioParticleManager->emit(MAP_MAP_MS_OBJUP_TOUDAI_B, &unk48, 2,
 			                             this);
-			gpPollution->getLayer(1)->startDecay();
-
-	// Every diff marker of this function is a stack offset sitting 0x18 above
-	// ours (target frame 0xa0 against 0x88). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
+			SMSGetPollutionLayer(1)->startDecay();
 		}
 
 		SMS_MarioWarpRequest(unk54, unk60);
-		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0, nullptr,
-		                                  0);
+		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_CLEAR_SIGN_BIG, 0,
+		                                   nullptr, 0);
 		return true;
 	}
 
@@ -193,9 +180,9 @@ void TDolpicEventRiccoMammaGate::loadAfter()
 		unk28->setUp();
 		unk18 = 0;
 		if (unk2C == 0x50001)
-			gpPollution->getCounterLayer().offLayer(0);
+			SMSGetPollution()->offLayer(0);
 		else
-			gpPollution->getCounterLayer().offLayer(1);
+			SMSGetPollution()->offLayer(1);
 	}
 }
 
@@ -203,9 +190,8 @@ void TDolpicEventRiccoMammaGate::load(JSUMemoryInputStream& stream)
 {
 	TMapEvent::load(stream);
 	stream.readString();
-	stream >> unk54.x >> unk54.y >> unk54.z;
 	f32 unused;
-	stream >> unused;
+	stream >> unk54.x >> unk54.y >> unk54.z >> unused;
 	stream >> unk60;
 
 	int idx;
@@ -219,7 +205,7 @@ void TDolpicEventRiccoMammaGate::load(JSUMemoryInputStream& stream)
 
 	unk24 = TMapObjBase::newAndInitBuildingCollisionMove(idx + 1, nullptr);
 	unk28 = TMapObjBase::newAndInitBuildingCollisionWarp(idx + 1, nullptr);
-	if (TFlagManager::getInstance()->getBool(unk2C)) {
+	if (TFlagManager::getInstance()->getBool(getEventFlag())) {
 		unk20 = getBuilding(idx + 1)->getJoint();
 		TMapObjBase::setJointScaleY(unk20, 0.008f);
 		TMapObjBase::setJointTransY(unk20, 295.0f);
@@ -259,8 +245,8 @@ TDolpicEventRiccoMammaGate::TDolpicEventRiccoMammaGate(const char* name)
     , unk3C(0)
     , unk40(0)
     , unk44(0)
-    , unk60(0.0f)
-    , unk54(0.0f, 0.0f, 0.0f)
-    , unk48(0.0f, 0.0f, 0.0f)
 {
+	unk60   = 0.0f;
+	unk48.x = unk48.y = unk48.z = 0.0f;
+	unk54.x = unk54.y = unk54.z = 0.0f;
 }

@@ -17,17 +17,15 @@ struct TNpcTakeData {
 };
 
 // fabricated
-struct TNpcModelDataEntry {
-	/* 0x0 */ const TColorChangeInfo* unk0;
-	/* 0x4 */ u32 unk4;
-};
-
-// fabricated
 struct TNpcModelData {
-	/* 0x0 */ const char* unk0;
-	/* 0x4 */ u32 unk4;
+	// One joint name per MActor slot, indexed with the same `j` as unk8:
+	// TNpcParts::TNpcParts reads both with one `j * 4` offset off the entry.
+	// Every table in NpcInitData.cpp leaves slot 1 null.
+	/* 0x0 */ const char* unk0[2];
 	/* 0x8 */ const char* unk8[2];
-	/* 0x10 */ TNpcModelDataEntry unk10[3];
+	// Up to three colour changes, each with one entry per MActor slot:
+	// TNpcParts::TNpcParts indexes them `[k][j]` with the same `j * 4` offset.
+	/* 0x10 */ const TColorChangeInfo* unk10[3][2];
 	/* 0x28 */ s16 unk28;
 	/* 0x2A */ bool unk2A;
 	/* 0x2B */ u8 unk2B;

@@ -60,6 +60,19 @@ void* memchr(const void* ptr, int ch, size_t count)
 	return NULL;
 }
 
+void* __memrchr(const void* ptr, int ch, size_t count)
+{
+	const unsigned char* p;
+
+	unsigned long v = (ch & 0xff);
+
+	for (p = (unsigned char*)ptr + count, count++; --count;)
+		if ((*--p & 0xff) == v)
+			return (void*)p;
+
+	return NULL;
+}
+
 int memcmp(const void* lhs, const void* rhs, size_t count)
 {
 	const unsigned char* p1;

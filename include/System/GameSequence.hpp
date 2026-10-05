@@ -6,9 +6,20 @@
 
 class TGameSequence {
 public:
+	// The defaulted arguments are the level that puts the flag member's
+	// converting constructor out of line where decideNextStage is expanded
+	// into TMarDirector::changeState/updateGameMode. Upstream's defaulted
+	// flag parameter (instead of a TFlagT<u16>(0) argument built here) gives
+	// TApplication::TApplication its 0x40 frame (99.6 -> 100) and
+	// decideNextStage 99.65 -> 99.88, with nothing else moving.
 	TGameSequence(u8 stage = 0, u8 scenario = 0, JDrama::TFlagT<u16> flag = 0)
 	{
 		set(stage, scenario, flag);
+	}
+
+	void set(u8 param_1, u8 param_2)
+	{
+		set(param_1, param_2, JDrama::TFlagT<u16>(0));
 	}
 
 	TGameSequence& operator=(const TGameSequence& other)

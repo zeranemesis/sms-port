@@ -56,9 +56,20 @@ JKRCompArchive::~JKRCompArchive()
 	mIsMounted = false;
 }
 
+// UNUSED; JKRMemArchive::fixedInit with this class's mount mode, which
+// takes its own register (0x44, against 0x40 where the mode is 1 or 2).
 void JKRCompArchive::fixedInit(s32 entryNum)
 {
-	JUT_ASSERT_F(false, "UNIMPLEMENTED");
+	mIsMounted  = false;
+	mMountMode  = MOUNT_COMP;
+	mMountCount = 1;
+	_54         = 2;
+	mHeap       = JKRHeap::sCurrentHeap;
+	mEntryNum   = entryNum;
+	if (sCurrentVolume)
+		return;
+	sCurrentVolume = this;
+	setCurrentDirID(0);
 }
 
 void JKRCompArchive::mountFixed(s32 entryNum)

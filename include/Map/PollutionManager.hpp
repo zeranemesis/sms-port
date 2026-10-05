@@ -17,7 +17,7 @@ class TPollutionManager : public TJointModelManager {
 public:
 	struct TPollutionInfo {
 		/* 0x0 */ u16 mLayerCount;
-		/* 0x4 */ TPollutionLayerInfo* mLayerInfos;
+		/* 0x4 */ PTR32(TPollutionLayerInfo) mLayerInfos;
 	};
 
 	TPollutionManager(const char* name = "落書き管理");
@@ -65,10 +65,21 @@ public:
 	// fabricated
 	TPollutionCounterLayer& getCounterLayer() { return unk70; }
 	TPollutionCounterObj& getCounterObj() { return unk1EC; }
+	TPollutionLayer** getLayers()
+	{
+		return (TPollutionLayer**)getJointModels();
+	}
 	TPollutionLayer* getLayer(int i)
 	{
 		return (TPollutionLayer*)getJointModel(i);
 	}
+	// Both overloads keep the two-level cast-over-getJointModel(i) spelling.
+	// Round 14 trialled `(TPollutionLayer*)mJointModels[i]` in the const one
+	// (the candidate left open by TPollutionManager::cleanedAll's note): it
+	// does not move cleanedAll at all (96.4%, still 8 bytes of frame too big)
+	// and costs getPollutionType and isPolluted their exact match
+	// (100% -> 99.7% each), so the level count is not interchangeable with
+	// where the level is declared. Do not retry.
 	TPollutionLayer* getLayer(int i) const
 	{
 		return (TPollutionLayer*)getJointModel(i);
@@ -92,5 +103,18 @@ public:
 	/* 0x208 */ ResTIMG* mDefaultCleanStampTex;
 	/* 0x20C */ u16 unk20C;
 };
+
+// Fabricated names. The ROM reaches a pollution layer at two different inline
+// depths: `getLayer(i)` (the indexed accessor over TJointModelManager's own
+// indexed `getJointModel(i)`) is what every ordinary site expands to, while
+// TAirportEventSink::watch and TMapEventSirenaSink::watch expand two levels
+// more -- this pair over the plain array accessor. Substituting either form at
+// the other's sites costs the exact match, so both spellings are load-bearing.
+inline TPollutionManager* SMSGetPollution() { return gpPollution; }
+
+inline TPollutionLayer* SMSGetPollutionLayer(int i)
+{
+	return SMSGetPollution()->getLayers()[i];
+}
 
 #endif

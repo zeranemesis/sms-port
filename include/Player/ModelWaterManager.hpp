@@ -55,19 +55,15 @@ public:
 	    , mWaterHitCounter(0)
 	{
 	}
-
+	virtual ~TWaterHitActor() { }
 	virtual BOOL receiveMessage(THitActor* sender, u32 message);
 	void onWaterHitCounter();
-	// fabricated
 	s16 getWaterHitCounter() const { return mWaterHitCounter; }
 
 public:
-	// TODO: the methods of this class live in Enemy/BossHanachanSub.cpp and
-	// treat this as a halfword counter (sth), while the water particle code
-	// reads a whole word at the same offset. Something about this class is
-	// still wrong, the union just lets both kinds of users compile.
+	// Senders carry a particle index; boss collision receivers carry a timer.
 	union {
-		/* 0x68 */ int unk68;
+		/* 0x68 */ int mParticleIndex;
 		/* 0x68 */ s16 mWaterHitCounter;
 	};
 };
@@ -75,6 +71,15 @@ public:
 class TModelWaterManager;
 
 extern TModelWaterManager* gpModelWaterManager;
+
+// Fabricated: the water manager bound to a named local before it is
+// returned, +8 of low region per expansion over a raw gpModelWaterManager
+// read. Formerly parked TU-locally in four units.
+inline TModelWaterManager* SMSGetModelWaterManagerBound()
+{
+	TModelWaterManager* manager = gpModelWaterManager;
+	return manager;
+}
 
 class TModelWaterManager : public JDrama::TViewObj {
 public:
@@ -86,12 +91,15 @@ public:
 	virtual void load(JSUMemoryInputStream&);
 	virtual void loadAfter();
 	f32 getWPGravity(int) const;
+	u8 getWaterAlpha() const;
 	bool askHitWaterParticleOnGround(const JGeometry::TVec3<f32>&);
 	void makeEmit(const TWaterEmitInfo&);
 	u8 emitRequest(const TWaterEmitInfo&);
 	void splashSound(const JGeometry::TVec3<f32>&, f32) const;
 	void splashGround(int);
+	void touchingExec(int);
 	void splashWall(int);
+	void splashWallPosSize(const JGeometry::TVec3<f32>&, f32);
 	f32 getPlaneFriction(const TBGCheckData*);
 	f32 getPlaneFall(const TBGCheckData*);
 	f32 getPlaneVanishSpeed(const TBGCheckData*);
@@ -120,15 +128,15 @@ public:
 	// fabricated
 	BOOL checkParticleFlag(TWaterHitActor* hit, u16 flag)
 	{
-		return mParticleFlagSOA[hit->unk68] & flag ? TRUE : FALSE;
+		return mParticleFlagSOA[hit->mParticleIndex] & flag ? TRUE : FALSE;
 	}
 	u16 getParticleFlag(TWaterHitActor* hit)
 	{
-		return mParticleFlagSOA[hit->unk68];
+		return mParticleFlagSOA[hit->mParticleIndex];
 	}
 	s16 getParticleAttack(TWaterHitActor* hit)
 	{
-		return mParticleAttackSOA[hit->unk68];
+		return mParticleAttackSOA[hit->mParticleIndex];
 	}
 	int getFlagBottom4Bits(int i) const { return mParticleFlagSOA[i] & 0xf; }
 	void setFlagBottom4Bits(int i, int flag)
@@ -155,6 +163,9 @@ public:
 	enum { SLOT_NUM = 256 };
 
 public:
+	// fabricated: header round 20 accessor candidates
+	u16* getParticleFlagSOA() { return mParticleFlagSOA; }
+
 	/* 0x10 */ s16 unk10;
 	/* 0x12 */ u16 mParticleCount;
 	/* 0x14 */ f32 mParticleLifetimeSOA[SLOT_NUM];

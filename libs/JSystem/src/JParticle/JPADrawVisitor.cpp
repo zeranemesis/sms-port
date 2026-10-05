@@ -81,8 +81,9 @@ void JPADrawExecGenPrjTexMtx::exec(const JPADrawContext* dc)
 	Mtx mtx;
 
 	f32 tick   = dc->mBaseEmitter->getFrame();
-	f32 transX = tick * dc->mBaseShape->getTexScrollTransX()
-	             + dc->mBaseShape->getTexStaticTransX();
+	f32 scrollX = dc->mBaseShape->getTexScrollTransX();
+	f32 staticX = dc->mBaseShape->getTexStaticTransX();
+	f32 transX = tick * scrollX + staticX;
 	f32 transY = tick * dc->mBaseShape->getTexScrollTransY()
 	             + dc->mBaseShape->getTexStaticTransY();
 	f32 scaleX = tick * dc->mBaseShape->getTexScrollScaleX()
@@ -326,7 +327,8 @@ void JPADrawExecLoadTexture::exec(const JPADrawContext* dc,
 void JPADrawExecBillBoard::exec(const JPADrawContext* dc,
                                 JPABaseParticle* particle)
 {
-	if (particle->isInvisibleParticle())
+	bool invisible = particle->isInvisibleParticle();
+	if (invisible)
 		return;
 
 	f32 scaleX = particle->getDrawParamPPtr()->mScaleX;
@@ -359,6 +361,12 @@ void JPADrawExecBillBoard::exec(const JPADrawContext* dc,
 	GXEnd();
 }
 
+// Direct-return level over the raw angle read, taken by the sine only: it is
+// the 4 bytes of low region (JPADrawExecRotationCross frame 0x138,
+// JPADrawExecRotation 0xd8) that retail carries, and unlike the
+// same level over mScaleX it leaves every FPR operand order as retail's.
+static inline u16 JPADrawVisitorAngle(const JPADrawParams* p) { return p->unk34; }
+
 void JPADrawExecRotBillBoard::exec(const JPADrawContext* dc,
                                    JPABaseParticle* particle)
 {
@@ -367,7 +375,7 @@ void JPADrawExecRotBillBoard::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
 	f32 cos = JMASCos(params->unk34);
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
@@ -400,7 +408,8 @@ void JPADrawExecRotBillBoard::exec(const JPADrawContext* dc,
 void JPADrawExecYBillBoard::exec(const JPADrawContext* dc,
                                  JPABaseParticle* particle)
 {
-	if (particle->isInvisibleParticle())
+	bool invisible = particle->isInvisibleParticle();
+	if (invisible)
 		return;
 
 	f32 scaleX = particle->getDrawParamPPtr()->mScaleX;
@@ -442,7 +451,7 @@ void JPADrawExecRotYBillBoard::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
 	f32 cos = JMASCos(params->unk34);
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
@@ -458,9 +467,15 @@ void JPADrawExecRotYBillBoard::exec(const JPADrawContext* dc,
 
 	MTXMultVecArray(dc->pcb->unk38, offs, offs, ARRAY_COUNT(offs));
 
+	// The rotate/scale-only multiply is the ROM's: this exec is the only
+	// billboard variant that drops the view translation here.
+	//
+	// TODO: 99.8%. Every instruction matches; the ROM's stack temps all sit
+	// 4 bytes higher (offs at 0x50, pt at 0x44), so one 4-byte inline temp --
+	// a pointer binding by frame-gaps' ladder -- is missing below `pt`.
 	JGeometry::TVec3<f32> pt;
 	particle->getGlobalPosition(pt);
-	MTXMultVec(dc->pcb->mViewMtx, &pt, &pt);
+	MTXMultVecSR(dc->pcb->mViewMtx, &pt, &pt);
 
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
 	GXPosition3f32(offs[0].x + pt.x, offs[0].y + pt.y, offs[0].z + pt.z);
@@ -502,14 +517,11 @@ void dirTypeEmtrDir(JPABaseParticle*, JPABaseEmitter* emitter,
 void dirTypePrevPtcl(JPABaseParticle* particle, JPABaseEmitter* emitter,
                      JGeometry::TVec3<f32>& result)
 {
-
-	
-	
 	JGeometry::TVec3<f32> pos;
 	particle->getGlobalPosition(pos);
-	JSULink<JPABaseParticle>* prev = particle->getLinkBufferPtr()->getPrev();
-	if (prev != nullptr)
-		prev->getObject()->getGlobalPosition(result);
+	if (particle->getLinkBufferPtr()->getPrev() != nullptr)
+		particle->getLinkBufferPtr()->getPrev()->getObject()->getGlobalPosition(
+		    result);
 	else
 		emitter->getEmitterGlobalTranslation(result);
 
@@ -612,6 +624,33 @@ void rotTypeYJiggle(f32 sin, f32 cos, Mtx& out)
 	out[2][3] = 0.0f;
 }
 
+// The four directional draws want the side vector colored x f29 .. z f31,
+// which the header cross (stores x, y, z) cannot give: the same body storing
+// z, y, x does. Changing TVec3::cross itself regresses the tree (see its
+// TODO in JGVec3.hpp) and the Stripe draws here, so it stays TU-local.
+// `pt` is colored the mirror way (x f31 .. z f29) yet loaded x first: its
+// fields are first touched z first, by zero()'s chained `x = y = z = 0`,
+// before getGlobalPosition copies x, y, z over them (the dead zero stores
+// go, the order of the IRO temporaries stays).
+static inline void JPACross(JGeometry::TVec3<f32>& out, const JGeometry::TVec3<f32>& a,
+                            const JGeometry::TVec3<f32>& b)
+{
+	f32 _x = a.y * b.z - a.z * b.y;
+	f32 _y = a.z * b.x - a.x * b.z;
+	f32 _z = a.x * b.y - a.y * b.x;
+	out.z = _z;
+	out.y = _y;
+	out.x = _x;
+}
+
+// TODO: The low region is 0x20 short (frame 0x128 vs 0x100); FPRs are right
+// through JPACross and the zeroed pt. Retail also has a 12-byte named slot above offs. Declaration
+// moves of pt are inert (pt has no slot). Without the angle level the Rot
+// siblings are 8 short too, so one 8-byte site is shared by all four.
+// c-k11: every accessed slot is 0x20 low and the saved registers 0x28, so
+// eight words are missing below local_80 (inline or IRO) and two at the
+// top. setLength(1.0f) for any subset of the three normalize() calls moves
+// the frame the wrong way (0xf8).
 void JPADrawExecDirectional::exec(const JPADrawContext* dc,
                                   JPABaseParticle* particle)
 {
@@ -638,12 +677,12 @@ void JPADrawExecDirectional::exec(const JPADrawContext* dc,
 	local_BC.normalize();
 
 	JGeometry::TVec3<f32> f29_f30_f31;
-	f29_f30_f31.cross(params->unk0, local_BC);
+	JPACross(f29_f30_f31, params->unk0, local_BC);
 	if (f29_f30_f31.isZero())
 		return;
 	f29_f30_f31.normalize();
 
-	params->unk0.cross(local_BC, f29_f30_f31);
+	params->unk0.cross2(local_BC, f29_f30_f31);
 	params->unk0.normalize();
 
 	Mtx local_80;
@@ -665,6 +704,7 @@ void JPADrawExecDirectional::exec(const JPADrawContext* dc,
 	MTXMultVecArray(local_80, offs, offs, ARRAY_COUNT(offs));
 
 	JGeometry::TVec3<f32> pt;
+	pt.zero();
 	particle->getGlobalPosition(pt);
 
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
@@ -679,6 +719,7 @@ void JPADrawExecDirectional::exec(const JPADrawContext* dc,
 	GXEnd();
 }
 
+// Stack-exact through the angle level on sine and cosine, rotation Mtx first.
 void JPADrawExecRotDirectional::exec(const JPADrawContext* dc,
                                      JPABaseParticle* particle)
 {
@@ -687,21 +728,21 @@ void JPADrawExecRotDirectional::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
-	f32 cos = JMASCos(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
+	f32 cos = JMASCos(JPADrawVisitorAngle(params));
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
 	f32 y0 = +params->mScaleY * (dc->pcb->unk4.y + dc->pcb->unkC.y);
 	f32 x1 = +params->mScaleX * (dc->pcb->unk4.x - dc->pcb->unkC.x);
 	f32 y1 = -params->mScaleY * (dc->pcb->unk4.y - dc->pcb->unkC.y);
 
+	Mtx local_120;
 	JGeometry::TVec3<f32> offs[4];
 	offs[0].set(x0, y0, 0.0f);
 	offs[1].set(x1, y0, 0.0f);
 	offs[2].set(x1, y1, 0.0f);
 	offs[3].set(x0, y1, 0.0f);
 
-	Mtx local_120;
 	dc->pcb->mRotTypeFunc(sin, cos, local_120);
 
 	JGeometry::TVec3<f32> local_E4;
@@ -711,12 +752,12 @@ void JPADrawExecRotDirectional::exec(const JPADrawContext* dc,
 	local_E4.normalize();
 
 	JGeometry::TVec3<f32> f29_f30_f31;
-	f29_f30_f31.cross(params->unk0, local_E4);
+	JPACross(f29_f30_f31, params->unk0, local_E4);
 	if (f29_f30_f31.isZero())
 		return;
 	f29_f30_f31.normalize();
 
-	params->unk0.cross(local_E4, f29_f30_f31);
+	params->unk0.cross2(local_E4, f29_f30_f31);
 	params->unk0.normalize();
 
 	Mtx local_a8;
@@ -740,6 +781,7 @@ void JPADrawExecRotDirectional::exec(const JPADrawContext* dc,
 	MTXMultVecArray(local_78, offs, offs, ARRAY_COUNT(offs));
 
 	JGeometry::TVec3<f32> pt;
+	pt.zero();
 	particle->getGlobalPosition(pt);
 
 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
@@ -754,10 +796,17 @@ void JPADrawExecRotDirectional::exec(const JPADrawContext* dc,
 	GXEnd();
 }
 
+// TODO: frame 0x168 exact through the named invisible bool (as the BillBoard
+// siblings); the slots still differ. FPRs as in JPADrawExecRotDirectional.
+// Direct-return levels over mScaleX/mScaleY at any site subset flip fmuls
+// operand order.
+// Frame-inert (c-m15): no pt.zero(), pt(0,0,0) ctor, header cross for
+// JPACross, cross for cross2, setLength(1.0f) for normalize.
 void JPADrawExecDirectionalCross::exec(const JPADrawContext* dc,
                                        JPABaseParticle* particle)
 {
-	if (particle->isInvisibleParticle())
+	bool invisible = particle->isInvisibleParticle();
+	if (invisible)
 		return;
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
@@ -788,12 +837,12 @@ void JPADrawExecDirectionalCross::exec(const JPADrawContext* dc,
 	local_BC.normalize();
 
 	JGeometry::TVec3<f32> f29_f30_f31;
-	f29_f30_f31.cross(params->unk0, local_BC);
+	JPACross(f29_f30_f31, params->unk0, local_BC);
 	if (f29_f30_f31.isZero())
 		return;
 	f29_f30_f31.normalize();
 
-	params->unk0.cross(local_BC, f29_f30_f31);
+	params->unk0.cross2(local_BC, f29_f30_f31);
 	params->unk0.normalize();
 
 	Mtx local_80;
@@ -815,9 +864,10 @@ void JPADrawExecDirectionalCross::exec(const JPADrawContext* dc,
 	MTXMultVecArray(local_80, offs, offs, ARRAY_COUNT(offs));
 
 	JGeometry::TVec3<f32> pt;
+	pt.zero();
 	particle->getGlobalPosition(pt);
 
-	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	GXBegin(GX_QUADS, GX_VTXFMT0, 8);
 	GXPosition3f32(offs[0].x + pt.x, offs[0].y + pt.y, offs[0].z + pt.z);
 	GXTexCoord2f32(dc->pcb->mTexCoords[0].x, dc->pcb->mTexCoords[0].y);
 	GXPosition3f32(offs[1].x + pt.x, offs[1].y + pt.y, offs[1].z + pt.z);
@@ -837,6 +887,7 @@ void JPADrawExecDirectionalCross::exec(const JPADrawContext* dc,
 	GXEnd();
 }
 
+// Stack-exact through the angle level on sine and cosine, rotation Mtx first.
 void JPADrawExecRotDirectionalCross::exec(const JPADrawContext* dc,
                                           JPABaseParticle* particle)
 {
@@ -845,14 +896,15 @@ void JPADrawExecRotDirectionalCross::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
-	f32 cos = JMASCos(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
+	f32 cos = JMASCos(JPADrawVisitorAngle(params));
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
 	f32 y0 = +params->mScaleY * (dc->pcb->unk4.y + dc->pcb->unkC.y);
 	f32 x1 = +params->mScaleX * (dc->pcb->unk4.x - dc->pcb->unkC.x);
 	f32 y1 = -params->mScaleY * (dc->pcb->unk4.y - dc->pcb->unkC.y);
 
+	Mtx local_180;
 	JGeometry::TVec3<f32> offs[8];
 	offs[0].set(x0, y0, 0.0f);
 	offs[1].set(x1, y0, 0.0f);
@@ -867,7 +919,6 @@ void JPADrawExecRotDirectionalCross::exec(const JPADrawContext* dc,
 	offs[7].set((offs[1].x + offs[0].x) * 0.5f, y1,
 	            (offs[1].x - offs[0].x) * 0.5f);
 
-	Mtx local_180;
 	dc->pcb->mRotTypeFunc(sin, cos, local_180);
 
 	JGeometry::TVec3<f32> local_BC;
@@ -877,12 +928,12 @@ void JPADrawExecRotDirectionalCross::exec(const JPADrawContext* dc,
 	local_BC.normalize();
 
 	JGeometry::TVec3<f32> f29_f30_f31;
-	f29_f30_f31.cross(params->unk0, local_BC);
+	JPACross(f29_f30_f31, params->unk0, local_BC);
 	if (f29_f30_f31.isZero())
 		return;
 	f29_f30_f31.normalize();
 
-	params->unk0.cross(local_BC, f29_f30_f31);
+	params->unk0.cross2(local_BC, f29_f30_f31);
 	params->unk0.normalize();
 
 	Mtx local_d8;
@@ -906,9 +957,10 @@ void JPADrawExecRotDirectionalCross::exec(const JPADrawContext* dc,
 	MTXMultVecArray(local_a8, offs, offs, ARRAY_COUNT(offs));
 
 	JGeometry::TVec3<f32> pt;
+	pt.zero();
 	particle->getGlobalPosition(pt);
 
-	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+	GXBegin(GX_QUADS, GX_VTXFMT0, 8);
 	GXPosition3f32(offs[0].x + pt.x, offs[0].y + pt.y, offs[0].z + pt.z);
 	GXTexCoord2f32(dc->pcb->mTexCoords[0].x, dc->pcb->mTexCoords[0].y);
 	GXPosition3f32(offs[1].x + pt.x, offs[1].y + pt.y, offs[1].z + pt.z);
@@ -941,13 +993,15 @@ void JPADrawExecDirBillBoard::exec(const JPADrawContext* dc,
 	JGeometry::TVec3<f32> dir(dc->pcb->mViewMtx[2][0], dc->pcb->mViewMtx[2][1],
 	                          dc->pcb->mViewMtx[2][2]);
 
-	local_9C.cross(local_9C, dir);
+	local_9C.cross2(local_9C, dir);
 	if (local_9C.isZero())
 		return;
 	local_9C.normalize();
 
 	MTXMultVecSR(dc->pcb->mViewMtx, &local_9C, &local_9C);
 
+	f32 x = local_9C.x;
+	f32 y = local_9C.y;
 	f32 scaleX = params->mScaleX;
 	f32 scaleY = params->mScaleY;
 
@@ -961,9 +1015,6 @@ void JPADrawExecDirBillBoard::exec(const JPADrawContext* dc,
 	offs[1].set(x1, scaleY);
 	offs[2].set(x1, -y1);
 	offs[3].set(-scaleX, -y1);
-
-	f32 x = local_9C.x;
-	f32 y = local_9C.y;
 
 	offs[0].set(x * offs[0].x - y * offs[0].y, x * offs[0].y + y * offs[0].x);
 	offs[1].set(x * offs[1].x - y * offs[1].y, x * offs[1].y + y * offs[1].x);
@@ -994,21 +1045,21 @@ void JPADrawExecRotation::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
 	f32 cos = JMASCos(params->unk34);
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
-	f32 x1 = params->mScaleX * (dc->pcb->unk4.x - dc->pcb->unkC.x);
 	f32 y0 = params->mScaleY * (dc->pcb->unk4.y + dc->pcb->unkC.y);
+	f32 x1 = params->mScaleX * (dc->pcb->unk4.x - dc->pcb->unkC.x);
 	f32 y1 = -params->mScaleY * (dc->pcb->unk4.y - dc->pcb->unkC.y);
 
+	Mtx mtx;
 	JGeometry::TVec3<f32> offs[4];
 	offs[0].set(x0, y0, 0.0f);
 	offs[1].set(x1, y0, 0.0f);
 	offs[2].set(x1, y1, 0.0f);
 	offs[3].set(x0, y1, 0.0f);
 
-	Mtx mtx;
 	dc->pcb->mRotTypeFunc(sin, cos, mtx);
 	MTXMultVecArray(mtx, offs, offs, ARRAY_COUNT(offs));
 
@@ -1035,7 +1086,7 @@ void JPADrawExecRotationCross::exec(const JPADrawContext* dc,
 
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
-	f32 sin = JMASSin(params->unk34);
+	f32 sin = JMASSin(JPADrawVisitorAngle(params));
 	f32 cos = JMASCos(params->unk34);
 
 	f32 x0 = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
@@ -1096,13 +1147,16 @@ void JPADrawExecPoint::exec(const JPADrawContext* dc, JPABaseParticle* particle)
 	GXEnd();
 }
 
+// Both vectors are declared before the visibility test and the test result
+// is named; together they give retail's 0x78 frame with local_40 at 0x40.
 void JPADrawExecLine::exec(const JPADrawContext* dc, JPABaseParticle* particle)
 {
-	if (particle->isInvisibleParticle())
+	JGeometry::TVec3<f32> f31_f30_f39;
+	JGeometry::TVec3<f32> local_40;
+	bool invisible = particle->isInvisibleParticle();
+	if (invisible)
 		return;
 
-	JGeometry::TVec3<f32> local_40;
-	JGeometry::TVec3<f32> f31_f30_f39;
 	particle->getGlobalPosition(f31_f30_f39);
 	particle->getVelVec(local_40);
 	if (local_40.isZero())
@@ -1130,6 +1184,12 @@ static JSULink<JPABaseParticle>* stripeGetPrev(JSULink<JPABaseParticle>* link)
 {
 	return link->getPrev();
 }
+// TODO: 98.0%, instruction-exact with retail's frame (sine and cosine taken
+// inline in the v1/v2 constructors, not named); the low region is one word
+// short (local_BC at 0x10c, retail 0x108) and the callee-saved FPRs are
+// permuted (retail colours the hoisted 1.0f/0.0f/epsilon first, f31-f29).
+// Inert before: function-scope pt0/local_BC/v1/v2, pt0 first, cross2 on the
+// first cross product; `mtx.mult(v, v)` now overshoots the frame by 0x18.
 void JPADrawExecStripe::exec(const JPADrawContext* dc)
 {
 	u32 elems = dc->unk18->getNumLinks();
@@ -1162,13 +1222,11 @@ void JPADrawExecStripe::exec(const JPADrawContext* dc)
 		JPABaseParticle* particle = link->getObject();
 
 		JPADrawParams* params = particle->getDrawParamPPtr();
-		f32 sin               = JMASSin(params->unk34);
-		f32 cos               = JMASCos(params->unk34);
 
 		f32 x = -params->mScaleX * (dc->pcb->unk4.x + dc->pcb->unkC.x);
-		JGeometry::TVec3<f32> v1(x * cos, 0.0f, x * sin);
+		JGeometry::TVec3<f32> v1(x * JMASCos(params->unk34), 0.0f, x * JMASSin(params->unk34));
 		f32 y = +params->mScaleX * (dc->pcb->unk4.x - dc->pcb->unkC.x);
-		JGeometry::TVec3<f32> v2(y * cos, 0.0f, y * sin);
+		JGeometry::TVec3<f32> v2(y * JMASCos(params->unk34), 0.0f, y * JMASSin(params->unk34));
 
 		JGeometry::TVec3<f32> pt0;
 		particle->getGlobalPosition(pt0);
@@ -1187,7 +1245,7 @@ void JPADrawExecStripe::exec(const JPADrawContext* dc)
 		else
 			f29_f30_f31.normalize();
 
-		params->unk0.cross(local_BC, f29_f30_f31);
+		params->unk0.cross2(local_BC, f29_f30_f31);
 		params->unk0.normalize();
 
 		mtx.setXYZDir(f29_f30_f31, local_BC, params->unk0);
@@ -1205,6 +1263,11 @@ void JPADrawExecStripe::exec(const JPADrawContext* dc)
 	GXEnd();
 }
 
+// TODO: 97.3%, instruction-exact with the right frame; GPRs right with start
+// declared before getNext. Left: local_BC 0x18 high (0x1d4, retail 0x1bc) and
+// the callee-saved FPRs (retail colours loop 1's pt.x and fVar2 first, fVar9
+// f20, fVar2_0 f16). `mult(v, v)`, inline sine/cosine, pt0.zero() and
+// cross2 on the first cross product are worse or inert.
 void JPADrawExecStripeCross::exec(const JPADrawContext* dc)
 {
 
@@ -1214,8 +1277,8 @@ void JPADrawExecStripeCross::exec(const JPADrawContext* dc)
 
 	typedef JSULink<JPABaseParticle>* (*NxtFunc)(JSULink<JPABaseParticle>*);
 
-	NxtFunc getNext;
 	JSULink<JPABaseParticle>* start;
+	NxtFunc getNext;
 
 	f32 fVar2_0;
 	f32 fVar2;
@@ -1263,11 +1326,11 @@ void JPADrawExecStripeCross::exec(const JPADrawContext* dc)
 		JGeometry::TVec3<f32> f29_f30_f31;
 		f29_f30_f31.cross(params->unk0, local_BC);
 		if (f29_f30_f31.isZero())
-			f29_f30_f31.set(0.0f, 1.0f, 0.0f);
+			f29_f30_f31.set(1.0f, 0.0f, 0.0f);
 		else
 			f29_f30_f31.normalize();
 
-		params->unk0.cross(local_BC, f29_f30_f31);
+		params->unk0.cross2(local_BC, f29_f30_f31);
 		params->unk0.normalize();
 
 		mtx.setXYZDir(f29_f30_f31, local_BC, params->unk0);
@@ -1312,11 +1375,11 @@ void JPADrawExecStripeCross::exec(const JPADrawContext* dc)
 		JGeometry::TVec3<f32> f29_f30_f31;
 		f29_f30_f31.cross(params->unk0, local_BC);
 		if (f29_f30_f31.isZero())
-			f29_f30_f31.set(0.0f, 1.0f, 0.0f);
+			f29_f30_f31.set(1.0f, 0.0f, 0.0f);
 		else
 			f29_f30_f31.normalize();
 
-		params->unk0.cross(local_BC, f29_f30_f31);
+		params->unk0.cross2(local_BC, f29_f30_f31);
 		params->unk0.normalize();
 
 		mtx.setXYZDir(f29_f30_f31, local_BC, params->unk0);
@@ -1520,12 +1583,14 @@ void JPADrawCalcScaleY::calc(const JPADrawContext* dc,
 	}
 }
 
+// Direct-return level over the base scale, taken by the scale-in and scale-out
+// branches of the two BySpeed calcs (+4 of low region each); the plain branch
+// reads the member raw.
+static inline f32 JPADrawVisitorUnkC(const JPADrawParams* p) { return p->unkC; }
+
 void JPADrawCalcScaleXBySpeed::calc(const JPADrawContext* dc,
                                     JPABaseParticle* particle)
 {
-
-	
-	
 	JPADrawParams* params = particle->getDrawParamPPtr();
 
 	JGeometry::TVec3<f32> vel;
@@ -1533,11 +1598,11 @@ void JPADrawCalcScaleXBySpeed::calc(const JPADrawContext* dc,
 
 	if (dc->pcb->mScaleAnmTimer < dc->mExtraShape->getScaleInTiming()) {
 		params->mScaleX
-		    = params->unkC
+		    = JPADrawVisitorUnkC(params)
 		      * ((dc->mExtraShape->getIncreaseRateX() * dc->pcb->mScaleAnmTimer)
 		         + dc->mExtraShape->getScaleInValueX());
 	} else if (dc->pcb->mScaleAnmTimer > dc->mExtraShape->getScaleOutTiming()) {
-		params->mScaleX = params->unkC
+		params->mScaleX = JPADrawVisitorUnkC(params)
 		                  * ((dc->mExtraShape->getDecreaseRateX()
 		                      * (dc->pcb->mScaleAnmTimer
 		                         - dc->mExtraShape->getScaleOutTiming()))
@@ -1558,11 +1623,11 @@ void JPADrawCalcScaleYBySpeed::calc(const JPADrawContext* dc,
 
 	if (dc->pcb->mScaleAnmTimer < dc->mExtraShape->getScaleInTiming()) {
 		params->mScaleY
-		    = params->unkC
+		    = JPADrawVisitorUnkC(params)
 		      * ((dc->mExtraShape->getIncreaseRateY() * dc->pcb->mScaleAnmTimer)
 		         + dc->mExtraShape->getScaleInValueY());
 	} else if (dc->pcb->mScaleAnmTimer > dc->mExtraShape->getScaleOutTiming()) {
-		params->mScaleY = params->unkC
+		params->mScaleY = JPADrawVisitorUnkC(params)
 		                  * ((dc->mExtraShape->getDecreaseRateY()
 		                      * (dc->pcb->mScaleAnmTimer
 		                         - dc->mExtraShape->getScaleOutTiming()))

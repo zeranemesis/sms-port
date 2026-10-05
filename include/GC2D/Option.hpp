@@ -8,16 +8,11 @@
 #include <System/ArrayWrapper.hpp>
 
 class J2DPane;
-class J2DPicture;
-class J2DTextBox;
 class J2DScreen;
 class J2DOrthoGraph;
 class J2DSetScreen;
 class TExPane;
 class JAISound;
-class JUTTexture;
-class TOptionSubtitleUnit;
-class TOptionLanguageUnit;
 
 /**
  * @brief A control that makes a pane's left side
@@ -25,23 +20,32 @@ class TOptionLanguageUnit;
  */
 class TArrowControl {
 public:
-	TArrowControl(J2DScreen* screen, J2DPicture* picture);
+	TArrowControl(J2DPane* pane)
+	    : mPane(pane)
+	    , unk14(true)
+	    , mPhase(0)
+	{
+		mBounds = mPane->getBounds();
+	}
 
-	int replaceTexture(u32 tag, JUTTexture* texture);
-	void changeTexture(int language);
 	void update();
 	void updateAlpha();
 	void updateScale();
 	int calcMoveX(int phase) const;
 
 public:
-	/* 0x0 */ J2DScreen* mScreen;
-	/* 0x4 */ J2DPicture* mPicture;
-	/* 0x8 */ JUTRect mBounds;
-	/* 0x18 */ bool unk18;
-	/* 0x1C */ int mPhase;
-	/* 0x20 */ JUTTexture* mLanguageTextures[5];
+	/* 0x0 */ J2DPane* mPane;
+	/* 0x4 */ JUTRect mBounds;
+	/* 0x14 */ bool unk14;
+	/* 0x18 */ int mPhase;
 };
+
+// NOTE: the GMSJ01 reconstruction this file grew from had a `TBalloonControl`
+// member at +0xC in both option units, driving the 'bub0'..'bub4' panes.
+// GMSE01 has no trace of it: the map lists no TBalloonControl symbol in
+// Option.cpp, `new TOptionRumbleUnit` asks for 0x24 (not 0x28) bytes, and both
+// constructors go straight from the parent pane to the selection bubble.
+// See git history for the removed class if a Japanese build is ever added.
 
 /**
  * @brief Pulsating control for a pane.
@@ -55,7 +59,6 @@ public:
 	void startAnm();
 	void stopAnm();
 	void update();
-	void resize(int content_width);
 
 public:
 	/* 0x0 */ J2DPane* mPane;
@@ -117,7 +120,11 @@ public:
 
 public:
 	/* 0x0 */ J2DScreen* mScreen;
-	/* 0x4 */ ArrayWrapper<const u32> mItems;
+	// The map instantiates ArrayWrapper<Ul>, not ArrayWrapper<const Ul>:
+	// see the weak begin__Q29@unnamed@16ArrayWrapper<Ul>CFv in Option.cpp.
+	// TODO: the cast in setupToggle disappears if ArrayWrapper<T>::set() took
+	// a `const T*` (open change in System/ArrayWrapper.hpp).
+	/* 0x4 */ ArrayWrapper<u32> mItems;
 	/* 0xC */ const u32* mCurItem;
 };
 
@@ -135,28 +142,29 @@ public:
 
 	TOptionRumbleUnit(J2DScreen* screen);
 
-	int replaceTexture(u32 tag, JUTTexture* texture);
-	void changeTexture(int language);
-	void checkRumble();
 	void update();
+	void checkRumble();
 	void toggle();
 	void adjust();
 	void adjustView();
-	void hide();
 	void show();
+	void hide();
 	void deactivate(bool force);
 	void activate();
 	void setValue(RumbleType value);
+	RumbleType getValue() const
+	{
+		return (RumbleType)mSelectionText->getNumber();
+	}
 	void setState(State state);
 	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
 
-	RumbleType getValue() const { return (RumbleType)getNumber(); }
-	s32 getNumber() const { return mSelectionText->getNumber(); }
-
 	TPatternAnmControl* getCurrentGamepadAnm() const
 	{
-		return mGamepadIcon[getNumber()];
+		return mGamepadIcon[mSelectionText->getNumber()];
 	}
+
+	u8 getInitialAlpha() const { return mInitialAlpha; }
 
 public:
 	/* 0x0 */ J2DScreen* mScreen;
@@ -167,8 +175,57 @@ public:
 	/* 0x18 */ TToggleControl* mSelectionText;
 	/* 0x1C */ State mState;
 	/* 0x20 */ bool mShouldRumble;
-	/* 0x24 */ JUTTexture* mLanguageTextures[5];
-	/* 0x38 */ JUTTexture* mStateTextures[2][5];
+};
+
+/**
+ * @brief The subtitle on/off option, US only.
+ * The Japanese release has no subtitle option, so this whole class is
+ * GMSE01-specific; the map lists it in Option.cpp between the sound and the
+ * rumble unit.
+ */
+class TOptionSubtitleUnit {
+public:
+	enum SubtitleType {
+		SUBTITLE_TYPE_UNK0 = 0,
+		SUBTITLE_TYPE_UNK1 = 1,
+	};
+	enum State {
+		STATE_ACTIVE       = 0,
+		STATE_DEACTIVATING = 1,
+		STATE_INACTIVE     = 2,
+	};
+
+	TOptionSubtitleUnit(J2DScreen* screen);
+
+	void update();
+	void toggle();
+	void adjust();
+	void show();
+	void hide();
+	void deactivate(bool force);
+	void activate();
+	void setValue(SubtitleType value);
+	SubtitleType getValue() const
+	{
+		return (SubtitleType)mSelectionText->getNumber();
+	}
+	void setState(State state);
+	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
+
+public:
+	// fabricated: header round 20 accessor candidates
+	TExPane* getParentPane() const
+	{
+		TExPane* parentPane = mParentPane;
+		return parentPane;
+	}
+
+	/* 0x0 */ J2DScreen* mScreen;
+	/* 0x4 */ TExPane* mParentPane;
+	/* 0x8 */ u8 mInitialAlpha;
+	/* 0xC */ TPaneScalingControl* mSelectionBubble;
+	/* 0x10 */ TToggleControl* mSelectionText;
+	/* 0x14 */ State mState;
 };
 
 class TOptionSoundUnit {
@@ -189,16 +246,14 @@ public:
 	void initMonoAnm();
 	void initSteleoAnm();
 	void initSurroundAnm();
-	int replaceTexture(u32 tag, JUTTexture* texture);
-	void changeTexture(int language);
 	void update();
 	void updatePatternAnm();
 	void foreachPatternAnm(ArrayWrapper<TPatternAnmControl*>& ary,
 	                       void (TPatternAnmControl::*ptmf)());
 	void toggle();
+	void adjust();
 	void show();
 	void hide();
-	void adjust();
 	void deactivate(bool force);
 	void activate();
 	void setValue(int value);
@@ -207,9 +262,11 @@ public:
 	static SoundType flagToType(int flag);
 	static int typeToFlag(SoundType type);
 	void setState(State state);
-	void adjustSound();
 	void adjustView();
+	void adjustSound();
 	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
+
+	u8 getInitialAlpha() const { return mInitialAlpha; }
 
 	struct FabricatedSoundSettings {
 		/* 0x0 */ u32 mSoundSystemSE;
@@ -236,76 +293,6 @@ public:
 	/* 0x38 */ TPatternAnmControl* mStereoAnimations[3];
 	/* 0x44 */ TPatternAnmControl* mSurroundAnimations[5];
 	/* 0x58 */ ArrayWrapper<TPatternAnmControl*> mMonteIcons[3];
-	/* 0x70 */ JUTTexture* mLanguageTextures[5];
-	/* 0x84 */ JUTTexture* mModeTextures[3][5];
-};
-
-class TOptionSubtitleUnit {
-public:
-	enum State {
-		STATE_ACTIVE = 0,
-		STATE_DEACTIVATING = 1,
-		STATE_INACTIVE = 2,
-	};
-
-	TOptionSubtitleUnit(J2DScreen* screen);
-	int replaceTexture(u32 tag, JUTTexture* texture);
-	void changeTexture(int language);
-	void toggle();
-	void adjust();
-	void show();
-	void hide();
-	void deactivate(bool force);
-	void activate();
-	void setValue(int value);
-	void setState(State state);
-	void update();
-	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
-	int getValue() const { return mSelectionText->getNumber(); }
-
-public:
-	/* 0x00 */ J2DScreen* mScreen;
-	/* 0x04 */ TExPane* mParentPane;
-	/* 0x08 */ u8 mInitialAlpha;
-	/* 0x0C */ TPaneScalingControl* mSelectionBubble;
-	/* 0x10 */ TToggleControl* mSelectionText;
-	/* 0x14 */ State mState;
-	/* 0x18 */ JUTTexture* mLanguageTextures[5];
-	/* 0x2C */ JUTTexture* mStateTextures[2][5];
-};
-
-class TOptionLanguageUnit {
-public:
-	enum State {
-		STATE_ACTIVE = 0,
-		STATE_DEACTIVATING = 1,
-		STATE_INACTIVE = 2,
-	};
-
-	TOptionLanguageUnit(J2DScreen* screen);
-	int replaceTexture(u32 tag, JUTTexture* texture);
-	void changeTexture(int language);
-	void toggle();
-	void adjust();
-	void show();
-	void hide();
-	void deactivate(bool force);
-	void activate();
-	void setValue(int value);
-	void update();
-	void setState(State state);
-	void setInfluencedAlphaRecursive(J2DPane* pane, bool influenced_alpha);
-	int getValue() const { return mSelectionText->getNumber(); }
-
-public:
-	/* 0x00 */ J2DScreen* mScreen;
-	/* 0x04 */ TExPane* mParentPane;
-	/* 0x08 */ u8 mInitialAlpha;
-	/* 0x0C */ TPaneScalingControl* mSelectionBubble;
-	/* 0x10 */ TToggleControl* mSelectionText;
-	/* 0x14 */ State mState;
-	/* 0x18 */ JUTTexture* mLanguageTextures[5];
-	/* 0x2C */ u8 mUnknownTail[0x64];
 };
 
 class TOptionControl {
@@ -314,42 +301,39 @@ public:
 		SELECT_TYPE_RUMBLE_OPTION   = 0,
 		SELECT_TYPE_SOUND_OPTION    = 1,
 		SELECT_TYPE_SUBTITLE_OPTION = 2,
-		SELECT_TYPE_LANGUAGE_OPTION = 3,
 	};
 
 	void load();
 	void loadSetting();
+	void movementCommon();
 	void draw(J2DOrthoGraph* graph);
 	bool movementCard2Option();
 	bool movementOption();
 	bool movementOption2Card();
 	void setType(TOptionControl::SelectType type, bool initial_options_entry);
-	void changeTexture(int language);
-	void changeTopMessage(int language);
-	void movementCommon();
 	void toggleCurType();
-	void writeValue();
 	void checkInput();
+	void writeValue();
 	bool isChangedSetting() const;
 	void resetChangedSetting();
 
 public:
+	// fabricated: header round 20 accessor candidates
+	TOptionRumbleUnit* getRumbleOption() const { return mRumbleOption; }
+	TOptionSoundUnit* getSoundOption() const { return mSoundOption; }
+	TOptionSubtitleUnit* getSubtitleOption() const { return mSubtitleOption; }
+
 	/* 0x0 */ J2DSetScreen* mScreen;
 	/* 0x4 */ TArrowControl* mBackArrow;
 	/* 0x8 */ TOptionRumbleUnit* mRumbleOption;
 	/* 0xC */ TOptionSoundUnit* mSoundOption;
 	/* 0x10 */ TOptionSubtitleUnit* mSubtitleOption;
-	/* 0x14 */ int mInitialSubtitleValue;
-	/* 0x18 */ TOptionLanguageUnit* mLanguageOption;
-	/* 0x1C */ int mInitialLanguageValue;
-	/* 0x20 */ J2DTextBox* mOptionTextA;
-	/* 0x24 */ J2DTextBox* mOptionTextB;
-	/* 0x28 */ void* mLocalizedMessageResources[5];
-	/* 0x3C */ SelectType mSelectedOption;
-	/* 0x40 */ bool mWasJumping;
-	/* 0x41 */ bool unk41;
-	/* 0x44 */ int mInitialRumbleValue;
-	/* 0x48 */ int mInitialSoundValue;
+	/* 0x14 */ SelectType mSelectedOption;
+	/* 0x18 */ bool mWasJumping;
+	/* 0x19 */ bool mStickNeutral;
+	/* 0x1C */ int mInitialRumbleValue;
+	/* 0x20 */ int mInitialSoundValue;
+	/* 0x24 */ int mInitialSubtitleValue;
 };
 
 #endif

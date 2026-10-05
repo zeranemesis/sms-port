@@ -23,7 +23,9 @@ TMapObjGrassManager* gpMapObjGrassManager;
 Vec TMapObjGrassManager::mDrawVec;
 
 static f32 sGrassAddTime = 0.2f;
-static GXColor color_table[]
+// GXSetArray feeds this straight to the GP, so it is 32-byte aligned; the map
+// records align:32 and the 8-byte hole it leaves after sGrassAddTime.
+static GXColor color_table[] __attribute__((aligned(32)))
     = { { 0x3C, 0xC8, 0x3C, 0xFF }, { 0x28, 0x64, 0x28, 0xFF } };
 
 void TMapObjGrassGroup::drawNear() const
@@ -100,9 +102,11 @@ void TMapObjGrassGroup::load(JSUMemoryInputStream& stream)
 {
 	THitActor::load(stream);
 	stream >> unk68;
-	unk6C      = new JGeometry::TVec3<f32>[unk68];
-	unk70      = new JGeometry::TVec3<s16>[unk68];
-	unk74      = new s16[unk68];
+	unk6C = new JGeometry::TVec3<f32>[unk68];
+	unk70 = new JGeometry::TVec3<s16>[unk68];
+	unk74 = new s16[unk68];
+	// Three named scalars, declared x, z, y: retail's f27/f26/f25 follow that
+	// declaration order and a TVec3 costs 24 bytes of frame retail does not have.
 	f32 scaleX = mScaling.x * 100.0f;
 	f32 scaleZ = mScaling.z * 100.0f;
 	f32 scaleY = mScaling.y * 200.0f;
@@ -131,12 +135,27 @@ TMapObjGrassGroup::TMapObjGrassGroup()
 {
 }
 
+// Two binding levels carry initDrawNear's 24 dead low bytes: +16 for the
+// width read and +8 for the view matrix (batch 136). TODO: promote once the
+// real helpers are identified.
+static inline f32 GrassWidth()
+{
+	f32 width = TMapObjGrassManager::mWidth;
+	return width;
+}
+
+static inline MtxPtr GrassViewMtx()
+{
+	MtxPtr view = j3dSys.getViewMtx();
+	return view;
+}
+
 void TMapObjGrassManager::initDrawNear() const
 {
 	Mtx viewItm;
-	MTXInverse(j3dSys.getViewMtx(), viewItm);
+	MTXInverse(GrassViewMtx(), viewItm);
 	JGeometry::TVec3<f32> vec(viewItm[0][0], viewItm[1][0], viewItm[2][0]);
-	vec *= mWidth;
+	vec *= GrassWidth();
 
 	mDrawVec.x = vec.x;
 	mDrawVec.y = vec.y;
@@ -175,13 +194,6 @@ void TMapObjGrassManager::initDrawNear() const
 	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
 	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
 	GXSetCullMode(GX_CULL_NONE);
-
-	// Every diff marker of this function is a stack offset sitting 0x18 above
-	// ours (target frame 0x98 against 0x80). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	
-	
 }
 
 void TMapObjGrassManager::initDrawFar() const
@@ -193,8 +205,14 @@ void TMapObjGrassManager::initDrawFar() const
 	GXSetVtxDesc(GX_VA_CLR0, GX_INDEX8);
 }
 
+// The 48 dead low bytes of TMapObjGrassManager::perform are this uninitialised
+// non-trivial 48-byte local, which draw() (an UNUSED symbol, so a legal
+// carrier) reserves with no code at all in either copy; initDrawFar() carries
+// it identically, so the site is not distinguishable from the binary.
+// TODO: what retail actually did with it is unknown -- nothing reads it.
 void TMapObjGrassManager::draw() const
 {
+	JGeometry::SMatrix34C<f32> scratch;
 	initDrawNear();
 	for (int i = 0; i < unk10; ++i)
 		unk14[i]->drawNear();
@@ -206,9 +224,6 @@ void TMapObjGrassManager::draw() const
 
 void TMapObjGrassManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-
-	
-	
 	if (cue & CUE_CALC_ANIM) {
 		f32 fVar1 = 0.0f;
 		for (int i = 0; i < 10; ++i) {

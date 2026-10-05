@@ -1,13 +1,8 @@
-// rogue include: the original TU opens .rodata with this dummy string
-// pair, ahead of every other string constant in the object.
-#include <M3DUtil/InfectiousStrings.hpp>
-
 #include <Map/Map.hpp>
 #include <Map/MapCollisionData.hpp>
 #include <Map/MapModel.hpp>
 #include <Map/MapWarp.hpp>
 #include <Map/MapXlu.hpp>
-#include <Map/MapCollisionEntry.hpp>
 #include <Map/MapStaticObject.hpp>
 #include <Map/MapEventMare.hpp>
 #include <M3DUtil/MActor.hpp>
@@ -27,96 +22,121 @@
 #include <JSystem/JDrama/JDRNameRefGen.hpp>
 #include <JSystem/JDrama/JDRViewObjPtrList.hpp>
 
+// rogue includes needed for matching sinit & bss
 #include <MSound/MSSetSound.hpp>
 #include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Map/MapCollisionEntry.hpp>
 
 TMap* gpMap;
 
+// UNUSED, 0x5c in the map: inlined into initStage().
+static void initOption()
+{
+	TMapObjOptionWall* wall = new TMapObjOptionWall("オプション用壁");
+	wall->init();
+	TMapObjBase::joinToGroup("マップグループ", wall);
+}
+
+// UNUSED, 0x48 in the map: inlined into initStage().
+static void initSirena()
+{
+	if (SMSGetMarDirector()->getCurrentStage() == 0)
+		return;
+	TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
+}
+
 static void initMonte()
 {
-
-    
-    
-    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("マップグループ"));
+	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >(
+	        "インダイレクトシーン");
 
 	TMapStaticObj* obj = new TMapStaticObj("水インダイレクト");
 	obj->init("SeaIndirect");
 	group->getChildren().push_back(obj);
 
-	if (gpMarDirector->getCurrentStage() == 0
-	    || gpMarDirector->getCurrentStage() == 2
-	    || gpMarDirector->getCurrentStage() == 5
-	    || gpMarDirector->getCurrentStage() == 6) {
+	if (SMSGetMarDirector()->getCurrentStage() == 0
+	    || SMSGetMarDirector()->getCurrentStage() == 2
+	    || SMSGetMarDirector()->getCurrentStage() == 5
+	    || SMSGetMarDirector()->getCurrentStage() == 6) {
 		SMS_LoadParticle("/scene/map/pollution/ms_newfire_b.jpa", 0x1DC);
 		SMS_LoadParticle("/scene/map/pollution/ms_newfire_a.jpa", 0x65);
 	}
 
-	if (gpMarDirector->getCurrentStage() == 1
-	    || gpMarDirector->getCurrentStage() == 3
-	    || gpMarDirector->getCurrentStage() == 5
-	    || gpMarDirector->getCurrentStage() == 7) {
+	if (SMSGetMarDirector()->getCurrentStage() == 1
+	    || SMSGetMarDirector()->getCurrentStage() == 3
+	    || SMSGetMarDirector()->getCurrentStage() == 5
+	    || SMSGetMarDirector()->getCurrentStage() == 7) {
 		SMS_LoadParticle("/scene/map/map/ms_monte_yuge.jpa", 0x156);
 	}
 }
 
+// TODO: every instruction matches; frame 0x138 against retail's 0x148. The
+// three events share one `event` slot as in retail, and the director reads go
+// through SMSGetMarDirector() (the `!= 0 && != 0` pair is +8 each, the first
+// two are inert), leaving a uniform 0x10 of low region. Inert: a named warp
+// local in the loop, split declarations, a group alias at the gate.
 static void initMare()
 {
+	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >("マップグループ");
 
-    
-    
-    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("マップグループ"));
-
-	if (gpMarDirector->getCurrentStage() == 5) {
+	if (SMSGetMarDirector()->getCurrentStage() == 5) {
 		TMapStaticObj* gate = new TMapStaticObj("マーレ５ＥＸゲート");
 		gate->init("Mare5ExGate");
 		group->getChildren().push_back(gate);
 	}
 
-	if (gpMarDirector->getCurrentStage() == 0) {
+	if (SMSGetMarDirector()->getCurrentStage() == 0) {
 		SMS_LoadParticle("/scene/map/map/ms_mare_objup_a.jpa",
 		                 MAP_MAP_MS_MARE_OBJUP_A);
 		SMS_LoadParticle("/scene/map/map/ms_mare_objup_b.jpa",
 		                 MAP_MAP_MS_MARE_OBJUP_B);
 	}
 
-	if (gpMarDirector->getCurrentStage() != 0
-	    && gpMarDirector->getCurrentStage() != 0) {
+	if (SMSGetMarDirector()->getCurrentStage() != 0
+	    && SMSGetMarDirector()->getCurrentStage() != 0) {
 		for (int i = 1; i < 8; ++i)
 			TMapObjBase::newAndInitBuildingCollisionWarp(i, nullptr)->setUp();
 	}
 
-	{
-		TMareEventDepressWall* event
-		    = new TMareEventDepressWall("イベント(マーレへこむ壁)");
-		event->init1stEvent();
-		group->getChildren().push_back(event);
-	}
-	{
-		TMareEventDepressWall* event
-		    = new TMareEventDepressWall("イベント(マーレへこむ壁)");
-		event->init2ndEvent();
-		group->getChildren().push_back(event);
-	}
-	{
-		TMareEventDepressWall* event
-		    = new TMareEventDepressWall("イベント(マーレへこむ壁)");
-		event->init3rdEvent();
-		group->getChildren().push_back(event);
-	}
+	TMareEventDepressWall* event
+	    = new TMareEventDepressWall("イベント（マーレへこむ壁）");
+	event->init1stEvent();
+	group->getChildren().push_back(event);
+
+	event = new TMareEventDepressWall("イベント（マーレへこむ壁）");
+	event->init2ndEvent();
+	group->getChildren().push_back(event);
+
+	event = new TMareEventDepressWall("イベント（マーレへこむ壁）");
+	event->init3rdEvent();
+	group->getChildren().push_back(event);
 }
 
+// Pragma residue (sweep 360): protects initStage() (99.94 -> 55.8) and, less
+// visibly, initMonte/initMare/initStageCommon and this unit's data (100 ->
+// 90.3). initPinnaParco is exact and static, and the map keeps it out of line,
+// but it is only 6 statements against a depth-1 budget of 14.
+// TODO (cc38): three statements short (fillers). Naming either constructor
+// argument tips it but hoists the argument above its `__nw__`
+// (initPinnaParco 63%).
 #pragma dont_inline on
+// Binding level worth +8 of low region, landing initPinnaParco's frame at
+// 0x50 (batch 121).
+static inline TMapModelManager* MapGetModelManager(TMap* p)
+{
+	TMapModelManager* modelManager = p->getModelManager();
+	return modelManager;
+}
+
 static void initPinnaParco()
 {
-
-	
-	
 	J3DModel* model = new J3DModel(
-	    gpMap->getModelManager()->getJointModel(0)->getModelData(), 0, 1);
+	    MapGetModelManager(gpMap)->getJointModel(0)->getModelData(), 0, 1);
 	MActor* actor = new MActor(gpMap->getModelManager()->getMActorAnmData());
 	actor->setModel(model, 0);
 	TMapModelActor* mapModelActor = new TMapModelActor("ピンナ鏡用地形モデル");
@@ -125,31 +145,60 @@ static void initPinnaParco()
 }
 #pragma dont_inline off
 
+// UNUSED, 0x58 in the map: inlined into initStage().
+static void initPinnaBeach()
+{
+	SMS_LoadParticle("/scene/mapObj/SandSteam.jpa", 0x6A);
+}
+
+// UNUSED, 0x64 in the map: inlined into initStage().
+static void initBianco()
+{
+	if (SMSGetMarDirector()->getCurrentStage() == 0)
+		return;
+	TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
+	TMapObjBase::newAndInitBuildingCollisionWarp(2, nullptr)->setUp();
+}
+
+// UNUSED, 0x6c in the map: inlined into initStage().
+static void initDolpic()
+{
+	if (SMSGetMarDirector()->getCurrentStage() != 5
+	    && SMSGetMarDirector()->getCurrentStage() != 9) {
+		TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
+		TMapObjBase::newAndInitBuildingCollisionWarp(2, nullptr)->setUp();
+	}
+}
+
+// TODO: 99.6%. Every instruction matches; the frame is 0x190 against retail's
+// 0x1d0 (the director accessor bought 0x38 over the raw global). All push_back
+// temporaries sit 0x3c low and the iterator block is 4 short of the `new`
+// spills: a dead low region with no UNUSED carrier. Inert or worse: binding
+// either search (+8 each, lands high), `group->insert()` (77%), a named stage
+// local. SMS_LoadParticle spellings are frame-inert in this TU.
 static void initStageCommon()
 {
+	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+	    = JDrama::TNameRefGen::search<
+	        JDrama::TViewObjPtrListT<JDrama::TViewObj> >(
+	        "インダイレクトシーン");
+	JDrama::TNameRefGen::search<JDrama::TViewObjPtrListT<JDrama::TViewObj> >(
+	    "マップグループ");
 
-    
-    
-    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
-	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	        JDrama::TNameRefGen::search("インダイレクトシーン"));
-	static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
-	    JDrama::TNameRefGen::search("マップグループ"));
+	if (SMSGetMarDirector()->getCurrentMap() == 4
+	    || SMSGetMarDirector()->getCurrentMap() == 3
+	    || SMSGetMarDirector()->getCurrentMap() == 0xD
+	    || SMSGetMarDirector()->getCurrentMap() == 9
+	    || SMSGetMarDirector()->getCurrentMap() == 5
+	    || SMSGetMarDirector()->getCurrentMap() == 6
+	    || SMSGetMarDirector()->getCurrentMap() == 0x14
+	    || SMSGetMarDirector()->getCurrentMap() <= 1) {
+		TMapStaticObj* obj = new TMapStaticObj("波（遠景）");
+		obj->init("sea");
 
-	if (gpMarDirector->getCurrentMap() == 4
-	    || gpMarDirector->getCurrentMap() == 3
-	    || gpMarDirector->getCurrentMap() == 0xD
-	    || gpMarDirector->getCurrentMap() == 9
-	    || gpMarDirector->getCurrentMap() == 5
-	    || gpMarDirector->getCurrentMap() == 6
-	    || gpMarDirector->getCurrentMap() == 0x14
-	    || gpMarDirector->getCurrentMap() <= 1) {
-		TMapStaticObj* sea = new TMapStaticObj("波（遠景）");
-		sea->init("sea");
-
-		TMapStaticObj* indirect = new TMapStaticObj("インダイレクト波");
-		indirect->init("SeaIndirect");
-		group->getChildren().push_back(indirect);
+		obj = new TMapStaticObj("インダイレクト波");
+		obj->init("SeaIndirect");
+		group->getChildren().push_back(obj);
 
 		TMapObjWaterFilter* filter
 		    = new TMapObjWaterFilter("水中カメラフィルタ");
@@ -161,7 +210,7 @@ static void initStageCommon()
 		sceneIndirect->init();
 		group->getChildren().push_back(sceneIndirect);
 	}
-	if (gpMarDirector->mMap == 2) {
+	if (SMSGetMarDirector()->getCurrentMap() == 2) {
 		TMapObjSeaIndirect* sceneIndirect
 		    = new TMapObjSeaIndirect("水中カメラインダイレクト");
 		sceneIndirect->init();
@@ -169,30 +218,25 @@ static void initStageCommon()
 	}
 }
 
+// TODO: every instruction matches; the frame is 0x10 short (0x60 vs 0x70).
+// The director accessor bought 0x20 and the named stage and map 8 more;
+// naming the warp objects and restoring the UNUSED per-area helpers are
+// inert, and one named director is 13 instructions off.
 static void initStage()
 {
-
-	
-	
-	if (gpMarDirector->getCurrentStage() > 9)
+	u8 stage = SMSGetMarDirector()->getCurrentStage();
+	if (stage > 9)
 		return;
 
 	initStageCommon();
 
-	switch (gpMarDirector->getCurrentMap()) {
-	case 1: { // Bianco
-		if (gpMarDirector->getCurrentStage() == 5
-		    || gpMarDirector->getCurrentStage() == 9)
-			break;
-		TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
-		TMapObjBase::newAndInitBuildingCollisionWarp(2, nullptr)->setUp();
+	u8 map = SMSGetMarDirector()->getCurrentMap();
+	switch (map) {
+	case 1:
+		initDolpic();
 		break;
-	}
-	case 2: // Ricco
-		if (gpMarDirector->getCurrentStage() == 0)
-			break;
-		TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
-		TMapObjBase::newAndInitBuildingCollisionWarp(2, nullptr)->setUp();
+	case 2:
+		initBianco();
 		break;
 	case 9: // Mare
 		initMare();
@@ -200,96 +244,88 @@ static void initStage()
 	case 8: // Monte
 		initMonte();
 		break;
-	case 6: // Pinna
-		if (gpMarDirector->getCurrentStage() == 0)
-			break;
-		TMapObjBase::newAndInitBuildingCollisionWarp(1, nullptr)->setUp();
+	case 6:
+		initSirena();
 		break;
-	case 5: // Sirena
-		SMS_LoadParticle("/scene/mapObj/SandSteam.jpa", 0x6A);
+	case 5:
+		initPinnaBeach();
 		break;
 	case 13: // Pinna Parco
 		initPinnaParco();
 		break;
-	case 15: { // Option
-		TMapObjOptionWall* wall = new TMapObjOptionWall("オプション用壁");
-		wall->init();
-		TMapObjBase::joinToGroup("マップグループ", wall);
+	case 15:
+		initOption();
 		break;
 	}
+}
+
+void TMap::updateDelfino()
+{
+	TMapWarp* warp = mWarp;
+	int cube       = gpCubeArea->unk1C;
+	if (cube != warp->unk8) {
+		if (cube != -1)
+			warp->changeModel(cube);
+		else if (SMSGetMarDirector()->getCurrentStage() != 0)
+			warp->changeModel(3);
 	}
 }
 
-inline void TMap::updateDelfino()
+void TMap::updateMonte()
 {
-    int warpUnk8 = mWarp->unk8;
-    if (warpUnk8 != gpCubeArea->unk1C) {
-        int cube = gpCubeArea->unk1C;
-        if (cube != -1)
-            mWarp->changeModel(cube);
-        else if (gpMarDirector->getCurrentStage() != 0)
-            mWarp->changeModel(3);
-    }
-}
-
-inline void TMap::updateMonte()
-{
-	if (gpMarDirector->getCurrentStage() == 1
-	    || gpMarDirector->getCurrentStage() == 3
-	    || gpMarDirector->getCurrentStage() == 5
-	    || gpMarDirector->getCurrentStage() == 7)
+	if (SMSGetMarDirector()->getCurrentStage() == 1
+	    || SMSGetMarDirector()->getCurrentStage() == 3
+	    || SMSGetMarDirector()->getCurrentStage() == 5
+	    || SMSGetMarDirector()->getCurrentStage() == 7)
 		gpMarioParticleManager->emit(MAP_MAP_MS_MONTE_YUGE,
 		                             &gpMapObjManager->unk44, 1, this);
 }
 
-static inline void updateRicco()
+static void updateRicco()
 {
-    static JGeometry::TVec3<f32> pos(1815.0f, 1500.0f, 1550.0f);
-    SMSGetMSound()->startSoundActor(0x3000, &pos, 0, nullptr, 0, 4);
+	static JGeometry::TVec3<f32> pos(1815.0f, 1500.0f, 1550.0f);
+	SMSGetMSound()->startSoundActor(0x3000, &pos);
 }
 
+// TODO: every instruction matches and nothing is on the stack; the frame is
+// 0xc0 against retail's 0x110 (the short startSoundActor overload in
+// updateRicco bought 8). The remaining 0x50 is dead low region; only the
+// UNUSED update helpers could carry it and nothing in them evidences a local.
 void TMap::update()
 {
+	switch (SMSGetMarDirector()->getCurrentMap()) {
+	case 3:
+		updateRicco();
+		break;
 
-    
-    
+	case 8: // Monte
+		updateMonte();
+		break;
 
-    switch (gpMarDirector->mMap) {
-    case 3:
-        updateRicco();
-        break;
+	case 7:
+		updateDelfino();
+		break;
+	}
 
-    case 8: // Monte
-        updateMonte();
-        break;
+	if (SMSGetMarDirector()->unk124 != 0 || gpCamera->isDemoCamera())
+		return;
 
-    case 7:
-        updateDelfino();
-        break;
-    }
+	if (SMSGetMarDirector()->getCurrentMap() == 0x39
+	    || SMSGetMarDirector()->getCurrentMap() == 0x10
+	    || SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE))
+		return;
 
-    if (gpMarDirector->unk124 == 0) {
-        if (!gpCamera->isDemoCamera()) {
-            u32 map = gpMarDirector->getCurrentMap();
-            if (map != 0x39) {
-                if (map != 0x10) {
-                    if (!SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)) {
-                        const JGeometry::TVec3<f32>& camPos = gpCamera->getUnk124();
-                        f32 height = gpMapObjWave->getHeight(camPos.x, camPos.y, camPos.z);
-                        if (height == gpCamera->getUnk124().y || gpCamera->getUnk124().y > height) {
-                            if (!unk20) {
-                                unk20 = 1;
-                                MSSeCallBack::setWaterCameraFir(false);
-                            }
-                        } else if (unk20) {
-                            unk20 = 0;
-                            MSSeCallBack::setWaterCameraFir(true);
-                        }
-                    }
-                }
-            }
-        }
-    }
+	const JGeometry::TVec3<f32>& camPos = SMSGetCamera()->getUnk124();
+	f32 height = gpMapObjWave->getHeight(camPos.x, camPos.y, camPos.z);
+	if (height == SMSGetCamera()->getUnk124().y || SMSGetCamera()->getUnk124().y > height) {
+		if (!unk20) {
+			unk20 = 1;
+			MSSeCallBack::setWaterCameraFir(false);
+		}
+	} else if (unk20) {
+		unk20 = 0;
+		MSSeCallBack::setWaterCameraFir(true);
+	}
 }
 
 TBGCheckData* TMap::getIllegalCheckData()
@@ -316,27 +352,30 @@ const TBGCheckData* TMap::intersectLine(const JGeometry::TVec3<f32>& param_1,
 	return mCollisionData->intersectLine(param_1, param_2, param_3, param_4);
 }
 
-bool TMap::isTouchedOneWall(f32 x, f32 y, f32 z, f32 radius) const
+bool TMap::isTouchedOneWall(const JGeometry::TVec3<f32>& pos, f32 radius) const
 {
-    // TODO: stack frame mismatch (target 0x70 vs ours 0x68).
-    // Original likely spilled float params to stack for address-taking.
-    f32 x_copy = x;
-    f32 z_copy = z;
-    return isTouchedOneWallAndMoveXZ(&x_copy, y, &z_copy, radius);
+	return isTouchedOneWall(pos.x, pos.y, pos.z, radius);
 }
 
+bool TMap::isTouchedOneWall(f32 x, f32 y, f32 z, f32 radius) const
+{
+	return isTouchedOneWallAndMoveXZ(&x, y, &z, radius);
+}
+
+// The wall test is isTouchedWallsAndMoveXZ inlined in a value context
+// (`!= false`): its forced-load word is the dead word retail keeps directly
+// below the record, here and in the inlined copy in isTouchedOneWall (c-k13).
 bool TMap::isTouchedOneWallAndMoveXZ(f32* x, f32 y, f32* z, f32 radius) const
 {
-    TBGWallCheckRecord record(*x, y, *z, radius, 1, 0);
+	TBGWallCheckRecord record(*x, y, *z, radius, 1, 0);
 
-    int r = mCollisionData->checkWalls(&record);
-    if (r != 0 ? true : false) {
-        *x = record.mCenter.x;
-        *z = record.mCenter.z;
-        return true;
-    } else {
-        return false;
-    }
+	if (isTouchedWallsAndMoveXZ(&record) != false) {
+		*x = record.mCenter.x;
+		*z = record.mCenter.z;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 bool TMap::isTouchedWallsAndMoveXZ(TBGWallCheckRecord* record) const
@@ -387,6 +426,12 @@ f32 TMap::checkGroundExactY(f32 x, f32 y, f32 z,
                             const TBGCheckData** result) const
 {
 	return mCollisionData->checkGround(x, y - -78.0f, z, 0, result);
+}
+
+f32 TMap::checkGroundExactY(const JGeometry::TVec3<f32>& pos,
+                            const TBGCheckData** result) const
+{
+	return checkGroundExactY(pos.x, pos.y, pos.z, result);
 }
 
 f32 TMap::checkGround(const JGeometry::TVec3<f32>& pos,
@@ -457,4 +502,3 @@ TMap::TMap(const char* name)
 	gpMap = this;
 }
 
-TMap::~TMap() { }
