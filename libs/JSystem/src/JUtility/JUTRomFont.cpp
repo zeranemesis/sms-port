@@ -73,7 +73,6 @@ f32 JUTRomFont::drawChar_scale(float pos_x, float pos_y, float scale_x,
 	// TODO: figure out the `trash` values in the stack frame
 
 	s32 width;
-	char trash1[0x4];
 	void* image;
 	s32 fontX;
 	s32 fontY;
@@ -87,7 +86,6 @@ f32 JUTRomFont::drawChar_scale(float pos_x, float pos_y, float scale_x,
 
 	// TODO: this is likely an inline used both here and in getWidthEntry
 	char str[2];
-	char trash2[0x4];
 	char* strPtr = str;
 	if (chr >= 0x100) {
 		strPtr++;

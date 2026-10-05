@@ -11,9 +11,9 @@ extern JPAEmitterManager* gpEmitterManager4D2;
 
 void TSunGlass::startFade(int type, bool arg1)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_startFade[24];
-	(void)framePad_24_startFade;
+
+	
+	
 	TFlagManager::getInstance()->getFlag(0x40000);
 
 	if (type == 2) {
@@ -107,15 +107,15 @@ u8 TSunGlass::getShineAlpha()
 }
 
 void TSunGlass::loadAfter() {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_loadAfter[8];
-	(void)framePad_8_loadAfter; unk14.a = getShineAlpha(); }
+
+	
+	 unk14.a = getShineAlpha(); }
 
 void TSunGlass::load(JSUMemoryInputStream& stream)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_load[24];
-	(void)framePad_24_load;
+
+	
+	
 	JDrama::TViewObj::load(stream);
 	unk10 = gpMarDirector->unk18[1];
 }

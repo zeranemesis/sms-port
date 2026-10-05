@@ -49,9 +49,9 @@ int THelpActor::getHelpID()
 
 void THelpActor::perform(u32 cue, JDrama::TGraphics*)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_perform[8];
-	(void)framePad_8_perform;
+
+	
+	
 	if (cue & CUE_MOVE) {
 		if (unk74) {
 			if (getHelpID() == -1)

@@ -96,6 +96,10 @@ MActor::MActor(MActorAnmData* anm_data)
 			unk10[i]->unk28 = it->unk0;
 		}
 	}
+
+	// Dummy to match original stack frame (MWCC: last declared gets low offsets)
+	char dummy[8];
+	(void)dummy;
 }
 
 void MActor::setMActorAnmData(MActorAnmData* anm_data) { mAnmData = anm_data; }
@@ -157,9 +161,9 @@ void MActor::setModel(J3DModel* param_1, u32 param_2)
 
 bool MActor::isCurAnmAlreadyEnd(int type)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_isCurAnmAlreadyEnd[8];
-	(void)framePad_8_isCurAnmAlreadyEnd;
+
+	
+	
 	bool result = true;
 
 	J3DFrameCtrl* ctrl = getFrameCtrl(type);
@@ -168,6 +172,11 @@ bool MActor::isCurAnmAlreadyEnd(int type)
 		         || ctrl->checkState(J3DFrameCtrl::STATE_LOOPED_ONCE)
 		         || ctrl->getFrame() + 0.1f >= ctrl->getEnd();
 	}
+
+
+	// Dummy to match original stack frame
+	char dummy[8];
+	(void)dummy;
 
 	return result;
 }
@@ -307,9 +316,9 @@ void MActor::updateOutSubBck()
 
 void MActor::calcAnm()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_calcAnm[24];
-	(void)framePad_24_calcAnm;
+
+	
+	
 	frameUpdate();
 
 	updateIn();
@@ -325,6 +334,10 @@ void MActor::calc()
 	updateIn();
 	mModel->calc();
 	updateOut();
+
+	// Dummy to match original stack frame
+	char dummy[16];
+	(void)dummy;
 }
 
 void MActor::viewCalc()
@@ -344,6 +357,12 @@ void MActor::setLightID(s16 light_id)
 void MActor::setLightData(const TBGCheckData* param_1,
                           const JGeometry::TVec3<f32>& param_2)
 {
+	// Force float spill to match original stack frame
+	f32 tmp = 0.0f;
+	f32 groundY = 0.0f;
+	(void)tmp;
+	(void)groundY;
+
 	if (!unk40)
 		return;
 
@@ -358,9 +377,9 @@ void MActor::setLightData(const TBGCheckData* param_1,
 	mLightId = 0;
 #ifdef VERSION_GMSP01
 	if (param_1->isShadow()) {
-		f32 tmp = param_2.x * param_1->mNormal.x
+		tmp = param_2.x * param_1->mNormal.x
 		          + param_2.z * param_1->mNormal.z + param_1->mPlaneDistance;
-		f32 groundY = -tmp / param_1->mNormal.y;
+		groundY = -tmp / param_1->mNormal.y;
 		if (groundY + 200.0f > param_2.y)
 			setLightID(param_1->getData());
 	}
@@ -386,9 +405,9 @@ void MActor::update() { }
 
 void MActor::entry()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_entry[8];
-	(void)framePad_8_entry;
+
+	
+	
 	if (!unk39)
 		return;
 
@@ -408,6 +427,10 @@ void MActor::entry()
 
 	if (shouldResetLightDrawBuf)
 		gpLightManager->getLightSet(unk44)->resetLightDrawBuffer();
+
+	// Dummy to match original stack frame
+	char dummy[8];
+	(void)dummy;
 }
 
 void MActor::frameUpdate()
@@ -431,9 +454,9 @@ void MActor::matAnmFrameUpdate()
 
 void MActor::perform(u32 cue, JDrama::TGraphics*)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_perform[16];
-	(void)framePad_16_perform;
+
+	
+	
 	if (cue & CUE_CALC_ANIM)
 		calcAnm();
 
@@ -671,13 +694,17 @@ void MActor::entryOut()
 
 void MActor::updateMatAnm()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_updateMatAnm[8];
-	(void)framePad_8_updateMatAnm;
+
+	
+	
 	j3dSys.setTexture(mModel->getModelData()->getTexture());
 	for (u16 i = 0; i < mMaterialNum; ++i)
 		if (unk30[i] != 0x32 || unk2C[i] != 0x32)
 			SMS_CalcMatAnmAndMakeDL(mModel, i);
+
+	// Dummy to match original stack frame
+	char dummy[8];
+	(void)dummy;
 }
 
 void MActor::dumpReport() { }

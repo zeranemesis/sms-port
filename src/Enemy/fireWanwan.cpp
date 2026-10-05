@@ -457,9 +457,9 @@ TFireWanwanTailHit::TFireWanwanTailHit(TFireWanwan& param_1)
 
 BOOL TFireWanwanTailHit::receiveMessage(THitActor* sender, u32 message)
 {
-	// Frame-padding: MWCC allocates 16 bytes more for this body than we do.
-	char framePad_16_receiveMessage[16];
-	(void)framePad_16_receiveMessage;
+
+	
+	
 	if (sender->getActorType() == 0x80000001) {
 		if (message == HIT_MESSAGE_TAKE) {
 			if (!mOwner->canTakenByMario())
@@ -635,9 +635,9 @@ void TFireWanwanTailHit::clipNodes(JDrama::TGraphics*) { }
 
 void TFireWanwanTailHit::movementBody(const JGeometry::TVec3<f32>& param_1)
 {
-	// Frame-padding: target frame is 64 bytes larger (MWCC stack-padding quirk).
-	char framePad_64_movementBody[64];
-	(void)framePad_64_movementBody;
+
+	
+	
 	if (mOwner->isHungTailNerve() && !mOwner->unk194->isTaken()
 	    && !mOwner->isReadyToFly()) {
 		unkA4->mBoundRate
@@ -684,9 +684,9 @@ BOOL TFireWanwanTailHit::moveRequest(const JGeometry::TVec3<f32>& param_1)
 	JGeometry::TVec3<f32> next = param_1;
 
 	const TBGCheckData* checkData;
-	// Frame-padding: MWCC allocates 8 bytes more for this body than we do.
-	char framePad_8_moveRequest[8];
-	(void)framePad_8_moveRequest;
+
+	
+	
 	f32 fVar1 = gpMap->checkGround(next.x, next.y + 100.0f, next.z, &checkData);
 	if (next.y <= 0.05f + fVar1) {
 		next.y = fVar1 + 1.0f;
@@ -761,9 +761,9 @@ TFireWanwan::TFireWanwan(const char* name)
 
 void TFireWanwan::init(TLiveManager* manager)
 {
-	// Frame-padding: MWCC allocates 8 bytes more for this body than we do.
-	char framePad_8_init[8];
-	(void)framePad_8_init;
+
+	
+	
 	TSmallEnemy::init(manager);
 	mActorType = 0x1000000E;
 	unk150     = 1;
@@ -797,9 +797,9 @@ void TFireWanwan::setMActorAndKeeper()
 
 void TFireWanwan::reset()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_reset[32];
-	(void)framePad_32_reset;
+
+	
+	
 	mPosition = mInitialPosition;
 
 	unk194->mIsOnFire = true;
@@ -1046,9 +1046,9 @@ void TFireWanwan::behaveToWater(THitActor* param_1)
 	unk194->mIsOnFire       = false;
 	mSprayedByWaterCooldown = 20;
 
-	// Frame-padding: MWCC allocates 80 bytes more for this body than we do.
-	char framePad_80_behaveToWater[80];
-	(void)framePad_80_behaveToWater;
+
+	
+	
 }
 
 void TFireWanwan::behaveHitComrades()
@@ -1650,9 +1650,9 @@ void TFireWanwan::bind()
 		mVelocity.y *= -0.05f;
 	}
 
-	// Frame-padding: MWCC allocates 20 bytes more for this body than we do.
-	char framePad_20_bind[20];
-	(void)framePad_20_bind;
+
+	
+	
 }
 
 int TFireWanwan::bindBody(JGeometry::TVec3<f32>* bound_step,
@@ -1873,9 +1873,9 @@ DEFINE_NERVE(TNerveFireWanwanGraphWander, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanTurn, TLiveActor)
 {
-	// Frame-padding: MWCC allocates 24 bytes more for this body than we do.
-	char framePad_24_execute[24];
-	(void)framePad_24_execute;
+
+	
+	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 	if (spine->getTime() == 0) {
 		self->prepareTurn();
@@ -1915,9 +1915,9 @@ DEFINE_NERVE(TNerveFireWanwanFindMario, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanAttack, TLiveActor)
 {
-	// Frame-padding: MWCC allocates 8 bytes more for this body than we do.
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -1996,9 +1996,9 @@ DEFINE_NERVE(TNerveFireWanwanRecoverGraph, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanRecover, TLiveActor)
 {
-	// Frame-padding: target frame is 72 bytes larger (MWCC stack-padding quirk).
-	char framePad_72_execute[72];
-	(void)framePad_72_execute;
+
+	
+	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -2081,9 +2081,9 @@ DEFINE_NERVE(TNerveFireWanwanHungTail, TLiveActor)
 
 	JGeometry::TVec3<f32> vec = self->mPosition;
 	vec -= SMS_GetMarioPos();
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 
 	self->mRotation.y = MsGetRotFromZaxisY(vec);
 	if (self->isReadyToFly()) {
@@ -2153,9 +2153,9 @@ DEFINE_NERVE(TNerveFireWanwanFreeze, TLiveActor)
 
 	JGeometry::TVec3<f32> zeroVel(0.0f, 0.0f, 0.0f);
 	self->setVelocity(zeroVel);
-	// Frame-padding: MWCC allocates 8 bytes more for this body than we do.
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 
 	if (self->getFreezeTime() < spine->getTime()) {
 		spine->pushAfterCurrent(&TNerveFireWanwanRecover::theNerve());
@@ -2167,9 +2167,9 @@ DEFINE_NERVE(TNerveFireWanwanFreeze, TLiveActor)
 
 DEFINE_NERVE(TNerveFireWanwanEscape, TLiveActor)
 {
-	// Frame-padding: MWCC allocates 8 bytes more for this body than we do.
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 	TFireWanwan* self = (TFireWanwan*)spine->getBody();
 
 	if (spine->getTime() == 0) {

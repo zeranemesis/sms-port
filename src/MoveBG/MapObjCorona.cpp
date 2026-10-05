@@ -198,8 +198,8 @@ Mtx* TBathtubGripParts::getRootJointMtx() const
 	// belongs to the *grip*, not to this part actor: the target leaves mGrip in
 	// r3 across the getModel() call.
 	s32 index = mGrip->unk200[unkF8];
-	char framePad_16_getRootJointMtx[16];
-	(void)framePad_16_getRootJointMtx;
+	
+	
 	return reinterpret_cast<Mtx*>(mGrip->getModel()->getAnmMtx(index));
 }
 
@@ -523,8 +523,8 @@ void TBathtubGrip::control()
 	// where MWCC picks r28 here. Nothing stack-resident explains the missing
 	// 0x28 bytes, so the pad only pins the frame; the register split is not
 	// reproducible from the source shape tried so far.
-	char framePad_32_TBathtubGrip_control[32];
-	(void)framePad_32_TBathtubGrip_control;
+	
+	
 
 	// The target reaches calcRootMatrix() through the vtable (0xC0) and only
 	// then makes the *direct* call to TMapObjBase::control().
@@ -659,8 +659,8 @@ void TBathtub::hipdrop(const JGeometry::TVec3<f32>& position)
 	// TODO: 94.9%, and the residue is the same register-allocation /
 	// orig_inv_sqrt-relocation noise quake documents, not missing logic. The
 	// 48-byte pad only pins the 0x98 frame.
-	char framePad_48_hipdrop[48];
-	(void)framePad_48_hipdrop;
+	
+	
 
 	unk250 = unk16C->hipdropRelease.get();
 	unk258 = unk16C->hipdropRecover.get();
@@ -712,13 +712,13 @@ void TBathtub::quake(const JGeometry::TVec3<f32>& position)
 	// The 20-byte pad below the throw vector is what pushes it to the ROM's
 	// 0x74 slot; the 76-byte one above it makes up the rest of the 0xA0 frame.
 	// See the TODO at the top for what is still missing.
-	char framePad_20_quake[20];
-	(void)framePad_20_quake;
+	
+	
 	JGeometry::TVec3<f32> velocity(0.0f, 1.0f, 0.0f);
 	SMS_ThrowMario(velocity, 10.0f);
 	getDown__6TKoopaFv(koopa);
-	char framePad_76_quake[76];
-	(void)framePad_76_quake;
+	
+	
 }
 
 // The unrolled `for` form (not five spelled-out `if`s) is what reproduces the
@@ -754,8 +754,8 @@ void TBathtub::tumble(f32 angle, f32 force)
 		unk1E8 += c;
 		*reinterpret_cast<volatile f32*>(&unk1EC) += JGeometry::TUtil<f32>::epsilon();
 		unk1F0 += s;
-		char framePad_24_tumble[24];
-		(void)framePad_24_tumble;
+		
+		
 	}
 }
 
@@ -1169,8 +1169,8 @@ void TBathtub::startDemo()
 	// does not move the flag either, so the missing locals have to be *named*
 	// -- the stand_effect J3DFrameCtrl and the fireStartDemoCamera argument
 	// temporaries are the obvious candidates.
-	char framePad_48_startDemo[48];
-	(void)framePad_48_startDemo;
+	
+	
 }
 
 bool TBathtub::allowsTumble() const
@@ -1714,8 +1714,8 @@ void TBathtub::load(JSUMemoryInputStream& stream)
 	// difference; whoever picks this up should look for the missing named
 	// locals (the shine body joint name table and the MActor are the obvious
 	// candidates) rather than keep the pad.
-	char framePad_16_load[16];
-	(void)framePad_16_load;
+	
+	
 }
 
 TBathtub::TBathtub(const char* name)
@@ -1762,8 +1762,8 @@ TBathtub::TBathtub(const char* name)
 	// elided SMatrix33R ctor above (see the note) forces. The pad pins the
 	// frame and the r31/LR slots; the r30 spill/restore pair stays missing
 	// until that type is fixed.
-	char framePad_8_TBathtub_ctor[8];
-	(void)framePad_8_TBathtub_ctor;
+	
+	
 }
 
 // Unused

@@ -353,8 +353,8 @@ f32 TMapWire::getPosInWire(const JGeometry::TVec3<f32>& point) const
 	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_mapWireGetPosInWire[8];
-	(void)framePad_8_mapWireGetPosInWire;
+	
+	
 	return partialLength / totalLength;
 }
 

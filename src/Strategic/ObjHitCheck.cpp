@@ -199,8 +199,8 @@ void TObjHitCheck::entryGroup(TIdxGroupObj* group)
 	// ours (target frame 0xe0 against 0xd8). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_objHitEntryGroup[8];
-	(void)framePad_8_objHitEntryGroup;
+	
+	
 }
 
 inline void TObjHitCheck::clearGroup(TIdxGroupObj* group)

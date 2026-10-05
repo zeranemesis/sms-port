@@ -385,9 +385,9 @@ void TCoasterKillerManager::load(JSUMemoryInputStream& stream)
 
 void TCoasterKillerManager::loadAfter()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_loadAfter[24];
-	(void)framePad_24_loadAfter;
+
+	
+	
 	TSmallEnemyManager::loadAfter();
 	ASSERT_TEST(unk38);
 }

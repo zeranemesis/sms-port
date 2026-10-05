@@ -131,9 +131,9 @@ void TMapObjBase::setUpMapCollision(u16 param_1)
 
 void TMapObjBase::soundBas(u32 param_1, f32 param_2, f32 param_3)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_soundBas[8];
-	(void)framePad_8_soundBas;
+
+	
+	
 	f32 currFrame = mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
 	if (currFrame <= param_2 && param_2 < currFrame + param_3) {
 		SMSGetMSound()->startSoundActor(param_1, &mPosition, 0, nullptr, 0, 4);
@@ -142,9 +142,9 @@ void TMapObjBase::soundBas(u32 param_1, f32 param_2, f32 param_3)
 
 void TMapObjBase::startSound(u16 param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_startSound[8];
-	(void)framePad_8_startSound;
+
+	
+	
 	if (unk100 != param_1)
 		unk100 = param_1;
 
@@ -264,9 +264,9 @@ void TMapObjBase::startAnim(u16 param_1)
 
 void TMapObjBase::makeObjDefault()
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_makeObjDefault[40];
-	(void)framePad_40_makeObjDefault;
+
+	
+	
 	mPosition.set(mInitialPosition.x, mInitialPosition.y + mYOffset,
 	              mInitialPosition.z);
 
@@ -284,9 +284,9 @@ void TMapObjBase::makeObjDefault()
 
 void TMapObjBase::makeObjDead()
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_makeObjDead[48];
-	(void)framePad_48_makeObjDead;
+
+	
+	
 	mVelocity.x = mVelocity.y = mVelocity.z = 0.0f;
 	onLiveFlag(LIVE_FLAG_UNK10);
 
@@ -618,9 +618,9 @@ Mtx* TMapObjBase::getRootJointMtx() const
 
 void TMapObjBase::calcRootMatrix()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_calcRootMatrix[8];
-	(void)framePad_8_calcRootMatrix;
+
+	
+	
 	J3DModel* model = getModel();
 	MsMtxSetXYZRPH(model->getBaseTRMtx(), mPosition.x, mPosition.y - mYOffset,
 	               mPosition.z, mRotation.x, mRotation.y, mRotation.z);
@@ -653,8 +653,8 @@ void TMapObjBase::initAndRegister(const char* param_1)
 	// ours (target frame 0x70 against 0x68). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_initAndRegister[8];
-	(void)framePad_8_initAndRegister;
+	
+	
 	}
 }
 

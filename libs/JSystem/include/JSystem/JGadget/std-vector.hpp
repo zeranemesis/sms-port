@@ -293,6 +293,7 @@ public:
 			ResizeNotLarger(new_size);
 			return end();
 		}
+		return end();
 	}
 	// fabricated but present in TP as Resize_notLarger_
 	void ResizeNotLarger(size_t u)

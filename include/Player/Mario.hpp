@@ -11,7 +11,6 @@
 #include <Player/MarioFlags.hpp>
 
 class TLiveActor;
-class TWaterGun;
 class TBGCheckData;
 class J3DAnmTexPattern;
 class J3DModelData;
@@ -1182,12 +1181,9 @@ public:
 	u32 startVoiceIfNoVoice(u32);
 	u32 startVoice(u32);
 	void soundTorocco();
-	void animSound();
+void animSound();
 	void soundMovement();
-	bool checkStatusType(s32 flag) const
-	{
-		return mStatus & flag ? true : false;
-	}
+	inline bool checkStatusType(s32 flag) const { return mStatus & flag ? true : false; }
 
 	// fabricated
 	f32 getIntendedMag() const { return mIntendedMag; }

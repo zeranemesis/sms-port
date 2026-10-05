@@ -11,33 +11,6 @@ const JGeometry::TVec3<f32> CLBConstUpVec(0.0f, 1.0f, 0.0f);
 static const f32 SHORTANGLE_TO_DEGREES = 0.005493164f; // 360/65536
 static const f32 DEGREES_TO_RADIANS    = 0.017453294f; // pi/180
 
-// TODO: These are very fake. The extra indirection exists only to push the
-// inline expansion of setLength() inside normalize() one pass deeper, so that
-// the first call site stops at a real `bl setLength` while the second one
-// still expands it -- that is what the ROM does.
-static inline void normalizeInner1(JGeometry::TVec3<f32>& vec)
-{
-	vec.normalize();
-}
-
-static inline void normalizeInner2(JGeometry::TVec3<f32>& vec)
-{
-	normalizeInner1(vec);
-}
-
-// TODO: also fabricated; pushes MsSqrtf()'s expansion one pass deeper so that
-// the xzDistance computation keeps a real `bl MsSqrtf` while the near-plane
-// diagonal below expands it, matching the ROM.
-static inline f32 sqrtInner(f32 x)
-{
-	return MsSqrtf(x);
-}
-
-static inline f32 sqrtInner2(f32 x)
-{
-	return sqrtInner(x);
-}
-
 static inline void RotateVecByPitchYaw(JGeometry::TVec3<f32>* vec, s16 pitch,
                                        s16 yaw)
 {
@@ -416,12 +389,12 @@ void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
 	JGeometry::TVec3<f32> local_68;
 
 	local_a8.sub(lookat, origin);
-	normalizeInner2(local_a8);
+	local_a8.normalize();
 
 	// Center point
 	out_grid[4].scaleAdd(near_dist, origin, local_a8);
 
-	f32 xzDistance = sqrtInner2((origin.x - lookat.x) * (origin.x - lookat.x)
+	f32 xzDistance = MsSqrtf((origin.x - lookat.x) * (origin.x - lookat.x)
 	                           + (origin.z - lookat.z) * (origin.z - lookat.z));
 	out_euler->x   = -matan(xzDistance, origin.y - lookat.y);
 	out_euler->y   = matan(origin.z - lookat.z, origin.x - lookat.x);
@@ -432,7 +405,7 @@ void CLBCalcNearNinePos(JGeometry::TVec3<f32>* out_grid, S16Vec* out_euler,
 
 	// We already did this, so maybe we're calling another function here?
 	local_80.sub(lookat, origin);
-	normalizeInner1(local_80);
+	local_80.normalize();
 
 	f32 rollAngle = out_euler->z * SHORTANGLE_TO_DEGREES * DEGREES_TO_RADIANS;
 

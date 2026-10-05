@@ -455,7 +455,6 @@ void JUTReportConsole_f(const char* fmt, ...)
 	va_start(args, fmt);
 	JUTReportConsole_f_va(fmt, args);
 	va_end(args);
-	char trash[0x4];
 }
 
 void JUTReportConsole(const char* message)
@@ -483,7 +482,6 @@ void JUTWarningConsole_f(const char* fmt, ...)
 	va_start(args, fmt);
 	JUTReportConsole_f_va(fmt, args);
 	va_end(args);
-	char trash[0x4];
 }
 
 void JUTWarningConsole(const char* message)

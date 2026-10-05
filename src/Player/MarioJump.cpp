@@ -693,9 +693,9 @@ BOOL TMario::slipFalling()
 
 BOOL TMario::fireDowning()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_fireDowning[8];
-	(void)framePad_8_fireDowning;
+
+	
+	
 	if (mStatusTimer == 1)
 		startVoice(MSD_SE_MV05_DAMAGE_FIRE_01);
 	mStatusTimer += 1;

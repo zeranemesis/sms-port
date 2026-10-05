@@ -82,8 +82,8 @@ void TYumboSeed::perform(u32 cue, JDrama::TGraphics* graphics)
 	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_yumboPerform[8];
-	(void)framePad_8_yumboPerform;
+	
+	
 	}
 
 	if (cue & CUE_MOVE) {

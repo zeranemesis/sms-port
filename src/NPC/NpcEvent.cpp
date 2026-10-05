@@ -318,8 +318,8 @@ static void evCheckMonteClear(TSpcTypedInterp<TEventWatcher>* interp,
 	// ours (target frame 0x90 against 0x88). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_evCheckMonteClear[8];
-	(void)framePad_8_evCheckMonteClear;
+	
+	
 }
 
 void TNpcEvent::initNpcBuiltin(TSpcTypedBinary<TEventWatcher>* param_1)
@@ -357,9 +357,9 @@ void TNpcEvent::initDownSunflowerNum()
 
 static s32 ReviveSunflowerCallBack(uintptr_t param_1, u32 param_2)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_ReviveSunflowerCallBack[16];
-	(void)framePad_16_ReviveSunflowerCallBack;
+
+	
+	
 	if (param_2 == 0) {
 		TBaseNPC* sunflower = (TBaseNPC*)param_1;
 		sunflower->sunflowerReviveIn();

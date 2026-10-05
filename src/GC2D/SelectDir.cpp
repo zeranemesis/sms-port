@@ -48,9 +48,9 @@ TSelectDir::TSelectDir()
 
 TSelectDir::~TSelectDir()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_TSelectDir[8];
-	(void)framePad_8_TSelectDir;
+
+	
+	
 	JKRMemArchive* arc = (JKRMemArchive*)JKRFileLoader::getVolume("select");
 	if (arc)
 		arc->unmountFixed();

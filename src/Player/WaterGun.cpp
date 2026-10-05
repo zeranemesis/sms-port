@@ -253,8 +253,8 @@ void TNozzleBase::movement(const TMarioControllerWork& controllerWork)
 	// ours (target frame 0x30 against 0x28). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_nozzleMovement[8];
-	(void)framePad_8_nozzleMovement;
+	
+	
 	}
 	s32 var1 = 256.0f * controllerWork.mAnalogR * 150.0f;
 
@@ -1450,9 +1450,9 @@ void TWaterGun::initInLoadAfter() { }
 #pragma dont_inline on
 MtxPtr TWaterGun::getEmitMtx(int jointIndex)
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_getEmitMtx[48];
-	(void)framePad_48_getEmitMtx;
+
+	
+	
 	MtxPtr result = nullptr;
 	if (mMario->onYoshi()) {
 		result = mMario->mYoshi->getTongueMtx();
@@ -1485,9 +1485,9 @@ MtxPtr TWaterGun::getNozzleMtx()
 
 void TWaterGun::changeNozzle(TNozzleType nozzleType, bool animate)
 {
-	// Frame-padding: target frame is 64 bytes larger (MWCC stack-padding quirk).
-	char framePad_64_changeNozzle[64];
-	(void)framePad_64_changeNozzle;
+
+	
+	
 	f32 usedWater = (f32)mCurrentWater
 	                / mNozzleList[mCurrentNozzle]->mEmitParams.mAmountMax.get();
 	if (nozzleType == Spray) {
@@ -1747,9 +1747,9 @@ bool TWaterGun::isEmitting()
 
 void TWaterGun::setAmountToRate(f32 rate)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_setAmountToRate[24];
-	(void)framePad_24_setAmountToRate;
+
+	
+	
 	// volatile u32 unused2[7]; // TODO: possibly inlined function
 	if (mCurrentNozzle == 3) {
 		TNozzleBase* currentNozzle = getCurrentNozzle();
@@ -1763,9 +1763,9 @@ void TWaterGun::setAmountToRate(f32 rate)
 
 BOOL TWaterGun::isPressureOn()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_isPressureOn[24];
-	(void)framePad_24_isPressureOn;
+
+	
+	
 	// volatile u32 unused2[6];
 	if (getCurrentNozzle()->getNozzleKind() == 1) {
 		TNozzleTrigger* triggerNozzle = (TNozzleTrigger*)getCurrentNozzle();
@@ -1778,9 +1778,9 @@ BOOL TWaterGun::isPressureOn()
 
 f32 TWaterGun::getPressure()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_getPressure[16];
-	(void)framePad_16_getPressure;
+
+	
+	
 	// TODO: Missing stack space
 	// volatile u32 unused2[5];
 	if (getCurrentNozzle()->getNozzleKind() == 1) {
@@ -1792,9 +1792,9 @@ f32 TWaterGun::getPressure()
 
 f32 TWaterGun::getPressureMax()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_getPressureMax[16];
-	(void)framePad_16_getPressureMax;
+
+	
+	
 	// TODO: Missing stack space
 	// volatile u32 unused2[6];
 
@@ -1811,9 +1811,9 @@ void TWaterGun::getEmitPosDirSpeed(int index, JGeometry::TVec3<f32>* pos,
                                    JGeometry::TVec3<f32>* dir,
                                    JGeometry::TVec3<f32>* speed)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_getEmitPosDirSpeed[24];
-	(void)framePad_24_getEmitPosDirSpeed;
+
+	
+	
 	// TODO: Fix unused stack space
 	// volatile u32 unused2[6];
 
@@ -1867,9 +1867,9 @@ void TWaterGun::triggerPressureMovement(
 }
 void TWaterGun::emit()
 {
-	// Frame-padding: target frame is 80 bytes larger (MWCC stack-padding quirk).
-	char framePad_80_emit[80];
-	(void)framePad_80_emit;
+
+	
+	
 	// TODO: Missing stack space
 	// volatile u32 unused1[25];
 
@@ -1936,9 +1936,9 @@ void TWaterGun::emit()
 }
 BOOL TWaterGun::suck()
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_suck[40];
-	(void)framePad_40_suck;
+
+	
+	
 	// TODO: Missing stack space
 	// volatile u32 unused1[7];
 	if (mCurrentNozzle == (s8)Yoshi) {
@@ -1982,9 +1982,9 @@ BOOL TWaterGun::damage()
 
 void TWaterGun::changeBackup()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_changeBackup[8];
-	(void)framePad_8_changeBackup;
+
+	
+	
 	// TODO: Missing stack space (original has 8 extra bytes for alignment)
 	// volatile u32 unused2[5];
 	if (mSwitchToSecondNozzleProgress == 0.0f) {

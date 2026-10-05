@@ -129,14 +129,14 @@ int TMapCollisionData::checkWallList(const TBGCheckList* param_1,
 	if (!param_1)
 		return 0;
 
-	// Frame-padding: the ROM's frame is 0x310 and ours is 0x230, but neither
+
 	// version stores a single byte below the register save area (the ROM uses
 	// only 9 distinct stack slots: 0x4, 0x2d4..0x308, 0x314). The whole 0x2d4
 	// bytes of "local" space is reserved-but-never-used, so it can only come
 	// from MWCC's frame sizing for the inlined someUnknownInline body. We
 	// cannot reproduce that sizing directly, so pad it back out by hand.
-	char framePad_224_cwl[224];
-	(void)framePad_224_cwl;
+	
+	
 
 	f32 f27 = param_2->mCenter.y;
 	// param_1: r28

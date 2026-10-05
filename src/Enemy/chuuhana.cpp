@@ -551,11 +551,6 @@ void TChuuHana::checkOnPanel()
 	// TODO: UNUSED in the target (0x148 bytes), not yet reconstructed
 }
 
-// TODO: fake pragma. In the target TUtil<f32>::sqrt is inlined here, which
-// presumably makes willFall too big to be auto-inlined into the nerves; in
-// our build sqrt stays out-of-line (unknown why) and willFall would get
-// inlined into TNerveChuuHanaAttack::execute without this.
-#pragma dont_inline on
 bool TChuuHana::willFall(long time)
 {
 	f32 radius = mSmallMirrorR;
@@ -577,7 +572,6 @@ bool TChuuHana::willFall(long time)
 	unk1B2 = 0;
 	return false;
 }
-#pragma dont_inline off
 
 // TODO: matches except for a 0x10 byte smaller stack frame
 void TChuuHana::setGoal()

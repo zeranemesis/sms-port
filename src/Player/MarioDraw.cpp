@@ -1070,9 +1070,9 @@ f32 TMario::setAnimation(int anm_id, f32 rate)
 
 f32 TMario::setReverseAnimation(int anm_id, f32 rate)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_setReverseAnimation[16];
-	(void)framePad_16_setReverseAnimation;
+
+	
+	
 	// volatile u32 padding[4];
 	if (anm_id != mAnimationId) {
 		setAnimation(anm_id, rate);
@@ -1784,9 +1784,9 @@ void TMario::calcBaseMtx(MtxPtr mtx)
 
 void TMario::addCallBack(JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 112 bytes larger (MWCC stack-padding quirk).
-	char framePad_112_addCallBack[112];
-	(void)framePad_112_addCallBack;
+
+	
+	
 	// volatile u32 padding[27];
 	gpMarioForCallBack      = this;
 	J3DModelData* modelData = mModel->unk8->getModelData();
@@ -1865,9 +1865,9 @@ void TMario::setUpperDamageRun()
 
 void TMario::addUpper()
 {
-	// Frame-padding: target frame is 64 bytes larger (MWCC stack-padding quirk).
-	char framePad_64_addUpper[64];
-	(void)framePad_64_addUpper;
+
+	
+	
 	// volatile u32 padding[17];
 	J3DFrameCtrl& frameCtrl = mModel->getFrameCtrl(1);
 	if (mUpperState != UPPER_STATE_FIXED_ANIMATION) {
@@ -2014,9 +2014,9 @@ void TMario::calcAnim(u32 param_1, JDrama::TGraphics* graphics)
 
 void TMario::calcView(JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_calcView[16];
-	(void)framePad_16_calcView;
+
+	
+	
 	// volatile u32 padding[4];
 	MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
 	mModel->unk8->viewCalc();

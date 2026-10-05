@@ -26,9 +26,9 @@ void TPollutionLayer::changeType(u16 type) { mPollutionType = type; }
 
 bool TPollutionLayer::getPollutedPosNear(f32 range, JGeometry::TVec3<f32>* dest)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_getPollutedPosNear[24];
-	(void)framePad_24_getPollutedPosNear;
+
+	
+	
 	TPollutionPos& pos = mPos;
 	for (int i = 0; i < 5; ++i) {
 		f32 x   = (MsRandF() - 0.5f) * (mAreaMinRate + MsRandF());

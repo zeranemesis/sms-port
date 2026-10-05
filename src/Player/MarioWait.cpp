@@ -64,8 +64,8 @@ bool TMario::canSleep()
 	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_marioCanSleep[8];
-	(void)framePad_8_marioCanSleep;
+	
+	
 	return true;
 }
 
@@ -133,9 +133,9 @@ BOOL TMario::waitingCommonEvents()
 
 void TMario::stopCommon(int anim_id, int status_on_end)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_stopCommon[8];
-	(void)framePad_8_stopCommon;
+
+	
+	
 	waitProcess();
 	setAnimation(anim_id, 1.0f);
 	if (onYoshi() && mYoshi->mActor->curAnmEndsNext(ANM_TYPE_BCK, nullptr)) {
@@ -154,9 +154,9 @@ void TMario::changeMontemanWaitingAnim()
 
 BOOL TMario::waiting()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_waiting[24];
-	(void)framePad_24_waiting;
+
+	
+	
 	if (waitingCommonEvents())
 		return 1;
 

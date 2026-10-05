@@ -133,14 +133,14 @@ public:
 
 	TVec2 operator*(T scalar) const { return TVec2(x * scalar, y * scalar); }
 
-	const TVec2& operator+(const TVec2& other) const
+	TVec2 operator+(const TVec2& other) const
 	{
 		TVec2 result = *this;
 		result += other;
 		return result;
 	}
 
-	const TVec2& operator-(const TVec2& other) const
+	TVec2 operator-(const TVec2& other) const
 	{
 		TVec2 result = *this;
 		result -= other;

@@ -17,9 +17,9 @@ void M3UModelMario::changeMtxCalcSIAnmBQAnmTransform(int param_1, int param_2,
 
 void M3UModelMario::updateInMotion()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_updateInMotion[32];
-	(void)framePad_32_updateInMotion;
+
+	
+	
 	// volatile u32 unused[12];
 	for (int i = 0; i < unk10; ++i) {
 		SomeModelMarioStruct& info = unk24[i];

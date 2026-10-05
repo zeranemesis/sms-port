@@ -340,9 +340,9 @@ void TMario::load(JSUMemoryInputStream& stream)
 
 void TMario::loadAfter()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_loadAfter[8];
-	(void)framePad_8_loadAfter;
+
+	
+	
 	if (checkFlag(MARIO_FLAG_HAS_FLUDD))
 		mWaterGun->initInLoadAfter();
 

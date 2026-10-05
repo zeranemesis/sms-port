@@ -370,9 +370,9 @@ EnumNpcAnmKind TBaseNPC::getNpcWaitAnmBase_()
 
 void TBaseNPC::npcWaitIn()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_npcWaitIn[24];
-	(void)framePad_24_npcWaitIn;
+
+	
+	
 	EnumNpcAnmKind kind = NPC_ANM_KIND_UNK1;
 
 	if (!checkActionFlag(NPC_ACTION_UNK400)) {
@@ -465,9 +465,9 @@ void TBaseNPC::npcStepIn()
 
 void TBaseNPC::npcTalkIn()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_npcTalkIn[24];
-	(void)framePad_24_npcTalkIn;
+
+	
+	
 	onLiveFlag(LIVE_FLAG_UNK80000);
 	if (mActorType != 0x400001C && mActorType != 0x400001D) {
 		if (!isSunflowerReviving()) {
@@ -484,9 +484,9 @@ void TBaseNPC::npcTalkIn()
 
 void TBaseNPC::npcTalking()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_npcTalking[24];
-	(void)framePad_24_npcTalking;
+
+	
+	
 	if (isSunflowerReviving()) {
 		sunflowerReviving();
 		return;
@@ -557,9 +557,9 @@ void TBaseNPC::npcHappyIn(u8 param_1)
 
 void TBaseNPC::npcWetIn()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_npcWetIn[16];
-	(void)framePad_16_npcWetIn;
+
+	
+	
 	if (!isSunflowerReviving()) {
 		EnumNpcAnmKind EVar7              = NPC_ANM_KIND_UNK5;
 		EnumNpcStopMotionBlendOnOff EVar6 = NPC_STOP_MOTION_BLEND_ON;
@@ -855,9 +855,9 @@ bool TBaseNPC::npcBlowning()
 
 void TBaseNPC::npcMareStandIn()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_npcMareStandIn[8];
-	(void)framePad_8_npcMareStandIn;
+
+	
+	
 	switch (unkD0->getCurrentAnmKind()) {
 	case NPC_ANM_KIND_UNKE:
 	case NPC_ANM_KIND_UNK5:
@@ -985,9 +985,9 @@ void TBaseNPC::sunflowerReviveIn()
 
 bool TBaseNPC::sunflowerReviving()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_sunflowerReviving[8];
-	(void)framePad_8_sunflowerReviving;
+
+	
+	
 	bool result = false;
 	if (checkUnk1D8(UNK1D8_FLAG_UNK2)
 	    && unkD0->getCurrentAnmKind() == NPC_ANM_KIND_UNK1A) {

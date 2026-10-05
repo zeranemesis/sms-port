@@ -983,7 +983,7 @@ void TMBindShadowManager::drawShadowVolume(bool param_1,
 	else
 		SMS_SettingDrawShape(mModelDatas[1]->getModelData(), 0);
 
-	// Frame-padding.  Measured: before any pad, all 36 mismatching markers here
+
 	// were a uniform LEFT-RIGHT +4 - our two `int[9]` index tables sat 4 bytes
 	// below the ROM's, while the saved registers and the 0x1b0 frame already
 	// matched.  Declared LAST so MWCC gives it the bottom of the local area and
@@ -992,8 +992,8 @@ void TMBindShadowManager::drawShadowVolume(bool param_1,
 	// as well and leaves all 36 markers), and so is `short[2]`; MWCC rounds the
 	// frame to 8 regardless of the pad's declared size, so the last 0.4 B
 	// (the 9 saved-register markers) is not reachable this way.
-	char framePad_4_drawShadowVolume[4];
-	(void)framePad_4_drawShadowVolume;
+	
+	
 }
 
 void TMBindShadowManager::drawShadowGD(u32 param_1, JDrama::TGraphics* param_2)

@@ -26,7 +26,6 @@ const char* SMSGetMessageData(void* param_1, u32 param_2)
 		local_40 >> local_84;
 	}
 
-	char trash2[0x4];
 
 	int r30      = 0;
 	u32 local_68 = 0;
@@ -67,7 +66,6 @@ const char* SMSGetMessageData(void* param_1, u32 param_2)
 		}
 	}
 
-	char trash[0x4];
 
 	if (r30 != 0 && local_68 != 0)
 		r31 = (const char*)param_1 + r30 + local_68 + 0x20;

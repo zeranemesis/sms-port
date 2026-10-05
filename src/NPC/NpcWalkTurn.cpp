@@ -157,9 +157,9 @@ bool TBaseNPC::execTurnToFirstState()
 
 bool TBaseNPC::isNeedTurnToFirstState() const
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_isNeedTurnToFirstState[8];
-	(void)framePad_8_isNeedTurnToFirstState;
+
+	
+	
 	if (!isClean() || checkActionFlag(NPC_ACTION_HAPPY))
 		return false;
 

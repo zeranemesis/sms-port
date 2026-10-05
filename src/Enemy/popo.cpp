@@ -142,8 +142,8 @@ void TPopoManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
 	// As in TPopo::kill, the retail frame carries 8 bytes of slack that this
 	// body never touches.
-	char framePad_8_perform[8];
-	(void)framePad_8_perform;
+	
+	
 	// TODO: 0x1A4 is TPopo::unk1A4[0]; the flag is unnamed so far.
 	if (cue & 1) {
 		for (int i = 0; i < getActiveObjNum(); ++i) {
@@ -781,8 +781,8 @@ void TPopo::kill()
 {
 	// The retail frame is 8 bytes larger than anything this body needs; the
 	// slack is most likely a leftover temporary from the original source.
-	char framePad_8_kill[8];
-	(void)framePad_8_kill;
+	
+	
 	if (unk1B4) {
 		((TPopoManager*)mManager)->unk60 = 1;
 		unk1B4 = 0;
@@ -979,8 +979,8 @@ void TPopo::explosion()
 void TPopo::possessedIn()
 {
 	// The retail frame is 0x10 bytes larger than anything this body needs.
-	char framePad_16_possessedIn[16];
-	(void)framePad_16_possessedIn;
+	
+	
 	mMActor = mMActorKeeper->getMActor("popoH.bmd");
 	setBckAnm(3);
 	mMActor->setBtpFromIndex(0);

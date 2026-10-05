@@ -250,8 +250,8 @@ DEFINE_NERVE(TNerveMantaSpawn, TLiveActor)
 	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_mantaSpawnNerve[8];
-	(void)framePad_8_mantaSpawnNerve;
+	
+	
 	}
 
 	if (spine->getTime() == 0) {
@@ -279,9 +279,9 @@ DEFINE_NERVE(TNerveMantaSpawn, TLiveActor)
 
 DEFINE_NERVE(TNerveMantaDeath, TLiveActor)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 	TBossManta* self = (TBossManta*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -1303,8 +1303,8 @@ void TBossMantaManager::createEnemies(int num)
 	// ours (target frame 0xb0 against 0xa8). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_mantaCreateEnemies[8];
-	(void)framePad_8_mantaCreateEnemies;
+	
+	
 	}
 
 	if (num >= 0)

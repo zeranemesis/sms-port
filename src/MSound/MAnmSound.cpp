@@ -48,8 +48,8 @@ void MAnmSoundMario::startAnimSound(void* interface, u32 id,
 		return;
 
 	// fakematch: only inflates the stack frame from 0x30 to the ROM's 0x38.
-	char framePad_8_startAnimSound[8];
-	(void)framePad_8_startAnimSound;
+	
+	
 
 	u32 category = id >> 30;
 	s32 soundType = (id >> 12) & 0xF;
@@ -117,8 +117,8 @@ void MAnmSoundNPC::startAnimSound(void* interface, u32 sound_id,
 	// MWCC drop the cached copy.
 	if (MSGMSound->gateCheck(sound_id)) {
 		// fakematch: only inflates the stack frame from 0x88 to the ROM's 0x90.
-		char framePad_8_startAnimSound[8];
-		(void)framePad_8_startAnimSound;
+		
+		
 
 		JAIAnimeSoundData* ptr = mData;
 

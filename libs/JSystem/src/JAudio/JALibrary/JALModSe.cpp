@@ -196,9 +196,9 @@ void JALSystem::append(JALSystem::ModType param_1, const char* param_2,
 void JALSystem::appendGrpMember(JALSystem::ModType param_1, u32 param_2,
                                 u32 param_3)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_appendGrpMember[8];
-	(void)framePad_8_appendGrpMember;
+
+	
+	
 	switch (param_1) {
 	case ModType_JALSeModVolFGrp: {
 		JALSeModDataGrp<JALSeModVolFGrp>* found

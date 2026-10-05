@@ -70,5 +70,4 @@ void J3DMaterialAnm::calc(J3DMaterial* pMaterial) const
 			mTexMtxAnm[i]->calc(&pMaterial->getTexMtx(i)->mSRT);
 
 	// TODO: more inlines? we may never know
-	char trash[0x8];
 }

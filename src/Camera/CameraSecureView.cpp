@@ -11,9 +11,9 @@
 
 void CPolarSubCamera::calcSecureViewTarget_(s16 angle, f32* outX, f32* outZ)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_calcSecureViewTarget_[8];
-	(void)framePad_8_calcSecureViewTarget_;
+
+	
+	
 	s16 base = *gpMarioAngleY - 0x8000;
 	s16 diff = angle - base;
 
@@ -41,9 +41,9 @@ void CPolarSubCamera::calcSecureViewTarget_(s16 angle, f32* outX, f32* outZ)
 
 void CPolarSubCamera::execSecureView_(s16 angle, Vec* out)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execSecureView_[16];
-	(void)framePad_16_execSecureView_;
+
+	
+	
 	f32 px;
 	f32 pz;
 	calcSecureViewTarget_(angle, &px, &pz);

@@ -56,9 +56,9 @@ void TNpcCoin::requestAppearCoin(const Vec& param_1, f32 param_2, int param_3)
 
 void TNpcCoin::updateCoin()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_updateCoin[16];
-	(void)framePad_16_updateCoin;
+
+	
+	
 	if (unk4 > 0) {
 		if (!gpMarDirector->isTalkOrDemoModeNow()) {
 			unk4 -= 1;

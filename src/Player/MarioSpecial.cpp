@@ -110,9 +110,9 @@ BOOL TMario::barWait()
 
 BOOL TMario::barClimb()
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_barClimb[48];
-	(void)framePad_48_barClimb;
+
+	
+	
 	if (mHolder == nullptr)
 		return changePlayerStatus(MARIO_STATUS_LAND_SAFE_DOWN, 0, false);
 
@@ -281,9 +281,9 @@ void TMario::doRoofWaitingProcess()
 
 BOOL TMario::roofCommonEvents()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_roofCommonEvents[8];
-	(void)framePad_8_roofCommonEvents;
+
+	
+	
 	if (mInput & 0x8000) {
 		mInput &= ~0x8000;
 		return changePlayerStatus(MARIO_STATUS_LANDING, 0, false);
@@ -358,8 +358,8 @@ BOOL TMario::moveRoof()
 	// ours (target frame 0x68 against 0x50). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_24_marioMoveRoof[24];
-	(void)framePad_24_marioMoveRoof;
+	
+	
 		}
 	}
 

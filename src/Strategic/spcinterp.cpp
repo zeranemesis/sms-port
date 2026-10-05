@@ -422,8 +422,8 @@ void TSpcInterp::execcall()
 	// ours (target frame 0x88 against 0x68). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_32_spcExeccall[32];
-	(void)framePad_32_spcExeccall;
+	
+	
 }
 
 void TSpcInterp::execfunc()

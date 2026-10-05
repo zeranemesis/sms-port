@@ -94,9 +94,9 @@ void TSky::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TSky::load(JSUMemoryInputStream& stream)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_load[24];
-	(void)framePad_24_load;
+
+	
+	
 	JDrama::TActor::load(stream);
 	unk44 = SMS_MakeMActorWithAnmData(
 	    "/scene/map/map/sky.bmd", gpMap->getModelManager()->getMActorAnmData(),

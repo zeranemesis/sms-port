@@ -265,9 +265,7 @@ void TNPCManager::clipEnemies(JDrama::TGraphics* graphics)
 
 void TNPCManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding hack: original frame 0x38, ours 0x30 (MWCC stack-padding bug).
-	char pad[8];
-	(void)pad;
+
 	if (cue & CUE_ENTRY) {
 		for (int i = 0, e = mObjNum; i < e; ++i) {
 			TBaseNPC* npc = (TBaseNPC*)unk18[i];

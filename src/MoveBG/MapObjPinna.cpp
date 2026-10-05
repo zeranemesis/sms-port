@@ -189,9 +189,9 @@ void TViking::loadAfter()
 
 void TChangeStageMerrygoround::touchPlayer(THitActor* player)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_touchPlayer[24];
-	(void)framePad_24_touchPlayer;
+
+	
+	
 	if (isStateTimerEngaged())
 		return;
 	TYoshi* yoshi = SMS_GetYoshi();
@@ -217,9 +217,9 @@ TViking::TViking(const char* name)
 TMerrygoround::TMerrygoround(const char* name)
     : TMapObjBase(name)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_ctor[8];
-	(void)framePad_8_ctor;
+
+	
+	
 	int i;
 	unk1A0 = 0;
 	unk1A4 = 0;
@@ -369,9 +369,9 @@ void THorizontalViking::initMapObj()
 
 void THorizontalViking::control()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_control[8];
-	(void)framePad_8_control;
+
+	
+	
 	TMapObjBase::control();
 	switch (mState) {
 	case 1:
@@ -700,9 +700,9 @@ void TAmiKing::initMapObj()
 
 void TBalloonKoopaJr::kill()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_kill[8];
-	(void)framePad_8_kill;
+
+	
+	
 	TMapObjGeneral::kill();
 	emitAndScale(0x5A, 0, &unk148);
 	emitAndScale(0x5B, 0, &unk148);

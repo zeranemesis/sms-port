@@ -208,9 +208,9 @@ BOOL TAmenbo::receiveMessage(THitActor* sender, u32 message)
 
 void TAmenbo::behaveToWater(THitActor* param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_behaveToWater[8];
-	(void)framePad_8_behaveToWater;
+
+	
+	
 	if (mWaterGunHitCooldown <= 0 && isWaterFromWaterGun(param_1)) {
 		mWaterGunHitCooldown = 45;
 		mSpine->reset();
@@ -249,15 +249,15 @@ void TAmenbo::forceKill()
 bool TAmenbo::isCollidMove(THitActor* param_1) { return param_1 != this; }
 
 bool TAmenbo::doKeepDistance() {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_doKeepDistance[8];
-	(void)framePad_8_doKeepDistance; return !isAttacking(); }
+
+	
+	 return !isAttacking(); }
 
 void TAmenbo::attackToMario()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_attackToMario[8];
-	(void)framePad_8_attackToMario;
+
+	
+	
 	if (isAttacking())
 		sendAttackMsgToMario();
 }

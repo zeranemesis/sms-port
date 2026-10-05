@@ -619,9 +619,9 @@ void TMario::soundMovement()
 
 void TMario::animSound()
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_animSound[48];
-	(void)framePad_48_animSound;
+
+	
+	
 	mSoundFlags = mGroundPlane->unk6;
 
 	if (checkFlag(MARIO_FLAG_DIRTY)) {
@@ -692,8 +692,8 @@ void TMario::soundTorocco()
 	// ours (target frame 0x58 against 0x50). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_soundTorocco[8];
-	(void)framePad_8_soundTorocco;
+	
+	
 }
 
 u8 TMario::getVoiceStatus()
@@ -713,9 +713,9 @@ u8 TMario::getVoiceStatus()
 
 u32 TMario::startVoice(u32 param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_startVoice[8];
-	(void)framePad_8_startVoice;
+
+	
+	
 	if (onYoshi())
 		return 0;
 

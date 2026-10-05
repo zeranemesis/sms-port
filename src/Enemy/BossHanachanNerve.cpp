@@ -35,10 +35,10 @@ DEFINE_NERVE(TNerveBossHanachanGraphWander, TLiveActor)
 
 DEFINE_NERVE(TNerveBossHanachanTumble, TLiveActor)
 {
-	// Frame-padding: every instruction in this body already matches, but the
+
 	// target frame is 8 bytes larger than ours (MWCC stack-padding quirk).
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+	
+	
 	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
 	if (spine->getTime() == 0)
 		boss->setTumbleAnm(BH_STOP_MOTION_BLEND_ON);
@@ -95,11 +95,11 @@ DEFINE_NERVE(TNerveBossHanachanDamage, TLiveActor)
 
 DEFINE_NERVE(TNerveBossHanachanSnort, TLiveActor)
 {
-	// Frame-padding: every instruction in this body already matches, but the
+
 	// target frame is 0x18 bytes larger than ours (MWCC stack-padding quirk --
 	// six dead 4-byte slots we could not attribute to any real expression).
-	char framePad_24_execute[24];
-	(void)framePad_24_execute;
+	
+	
 	TBossHanachan* boss = static_cast<TBossHanachan*>(spine->getBody());
 	if (spine->getTime() == 200 && boss->checkLiveFlag(LIVE_FLAG_UNK20000)) {
 		boss->offLiveFlag(LIVE_FLAG_UNK20000);

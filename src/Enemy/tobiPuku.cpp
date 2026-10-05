@@ -279,9 +279,9 @@ void TTobiPuku::reset()
 
 void TTobiPuku::moveObject()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_moveObject[8];
-	(void)framePad_8_moveObject;
+
+	
+	
 	mTurnSpeed = unk19C->mSLTurnSpeedLow.get();
 	if (mBoundSw && TTobiPuku::isInhibitedForceMove())
 		hitWall();
@@ -445,9 +445,9 @@ bool TTobiPuku::isRoll()
 
 void TTobiPuku::behaveToWater(THitActor* param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_behaveToWater[8];
-	(void)framePad_8_behaveToWater;
+
+	
+	
 	if (mSpine->getCurrentNerve() != &TNerveTobiPukuHitWater::theNerve()) {
 		SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_FLY, &mPosition, 0,
 		                                nullptr, 0, 4);
@@ -470,8 +470,8 @@ void TTobiPuku::walkBehavior(int param_1, f32 param_2)
 	// ours (target frame 0x68 against 0x60). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_tobiPukuWalk[8];
-	(void)framePad_8_tobiPukuWalk;
+	
+	
 }
 
 void TTobiPuku::swimEffect()
@@ -507,9 +507,9 @@ bool TTobiPuku::isReachedToGoalXZ()
 
 void TTobiPuku::generateEffectColumWater()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_generateEffectColumWater[8];
-	(void)framePad_8_generateEffectColumWater;
+
+	
+	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
@@ -601,9 +601,9 @@ void TTobiPuku::genEventCoin() { isDeadBck(); }
 
 void TTobiPuku::changeOut()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_changeOut[8];
-	(void)framePad_8_changeOut;
+
+	
+	
 	offLiveFlag(LIVE_FLAG_HIDDEN);
 	mPosition = mJuiceBlock->mPosition;
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TLS_CHANGE,
@@ -709,9 +709,9 @@ void TMoePuku::calcRootMatrix()
 
 void TMoePuku::hitWater()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_hitWater[8];
-	(void)framePad_8_hitWater;
+
+	
+	
 	TTobiPuku::hitWater();
 
 	MtxPtr mtx = mMActor->getModel()->getAnmMtx(1);
@@ -793,9 +793,9 @@ void TMoePuku::setJumpStartAnm()
 
 void TMoePuku::generateEffectColumWater()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_generateEffectColumWater[8];
-	(void)framePad_8_generateEffectColumWater;
+
+	
+	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
@@ -906,8 +906,8 @@ DEFINE_NERVE(TNerveTobiPukuAttack, TLiveActor)
 	// ours (target frame 0x50 against 0x48). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_tobiPukuAttackNerve[8];
-	(void)framePad_8_tobiPukuAttackNerve;
+	
+	
 		}
 
 		if (self->checkCurAnmEnd(0)) {

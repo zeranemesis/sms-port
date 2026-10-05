@@ -165,8 +165,8 @@ void TRealoid::loadDefault(JSUMemoryInputStream& stream, const char* name,
 	// ours (target frame 0x78 against 0x70). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_realoidLoadDefault[8];
-	(void)framePad_8_realoidLoadDefault;
+	
+	
 }
 
 void TRealoid::clipBoids(JDrama::TGraphics* graphics)

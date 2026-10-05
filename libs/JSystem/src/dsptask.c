@@ -9,7 +9,6 @@ static void DspInitWork();
 static void DspHandShake(void*)
 {
 	volatile u32 mail;
-	char trash[0x8];
 
 	do {
 		mail = DSPCheckMailFromDSP();

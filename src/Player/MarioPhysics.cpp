@@ -111,10 +111,10 @@ void TMario::checkDescent()
 	if (!gpMap->isTouchedWallsAndMoveXZ(&rec))
 		return;
 
-	f32 floorY;
-	const TBGCheckData* ground;
-	checkGroundPlane(rec.mCenter.x, mPosition.y + 30.0f, rec.mCenter.z, &floorY,
-	                 &ground);
+const TBGCheckData* ground;
+  f32 floorY;
+  checkGroundPlane(rec.mCenter.x, mPosition.y + 30.0f, rec.mCenter.z, &floorY,
+                   &ground);
 
 	if (ground->checkFlag(BG_CHECK_FLAG_ILLEGAL))
 		return;
@@ -139,8 +139,8 @@ void TMario::checkDescent()
 	// ours (frame 0x78 against 0x68). Declared LAST on purpose: mwcc hands out
 	// the low addresses to the last-declared local, so the pad has to come
 	// after TBGWallCheckRecord rec to push rec and its float spills up.
-	char framePad_16_checkDescent[16];
-	(void)framePad_16_checkDescent;
+	
+	
 }
 
 int TMario::checkGroundAtWalking(Vec* v)
@@ -470,9 +470,9 @@ BOOL TMario::isFallCancel()
 
 void TMario::fallProcess()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_fallProcess[16];
-	(void)framePad_16_fallProcess;
+
+	
+	
 	if (mStatus == MARIO_STATUS_DIVE) {
 		mVel.y -= mDivingParams.mGravity.get();
 		if (mVel.y < -75.0f)

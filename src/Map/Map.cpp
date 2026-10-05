@@ -34,7 +34,10 @@ TMap* gpMap;
 
 static void initMonte()
 {
-	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+
+    
+    
+    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
 	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
 	        JDrama::TNameRefGen::search("マップグループ"));
 
@@ -60,7 +63,10 @@ static void initMonte()
 
 static void initMare()
 {
-	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+
+    
+    
+    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
 	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
 	        JDrama::TNameRefGen::search("マップグループ"));
 
@@ -106,9 +112,9 @@ static void initMare()
 #pragma dont_inline on
 static void initPinnaParco()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_initPinnaParco[8];
-	(void)framePad_8_initPinnaParco;
+
+	
+	
 	J3DModel* model = new J3DModel(
 	    gpMap->getModelManager()->getJointModel(0)->getModelData(), 0, 1);
 	MActor* actor = new MActor(gpMap->getModelManager()->getMActorAnmData());
@@ -121,7 +127,10 @@ static void initPinnaParco()
 
 static void initStageCommon()
 {
-	JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
+
+    
+    
+    JDrama::TViewObjPtrListT<JDrama::TViewObj>* group
 	    = static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
 	        JDrama::TNameRefGen::search("インダイレクトシーン"));
 	static_cast<JDrama::TViewObjPtrListT<JDrama::TViewObj>*>(
@@ -162,9 +171,9 @@ static void initStageCommon()
 
 static void initStage()
 {
-	// Frame-padding: target frame is 56 bytes larger (MWCC stack-padding quirk).
-	char framePad_56_initStage[56];
-	(void)framePad_56_initStage;
+
+	
+	
 	if (gpMarDirector->getCurrentStage() > 9)
 		return;
 
@@ -211,18 +220,19 @@ static void initStage()
 	}
 }
 
-void TMap::updateDelfino()
+inline void TMap::updateDelfino()
 {
-	int cube = gpCubeArea->unk1C;
-	if (cube != mWarp->unk8) {
-		if (cube != -1)
-			mWarp->changeModel(cube);
-		else if (gpMarDirector->getCurrentStage() != 0)
-			mWarp->changeModel(3);
-	}
+    int warpUnk8 = mWarp->unk8;
+    if (warpUnk8 != gpCubeArea->unk1C) {
+        int cube = gpCubeArea->unk1C;
+        if (cube != -1)
+            mWarp->changeModel(cube);
+        else if (gpMarDirector->getCurrentStage() != 0)
+            mWarp->changeModel(3);
+    }
 }
 
-void TMap::updateMonte()
+inline void TMap::updateMonte()
 {
 	if (gpMarDirector->getCurrentStage() == 1
 	    || gpMarDirector->getCurrentStage() == 3
@@ -232,52 +242,54 @@ void TMap::updateMonte()
 		                             &gpMapObjManager->unk44, 1, this);
 }
 
-static void updateRicco()
+static inline void updateRicco()
 {
-	static JGeometry::TVec3<f32> pos(1815.0f, 1500.0f, 1550.0f);
-	SMSGetMSound()->startSoundActor(0x3000, &pos, 0, nullptr, 0, 4);
+    static JGeometry::TVec3<f32> pos(1815.0f, 1500.0f, 1550.0f);
+    SMSGetMSound()->startSoundActor(0x3000, &pos, 0, nullptr, 0, 4);
 }
 
 void TMap::update()
 {
-	switch (gpMarDirector->mMap) {
-	case 3:
-		updateRicco();
-		break;
 
-	case 8: // Monte
-		updateMonte();
-		break;
+    
+    
 
-	case 7:
-		updateDelfino();
-		break;
-	}
+    switch (gpMarDirector->mMap) {
+    case 3:
+        updateRicco();
+        break;
 
-	if (gpMarDirector->unk124 != 0)
-		return;
+    case 8: // Monte
+        updateMonte();
+        break;
 
-	if (gpCamera->isDemoCamera())
-		return;
+    case 7:
+        updateDelfino();
+        break;
+    }
 
-	if (gpMarDirector->getCurrentMap() == 0x39
-	    || gpMarDirector->getCurrentMap() == 0x10)
-		return;
-
-	if (SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE))
-		return;
-
-	const JGeometry::TVec3<f32>& camPos = gpCamera->getUnk124();
-	f32 height = gpMapObjWave->getHeight(camPos.x, camPos.y, camPos.z);
-	if (height == gpCamera->getUnk124().y || gpCamera->getUnk124().y > height) {
-		if (!unk20) {
-			unk20 = 1;
-			MSSeCallBack::setWaterCameraFir(false);
-		}
-	} else if (unk20) {
-		unk20 = 0;
-		MSSeCallBack::setWaterCameraFir(true);
-	}
+    if (gpMarDirector->unk124 == 0) {
+        if (!gpCamera->isDemoCamera()) {
+            u32 map = gpMarDirector->getCurrentMap();
+            if (map != 0x39) {
+                if (map != 0x10) {
+                    if (!SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)) {
+                        const JGeometry::TVec3<f32>& camPos = gpCamera->getUnk124();
+                        f32 height = gpMapObjWave->getHeight(camPos.x, camPos.y, camPos.z);
+                        if (height == gpCamera->getUnk124().y || gpCamera->getUnk124().y > height) {
+                            if (!unk20) {
+                                unk20 = 1;
+                                MSSeCallBack::setWaterCameraFir(false);
+                            }
+                        } else if (unk20) {
+                            unk20 = 0;
+                            MSSeCallBack::setWaterCameraFir(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 TBGCheckData* TMap::getIllegalCheckData()
@@ -306,28 +318,25 @@ const TBGCheckData* TMap::intersectLine(const JGeometry::TVec3<f32>& param_1,
 
 bool TMap::isTouchedOneWall(f32 x, f32 y, f32 z, f32 radius) const
 {
-
-	// Every diff marker of this function is a stack offset sitting 0x8 above
-	// ours (target frame 0x68 against 0x60). Declared last on purpose: mwcc
-	// gives the low addresses to the last-declared local, so this is what
-	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_isTouchedOneWall[8];
-	(void)framePad_8_isTouchedOneWall;
-	return isTouchedOneWallAndMoveXZ(&x, y, &z, radius);
+    // TODO: stack frame mismatch (target 0x70 vs ours 0x68).
+    // Original likely spilled float params to stack for address-taking.
+    f32 x_copy = x;
+    f32 z_copy = z;
+    return isTouchedOneWallAndMoveXZ(&x_copy, y, &z_copy, radius);
 }
 
 bool TMap::isTouchedOneWallAndMoveXZ(f32* x, f32 y, f32* z, f32 radius) const
 {
-	TBGWallCheckRecord record(*x, y, *z, radius, 1, 0);
+    TBGWallCheckRecord record(*x, y, *z, radius, 1, 0);
 
-	int r = mCollisionData->checkWalls(&record);
-	if (r != 0 ? true : false) {
-		*x = record.mCenter.x;
-		*z = record.mCenter.z;
-		return true;
-	} else {
-		return false;
-	}
+    int r = mCollisionData->checkWalls(&record);
+    if (r != 0 ? true : false) {
+        *x = record.mCenter.x;
+        *z = record.mCenter.z;
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool TMap::isTouchedWallsAndMoveXZ(TBGWallCheckRecord* record) const

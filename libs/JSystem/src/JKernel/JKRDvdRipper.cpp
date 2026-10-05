@@ -21,7 +21,6 @@ void* JKRDvdRipper::loadToMainRAM(const char* name, u8* dst,
 	if (!file.open(name)) {
 		return nullptr;
 	}
-	char trash[0x4]; // uuuuh..???
 	return loadToMainRAM(&file, dst, expandSwitch, dstLength, heap,
 	                     allocDirection, offset, pCompression);
 }
@@ -35,7 +34,6 @@ void* JKRDvdRipper::loadToMainRAM(s32 entryNumber, u8* dst,
 	if (!file.open(entryNumber)) {
 		return nullptr;
 	}
-	char trash[0x4]; // uuuuh..???
 	return loadToMainRAM(&file, dst, expandSwitch, dstLength, heap,
 	                     allocDirection, offset, pCompression);
 }
@@ -74,7 +72,6 @@ void* JKRDvdRipper::loadToMainRAM(JKRDvdFile* dvdFile, u8* dst,
 		expandSize  = JKRDecompExpandSize(bufPtr);
 	}
 
-	char trash[0x4];
 
 	if (pCompression) {
 		*pCompression = (int)compression;
@@ -172,7 +169,6 @@ void* JKRDvdRipper::loadToMainRAM(JKRDvdFile* dvdFile, u8* dst,
 		}
 	}
 
-	char trash2[0x4];
 
 	if (compression == JKR_COMPRESSION_YAY0) {
 		// SZP decompression

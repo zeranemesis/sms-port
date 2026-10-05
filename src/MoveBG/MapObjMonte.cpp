@@ -474,8 +474,8 @@ void THangingBridge::perform(u32 cue, JDrama::TGraphics*)
 	JGeometry::TVec3<f32> vec;
 	// Frame padding: the ROM's frame is 0x50, ours 0x30, and every local slot
 	// is 0x20 below where the ROM puts it.
-	char framePad_20_perform[0x20];
-	(void)framePad_20_perform;
+	
+	
 	for (int i = 0; i < (int)unk10; ++i) {
 		THangingBridgeBoard* board = unk14[i];
 		vec = board->unk1A4[0];

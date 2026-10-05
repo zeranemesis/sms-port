@@ -144,9 +144,9 @@ namespace Driver {
 
 	static void __UpdateJcToDSP(TChannel* channel)
 	{
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16___UpdateJcToDSP[16];
-	(void)framePad_16___UpdateJcToDSP;
+
+	
+	
 		DSPInterface::DSPBuffer* buf = channel->unk20->mDSPHandle;
 		if (channel->unkD0) {
 			for (u8 i = 0; i < 6; ++i)
@@ -173,9 +173,9 @@ namespace Driver {
 
 	static void __UpdateJcToDSPInit(TChannel* channel)
 	{
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16___UpdateJcToDSPInit[16];
-	(void)framePad_16___UpdateJcToDSPInit;
+
+	
+	
 		DSPInterface::DSPBuffer* buf = channel->unk20->mDSPHandle;
 
 		if (channel->isDolbyMode()) {
@@ -386,9 +386,9 @@ namespace Driver {
 
 	int updatecallDSPChannel(TDSPChannel* dspChannel, u32 param)
 	{
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_updatecallDSPChannel[24];
-	(void)framePad_24_updatecallDSPChannel;
+
+	
+	
 		TChannel* channel = dspChannel->getLogicalChannel();
 		TChannelMgr* mgr  = channel->unk4;
 

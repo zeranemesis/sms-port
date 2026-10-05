@@ -167,9 +167,9 @@ TSmallEnemy::TSmallEnemy(const char* name)
 
 void TSmallEnemy::setMActorAndKeeper()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_setMActorAndKeeper[8];
-	(void)framePad_8_setMActorAndKeeper;
+
+	
+	
 	mMActorKeeper = new TMActorKeeper(mManager, 1);
 	mMActor       = mMActorKeeper->createMActorFromNthData(0, 0);
 }
@@ -404,9 +404,9 @@ void TSmallEnemy::genEventCoin()
 
 void TSmallEnemy::setAfterDeadEffect()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_setAfterDeadEffect[8];
-	(void)framePad_8_setAfterDeadEffect;
+
+	
+	
 	if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
 	        PARTICLE_MS_ENM_DISAP_A, &mPosition, 0, nullptr)) {
 		emitter->setGlobalScale(mScaling);
@@ -519,9 +519,9 @@ void TSmallEnemy::updateAnmSound() { TSpineEnemy::updateAnmSound(); }
 
 BOOL TSmallEnemy::receiveMessage(THitActor* sender, u32 message)
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_receiveMessage[48];
-	(void)framePad_48_receiveMessage;
+
+	
+	
 	if (isEatenByYosshi() && message == HIT_MESSAGE_TAKE && !mHolder) {
 		onHitFlag(HIT_FLAG_NO_COLLISION);
 		mHolder = (TTakeActor*)sender;
@@ -574,9 +574,9 @@ BOOL TSmallEnemy::receiveMessage(THitActor* sender, u32 message)
 
 bool TSmallEnemy::changeByJuice()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_changeByJuice[24];
-	(void)framePad_24_changeByJuice;
+
+	
+	
 	if (gpModelWaterManager->unk5D5F == 1 || gpModelWaterManager->unk5D5F == 2
 	    || gpModelWaterManager->unk5D5F == 3
 	    || TSmallEnemyManager::mTestJuiceType != 0) {
@@ -843,9 +843,9 @@ bool TSmallEnemy::isFindMarioFromParam(float param_1) const
 
 void TSmallEnemy::generateEffectColumWater()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_generateEffectColumWater[8];
-	(void)framePad_8_generateEffectColumWater;
+
+	
+	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT))
 		return;
 
@@ -886,9 +886,9 @@ void TSmallEnemy::expandCollision()
 
 bool TSmallEnemy::isEaten()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_isEaten[8];
-	(void)framePad_8_isEaten;
+
+	
+	
 	if (mHolder && mHolder->getHeldObject() == this) {
 		MtxPtr mtx = mHolder->getTakingMtx();
 		if (mtx) {

@@ -46,9 +46,9 @@ TCubeManagerBase::TCubeManagerBase(const char* name, u8 param_2)
 
 void TCubeManagerBase::load(JSUMemoryInputStream& stream)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_load[8];
-	(void)framePad_8_load;
+
+	
+	
 	JDrama::TNameRef::load(stream);
 	JDrama::TNameRef* root
 	    = JDrama::TNameRefGen::getInstance()->getRootNameRef();

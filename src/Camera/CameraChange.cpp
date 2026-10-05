@@ -426,9 +426,9 @@ void CPolarSubCamera::changeCamModeSpecifyFrame_(int mode, int tween_frames)
 void CPolarSubCamera::changeCamModeSpecifyCamMapTool_(
     const TCameraMapTool* tool)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_changeCamModeSpecifyCamMapTool_[8];
-	(void)framePad_8_changeCamModeSpecifyCamMapTool_;
+
+	
+	
 	int newMode = tool->getCameraMode();
 	if (mMode != newMode || unk70 != tool) {
 		unk74 = unk70;
@@ -573,11 +573,11 @@ bool CPolarSubCamera::isChangeToParallelCameraCByMoveBG_() const
 // hence the hacks above...
 void CPolarSubCamera::execCameraModeChangeProc_(int param_1)
 {
-	// Frame-padding: target frame is 88 bytes larger (0x100 vs 0xa8); nloc is 0
+
 	// on both sides - every byte of the local region is dead on both sides, so
 	// the pad only recreates the unreferenced space MWCC allocated in the ROM.
-	char framePad_88_execCameraModeChangeProc_[88];
-	(void)framePad_88_execCameraModeChangeProc_;
+	
+	
 
 	if (SMS_isMultiPlayerMap()) {
 		changeCamMode_(CAMERA_MODE_MULTI_PLAYER);

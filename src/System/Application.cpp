@@ -209,9 +209,9 @@ void SMSLoadArchiveARAM(TARAMBlock* out_block, const char* path)
 
 void SMSMountAramArchive(JKRMemArchive* archive, TARAMBlock& block)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_SMSMountAramArchive[16];
-	(void)framePad_16_SMSMountAramArchive;
+
+	
+	
 	if (block.mIsCompressed) {
 		JKRAram::aramToMainRam(
 		    block.mBlock, (u8*)SMSGetMarDirector()->getUnkD4(), 0, 0,
@@ -375,8 +375,8 @@ void* TApplication::setupThreadFuncLogo()
 	// ours (target frame 0xc0 against 0xb8). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_threadFuncLogo[8];
-	(void)framePad_8_threadFuncLogo;
+	
+	
 	return nullptr;
 }
 #pragma dont_inline off
@@ -543,8 +543,8 @@ bool TApplication::checkAdditionalMovie()
 	// ours (target frame 0x58 against 0x28). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_48_checkAdditionalMovie[48];
-	(void)framePad_48_checkAdditionalMovie;
+	
+	
 			}
 		}
 	} else {

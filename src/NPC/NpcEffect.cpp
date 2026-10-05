@@ -159,8 +159,8 @@ void TBaseNPC::emitHappyEffect_()
 	// ours (target frame 0x40 against 0x38). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_emitHappyEffect[8];
-	(void)framePad_8_emitHappyEffect;
+	
+	
 }
 
 inline void TBaseNPC::emitPollutionParticle_(int particle, MtxPtr mtx)
@@ -217,9 +217,9 @@ inline void TBaseNPC::emitWashEffect_()
 
 inline bool TBaseNPC::isPolWaitCEffectEmitTime_() const
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_isPolWaitCEffectEmitTime_[8];
-	(void)framePad_8_isPolWaitCEffectEmitTime_;
+
+	
+	
 	bool result = false;
 
 	const f32* checkFrames = nullptr;

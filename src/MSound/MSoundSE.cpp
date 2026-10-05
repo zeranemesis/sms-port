@@ -37,9 +37,9 @@ MSRandVol::MSRandVol(u32 param)
     , unk14(param)
     , mAmplitude(0.5f)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_MSRandVol[8];
-	(void)framePad_8_MSRandVol;
+
+	
+	
 	mPSlopes[0] = 0.0f;
 	mPSlopes[1] = 0.25f;
 	mPSlopes[2] = 0.5f;
@@ -137,9 +137,9 @@ MSRandPlay::MSRandPlay(u32 sound_id, s32 wait_min, s32 wait_max,
     , mCurveSlope(curve_slope)
     , mPlusSlope(plus_slope)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_MSRandPlay[8];
-	(void)framePad_8_MSRandPlay;
+
+	
+	
 }
 
 void MSRandPlay::randPlay(u32 vec_idx)

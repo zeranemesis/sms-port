@@ -34,9 +34,9 @@ TWalkerEnemy::TWalkerEnemy(const char* name)
 
 void TWalkerEnemy::init(TLiveManager* param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_init[8];
-	(void)framePad_8_init;
+
+	
+	
 	TSmallEnemy::init(param_1);
 	mBinder = new TWalker;
 	getWalker()->reset();
@@ -233,9 +233,9 @@ DEFINE_NERVE(TNerveWalkerGraphWander, TLiveActor)
 
 DEFINE_NERVE(TNerveWalkerAttack, TLiveActor)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
+
+	
+	
 	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
 
 	if (spine->getTime() == 0)

@@ -172,7 +172,6 @@ JGeometry::TVec3<f32> MsGetRotFromZaxis(const JGeometry::TVec3<f32>& param_1)
 {
 	JGeometry::TVec3<f32> result;
 	// TODO: temporary validation hack — frame is 8 bytes short without it
-	char trash[0x8];
 	result.zero();
 
 	JGeometry::TVec3<f32> axis = param_1;
@@ -219,7 +218,6 @@ void MsMtxSetRotRPH(MtxPtr param_1, f32 r, f32 p, f32 h)
 	f32 cp = MsCos(p);
 	f32 ch = MsCos(h);
 
-	char trash[0x4]; // TODO: skill issue
 
 	param_1[0][0] = ch * cp;
 	param_1[1][0] = sh * cp;
@@ -280,7 +278,6 @@ void MsMtxSetTRS(MtxPtr param_1, f32 x, f32 y, f32 z, f32 r, f32 p, f32 h,
 	f32 cp = MsCos(p);
 	f32 ch = MsCos(h);
 
-	char trash[0x8]; // TODO: skill issue
 
 	param_1[0][0] = (ch * cp) * sx;
 	param_1[1][0] = (sh * cp) * sx;
@@ -306,7 +303,6 @@ BOOL MsIsInSight(const JGeometry::TVec3<f32>& eye, f32 sight,
 	JGeometry::TVec3<f32> tmp = target;
 	tmp -= eye;
 
-	char trash[0x4]; // TODO: skill issue
 
 	if (tmp.squared() < aware * aware)
 		return true;

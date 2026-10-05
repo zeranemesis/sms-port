@@ -47,9 +47,9 @@ TAnimalBase::TAnimalBase(u32 actorType, const char* name)
 
 void TAnimalBase::init(TLiveManager* manager)
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_init[40];
-	(void)framePad_40_init;
+
+	
+	
 	mManager = manager;
 	manager->manageActor(this);
 
@@ -134,9 +134,9 @@ void TAnimalBase::load(JSUMemoryInputStream& stream)
 
 void TAnimalBase::loadAfter()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_loadAfter[16];
-	(void)framePad_16_loadAfter;
+
+	
+	
 	TNameRef::loadAfter();
 	if (mActorType == 0x800001)
 		MSoundSESystem::MSRandPlay::registerTrans(MSD_SE_OBJ_KAMOME_SOLO,
@@ -221,9 +221,9 @@ void TAnimalBase::perform(u32 cue, JDrama::TGraphics* graphics)
 		cue &= ~CUE_CALC_VIEW;
 	}
 
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_perform[48];
-	(void)framePad_48_perform;
+
+	
+	
 
 	TSpineEnemy::perform(cue, graphics);
 }

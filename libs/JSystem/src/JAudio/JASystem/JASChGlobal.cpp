@@ -23,7 +23,6 @@ TChannel* ChGlobal::getChannelHandle(u32 index)
 
 void ChGlobal::init()
 {
-	char trash[0x10]; // TODO: someone figure this out
 
 	TChannelMgr* mgr = new (JASDram, 32) TChannelMgr;
 	GLOBAL_CHANNEL   = mgr;

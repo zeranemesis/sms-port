@@ -90,9 +90,9 @@ void TMapObjGeneral::sink()
 
 void TMapObjGeneral::put()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_put[8];
-	(void)framePad_8_put;
+
+	
+	
 	mHolder                    = nullptr;
 	mHolder                    = nullptr;
 	s32 preservedTimeTilAppear = getStateTimer();
@@ -153,9 +153,9 @@ void TMapObjGeneral::touchingPlayer()
 
 void TMapObjGeneral::holding()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_holding[8];
-	(void)framePad_8_holding;
+
+	
+	
 	mPosition     = mHolder->mPosition;
 	mGroundHeight = gpMap->checkGround(mPosition, &mGroundPlane);
 }
@@ -186,9 +186,9 @@ void TMapObjGeneral::recovering()
 
 void TMapObjGeneral::sinking()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_sinking[8];
-	(void)framePad_8_sinking;
+
+	
+	
 	mPosition.y -= mMapObjData->mSink->unk0;
 
 	for (int i = 0; i < getColNum(); ++i) {
@@ -325,9 +325,9 @@ void TMapObjGeneral::hold(TTakeActor* actor)
 
 void TMapObjGeneral::ensureTakeSituation()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_ensureTakeSituation[8];
-	(void)framePad_8_ensureTakeSituation;
+
+	
+	
 	TMapObjBase::ensureTakeSituation();
 	if (isState(STATE_HOLDING) && mHolder == nullptr) {
 		mState = STATE_NORMAL;
@@ -349,9 +349,9 @@ void TMapObjGeneral::kill()
 
 void TMapObjGeneral::appear()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_appear[8];
-	(void)framePad_8_appear;
+
+	
+	
 	makeObjAppeared();
 	startAnim(1);
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK800000)) {
@@ -448,9 +448,9 @@ void TMapObjGeneral::checkRoofCollision(JGeometry::TVec3<f32>* param_1)
 
 void TMapObjGeneral::touchGround(JGeometry::TVec3<f32>* param_1)
 {
-	// Frame-padding: target frame is 56 bytes larger (MWCC stack-padding quirk).
-	char framePad_56_touchGround[56];
-	(void)framePad_56_touchGround;
+
+	
+	
 	if (mMapObjData->mPhysical ? true : false) {
 		mVelocity.x *= mMapObjData->mPhysical->unk4->unk10;
 		mVelocity.z *= mMapObjData->mPhysical->unk4->unk10;
@@ -489,9 +489,9 @@ void TMapObjGeneral::checkGroundCollision(JGeometry::TVec3<f32>* param_1)
 
 void TMapObjGeneral::calcVelocity()
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_calcVelocity[40];
-	(void)framePad_40_calcVelocity;
+
+	
+	
 	if (checkLiveFlag2(LIVE_FLAG_AIRBORNE)) {
 		f32 dVar5 = getGravityY();
 		mVelocity.y -= dVar5;
@@ -564,9 +564,9 @@ void TMapObjGeneral::bind()
 
 void TMapObjGeneral::control()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_control[8];
-	(void)framePad_8_control;
+
+	
+	
 	TMapObjBase::control();
 	if (checkMapObjFlag(MAP_OBJ_FLAG_CAN_SINK) && isState(STATE_NORMAL)
 	    && !isAirborne() && isPollutedGround(mPosition))

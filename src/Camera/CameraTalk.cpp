@@ -7,9 +7,9 @@
 
 void CPolarSubCamera::makeMtxForTalk(const TBaseNPC* param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_makeMtxForTalk[8];
-	(void)framePad_8_makeMtxForTalk;
+
+	
+	
 	killHeightPan_();
 	mCurrentTarget.unk2C = mCurrentTarget.mYaw;
 	mCurrentTarget.mYaw  = *gpMarioAngleY - 0x8000;
@@ -37,9 +37,9 @@ void CPolarSubCamera::makeMtxForTalk(const TBaseNPC* param_1)
 
 void CPolarSubCamera::makeMtxForPrevTalk()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_makeMtxForPrevTalk[16];
-	(void)framePad_16_makeMtxForPrevTalk;
+
+	
+	
 	if (isTalkCameraSpecifyMode(mMode)) {
 		mCurrentTarget.mYaw = mCurrentTarget.unk2C;
 

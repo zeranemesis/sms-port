@@ -82,9 +82,9 @@ void TPoiHanaManager::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TPoiHanaManager::initSetEnemies()
 {
-	// Frame-padding: target frame is 160 bytes larger (MWCC stack-padding quirk).
-	char framePad_160_initSetEnemies[160];
-	(void)framePad_160_initSetEnemies;
+
+	
+	
 	int bodyIdx
 	    = getObj(0)->getModel()->getModelData()->getMaterialName()->getIndex(
 	        "_body");
@@ -189,9 +189,9 @@ void TPoiHana::reset()
 
 void TPoiHana::moveObject()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_moveObject[16];
-	(void)framePad_16_moveObject;
+
+	
+	
 	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
 		unk1BC->mPosition = mPosition;
 	} else {
@@ -401,8 +401,8 @@ void TPoiHana::walkBehavior(int param_1, float param_2)
 	// ours (target frame 0x60 against 0x58). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_poihanaWalkBehavior[8];
-	(void)framePad_8_poihanaWalkBehavior;
+	
+	
 			}
 		}
 	}
@@ -568,9 +568,9 @@ void TSleepPoiHana::load(JSUMemoryInputStream& stream)
 
 DEFINE_NERVE(TNervePoihanaSleep, TLiveActor)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+
+	
+	
 	TPoiHana* self = (TPoiHana*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -628,9 +628,9 @@ DEFINE_NERVE(TNervePoihanaSleep, TLiveActor)
 
 DEFINE_NERVE(TNervePoihanaFreeze, TLiveActor)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
+
+	
+	
 	TPoiHana* self = (TPoiHana*)spine->getBody();
 
 	if (spine->getTime() == 0) {

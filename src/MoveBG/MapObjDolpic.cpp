@@ -95,9 +95,9 @@ void TMonumentShine::hitByWater(THitActor* actor)
 
 BOOL TMonumentShine::receiveMessage(THitActor* sender, u32 message)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_receiveMessage[8];
-	(void)framePad_8_receiveMessage;
+
+	
+	
 	if (sender->isActorType(0x01000001)) {
 		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
 		                             0, nullptr);
@@ -266,8 +266,8 @@ void TBellDolpic::ring(const JGeometry::TVec3<f32>& pos)
 	// ours (target frame 0x48 against 0x40). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_bellDolpicRing[8];
-	(void)framePad_8_bellDolpicRing;
+	
+	
 }
 
 void TBellDolpic::touchPlayer(THitActor* actor) { ring(actor->mPosition); }
@@ -365,9 +365,9 @@ void TBellDolpic::control()
 
 void TDptMonteFence::touchPlayer(THitActor* actor)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_touchPlayer[8];
-	(void)framePad_8_touchPlayer;
+
+	
+	
 	if (SMS_IsMarioStatusThrownDown()) {
 		SMSGetMSound()->startSoundActor(MSD_SE_IT_BARREL_CRASH, &mPosition, 0,
 		                                nullptr, 0, 4);
@@ -402,9 +402,9 @@ void TMapObjSmoke::load(JSUMemoryInputStream& in)
 
 void TMareGate::control()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_control[8];
-	(void)framePad_8_control;
+
+	
+	
 	TMapObjBase::control();
 
 	MSound* sound = SMSGetMSound();

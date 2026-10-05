@@ -72,8 +72,8 @@ void TMovieSubTitle::setupResource(const char* param_1, JKRArchive* param_2)
 	// ours (target frame 0x440 against 0x438). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_movieSubtitleSetup[8];
-	(void)framePad_8_movieSubtitleSetup;
+	
+	
 }
 
 void TMovieSubTitle::perform(u32 cue, JDrama::TGraphics* graphics)

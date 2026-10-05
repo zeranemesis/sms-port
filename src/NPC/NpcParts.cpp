@@ -34,9 +34,9 @@ TNpcParts::TNpcParts(u32 param_1, const J3DGXColorS10* param_2,
                      TBaseNPC* param_3)
     : unk60(param_3)
 {
-	// Frame-padding: target frame is 0x1f8.
-	char framePad_96_TNpcParts[96];
-	(void)framePad_96_TNpcParts;
+
+	
+	
 
 	const TNpcInitInfo* initInfo
 	    = SMSGetNpcInitData(unk60->getActorType() - 0x4000001);
@@ -196,9 +196,9 @@ void TNpcParts::addJellyFishParts(f32 param_1)
 
 void TNpcParts::setPartsAnmFrame(f32 param_1)
 {
-	// Frame-padding: target frame is 0xa0, ours 0x78 without this.
-	char framePad_40_setPartsAnmFrame[40];
-	(void)framePad_40_setPartsAnmFrame;
+
+	
+	
 
 	switch (unk60->getActorType()) {
 	case 0x4000010: {
@@ -240,9 +240,9 @@ MActor* TNpcParts::getPartsMActor(int param_1, int param_2)
 
 void TNpcParts::partsFrameUpdate()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_partsFrameUpdate[16];
-	(void)framePad_16_partsFrameUpdate;
+
+	
+	
 	int i = 0;
 
 	TSharedParts** it = unk0[unk60->getLodAnm()->unk8];
@@ -254,9 +254,9 @@ void TNpcParts::partsFrameUpdate()
 
 void TNpcParts::partsPerform(u32 param_1, JDrama::TGraphics* param_2)
 {
-	// Frame-padding: target frame is 0xf8, ours 0xc0 without this.
-	char framePad_56_partsPerform[56];
-	(void)framePad_56_partsPerform;
+
+	
+	
 
 	int i = 0;
 

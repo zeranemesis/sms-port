@@ -206,8 +206,8 @@ void TMapObjWave::draw()
 	     zOffset <= mHalfWaveSpan - mWaveHeight; zOffset += mWaveHeight) {
 		f32 z0 = zOffset + gpMarioPos->z;
 		f32 z1 = z0 + mWaveHeight;
-		char framePad_8_draw[8];
-		(void)framePad_8_draw;
+		
+		
 		GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, mWaveCount * 2);
 
 		for (f32 xOffset = -mHalfWaveSpan;
@@ -239,8 +239,8 @@ void TMapObjWave::updateHeightAndAlpha()
 	// height ramp is measured against.
 	const TBGCheckData* ground;
 	const TBGCheckData* ground2;
-	char framePad_36_updateHeightAndAlpha[0x24];
-	(void)framePad_36_updateHeightAndAlpha;
+	
+	
 	gpMap->checkGround(SMS_GetMarioPos(), &ground);
 	gpMap->checkGroundExactY(SMS_GetMarioPos().x, 10.0f, SMS_GetMarioPos().z,
 	                         &ground2);
@@ -334,8 +334,8 @@ void TMapObjWave::movement()
 
 void TMapObjWave::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	char framePad_32_perform[0x20];
-	(void)framePad_32_perform;
+	
+	
 
 	if (!unk94)
 		return;
@@ -356,8 +356,8 @@ void TMapObjWave::load(JSUMemoryInputStream& stream)
 {
 	JDrama::TNameRef::load(stream);
 
-	char framePad_16_load[0x10];
-	(void)framePad_16_load;
+	
+	
 
 	mWaveSpan        = 5200.0f;
 	mWaveHeight      = 200.0f;

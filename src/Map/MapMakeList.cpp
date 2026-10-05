@@ -278,9 +278,9 @@ void TMapCollisionData::removeCheckListNode(s32, s32) { }
 void TMapCollisionData::updateCheckListNode(s32 param_1, s32 param_2,
                                             s32 param_3)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_updateCheckListNode[24];
-	(void)framePad_24_updateCheckListNode;
+
+	
+	
 	TBGCheckListWarp* l   = &unk30[param_3];
 	TBGCheckListWarp* r   = &unk30[param_1];
 	TBGCheckListWarp* end = &unk30[param_3 + param_2];
@@ -337,8 +337,8 @@ void TMapCollisionData::removeCheckListData(u16 start, s32 count)
 	// ours (target frame 0x70 against 0x48). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_40_removeCheckListData[40];
-	(void)framePad_40_removeCheckListData;
+	
+	
 		}
 		curr->unk8 = nullptr;
 	}

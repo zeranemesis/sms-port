@@ -458,18 +458,18 @@ void TSpineEnemy::walkToCurPathNode(f32 march_speed, f32 turn_speed,
 	f32 angle = MsWrap(param_3 + MsGetRotFromZaxisY(tmp), 0.0f, 360.0f);
 	f32 fVar2 = MsAngleDiff(angle, mRotation.y);
 
-	// TODO: identical to a piece of code below, what is this?
-	f32 fVar3;
-	if (turn_speed >= 90.0f) {
-		fVar3 = 0.0f;
-	} else {
-		f32 s = MsSin(turn_speed);
-		if (fVar3 == 0.0f) {
-			fVar3 = 100000.0f;
-		} else {
-			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
-		}
-	}
+// TODO: identical to a piece of code below, what is this?
+ 	f32 fVar3;
+ 	if (turn_speed >= 90.0f) {
+ 		fVar3 = 0.0f;
+ 	} else {
+ 		f32 s = MsSin(turn_speed);
+ 		if (s == 0.0f) {
+ 			fVar3 = 100000.0f;
+ 		} else {
+ 			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
+ 		}
+ 	}
 
 	// TODO: tons of thi stuff should actually be inlines
 	f32 fVar5 = fVar2;
@@ -528,17 +528,17 @@ void TSpineEnemy::zigzagToCurPathNode(f32 march_speed, f32 turn_speed,
 
 	f32 fVar1 = MsAngleDiff(dVar12, mRotation.y);
 
-	f32 fVar3;
-	if (turn_speed >= 90.0f) {
-		fVar3 = 0.0f;
-	} else {
-		f32 s = MsSin(turn_speed);
-		if (fVar3 == 0.0f) {
-			fVar3 = 100000.0f;
-		} else {
-			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
-		}
-	}
+f32 fVar3;
+ 	if (turn_speed >= 90.0f) {
+ 		fVar3 = 0.0f;
+ 	} else {
+ 		f32 s = MsSin(turn_speed);
+ 		if (s == 0.0f) {
+ 			fVar3 = 100000.0f;
+ 		} else {
+ 			fVar3 = march_speed * MsSin(90.0f - turn_speed * 0.5f) / s;
+ 		}
+ 	}
 
 	f32 fVar2;
 	if (dVar9 > fVar3 * 2.0f) {
@@ -623,9 +623,9 @@ BOOL TSpineEnemy::checkCurAnmEnd(int type) const
 
 void TSpineEnemy::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_perform[8];
-	(void)framePad_8_perform;
+
+	
+	
 	TEnemyManager* mgr = (TEnemyManager*)getManager();
 
 	if (mgr != nullptr) {

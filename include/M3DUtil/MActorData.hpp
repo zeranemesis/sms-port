@@ -47,31 +47,25 @@ public:
 		loadAnmPtrArray(param_1, param_2);
 	}
 
-	void loadAnmPtrArray(const char* directory, const char* extension)
-	{
-		mAnimations = new J3DAnmBase*[mAnmNum];
-		for (int i = 0; i < mAnmNum; ++i) {
-			char buf[256];
-			if (*mAnmNames[i] != '/') {
-				char tmp[256];
-				snprintf(tmp, 0xff, "%s%s", directory, mAnmNames[i]);
-				snprintf(buf, 0xff, "%s%s", tmp, extension);
-			} else {
-				snprintf(buf, 0xff, "%s%s", mAnmNames[i], extension);
-			}
-			void* res = JKRGetResource(buf);
-			if (res)
-				mAnimations[i] = J3DAnmLoaderDataBase::load(res);
-		}
+void loadAnmPtrArray(const char* directory, const char* extension)
+ 	{
+ 		mAnimations = new J3DAnmBase*[mAnmNum];
+ 		for (int i = 0; i < mAnmNum; ++i) {
+ 			char buf[256];
+ 			if (*mAnmNames[i] != '/') {
+ 				char tmp[256];
+ 				snprintf(tmp, 0xff, "%s%s", directory, mAnmNames[i]);
+ 				snprintf(buf, 0xff, "%s%s", tmp, extension);
+ 			} else {
+ 				snprintf(buf, 0xff, "%s%s", mAnmNames[i], extension);
+ 			}
+ 			void* res = JKRGetResource(buf);
+ 			if (res)
+ 				mAnimations[i] = J3DAnmLoaderDataBase::load(res);
+ 		}
 
-		sortByFileNameRaw((void**)mAnimations);
+sortByFileNameRaw((void**)mAnimations);
 
-		// All six instantiations of this template are 8 bytes short: every
-		// stack reference of each one sits 0x8 above ours (target frame 0x238
-		// against 0x230). Declared last on purpose, mwcc gives the low frame
-		// addresses to the last-declared local.
-		char framePad_8_loadAnmPtrArray[8];
-		(void)framePad_8_loadAnmPtrArray;
 	}
 
 	T* getAnmPtr(int idx) const

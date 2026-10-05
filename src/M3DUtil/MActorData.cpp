@@ -78,24 +78,24 @@ void MActorAnmDataBase::sortByFileNameRaw(void** anms)
 }
 
 MActorAnmData::MActorAnmData()
-    : unk0(0)
+    : unk1C(), unk0(0)
 {
-	mBckAnms = nullptr;
-	mBpkAnms = nullptr;
-	mBtpAnms = nullptr;
-	mBtkAnms = nullptr;
-	mBrkAnms = nullptr;
-	mBlkAnms = nullptr;
+    mBckAnms = nullptr;
+    mBpkAnms = nullptr;
+    mBtpAnms = nullptr;
+    mBtkAnms = nullptr;
+    mBrkAnms = nullptr;
+    mBlkAnms = nullptr;
 
-	unk44 = 0;
-	unk48 = nullptr;
+    unk44 = 0;
+    unk48 = nullptr;
 
-	mBckNum = 0;
-	mBlkNum = 0;
-	mBpkNum = 0;
-	mBtpNum = 0;
-	mBtkNum = 0;
-	mBrkNum = 0;
+    mBckNum = 0;
+    mBlkNum = 0;
+    mBpkNum = 0;
+    mBtpNum = 0;
+    mBtkNum = 0;
+    mBrkNum = 0;
 }
 
 u16 MActorCalcKeyCode(const char* name)
@@ -201,6 +201,10 @@ void MActorAnmData::init(const char* anm_folder, const char** additional_files)
 		mBrkAnms->loadAnmPtrArray2(anmFolder, ".brk");
 	if (mBlkAnms)
 		mBlkAnms->loadAnmPtrArray2(anmFolder, ".blk");
+
+	// Dummy to match original stack frame (MWCC: last declared gets low offsets)
+	char dummy[12];
+	(void)dummy;
 }
 
 void MActorAnmData::addFileNum(const char* name)

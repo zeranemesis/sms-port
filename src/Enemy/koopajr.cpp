@@ -308,8 +308,8 @@ void TKoopaJr::reset()
 	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
 	// identical instruction stream (MWCC stack-padding bug); no natural source
 	// spelling has been found that reproduces it.
-	char framePad_8_reset[8];
-	(void)framePad_8_reset;
+	
+	
 	TSpineEnemy::reset();
 	resetKoopaJr();
 }
@@ -425,8 +425,8 @@ BOOL TKoopaJr::receiveMessage(THitActor* sender, u32 message)
 {
 	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
 	// otherwise identical instruction stream (MWCC stack-padding bug).
-	char framePad_8_receiveMessage[8];
-	(void)framePad_8_receiveMessage;
+	
+	
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		gpMarioParticleManager->emit(0xE7, &sender->mPosition, 0, nullptr);
 		gpMSound->startSoundSet(0x6802, &mPosition, 0, 0.0f, 0, 0, 4);
@@ -690,8 +690,8 @@ void TKoopaJrSubmarine::resetKoopaJrSubmarine()
 {
 	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
 	// otherwise identical instruction stream (MWCC stack-padding bug).
-	char framePad_16_resetKoopaJrSubmarine[16];
-	(void)framePad_16_resetKoopaJrSubmarine;
+	
+	
 	mSpine->reset();
 	unk150 = 0;
 	setAnimationIndex(0);
@@ -752,8 +752,8 @@ void TKoopaJrSubmarine::makeCollisionPositions()
 {
 	// TODO: frame padding. The ROM's frame is 40 bytes larger than ours with an
 	// identical instruction stream (MWCC stack-padding bug).
-	char framePad_40_makeCollisionPositions[40];
-	(void)framePad_40_makeCollisionPositions;
+	
+	
 	JGeometry::TVec3<f32> pos(0.0f, 0.0f, 0.0f);
 	for (int i = 0; i < 2; ++i) {
 		MtxPtr mtx = getModel()->getAnmMtx(TKoopaJr_getJointIndex(i + 3));
@@ -878,8 +878,8 @@ int TKoopaJrSubmarine::appearShineKiller(int)
 {
 	// TODO: frame padding. The ROM's frame is 48 bytes larger than ours with an
 	// identical instruction stream (MWCC stack-padding bug).
-	char framePad_48_appearShineKiller[48];
-	(void)framePad_48_appearShineKiller;
+	
+	
 	f32 chance;
 	if (SMS_GetMarioWaterGun()->mCurrentWater == 0) {
 		chance = 0.5f;
@@ -917,8 +917,8 @@ void TKoopaJrSubmarine::launchKiller()
 	// TODO: frame padding. The ROM's frame is 32 bytes larger than ours with an
 	// identical instruction stream (MWCC stack-padding bug); no natural source
 	// spelling has been found that reproduces it.
-	char framePad_32_launchKiller[32];
-	(void)framePad_32_launchKiller;
+	
+	
 	s32 slot = unk180 % 4;
 	TBathtubKiller* killer = (TBathtubKiller*)unk1A0->unk16C->getDeadEnemy();
 	if (killer) {
@@ -1156,8 +1156,8 @@ DEFINE_NERVE(TNerveKoopaJrSubmarineLaunchKiller, TLiveActor)
 	// TODO: frame padding. The ROM's frame is 8 bytes larger than ours with an
 	// identical instruction stream (MWCC stack-padding bug); no natural source
 	// spelling has been found that reproduces it.
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+	
+	
 
 	if (self->unk180 == self->unk184 && self->unk150 <= 0) {
 		J3DFrameCtrl* ctrl = self->getMActor()->getFrameCtrl(ANM_TYPE_BCK);
@@ -1194,8 +1194,8 @@ void TKoopaJrSubmarineManager::load(JSUMemoryInputStream& stream)
 	(void)(unk38 ? unk38 : unk38);
 	// TODO: frame padding (MWCC stack-padding bug): the ROM's frame is 64 bytes
 	// larger than ours.
-	char framePad_64_load[64];
-	(void)framePad_64_load;
+	
+	
 	TEnemyManager::load(stream);
 	unk38 = new TKoopaJrSubmarineParams("/enemy/koopajrsubmarine.prm");
 	(void)(unk38 ? unk38 : unk38);
@@ -1204,8 +1204,8 @@ void TKoopaJrSubmarineManager::load(JSUMemoryInputStream& stream)
 void TKoopaJrSubmarineManager::loadAfter()
 {
 	// TODO: frame padding (MWCC stack-padding bug), see ::load.
-	char framePad_40_loadAfter[40];
-	(void)framePad_40_loadAfter;
+	
+	
 	JDrama::TNameRef::loadAfter();
 	// TODO: @hack, see TKoopaJrSubmarineManager::load.
 	(void)(unk38 ? unk38 : unk38);

@@ -95,8 +95,8 @@ void* TDrawSyncManager::threadFunc(void* param_1)
 	// ours (target frame 0x38 against 0x30). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_drawSyncThreadFunc[8];
-	(void)framePad_8_drawSyncThreadFunc;
+	
+	
 			}
 		}
 	}

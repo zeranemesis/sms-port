@@ -75,7 +75,7 @@ void TMapObjPlane::draw()
 	// TEMP MEASUREMENT: frame pad probe, +8 B.  Frame-vs-hole diagnostic says
 	// the holes are equal (ROM 0xb8-0x60 = 0x58, ours 0xb0-0x58 = 0x58), so only
 	// padding differs and a pad can close it.  Delete unless it buys match.
-	char framePad_draw[8];
+	
 
 	for (int z = 0; z < mExtents - 1; ++z) {
 		f32 worldZ = mCollision->gridToWorld(z);
@@ -234,7 +234,7 @@ void TMapObjPlane::depress(f32 x, f32 z, f32 rate)
 {
 	// TEMP MEASUREMENT: frame pad probe, +16 B.  ROM 0x70-0x40 = 0x30,
 	// ours 0x60-0x30 = 0x30 - equal holes, so a pad can close it.
-	char framePad_depress[16];
+	
 
 	f32 x_ = mCollision->worldToGrid(x);
 	f32 z_ = mCollision->worldToGrid(z);
@@ -323,7 +323,7 @@ void TMapObjPlane::makeMountain()
 	// TEMP MEASUREMENT: frame pad probe, +56 B.  Frame-vs-hole diagnostic says
 	// the holes are equal (ROM 0x60-0x48 = 0x18, ours 0x28-0x10 = 0x18), so only
 	// padding differs and a pad can close it.  Delete unless it buys match.
-	char framePad_mkMtn[56];
+	
 
 	int width = (unk118[0x15] << 24) + (unk118[0x14] << 16)
 	            + (unk118[0x13] << 8) + unk118[0x12];

@@ -121,9 +121,9 @@ static const GXColorS10 nameKuriTevColorData[7] = {
 
 void TNameKuriManager::initSetEnemies()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_initSetEnemies[16];
-	(void)framePad_16_initSetEnemies;
+
+	
+	
 	void* brainBmd           = JKRGetResource("/scene/namekuri2/brain.bmd");
 	SDLModelData* brainModel = new SDLModelData(J3DModelLoaderDataBase::load(
 	    brainBmd, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
@@ -286,9 +286,9 @@ TNameKuri::TNameKuri(const char* name)
 
 void TNameKuri::init(TLiveManager* param_1)
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_init[40];
-	(void)framePad_40_init;
+
+	
+	
 	JKRHeap::getCurrentHeap()->getTotalFreeSize();
 
 	TWalkerEnemy::init(param_1);
@@ -438,8 +438,8 @@ void TNameKuri::moveObject()
 	// ours (target frame 0x68 against 0x58). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_16_namekuriMoveObject[16];
-	(void)framePad_16_namekuriMoveObject;
+	
+	
 	}
 
 	if (!isAirborne() && isBckAnm(7))
@@ -566,9 +566,9 @@ void TNameKuri::setMActorAndKeeper()
 
 void TNameKuri::reset()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_reset[8];
-	(void)framePad_8_reset;
+
+	
+	
 
 	gpCurNameKuri = this;
 	TWalkerEnemy::reset();

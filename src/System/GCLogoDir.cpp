@@ -129,9 +129,9 @@ void TGCLogoDir::setup(JDrama::TDisplay* param_1, TMarioGamePad* param_2)
 
 TGCLogoDir::~TGCLogoDir()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_TGCLogoDir[8];
-	(void)framePad_8_TGCLogoDir;
+
+	
+	
 	mGamePad->offFlag(TMarioGamePad::PAD_FLAG_MENU_INPUT);
 }
 

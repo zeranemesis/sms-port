@@ -18,8 +18,8 @@ void TMenuBase::perform(u32 cue, JDrama::TGraphics* graphics)
 	// ours (target frame 0x118 against 0x110). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_menuBasePerform[8];
-	(void)framePad_8_menuBasePerform;
+	
+	
 	}
 }
 

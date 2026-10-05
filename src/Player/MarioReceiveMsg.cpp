@@ -35,9 +35,9 @@ bool TMario::getNozzle(THitActor* sender, TWaterGun::TNozzleType type)
 
 void TMario::getGesso(THitActor* param_1)
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_getGesso[40];
-	(void)framePad_40_getGesso;
+
+	
+	
 	if (mStatus != 0x10000) {
 		mFaceAngle.y    = DEG2SHORTANGLE(param_1->mRotation.y);
 		mModelFaceAngle = mFaceAngle.y;

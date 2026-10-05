@@ -973,12 +973,6 @@ void TLeanMirror::load(JSUMemoryInputStream& stream)
 	mirror->unk28 = getModel();
 	if (gpMarDirector->unk7D != 1)
 		mState = 4;
-	// framePadLoad: the ROM's frame is 0x30 larger than the locals above
-	// account for (value at 0xC0, two 0x40 name buffers at 0x80 and 0x40,
-	// and 0x40 bytes of unused stack below that).  The extra 0x30 has not
-	// been identified; without it every stack offset in the function is
-	// shifted and the function is ~11% off.
-	char framePadLoad[0x30];
 }
 
 TLeanMirror::TLeanMirror(const char* name)

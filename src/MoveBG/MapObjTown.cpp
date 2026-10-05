@@ -141,9 +141,9 @@ void TManhole::touchPlayer(THitActor*)
 
 bool TManhole::animationFinished()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_animationFinished[16];
-	(void)framePad_16_animationFinished;
+
+	
+	
 	J3DFrameCtrl* frameCtrl = getMActor()->getFrameCtrl(ANM_TYPE_BCK);
 	if (frameCtrl->getRate() == 0.0f)
 		return true;
@@ -171,9 +171,9 @@ bool TManhole::animationFinished()
 
 void TManhole::appeared()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_appeared[32];
-	(void)framePad_32_appeared;
+
+	
+	
 	const TMapObjBase* assoc = unk154;
 	if (assoc) {
 		if (assoc->checkLiveFlag(LIVE_FLAG_DEAD)) {
@@ -216,9 +216,9 @@ void TManhole::appeared()
 
 void TManhole::calc()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_calc[32];
-	(void)framePad_32_calc;
+
+	
+	
 	f32 next = getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
 	           + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getRate();
 	if ((getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() <= 45.0f
@@ -246,9 +246,9 @@ void TManhole::setGroundCollision()
 
 void TManhole::makeManholeUnuseful(const TMapObjBase* param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_makeManholeUnuseful[8];
-	(void)framePad_8_makeManholeUnuseful;
+
+	
+	
 	if (unk154 == nullptr) {
 		unk154 = param_1;
 		unk158->setUpMtx(getModel()->getAnmMtx(0));
@@ -297,9 +297,9 @@ void TMapObjBillboard::swing(THitActor* param_1)
 }
 
 void TMapObjBillboard::touchActor(THitActor* param_1) {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_touchActor[8];
-	(void)framePad_8_touchActor; swing(param_1); }
+
+	
+	 swing(param_1); }
 
 u32 TMapObjBillboard::touchWater(THitActor* param_1)
 {
@@ -340,9 +340,9 @@ void TMapObjChangeStage::load(JSUMemoryInputStream& stream)
 
 void TMapObjChangeStageHipDrop::touchPlayer(THitActor*)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_touchPlayer[16];
-	(void)framePad_16_touchPlayer;
+
+	
+	
 	if (SMS_IsMarioStatusHipDrop()
 	    && gpMarioPos->y + *gpMarioSpeedY < SMS_GetMarioGrLevel()) {
 		SMSGetMarDirector()->setNextStage(unk138, nullptr);
@@ -576,9 +576,9 @@ TMapObjSwitch::TMapObjSwitch(const char* name)
 
 BOOL TRedCoinSwitch::receiveMessage(THitActor*, u32 message)
 {
-	// Frame-padding: target frame is 40 bytes larger (MWCC stack-padding quirk).
-	char framePad_40_receiveMessage[40];
-	(void)framePad_40_receiveMessage;
+
+	
+	
 	if (message == HIT_MESSAGE_HIP_DROP) {
 		startBck("redcoinswitch");
 		gpMarDirector->unk18[0]->mDisabledFrames
@@ -601,8 +601,8 @@ void TRedCoinSwitch::control()
 	// The target frame is 0x20 and it only ever touches 0x4, 0x1c and 0x24, so
 	// 0x18 bytes of it are unreferenced; ours is 0x18 and the saved r31 sits 8
 	// bytes too low.
-	char framePad_8_redCoinControl[8];
-	(void)framePad_8_redCoinControl;
+	
+	
 	switch (mState) {
 	case 1:
 		break;
@@ -661,9 +661,9 @@ TRedCoinSwitch::TRedCoinSwitch(const char* name)
 
 void TBasketReverse::kill()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_kill[8];
-	(void)framePad_8_kill;
+
+	
+	
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_A_W,
 	                                            &mPosition, 0, nullptr);
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_B,

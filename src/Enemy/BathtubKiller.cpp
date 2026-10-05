@@ -207,9 +207,9 @@ void TBathtubKiller::reset()
 
 void TBathtubKiller::resetBathtubKiller()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_resetBathtubKiller[24];
-	(void)framePad_24_resetBathtubKiller;
+
+	
+	
 	mSpine->initWith(&TNerveBathtubKillerWander::theNerve());
 	onLiveFlag(LIVE_FLAG_AIRBORNE);
 	unk208 = 0;
@@ -954,10 +954,10 @@ void TBathtubKillerManager::loadAfter()
 	TMapObjBaseManager::newAndRegisterObj("mushroom1up");
 	TMapObjBaseManager::newAndRegisterObj("mushroom1up");
 
-	// Frame-padding: the target's local area is 32 bytes larger below the
+
 	// newAndRegisterObj() temporaries (MWCC stack-padding quirk).
-	char framePad_32_loadAfter[32];
-	(void)framePad_32_loadAfter;
+	
+	
 
 	unk60 = TFlagManager::getInstance()->getFlag(0x20001);
 	unk64 = nullptr;

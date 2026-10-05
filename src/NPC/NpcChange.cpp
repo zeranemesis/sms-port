@@ -432,9 +432,9 @@ bool TBaseNPC::isStateGoToMad_() const
 
 bool TBaseNPC::isNowCanTaken() const
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_isNowCanTaken[8];
-	(void)framePad_8_isNowCanTaken;
+
+	
+	
 	bool result = false;
 	if (checkLiveFlag(LIVE_FLAG_UNK100000) && mActorType != 0x400001C
 	    && mHolder == nullptr && mHeldObject == nullptr

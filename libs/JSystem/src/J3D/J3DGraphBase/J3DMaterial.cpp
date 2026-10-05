@@ -789,7 +789,6 @@ void J3DPEBlockFull::reset(J3DPEBlock* block)
 		break;
 	}
 	case 'PEFL':
-		char trash[0x10];
 		mAlphaComp = *block->getAlphaComp();
 		mBlend     = *block->getBlend();
 		mZMode     = *block->getZMode();

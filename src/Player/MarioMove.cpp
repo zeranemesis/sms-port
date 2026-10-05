@@ -32,9 +32,9 @@ f32 TMario::getJumpAccelControl() const
 
 f32 TMario::getJumpSlideControl() const
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_getJumpSlideControl[8];
-	(void)framePad_8_getJumpSlideControl;
+
+	
+	
 	if (mStatus == MARIO_STATUS_WIRE_JUMP)
 		return mWireParams.mWireJumpSlideControl.get();
 
@@ -46,9 +46,9 @@ f32 TMario::getJumpSlideControl() const
 
 bool TMario::canSquat() const
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_canSquat[32];
-	(void)framePad_32_canSquat;
+
+	
+	
 	if (checkFlag(MARIO_FLAG_HAS_FLUDD) && mWaterGun
 	    && ((const TWaterGun*)mWaterGun)
 	               ->getCurrentNozzle()
@@ -184,7 +184,7 @@ void TMario::windMove(const JGeometry::TVec3<f32>& wind)
 
 void TMario::getGroundJumpPower() const { }
 
-BOOL TMario::onYoshi() const { return mYoshi != nullptr && mYoshi->onYoshi(); }
+BOOL TMario::onYoshi() const { return mYoshi != nullptr && mYoshi->mState == 8; }
 
 void TMario::addVelocity(f32 param_1)
 {
@@ -848,9 +848,9 @@ void TMario::checkGraffitoDamage() { }
 
 void TMario::checkGraffitoFire()
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_checkGraffitoFire[48];
-	(void)framePad_48_checkGraffitoFire;
+
+	
+	
 	if (isInvincible())
 		return;
 
@@ -886,9 +886,9 @@ void TMario::checkGraffitoLava() { }
 
 void TMario::checkGraffitoSlip()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_checkGraffitoSlip[8];
-	(void)framePad_8_checkGraffitoSlip;
+
+	
+	
 	if (isTouchGround4cm()) {
 		mFootPrintTimer = mDeParams.mFootPrintTimerMax.get();
 
@@ -951,9 +951,9 @@ void TMario::checkGraffitoSlip()
 
 void TMario::checkGraffitoElec()
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_checkGraffitoElec[48];
-	(void)framePad_48_checkGraffitoElec;
+
+	
+	
 	(void)0;
 	(void)0;
 	(void)0;
@@ -1287,9 +1287,9 @@ static inline void startForceJumpSound2(Vec* param_1, u32 param_2, f32 param_3,
 
 void TMario::checkEnforceJump()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_checkEnforceJump[24];
-	(void)framePad_24_checkEnforceJump;
+
+	
+	
 	if (mGroundPlane->isLegal() && mGroundPlane->isBounceOnLanding()
 	    && isTouchGround4cm() && (mPrevStatus & MARIO_STATUS_FLAG_JUMPING)) {
 
@@ -2107,7 +2107,7 @@ void TMario::thinkWaterSurface()
 
 	if (isInWater && mPosition.y < mFloorPosition.z) {
 		if (mFloorPosition.z > mPosition.y + mRunParams.mSwimDepth.get()) {
-			// deep water — Mario plunges in
+			// deep water - Mario plunges in
 			if (onYoshi()) {
 				mYoshi->disappear();
 				if (mWaterGun != nullptr) {
@@ -2248,9 +2248,9 @@ void TMario::thinkSand()
 
 void TMario::thinkParams()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_thinkParams[24];
-	(void)framePad_24_thinkParams;
+
+	
+	
 	mRotation.y = SHORTANGLE2DEG(mFaceAngle.y);
 	if (mInvincibilityFrames > 0)
 		mInvincibilityFrames -= 1;
@@ -2409,8 +2409,8 @@ void TMario::checkWet()
 	// ours (target frame 0x78 against 0x58). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_32_marioCheckWet[32];
-	(void)framePad_32_marioCheckWet;
+	
+	
 }
 
 void TMario::gunExec()

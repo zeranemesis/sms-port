@@ -31,7 +31,6 @@ void J3DMtxCalcBasic::recursiveUpdate(J3DNode* node)
 		return;
 
 	J3DMtxCalcBasic mtxCalc;
-	char trash[0x8]; // TODO:
 
 	MTXCopy(J3DSys::mCurrentMtx, mtxCalc.getBackupMtx());
 	mtxCalc.setBackupS(J3DSys::mCurrentS);
@@ -59,7 +58,6 @@ void J3DMtxCalcBasic::recursiveCalc(J3DNode* node)
 		return;
 
 	J3DMtxCalcBasic mtxCalc;
-	char trash[0x8]; // TODO:
 
 	MTXCopy(J3DSys::mCurrentMtx, mtxCalc.getBackupMtx());
 	mtxCalc.setBackupS(J3DSys::mCurrentS);

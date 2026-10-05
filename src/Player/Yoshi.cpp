@@ -420,9 +420,9 @@ bool TYoshi::appearFromEgg(const JGeometry::TVec3<f32>& pos, f32 yrot,
 
 bool TYoshi::disappear()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_disappear[8];
-	(void)framePad_8_disappear;
+
+	
+	
 	if (isHatched()) {
 		if (mState == STATE_MOUNTED)
 			mMario->getOffYoshi(true);
@@ -444,9 +444,9 @@ bool TYoshi::disappear()
 
 void TYoshi::kill()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_kill[8];
-	(void)framePad_8_kill;
+
+	
+	
 
 	disappear();
 	mBodyAnmSound->stop();
@@ -455,9 +455,9 @@ void TYoshi::kill()
 
 void TYoshi::ride()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_ride[24];
-	(void)framePad_24_ride;
+
+	
+	
 	mState = STATE_MOUNTED;
 
 	changeAnimation(0x16);
@@ -745,9 +745,9 @@ void TYoshi::doSearch()
 
 void TYoshi::doEat(u32 param_1)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_doEat[16];
-	(void)framePad_16_doEat;
+
+	
+	
 	int r31;
 	BOOL bVar1 = true;
 

@@ -219,9 +219,9 @@ void JPAMagnetField::set()
 }
 void JPAMagnetField::affect(JPAParticle* particle)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_affect[8];
-	(void)framePad_8_affect;
+
+	
+	
 	if (!checkStatus(STATUS_USE_GLOBAL_COORDS))
 		unk7C.sub(unk58, particle->mLocalPosition);
 	else

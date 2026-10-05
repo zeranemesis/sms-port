@@ -15,9 +15,9 @@ JPABaseEmitter::JPABaseEmitter()
     : unk0(this)
     , mRng(0)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_JPABaseEmitter[8];
-	(void)framePad_8_JPABaseEmitter;
+
+	
+	
 	MTXIdentity(mGlobalRotation);
 
 	mGlobalDynamicsScale.set(1.0f, 1.0f, 1.0f);
@@ -48,7 +48,7 @@ f32 JPABaseEmitter::getFovy() { return JPAEmitterInfoObj.mFovy; }
 
 f32 JPABaseEmitter::getAspect() { return JPAEmitterInfoObj.mAspect; }
 
-JPABaseParticle* JPABaseEmitter::newParticle()
+inline JPABaseParticle* JPABaseEmitter::newParticle()
 {
 	JPAParticle* particle
 	    = (JPAParticle*)mManager->unk0.getFirst()->getObject();
@@ -59,7 +59,7 @@ JPABaseParticle* JPABaseEmitter::newParticle()
 	return particle;
 }
 
-void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
+inline void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
                                         JSUList<JPABaseParticle>* list)
 {
 	particle->init();
@@ -67,7 +67,7 @@ void JPABaseEmitter::deleteBaseParticle(JPABaseParticle* particle,
 	mManager->unk0.prepend(particle->getLinkBufferPtr());
 }
 
-void JPABaseEmitter::deleteParticle(JPABaseParticle* particle) { }
+inline void JPABaseEmitter::deleteParticle(JPABaseParticle* particle) { }
 
 void JPABaseEmitter::deleteAllParticle()
 {
@@ -308,13 +308,13 @@ void JPABaseEmitter::loadBaseEmitterBlock(JPADataBlock* block)
 	stream >> mKeyAnmTypeMask;
 }
 
-void JPABaseEmitter::executeBeforeCallBack()
+inline void JPABaseEmitter::executeBeforeCallBack()
 {
 	if (unk110)
 		unk110->execute(this);
 }
 
-void JPABaseEmitter::executeAfterCallBack()
+inline void JPABaseEmitter::executeAfterCallBack()
 {
 	if (unk110)
 		unk110->executeAfter(this);
@@ -824,7 +824,7 @@ void JPABaseEmitter::doChildParticle()
 	}
 }
 
-f32 JPABaseEmitter::getKeyValue(f32 time, u16 frame_num, f32* frames)
+inline f32 JPABaseEmitter::getKeyValue(f32 time, u16 frame_num, f32* frames)
 {
 	return JPAGetKeyFrameValue(time, frame_num, frames);
 }
@@ -902,9 +902,9 @@ void JPABaseEmitter::calcKeyFrameAnime()
 
 void JPABaseEmitter::calc()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_calc[8];
-	(void)framePad_8_calc;
+
+	
+	
 	JPAEmitterInfoObj.mEmitCount = 0;
 
 	if (!checkStatus(STATUS_STOP_CALC))
@@ -929,7 +929,7 @@ void JPABaseEmitter::calc()
 	}
 }
 
-void JPABaseEmitter::setGlobalRMatrix(MtxPtr) { }
+inline void JPABaseEmitter::setGlobalRMatrix(MtxPtr) { }
 
 void JPABaseEmitter::setGlobalRTMatrix(MtxPtr param_1)
 {
@@ -942,6 +942,6 @@ void JPABaseEmitter::setGlobalSRTMatrix(MtxPtr param_1)
 	                       getGlobalTranslation());
 }
 
-void JPABaseEmitter::getPivotX() { }
+inline void JPABaseEmitter::getPivotX() { }
 
-void JPABaseEmitter::getPivotY() { }
+inline void JPABaseEmitter::getPivotY() { }

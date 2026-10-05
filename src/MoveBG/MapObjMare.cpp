@@ -81,11 +81,11 @@ BOOL TCogwheelScale::receiveMessage(THitActor* sender, u32 message)
 
 void TCogwheelScale::touchPlayer(THitActor* param_1)
 {
-	// Frame-padding: the target's frame is 0x58 and ours 0x20 and every one of
+
 	// its instructions matches; the original must have declared dead locals
 	// that MWCC still reserved slots for. TODO: identify them.
-	char framePad_56_touchPlayer[56];
-	(void)framePad_56_touchPlayer;
+	
+	
 	if (marioIsOn())
 		mWaterLeakPos = mRotPos;
 
@@ -263,13 +263,13 @@ void TCogwheel::calc()
 	modelMtx[0][3] = mPosition.x;
 	modelMtx[1][3] = mPosition.y;
 	modelMtx[2][3] = mPosition.z;
-	// Frame-padding: the target's frame is 0x80 and ours 0x78, and its two
+
 	// Mtx locals sit 8 bytes higher. Declaring this after them (MWCC lays
 	// locals out in declaration order from the top of the frame down) puts
 	// the dead 8 bytes below instead, which is what the target has.
 	// TODO: identify the real local the original declared here.
-	char framePad_8_calc[8];
-	(void)framePad_8_calc;
+	
+	
 }
 
 void TCogwheel::control()
@@ -473,10 +473,10 @@ void TMapObjGrowTree::updateHeight()
 
 u32 TMapObjGrowTree::touchWater(THitActor* param_1)
 {
-	// Frame-padding: the target frame is 0xe8 against our 0x80. TODO: name the
+
 	// dead local the original had.
-	char framePad_104_touchWater[104];
-	(void)framePad_104_touchWater;
+	
+	
 
 	// Only a water surface that has reached the top of the trunk starts the
 	// grow sequence.
@@ -546,11 +546,11 @@ u32 TMapObjGrowTree::touchWater(THitActor* param_1)
 
 void TMapObjGrowTree::control()
 {
-	// Frame-padding: the target frame is 0xF8 against our 0x90 without this.
+
 	// TODO: name the dead local the original had; ours still leaves the copy
 	// of mHeldObject->mPosition at 0x60 instead of 0xcc.
-	char framePad_120_control[120];
-	(void)framePad_120_control;
+	
+	
 
 	TMapObjBase::control();
 
@@ -761,10 +761,10 @@ TWireBell::TWireBell(const char* name)
 
 void TMapObjPuncher::touchPlayer(THitActor* param_1)
 {
-	// Frame-padding: the target frame is 0x68 against our 0x50. TODO: name the
+
 	// dead local the original had.
-	char framePad_24_touchPlayer[24];
-	(void)framePad_24_touchPlayer;
+	
+	
 
 	awake();
 	startAnim(1);
@@ -791,12 +791,12 @@ void TMapObjPuncher::touchPlayer(THitActor* param_1)
 
 void TMapObjPuncher::control()
 {
-	// Frame-padding: the target's frame is 0x38 and ours 0x28, and its `scale`
+
 	// TVec3 sits at 0x20(r1) instead of 0x14(r1). Declaring this after the
 	// locals (MWCC lays locals out from the top of the frame down) puts the
 	// dead 16 bytes below. TODO: identify the real local.
-	char framePad_16_control[16];
-	(void)framePad_16_control;
+	
+	
 	TMapObjBase::control();
 	switch (mState) {
 	case 0:
@@ -966,11 +966,11 @@ static bool stopAtWall(TMuddyBoat* self, TBGWallCheckRecord rec)
 
 void TMuddyBoat::bind()
 {
-	// Frame-padding: the target frame is 0x270 against our 0x190, and every
+
 	// local in it sits exactly 0xe0 higher. TODO: name the dead local the
 	// original had.
-	char framePad_224_bind[224];
-	(void)framePad_224_bind;
+	
+	
 
 	// A bound boat has already given up drifting, and a dead one has nothing
 	// to predict. Either way there is no linear velocity to report.
@@ -1144,10 +1144,10 @@ u32 TMuddyBoat::getSDLModelFlag() const
 
 void TMuddyBoat::initMapObj()
 {
-	// Frame-padding: target frame is 0x28, ours 0x20. Everything else matches.
+
 	// TODO: identify the dead 8-byte local the original had here.
-	char framePad_8_initMapObj[8];
-	(void)framePad_8_initMapObj;
+	
+	
 	TMapObjBase::initMapObj();
 	mAccelPos      = 0.04f;
 	mSpeedFriction = 0.998f;
@@ -1209,12 +1209,12 @@ static JGeometry::TVec3<f32> fall_upper_pos(2827.0f, 8604.0f, 7202.0f);
 
 void TMareFall::calc()
 {
-	// Frame-padding: the target's frame is 0x28 and ours 0x20. Every
+
 	// instruction matches, so the original must have declared a dead 8-byte
 	// local here that MWCC still reserved a stack slot for. TODO: identify
 	// it (see docs/AGENT_MATCHING_TIPS.md -- fakematch).
-	char framePad_8_calc[8];
-	(void)framePad_8_calc;
+	
+	
 	SMSGetMSound()->startSoundActor(MSD_SE_GE_FALL, &mPosition, 0, nullptr,
 	                                0, 4);
 	SMSGetMSound()->startSoundActor(MSD_SE_GE_FALL_UPPER, &fall_upper_pos, 0,
@@ -1265,11 +1265,11 @@ void TMareCork::moveObject()
 
 void TMareCork::calcRootMatrix()
 {
-	// Frame-padding: target frame is 0x30, ours 0x18. Every instruction and
+
 	// every stack offset matches modulo the dead padding. TODO: identify the
 	// local the original had here.
-	char framePad_24_calcRootMatrix[24];
-	(void)framePad_24_calcRootMatrix;
+	
+	
 	if (mIsMoving) {
 		// both wire bells count as collected once the animation has run this
 		// far; only the second call's result is branched on.
@@ -1319,11 +1319,11 @@ BOOL TMareEventPoint::receiveMessage(THitActor* sender, u32 message)
 {
 	// TODO: the exact meaning of the 0x1000 particle flag and the
 	// 0.1f normal-Z threshold have not been confirmed.
-	// Frame-padding: the target's frame is 0x30 and ours 0x28; every
+
 	// instruction and stack offset matches modulo this dead 8 bytes.
 	// TODO: identify the local the original really had here.
-	char framePad_8_receiveMessage[8];
-	(void)framePad_8_receiveMessage;
+	
+	
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		int water_id = TMapObjBase::getWaterID(sender);
 		// The target materialises this comparison into a bool first (hence

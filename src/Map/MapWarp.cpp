@@ -14,9 +14,9 @@
 
 void TMapWarp::changeModel(int i)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_changeModel[24];
-	(void)framePad_24_changeModel;
+
+	
+	
 	if (unk8 == i)
 		return;
 
@@ -30,13 +30,13 @@ void TMapWarp::warp(int) { }
 
 void TMapWarp::watchToWarp()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
+
 	// Measured: worth +0.1 pp here (45 -> 25 differing instructions).
 	// TODO: the residual is an INTERIOR shift, not bottom padding - the ROM puts
 	// `marioPos` (0xe8) and its `SMS_GetMarioPos()+unk4[point].unk8` scratch (0xa0)
 	// BELOW `mtx`/`vec2`, we put them above. checkData lands 0x10 low as a result.
-	char framePad_24_watchToWarp[24];
-	(void)framePad_24_watchToWarp;
+	
+	
 	const TBGCheckData* checkData;
 	f32 fVar8 = gpMap->checkGroundExactY(gpMarioPos->x, gpMarioPos->y + 30.0f,
 	                                     gpMarioPos->z, &checkData);
@@ -90,9 +90,9 @@ void TMapWarp::watchToWarp()
 
 void TMapWarp::initModel()
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_initModel[16];
-	(void)framePad_16_initModel;
+
+	
+	
 	// TODO: inlines
 	int num = gpMap->getModelManager()->getJointModel(0)->mChildrenNum;
 	for (int i = 0; i < num; ++i)
@@ -195,12 +195,12 @@ void TMapWarp::init(JSUMemoryInputStream& stream)
 		unkC = 8.0f;
 	}
 
-	// Frame-padding: target's local block sits 0x34 above our base (measured
+
 	// target layout: dummy at 0x64, arrays at 0x68/0xb8/0x108, temp at 0x1f8).
 	// Our frame = 0x30 base + 0x28 of MWCC expression-temporary slots (5
 	// stream>>-chain intermediates, measured) + this 12-byte pad = 0x64.
-	char framePad_12_init[12];
-	(void)framePad_12_init;
+	
+	
 }
 
 TMapWarp::TMapWarp()

@@ -195,9 +195,9 @@ TLightDrawBuffer::TLightDrawBuffer(int param_1, u32 param_2, const char* name)
     , mXluDrawBufferObject(nullptr)
     , unk80(param_1)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_TLightDrawBuffer[8];
-	(void)framePad_8_TLightDrawBuffer;
+
+	
+	
 	snprintf(unk1C, 0x32, "%s%s", name, "opa");
 	mOpaDrawBufferObject = new JDrama::TDrawBufObj(3, param_2, unk1C);
 
@@ -305,9 +305,9 @@ int TLightWithDBSet::getAmbIndex(const char* name)
 
 void TPlayerLightWithDBSet::makeDrawBuffer()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_makeDrawBuffer[32];
-	(void)framePad_32_makeDrawBuffer;
+
+	
+	
 	static const char lightName[] = "太陽（プレイヤー）";
 	static const char ambName[]   = "太陽アンビエント（プレイヤー）";
 

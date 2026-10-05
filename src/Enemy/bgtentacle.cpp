@@ -201,7 +201,6 @@ void TBGTentacleMtxCalc::calc(u16 param_1)
 	dst[1][2] = local_80.y;
 	dst[2][2] = local_80.z;
 
-	char trash[0x10]; // TODO: removeme
 }
 
 TBGTakeHit::TBGTakeHit(TBGTentacle* owner, const char* name)
@@ -676,9 +675,9 @@ void TBGTentacle::continuousRumble()
 
 void TBGTentacle::beatNode(int index, const JGeometry::TVec3<f32>& param_2)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_beatNode[8];
-	(void)framePad_8_beatNode;
+
+	
+	
 	mNodes[index].setVelocity(param_2);
 
 	f32 fVar1;
@@ -1340,9 +1339,9 @@ void TBGTentacle::resetAllNodes(const JGeometry::TVec3<f32>& param_1)
 
 void TBGTentacle::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 56 bytes larger (MWCC stack-padding quirk).
-	char framePad_56_perform[56];
-	(void)framePad_56_perform;
+
+	
+	
 	mTakeHit->perform(cue, graphics);
 
 	if (cue & CUE_MOVE) {

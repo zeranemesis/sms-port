@@ -41,9 +41,9 @@ BOOL TLampTrapSpikeHit::receiveMessage(THitActor* sender, u32 message)
 
 void TLampTrapSpikeHit::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_perform[24];
-	(void)framePad_24_perform;
+
+	
+	
 	THitActor::perform(cue, graphics);
 	if (cue & CUE_MOVE) {
 		mPosition = unk68->mPosition;

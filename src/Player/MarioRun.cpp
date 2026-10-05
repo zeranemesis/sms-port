@@ -292,9 +292,9 @@ f32 TMario::getChangeAngleSpeed()
 
 f32 TMario::getSlideStickMult()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_getSlideStickMult[32];
-	(void)framePad_32_getSlideStickMult;
+
+	
+	
 	(void)0;
 	(void)0;
 	(void)0;
@@ -1005,9 +1005,9 @@ inline BOOL TMario::toroccoing()
 
 BOOL TMario::walkEnd()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_walkEnd[8];
-	(void)framePad_8_walkEnd;
+
+	
+	
 	if (!(mInput & 0x10)) {
 		if (isRunningSlipStart())
 			return changePlayerStatus(MARIO_STATUS_SLIP, 0, false);
@@ -1375,9 +1375,9 @@ BOOL TMario::oilSlope()
 
 f32 TMario::downingCommon(int anim, f32 limit, int arg2)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_downingCommon[8];
-	(void)framePad_8_downingCommon;
+
+	
+	
 	f32 animRate = setAnimation(anim, 1.0f);
 	if (animRate < limit) {
 		slopeProcess();
@@ -1484,9 +1484,9 @@ BOOL TMario::catchDown()
 
 BOOL TMario::loserDown()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_loserDown[8];
-	(void)framePad_8_loserDown;
+
+	
+	
 	slopeProcess();
 	mForwardVel *= 0.9f;
 	if (mForwardVel * mForwardVel < 1.0f)
@@ -1521,9 +1521,9 @@ BOOL TMario::loserDown()
 
 BOOL TMario::jumpSlipCommon(s16 anim, u32 status)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_jumpSlipCommon[8];
-	(void)framePad_8_jumpSlipCommon;
+
+	
+	
 	if (mInput & 0x1) {
 		slopeProcess();
 		mForwardVel *= 0.98f;

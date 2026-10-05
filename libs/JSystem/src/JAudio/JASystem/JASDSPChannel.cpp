@@ -239,9 +239,9 @@ f32* TDSPChannel::getHistory() { return (f32*)history; }
 
 void TDSPChannel::updateAll()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_updateAll[24];
-	(void)framePad_24_updateAll;
+
+	
+	
 	DSPInterface::DSPBuffer* dspBuffer;
 	{
 		OSTick time   = OSGetTick();

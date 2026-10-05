@@ -180,8 +180,8 @@ void TMapObjGrassManager::initDrawNear() const
 	// ours (target frame 0x98 against 0x80). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_24_grassInitDrawNear[24];
-	(void)framePad_24_grassInitDrawNear;
+	
+	
 }
 
 void TMapObjGrassManager::initDrawFar() const
@@ -206,9 +206,9 @@ void TMapObjGrassManager::draw() const
 
 void TMapObjGrassManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_perform[48];
-	(void)framePad_48_perform;
+
+	
+	
 	if (cue & CUE_CALC_ANIM) {
 		f32 fVar1 = 0.0f;
 		for (int i = 0; i < 10; ++i) {

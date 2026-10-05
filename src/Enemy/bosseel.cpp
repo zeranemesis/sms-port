@@ -112,8 +112,8 @@ TBEelTearsDrop::TBEelTearsDrop(TBEelTears* owner, int jointIndex,
 	actor->setBckFromIndex(0);
 	actor->setLightType(LIGHT_TYPE_INDIRECT);
 	// TODO: the original had extra unused locals here.
-	char framePad_48_ctor[48];
-	(void)framePad_48_ctor;
+	
+	
 }
 
 void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -137,8 +137,8 @@ void TBEelTearsDrop::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 	mSharedParts->getMActor()->perform(cue, graphics);
 	// TODO: the original had extra unused locals here.
-	char framePad_16_perform[16];
-	(void)framePad_16_perform;
+	
+	
 }
 
 TBEelTearsSaveLoadParams::TBEelTearsSaveLoadParams(const char* path)
@@ -264,8 +264,8 @@ void TBEelTearsManager::splitTears(JGeometry::TVec3<f32>& position)
 			break;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_24_splitTears[24];
-	(void)framePad_24_splitTears;
+	
+	
 }
 
 TBEelTears::TBEelTears(const char* name)
@@ -316,8 +316,8 @@ void TBEelTears::init(TLiveManager* manager)
 	enemyGroup->getChildren().push_back(mRecoverCollision);
 	mRecoverCollision->onHitFlag(HIT_FLAG_NO_COLLISION);
 	// TODO: the original had extra unused locals here.
-	char framePad_16_init[16];
-	(void)framePad_16_init;
+	
+	
 }
 
 void TBEelTears::setMActorAndKeeper()
@@ -375,8 +375,8 @@ void TBEelTears::moveObject()
 
 	TLiveActor::moveObject();
 	// TODO: the original had extra unused locals here.
-	char framePad_32_moveObject[32];
-	(void)framePad_32_moveObject;
+	
+	
 }
 
 void TBEelTears::calcRootMatrix()
@@ -441,15 +441,15 @@ void TBEelTears::perform(u32 cue, JDrama::TGraphics* graphics)
 		mMActor->entry();
 	THitActor::perform(cue, graphics);
 	// TODO: the original had extra unused locals here.
-	char framePad_16_perform[16];
-	(void)framePad_16_perform;
+	
+	
 }
 
 BOOL TBEelTears::receiveMessage(THitActor*, u32 message)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_receiveMessage[8];
-	(void)framePad_8_receiveMessage;
+
+	
+	
 	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
 		mStateTimer = 60;
 		if (mSpine->getCurrentNerve() == &TNerveBEelTearsMoveUp::theNerve()
@@ -521,6 +521,22 @@ const char** TBEelTears::getBasNameTable() const
 	return bossEelTears_bastable;
 }
 
+// UNUSED: inlined in original
+void TBEelTears::setRecoverTears()
+{
+}
+
+// UNUSED: inlined in original
+BOOL TBossEel::isEyeBlurOn()
+{
+	return false;
+}
+
+// UNUSED: inlined in original
+void TBEelTearsDrop::generate(JGeometry::TVec3<f32>&)
+{
+}
+
 DEFINE_NERVE(TNerveBEelTearsGenerate, TLiveActor)
 {
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
@@ -538,9 +554,9 @@ DEFINE_NERVE(TNerveBEelTearsGenerate, TLiveActor)
 
 DEFINE_NERVE(TNerveBEelTearsMoveUp, TLiveActor)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
+
+	
+	
 	TBEelTears* tears = static_cast<TBEelTears*>(spine->getBody());
 	if (spine->getTime() == 0) {
 		tears->mMActor = tears->mMActorKeeper->getMActor("tears.bmd");
@@ -581,8 +597,8 @@ DEFINE_NERVE(TNerveBEelTearsWaterHit, TLiveActor)
 	if (tears->mHighPoly)
 		tears->mPosition.y += tears->mTearsParams->mSLTearsDamageUpSpeed.get();
 	// TODO: the original had extra unused locals here.
-	char framePad_24_execute[24];
-	(void)framePad_24_execute;
+	
+	
 	return false;
 }
 
@@ -612,8 +628,8 @@ DEFINE_NERVE(TNerveBEelTearsMarioRecover, TLiveActor)
 		tears->mRecoverCollision->mPosition.y = tears->mPosition.y;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_8_execute[8];
-	(void)framePad_8_execute;
+	
+	
 	return false;
 }
 
@@ -636,8 +652,8 @@ DEFINE_NERVE(TNerveBEelTearsSplit, TLiveActor)
 		return true;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_16_execute[16];
-	(void)framePad_16_execute;
+	
+	
 	return false;
 }
 
@@ -888,8 +904,8 @@ BOOL TBossEelTooth::receiveMessage(THitActor* sender, u32 message)
 		result = true;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_24_receiveMessage[24];
-	(void)framePad_24_receiveMessage;
+	
+	
 	return result;
 }
 
@@ -1004,8 +1020,8 @@ void TBossEelTooth::perform(u32 cue, JDrama::TGraphics* graphics)
 	THitActor::perform(cue, graphics);
 	mSharedParts->getMActor()->perform(cue, graphics);
 	// TODO: the original had extra unused locals here.
-	char framePad_64_perform[64];
-	(void)framePad_64_perform;
+	
+	
 }
 
 TBossEelVortex::TBossEelVortex(TBossEel* owner, const char* name)
@@ -1092,8 +1108,8 @@ void TBossEelVortex::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 	THitActor::perform(cue, graphics);
 	// TODO: the original had extra unused locals here.
-	char framePad_172_perform[172];
-	(void)framePad_172_perform;
+	
+	
 }
 
 void TBossEelVortex::reset()
@@ -1177,8 +1193,8 @@ void TBossEelEye::perform(u32 cue, JDrama::TGraphics* graphics)
 	getMActor()->perform(cue, graphics);
 	mCopyConnectedMtx = -1;
 	// TODO: the original had extra unused locals here.
-	char framePad_40_perform[40];
-	(void)framePad_40_perform;
+	
+	
 }
 
 void TBossEelEye::setBckAnm(int index)
@@ -1230,8 +1246,8 @@ void TBossEelHeartCoin::perform(u32 cue, JDrama::TGraphics* graphics)
 		TPosition3f heartMtx(mPosition.x, mPosition.y, mPosition.z);
 		getMActor()->getModel()->setBaseTRMtx(heartMtx);
 		// TODO: the original had an extra unused local here.
-		char framePad_44_perform[44];
-		(void)framePad_44_perform;
+		
+		
 	}
 	getMActor()->perform(cue, graphics);
 
@@ -1338,8 +1354,8 @@ void TBossEelCollision::behaveToMario()
 	SMS_MarioMoveRequest(marioTarget);
 
 	// TODO: the original had an extra unused 4-byte local here.
-	char framePad_4_behaveToMario[4];
-	(void)framePad_4_behaveToMario;
+	
+	
 
 	if (mOwner && mOwner->canEatMario())
 		mOwner->forceEat();
@@ -1372,8 +1388,8 @@ void TBossEelAwaCollision::behaveToMario()
 	marioTarget.add(*gpMarioPos);
 	SMS_MarioMoveRequest(marioTarget);
 	// TODO: the original had an extra unused 4-byte local here.
-	char framePad_4_behaveToMario[4];
-	(void)framePad_4_behaveToMario;
+	
+	
 }
 
 void TBossEelAwaCollision::perform(u32 cue, JDrama::TGraphics* graphics)
@@ -1400,8 +1416,8 @@ void TBossEelAwaCollision::perform(u32 cue, JDrama::TGraphics* graphics)
 	}
 	THitActor::perform(cue, graphics);
 	// TODO: the original had extra unused locals here.
-	char framePad_32_perform[32];
-	(void)framePad_32_perform;
+	
+	
 }
 
 void TBossEelBarrierCollision::initCollision()
@@ -1419,8 +1435,8 @@ void TBossEelBarrierCollision::behaveToMario()
 	marioTarget.add(*gpMarioPos);
 	SMS_MarioMoveRequest(marioTarget);
 	// TODO: the original had an extra unused 4-byte local here.
-	char framePad_4_behaveToMario[4];
-	(void)framePad_4_behaveToMario;
+	
+	
 }
 
 void TBossEelTearsRecoverCollision::initCollision()
@@ -1611,8 +1627,8 @@ void TBossEel::init(TLiveManager* manager)
 	initAnmSound();
 	mMActor->getModel()->calc();
 	// TODO: the original had extra unused locals here.
-	char framePad_16_init[16];
-	(void)framePad_16_init;
+	
+	
 }
 
 MtxPtr TBossEel::getTakingMtx() { return mMActor->getModel()->getAnmMtx(7); }
@@ -1632,9 +1648,9 @@ void TBossEel::calcAndSetCollisionCubeBite_()
 
 void TBossEel::updateTearsCnt()
 {
-	// Frame-padding: target frame is 80 bytes larger (MWCC stack-padding quirk).
-	char framePad_80_updateTearsCnt[80];
-	(void)framePad_80_updateTearsCnt;
+
+	
+	
 	static const s32 eyeTable[] = { 0, 2, 1, 3 };
 
 	++mTearCycleTimer;
@@ -1802,8 +1818,8 @@ void TBossEel::collideToMario()
 		correction.add(push);
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_16_collideToMario[16];
-	(void)framePad_16_collideToMario;
+	
+	
 
 	marioTarget.add(correction);
 	SMS_MarioMoveRequest(marioTarget);
@@ -2152,8 +2168,8 @@ DEFINE_NERVE(TNerveBossEelFirstSpin, TLiveActor)
 		return true;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_32_execute[32];
-	(void)framePad_32_execute;
+	
+	
 	return false;
 }
 
@@ -2189,8 +2205,8 @@ DEFINE_NERVE(TNerveBossEelSecondSpin, TLiveActor)
 		return true;
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_40_execute[40];
-	(void)framePad_40_execute;
+	
+	
 	return false;
 }
 
@@ -2235,16 +2251,16 @@ DEFINE_NERVE(TNerveBossEelAppear, TLiveActor)
 	}
 
 	// TODO: the original had extra unused locals here.
-	char framePad_32_execute[32];
-	(void)framePad_32_execute;
+	
+	
 	return false;
 }
 
 DEFINE_NERVE(TNerveBossEelOutWait, TLiveActor)
 {
-	// Frame-padding: target frame is 48 bytes larger (MWCC stack-padding quirk).
-	char framePad_48_execute[48];
-	(void)framePad_48_execute;
+
+	
+	
 	TBossEel* eel = static_cast<TBossEel*>(spine->getBody());
 	++eel->mBattleTimer;
 	if (spine->getTime() == 0) {
@@ -2315,8 +2331,8 @@ static BOOL ExecBackNerve_Sub(TSpineBase<TLiveActor>* spine, f32 speed)
 		}
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_40_ExecBackNerve_Sub[40];
-	(void)framePad_40_ExecBackNerve_Sub;
+	
+	
 	return false;
 }
 
@@ -2390,8 +2406,8 @@ DEFINE_NERVE(TNerveBossEelEat, TLiveActor)
 		}
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_76_execute[76];
-	(void)framePad_76_execute;
+	
+	
 	return false;
 }
 
@@ -2446,8 +2462,8 @@ DEFINE_NERVE(TNerveBossEelDie, TLiveActor)
 		}
 	}
 	// TODO: the original had extra unused locals here.
-	char framePad_68_execute[68];
-	(void)framePad_68_execute;
+	
+	
 	return false;
 }
 
@@ -2486,8 +2502,8 @@ DEFINE_NERVE(TNerveBossEelMouthOpenWait, TLiveActor)
 	if (eel->mMActor->checkCurBckFromIndex(14))
 		eel->mRotation.y += TBossEel::mOpenRollSpeed;
 	// TODO: the original had extra unused locals here.
-	char framePad_32_execute[32];
-	(void)framePad_32_execute;
+	
+	
 	return false;
 }
 

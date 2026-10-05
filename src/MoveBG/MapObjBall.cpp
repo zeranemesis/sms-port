@@ -172,8 +172,8 @@ void TMapObjBall::rebound(JGeometry::TVec3<f32>* position)
 	// frame-size pad: the retail frame is 0x38 bytes larger than the code
 	// needs; the extra locals the original declared here were all optimised
 	// away.
-	char framePad_56_rebound[0x38];
-	(void)framePad_56_rebound;
+	
+	
 	calcReflectingVelocity(
 	    mGroundPlane, mMapObjData->mPhysical->unk4->unk4, &mVelocity);
 	position->y = mGroundHeight;
@@ -419,8 +419,8 @@ void TMapObjBall::boundByActor(THitActor* actor)
 void TMapObjBall::touchActor(THitActor* actor)
 {
 	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	char framePad_8_touchActor[8];
-	(void)framePad_8_touchActor;
+	
+	
 	if (unk194 == 0 && !isState(STATE_HOLDING) && !isHideObj(actor)
 	    && actor->isActorType(0x08000083) && !actor->isActorType(0x400000CA)
 	    && !actor->isActorType(0x400000CC)) {
@@ -462,8 +462,8 @@ void TMapObjBall::makeObjDefault()
 {
 	// The retail frame is 8 bytes larger than the code needs; the extra
 	// locals the original declared here were all optimised away.
-	char framePad_8_makeObjDefault[8];
-	(void)framePad_8_makeObjDefault;
+	
+	
 	TMapObjBase::makeObjDefault();
 	MtxPtr mtx = getModel()->getAnmMtx(0);
 	mtx[0][3]  = mPosition.x;
@@ -474,8 +474,8 @@ void TMapObjBall::makeObjDefault()
 void TMapObjBall::makeObjAppeared()
 {
 	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	char framePad_8_makeObjAppeared[8];
-	(void)framePad_8_makeObjAppeared;
+	
+	
 	TMapObjBase::makeObjAppeared();
 	calcCurrentMtx();
 
@@ -513,8 +513,8 @@ void TMapObjBall::control()
 		// frame-size pad: the retail frame is 0x18 bytes larger than the
 		// code needs; the extra locals the original declared here were all
 		// optimised away.
-		char framePad_24_control[0x18];
-		(void)framePad_24_control;
+		
+		
 		if (!(velocity.squared() <= JGeometry::TUtil<f32>::epsilon())
 		    && mGroundPlane->mActor)
 			calcCurrentMtx();
@@ -729,8 +729,8 @@ TMapObjBall::TMapObjBall(const char* name)
 void TResetFruit::checkGroundCollision(JGeometry::TVec3<f32>* position)
 {
 	// frame-size pad: the retail frame is 0x28 bytes larger than the code needs
-	char framePad_40_checkGroundCollision[0x24];
-	(void)framePad_40_checkGroundCollision;
+	
+	
 	if (SMSGetMarDirector()->mMap == 7 || SMSGetMarDirector()->mMap == 4) {
 		if (SMSGetMarDirector()->mMap == 4) {
 			mGroundHeight = gpMap->checkGround(position->x,
@@ -777,8 +777,8 @@ void TResetFruit::waitingToAppear()
 		Mtx mtx;
 		// frame-size pad: the retail frame is 0x28 bytes larger than the
 		// code needs; the extra locals were all optimised away.
-		char framePad_36_waitingToAppear[0x24];
-		(void)framePad_36_waitingToAppear;
+		
+		
 		PSMTXScale(&mtx[0], 0.2f, 0.2f, 0.2f);
 		concatOnlyRotFromLeft(&mtx[0], getModel()->getAnmMtx(0),
 		                      getModel()->getAnmMtx(0));
@@ -795,8 +795,8 @@ void TResetFruit::waitingToAppear()
 
 void TResetFruit::makeObjWaitingToAppear()
 {
-	char framePad_8_makeObjWaitingToAppear[8];
-	(void)framePad_8_makeObjWaitingToAppear;
+	
+	
 	mState = FRUIT_STATE_ROTTING;
 	TResetFruit_hideAndWait(this);
 }
@@ -838,8 +838,8 @@ void TResetFruit::touchPollution()
 
 void TResetFruit::touchWaterSurface()
 {
-	char framePad_16_touchWaterSurface[0x10];
-	(void)framePad_16_touchWaterSurface;
+	
+	
 	emitColumnWater();
 
 	if (gpMSound->gateCheck(0x3875))
@@ -878,8 +878,8 @@ u32 TResetFruit::touchWater(THitActor* actor)
 void TResetFruit::touchActor(THitActor* actor)
 {
 	// frame-size pad: the retail frame is 0x10 bytes larger than the code needs
-	char framePad_16_touchActor[0x10];
-	(void)framePad_16_touchActor;
+	
+	
 	if (!isState(STATE_APPEARING) && !isState(STATE_BREAKING)
 	    && !isState(FRUIT_STATE_WAITING)
 	    && !isState(STATE_WAITING_TO_APPEAR)) {
@@ -899,8 +899,8 @@ void TResetFruit::touchActor(THitActor* actor)
 void TResetFruit::touchGround(JGeometry::TVec3<f32>* position)
 {
 	// frame-size pad: the retail frame is 0x10 bytes larger than the code needs
-	char framePad_16_touchGround[0x10];
-	(void)framePad_16_touchGround;
+	
+	
 	// The `? true : false` is what makes MWCC materialise the bool in r0.
 	if (mGroundPlane->mBGType == 0x800 ? true : false) {
 		mState = FRUIT_STATE_ROTTING;
@@ -977,8 +977,8 @@ void TResetFruit::rotting() { }
 void TResetFruit::breaking()
 {
 	Mtx mtx;
-	char framePad_24_breaking[0x18];
-	(void)framePad_24_breaking;
+	
+	
 	PSMTXScale(&mtx[0], 1.0f, mBreakingScaleSpeed, 1.0f);
 	J3DModel* model = getModel();
 	MtxPtr anmMtx   = model->getAnmMtx(0);
@@ -1005,8 +1005,8 @@ void TResetFruit::breaking()
 void TResetFruit::appearing()
 {
 	Mtx mtx;
-	char framePad_20_appearing[0x14];
-	(void)framePad_20_appearing;
+	
+	
 	PSMTXScale(&mtx[0], mScaleUpSpeed, mScaleUpSpeed, mScaleUpSpeed);
 	J3DModel* model = getModel();
 	MtxPtr anmMtx   = model->getAnmMtx(0);
@@ -1183,8 +1183,8 @@ void TResetFruit::killByTimer(int timer)
 void TResetFruit::makeObjAppeared()
 {
 	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	char framePad_8_makeObjAppeared[8];
-	(void)framePad_8_makeObjAppeared;
+	
+	
 	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000))
 		makeObjDefault();
 
@@ -1213,8 +1213,8 @@ void TResetFruit::makeObjAppeared()
 BOOL TResetFruit::receiveMessage(THitActor* sender, u32 message)
 {
 	// frame-size pad: the retail frame is 0x28 bytes larger than the code needs
-	char framePad_44_receiveMessage[0x2C];
-	(void)framePad_44_receiveMessage;
+	
+	
 	if (message == 0xB) {
 		if (!isState(STATE_NORMAL) && !isState(STATE_HOLDING)
 		    && !isState(FRUIT_STATE_ROTTING)) {
@@ -1329,8 +1329,8 @@ TRandomFruit::TRandomFruit(const char* name)
 void TCoverFruit::calcRootMatrix()
 {
 	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	char framePad_8_calcRootMatrix[8];
-	(void)framePad_8_calcRootMatrix;
+	
+	
 	if (mHolder != nullptr) {
 		MtxPtr mtx = mHolder->getTakingMtx();
 		PSMTXCopy(mtx, getModel()->getBaseTRMtx());
@@ -1381,8 +1381,8 @@ void TCoverFruit::loadAfter()
 void TBigWatermelon::touchWaterSurface()
 {
 	// frame-size pad: the retail frame is 8 bytes larger than the code needs
-	char framePad_8_touchWaterSurface[8];
-	(void)framePad_8_touchWaterSurface;
+	
+	
 	emitColumnWater();
 	if (gpMSound->gateCheck(0x3875))
 		MSoundSESystem::MSoundSE::startSoundActor(0x3875, &mPosition, 0,
@@ -1489,8 +1489,8 @@ void TBigWatermelon::kill()
 
 void TBigWatermelon::appearing()
 {
-	char framePad_24_appearing[0x18];
-	(void)framePad_24_appearing;
+	
+	
 	TMapObjGeneral::appearing();
 
 	MtxPtr mtx = getModel()->getAnmMtx(0);

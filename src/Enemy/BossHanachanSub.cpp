@@ -40,13 +40,13 @@ f32 BHSCalcCentrifugalForce(const JGeometry::TVec3<f32>& param_1,
 	return force;
 }
 
-// Frame-padding: the hole (frame 0x58 - lowest live slot 0x48) is 0x10 on BOTH
+
 // sides, so this is MWCC's bottom padding and a pad is the right lever.
 void BHSCalcRevisionDistXZByRotateZ(f32 param_1, f32 param_2, f32 param_3,
                                     f32* param_4, f32* param_5)
 {
-	char framePad_32_BHSCalcRevisionDistXZByRotateZ[32];
-	(void)framePad_32_BHSCalcRevisionDistXZByRotateZ;
+	
+	
 	f32 dist  = param_3 * param_2;
 	s16 angle = CLBRoundf<s16>(param_1 * (65536.0f / 360.0f));
 	// NOTE: cos MUST be declared before sin. The ROM allocates the sin lookup to

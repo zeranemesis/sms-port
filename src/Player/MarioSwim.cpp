@@ -93,9 +93,9 @@ void TMario::doSwimming()
 
 BOOL TMario::checkSwimJump()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_checkSwimJump[8];
-	(void)framePad_8_checkSwimJump;
+
+	
+	
 	if (mInput & 0x2) {
 		if (checkFlag(MARIO_FLAG_FLUDD_EMITTING) && !isUnderWater()) {
 			mPosition.y = 1.0f + mFloorPosition.z;
@@ -209,9 +209,9 @@ BOOL TMario::swimPaddleStart()
 
 BOOL TMario::swimPaddle()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_swimPaddle[8];
-	(void)framePad_8_swimPaddle;
+
+	
+	
 	f32 anmRate = 0.5f;
 	if (checkFlag(MARIO_FLAG_FLUDD_EMITTING))
 		anmRate = 5.0f;
@@ -338,9 +338,9 @@ BOOL TMario::swimPDown()
 
 BOOL TMario::swimMain()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_swimMain[24];
-	(void)framePad_24_swimMain;
+
+	
+	
 	if (checkFlag(MARIO_FLAG_GAME_OVER))
 		changePlayerStatus(MARIO_STATUS_SWIM_P_DOWN, 0, false);
 

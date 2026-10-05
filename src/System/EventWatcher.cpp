@@ -513,9 +513,9 @@ static void evRegisterMovie(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 
 static void evGameOver(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_evGameOver[16];
-	(void)framePad_16_evGameOver;
+
+	
+	
 	interp->verifyArgNum(0, &arg_num);
 	SMSGetMarDirector()->onFlag(TMarDirector::DIRECTOR_FLAG_SHINE_GET_PENDING);
 	interp->push();
@@ -668,9 +668,9 @@ static void evInsertTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 
 static void evStartTimer(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_evStartTimer[8];
-	(void)framePad_8_evStartTimer;
+
+	
+	
 	interp->verifyArgNum(1, &arg_num);
 
 	int time = interp->pop().getDataInt();
@@ -1287,9 +1287,9 @@ static void evOnNeutralMarioKey(TSpcTypedInterp<TEventWatcher>* interp,
 
 static void evInvalidatePad(TSpcTypedInterp<TEventWatcher>* interp, u32 arg_num)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_evInvalidatePad[8];
-	(void)framePad_8_evInvalidatePad;
+
+	
+	
 	interp->verifyArgNum(1, &arg_num);
 	int frames = interp->pop().getDataInt();
 

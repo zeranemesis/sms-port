@@ -18,7 +18,6 @@ static void Dsp_Update_Request();
 
 extern "C" void __DSPHandler(int interrupt, OSContext* context)
 {
-	char trash[0x2D8]; // TODO: wtf is this???
 
 	u16 temp     = __DSPRegs[5];
 	temp         = temp & ~0x28;

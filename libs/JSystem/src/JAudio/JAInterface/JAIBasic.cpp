@@ -596,9 +596,7 @@ void JAIBasic::initNullData()
 
 void JAIBasic::initDriver(JKRSolidHeap* heap, u32 aram_heap_size, u8 param_3)
 {
-	// Frame-padding hack: original frame is 0x30, ours is 0x28 (MWCC stack-padding bug).
-	char pad[8];
-	(void)pad;
+
 	s32 uVar1        = 1;
 	JKRSolidHeap* pHeap = heap;
 	u32 pAram         = aram_heap_size;

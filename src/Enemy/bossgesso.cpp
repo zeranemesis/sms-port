@@ -1222,9 +1222,9 @@ void TBossGesso::moveObject()
 
 void TBossGesso::reset()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_reset[8];
-	(void)framePad_8_reset;
+
+	
+	
 	for (int i = 0; i < TENTACLE_NUM; ++i) {
 		mTentacles[i]->resetAllNodes(mPosition);
 		mTentacles[i]->getFirstNode()->onUnk24();

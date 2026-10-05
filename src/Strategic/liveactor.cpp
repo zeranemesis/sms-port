@@ -29,9 +29,9 @@ f32 TLiveActor::mVelocityMinY = -40.0f;
 TLiveActor::TLiveActor(const char* name)
     : TTakeActor(name)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_TLiveActor[8];
-	(void)framePad_8_TLiveActor;
+
+	
+	
 	mManager       = nullptr;
 	mMActor        = nullptr;
 	mMActorKeeper  = nullptr;
@@ -144,9 +144,9 @@ void TLiveActor::initLodAnm(const TLodAnmIndex* param_1, int param_2,
 
 void TLiveActor::init(TLiveManager* manager)
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_init[24];
-	(void)framePad_24_init;
+
+	
+	
 	if (!manager) {
 		if (TObjChara* chara = (TObjChara*)unk3C) {
 			mMActorKeeper = new TMActorKeeper(nullptr, 1);
@@ -415,6 +415,13 @@ void TLiveActor::performOnlyDraw(u32 param_1, JDrama::TGraphics* param_2)
 	}
 }
 
+void TLiveActor::calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>& param_1,
+                                        f32 speed, f32 gravity) const
+{
+	JGeometry::TVec3<f32> vec;
+	SMSCalcJumpVelocityXZ(param_1, mPosition, speed, gravity, &vec);
+}
+
 JGeometry::TVec3<f32>
 TLiveActor::calcVelocityToJumpToY(const JGeometry::TVec3<f32>& param_1,
                                   f32 speed, f32 gravity) const
@@ -429,6 +436,20 @@ f32 TLiveActor::getGravityY() const { return mGravity; }
 BOOL TLiveActor::hasMapCollision() const
 {
 	return mMapCollisionManager ? 1 : 0;
+}
+
+int TLiveActor::getJointTransByName(const char* name,
+                                    JGeometry::TVec3<f32>* result) const
+{
+	const char** basTable = getBasNameTable();
+	if (!basTable)
+		return -1;
+
+	for (int i = 0; basTable[i]; i++) {
+		if (strcmp(basTable[i], name) == 0)
+			return getJointTransByIndex(i, result);
+	}
+	return -1;
 }
 
 int TLiveActor::getJointTransByIndex(int param_1,
@@ -461,9 +482,6 @@ MtxPtr TLiveActor::getTakingMtx()
 
 void TLiveActor::initAnmSound()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_initAnmSound[8];
-	(void)framePad_8_initAnmSound;
 	if (mAnmSound)
 		return;
 

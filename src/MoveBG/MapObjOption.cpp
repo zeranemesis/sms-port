@@ -32,9 +32,9 @@ static int sRumbleTime = 8;
 
 void TFileLoadBlock::touchPlayer(THitActor* param_1)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_touchPlayer[16];
-	(void)framePad_16_touchPlayer;
+
+	
+	
 	if (isState(STATE_NORMAL) && marioHeadAttack() && !isStateTimerEngaged()) {
 		startBck("fileloadblock");
 		gpCardLoad->setSelected(unk138);
@@ -51,9 +51,9 @@ void TFileLoadBlock::touchPlayer(THitActor* param_1)
 
 BOOL TFileLoadBlock::receiveMessage(THitActor* sender, u32 message)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_receiveMessage[16];
-	(void)framePad_16_receiveMessage;
+
+	
+	
 	if (isState(STATE_NORMAL) && message == HIT_MESSAGE_PUSH_UP
 	    && !isStateTimerEngaged()) {
 		startBck("fileloadblock");

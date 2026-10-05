@@ -4,7 +4,7 @@
 TBoundPane::TBoundPane(J2DScreen* param_1, u32 param_2)
 {
 	// TODO: frame pad to match the original stack frame size.
-	char framePad_8_ctor[8];
+	
 
 	unk14.x1 = 0;
 	unk14.y1 = 0;
@@ -49,7 +49,7 @@ void TBoundPane::setPaneSize(s32 param_1, const JUTPoint& param_2,
 bool TBoundPane::update()
 {
 	// TODO: frame pad to match the original stack frame size.
-	char framePad_16_update[16];
+	
 
 	if (unk24) {
 		if (unk28 > 1.0f) {

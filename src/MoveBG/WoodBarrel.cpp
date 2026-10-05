@@ -65,16 +65,16 @@ void TWoodBarrel::kill()
 	// ours (target frame 0x30 against 0x28). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_woodBarrelKill[8];
-	(void)framePad_8_woodBarrelKill;
+	
+	
 	}
 }
 
 void TWoodBarrel::appeared()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_appeared[8];
-	(void)framePad_8_appeared;
+
+	
+	
 	TMapObjGeneral::appeared();
 	if (SMS_IsMarioStatusHipDrop()) {
 		setDamageHeight(mMapObjData->mHit->unkC->unkC + 90.0f);
@@ -89,9 +89,9 @@ void TWoodBarrel::appeared()
 
 void TWoodBarrel::appear()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_appear[8];
-	(void)framePad_8_appear;
+
+	
+	
 	makeObjAppeared();
 	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_ENM_DISAP_A_W,
 	                                            &mPosition, 0, nullptr);

@@ -433,8 +433,8 @@ void TLeafBoat::control()
 	// Every one of the 16 stack references of this function sits exactly 0x30
 	// above ours (frame 0xa0 against 0x70) and the instruction stream is
 	// otherwise identical, so the target simply reserves 48 unused bytes.
-	char framePad_48_leafBoatControl[48];
-	(void)framePad_48_leafBoatControl;
+	
+	
 	if (marioHipAttack())
 		mVelocity.y -= unk154;
 

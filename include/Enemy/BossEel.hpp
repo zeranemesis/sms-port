@@ -58,6 +58,8 @@ public:
 		return THitActor::receiveMessage(sender, message);
 	}
 
+	void generate(JGeometry::TVec3<f32>&); // UNUSED: inlined in original
+
 public:
 	/* 0x68 */ TSharedParts* mSharedParts;
 	/* 0x6C */ bool mActive;
@@ -102,6 +104,7 @@ public:
 
 	void deadEffect();
 	void setBubble();
+	void setRecoverTears(); // UNUSED: inlined in original
 
 public:
 	/* 0x150 */ JGeometry::TVec3<f32> mInitialPosition;
@@ -148,23 +151,24 @@ public:
 	/* 0x134 */ TParamRT<f32> mSLToothAttackHeight;
 	/* 0x148 */ TParamRT<f32> mSLToothDamageRadius;
 	/* 0x15C */ TParamRT<f32> mSLToothDamageHeight;
-	/* 0x170 */ TParamRT<f32> mSLSpinAccel;
-	/* 0x184 */ TParamRT<f32> mSLSpinMaxSpeed;
-	/* 0x198 */ TParamRT<f32> mSLToothUpSpeed;
-	/* 0x1AC */ TParamRT<f32> mSLToothLiveHeight;
-	/* 0x1C0 */ TParamRT<s32> mSLToothMaxHitPoint;
-	/* 0x1D4 */ TParamRT<s32> mSLGenTearsTime;
-	/* 0x1E8 */ TParamRT<f32> mSLVortexAttackRadius;
-	/* 0x1FC */ TParamRT<f32> mSLVortexAttackHeight;
-	/* 0x210 */ TParamRT<f32> mSLVortexDamageRadius;
-	/* 0x224 */ TParamRT<f32> mSLVortexDamageHeight;
-	/* 0x238 */ TParamRT<s32> mSLVortexLiveTimer;
-	/* 0x24C */ TParamRT<f32> mSLVortexScaleXZ;
-	/* 0x260 */ TParamRT<f32> mSLVortexScaleY;
-	/* 0x274 */ TParamRT<s32> mSLMouthOpenFrame;
-	/* 0x288 */ TParamRT<s32> mSLMouthOpenInterval;
-	/* 0x29C */ TParamRT<s32> mSLCanEatFrame;
-	/* 0x2B0 */ TParamRT<f32> mSLBreathInPower;
+	/* 0x170 */ u8 _padding_170[0x10];
+	/* 0x180 */ TParamRT<f32> mSLSpinAccel;
+	/* 0x194 */ TParamRT<f32> mSLSpinMaxSpeed;
+	/* 0x1A8 */ TParamRT<f32> mSLToothUpSpeed;
+	/* 0x1BC */ TParamRT<f32> mSLToothLiveHeight;
+	/* 0x1D0 */ TParamRT<s32> mSLToothMaxHitPoint;
+	/* 0x1E4 */ TParamRT<s32> mSLGenTearsTime;
+	/* 0x1F8 */ TParamRT<f32> mSLVortexAttackRadius;
+	/* 0x20C */ TParamRT<f32> mSLVortexAttackHeight;
+	/* 0x220 */ TParamRT<f32> mSLVortexDamageRadius;
+	/* 0x234 */ TParamRT<f32> mSLVortexDamageHeight;
+	/* 0x248 */ TParamRT<s32> mSLVortexLiveTimer;
+	/* 0x25C */ TParamRT<f32> mSLVortexScaleXZ;
+	/* 0x270 */ TParamRT<f32> mSLVortexScaleY;
+	/* 0x284 */ TParamRT<s32> mSLMouthOpenFrame;
+	/* 0x298 */ TParamRT<s32> mSLMouthOpenInterval;
+	/* 0x2AC */ TParamRT<s32> mSLCanEatFrame;
+	/* 0x2C0 */ TParamRT<f32> mSLBreathInPower;
 };
 
 class TBossEelManager : public TEnemyManager {
@@ -370,6 +374,7 @@ public:
 	void updateTearsCnt();
 	void calcAndSetCollisionCubeBite_();
 	void generateBubble(JGeometry::TVec3<f32>&);
+	BOOL isEyeBlurOn(); // UNUSED: inlined in original
 
 	TBossEelSaveParams& getBossEelParams() const { return *mSaveParams; }
 
@@ -378,41 +383,42 @@ public:
 	};
 
 public:
-	/* 0x150 */ JGeometry::TVec3<f32> mInitialPosition;
-	/* 0x15C */ TBossEelEye* mEyes[4];
-	/* 0x16C */ TBossEelTooth* mTeeth[8];
-	/* 0x18C */ TBossEelVortex* mVortex;
-	/* 0x190 */ TMapCollisionMove* mMapCollisions[4];
-	/* 0x1A0 */ u16 mMapCollisionJointIndices[4];
-	/* 0x1A8 */ THitActor* mHeadCollision;
-	/* 0x1AC */ TCubeManagerBase* mMouthCubeManager;
-	/* 0x1B0 */ TBossEelBodyCollision* mBodyCollision;
-	/* 0x1B4 */ s32 mCurrentBckIndex;
-	/* 0x1B8 */ s32 mPreviousBckIndex;
-	/* 0x1BC */ f32 mBckBlendRatio;
-	/* 0x1C0 */ s32 mTearEyeIndex;
-	/* 0x1C4 */ s32 mTearCycleTimer;
-	/* 0x1C8 */ bool mForceEat;
-	/* 0x1CC */ f32 mSpinAngle;
-	/* 0x1D0 */ bool mTearEyeToggle;
-	/* 0x1D4 */ f32 mMouthOpenAmount;
-	/* 0x1D8 */ f32 mMouthOpenSpeed;
-	/* 0x1DC */ JGeometry::TVec3<f32> mDeathEffectPosition;
-	/* 0x1E8 */ TBossEelSaveParams* mSaveParams;
-	/* 0x1EC */ JGeometry::TVec2<s32>* mSpinTimer;
-	/* 0x1F0 */ bool mInDemo;
-	/* 0x1F4 */ f32 mAppearOffset;
-	/* 0x1F8 */ f32 mAppearAcceleration;
-	/* 0x1FC */ bool mToothDamaged;
-	/* 0x1FD */ bool mToothBroken;
-	/* 0x1FE */ bool mIsBiting;
-	/* 0x200 */ s32 mBattleTimer;
-	/* 0x204 */ JGeometry::TVec3<f32> mBreathParticlePosition;
-	/* 0x210 */ TBossEelBarrierCollision* mBarrierCollision;
-	/* 0x214 */ TBossEelAwaCollision* mAwaCollision;
-	/* 0x218 */ TBossEelHeartCoin* mHeartCoin;
-	/* 0x21C */ bool mMoguCameraActive;
-	/* 0x21D */ bool mCollisionEnabled;
+	/* 0x150 */ u8 _padding_150[4];
+	/* 0x154 */ JGeometry::TVec3<f32> mInitialPosition;
+	/* 0x160 */ TBossEelEye* mEyes[4];
+	/* 0x170 */ TBossEelTooth* mTeeth[8];
+	/* 0x190 */ TBossEelVortex* mVortex;
+	/* 0x194 */ TMapCollisionMove* mMapCollisions[4];
+	/* 0x1A4 */ u16 mMapCollisionJointIndices[4];
+	/* 0x1AC */ THitActor* mHeadCollision;
+	/* 0x1B0 */ TCubeManagerBase* mMouthCubeManager;
+	/* 0x1B4 */ TBossEelBodyCollision* mBodyCollision;
+	/* 0x1B8 */ s32 mCurrentBckIndex;
+	/* 0x1BC */ s32 mPreviousBckIndex;
+	/* 0x1C0 */ f32 mBckBlendRatio;
+	/* 0x1C4 */ s32 mTearEyeIndex;
+	/* 0x1C8 */ s32 mTearCycleTimer;
+	/* 0x1CC */ bool mForceEat;
+	/* 0x1D0 */ f32 mSpinAngle;
+	/* 0x1D4 */ bool mTearEyeToggle;
+	/* 0x1D8 */ f32 mMouthOpenAmount;
+	/* 0x1DC */ f32 mMouthOpenSpeed;
+	/* 0x1E0 */ JGeometry::TVec3<f32> mDeathEffectPosition;
+	/* 0x1EC */ TBossEelSaveParams* mSaveParams;
+	/* 0x1F0 */ JGeometry::TVec2<s32>* mSpinTimer;
+	/* 0x1F4 */ bool mInDemo;
+	/* 0x1F8 */ f32 mAppearOffset;
+	/* 0x1FC */ f32 mAppearAcceleration;
+	/* 0x200 */ bool mToothDamaged;
+	/* 0x201 */ bool mToothBroken;
+	/* 0x202 */ bool mIsBiting;
+	/* 0x204 */ s32 mBattleTimer;
+	/* 0x208 */ JGeometry::TVec3<f32> mBreathParticlePosition;
+	/* 0x214 */ TBossEelBarrierCollision* mBarrierCollision;
+	/* 0x218 */ TBossEelAwaCollision* mAwaCollision;
+	/* 0x21C */ TBossEelHeartCoin* mHeartCoin;
+	/* 0x220 */ bool mMoguCameraActive;
+	/* 0x221 */ bool mCollisionEnabled;
 };
 
 inline const TBossEel* TBossEelEye::getOwner() const

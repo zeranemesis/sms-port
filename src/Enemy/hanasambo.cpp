@@ -344,9 +344,9 @@ void TSamboFlower::init(TLiveManager* manager)
 
 void TSamboFlower::setMActorAndKeeper()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_setMActorAndKeeper[8];
-	(void)framePad_8_setMActorAndKeeper;
+
+	
+	
 	mMActorKeeper = new TMActorKeeper(mManager, 1);
 	mMActor       = mMActorKeeper->createMActor("flower.bmd", 3);
 	setMaterialToMActor(mMActor, ((TSamboFlowerManager*)mManager)->unk64);
@@ -355,9 +355,9 @@ void TSamboFlower::setMActorAndKeeper()
 
 BOOL TSamboFlower::receiveMessage(THitActor* sender, u32 message)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_receiveMessage[8];
-	(void)framePad_8_receiveMessage;
+
+	
+	
 	if (message == 0xF) {
 		if (!unk150)
 			bloom();
@@ -638,10 +638,10 @@ void THanaSambo::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void THanaSambo::createPollen()
 {
-	// Frame-padding: target frame is 8 bytes larger, 4 above and 4 below the
+
 	// locals (MWCC stack-padding quirk). TODO: find the real locals.
-	char framePad_4_createPollen[4];
-	(void)framePad_4_createPollen;
+	
+	
 	JGeometry::TVec3<f32> pos;
 	Mtx transform;
 	MtxPtr jointMtx = mMActor->getModel()->getAnmMtx(mPollenJntIndex);
@@ -667,8 +667,8 @@ void THanaSambo::createPollen()
 	}
 	if (emitter)
 		emitter->setGlobalSRTMatrix(transform);
-	char framePad_4b_createPollen[4];
-	(void)framePad_4b_createPollen;
+	
+	
 }
 
 
@@ -786,9 +786,9 @@ BOOL TNerveHanaSamboWait::execute(TSpineBase<TLiveActor>* spine) const
 
 BOOL TNerveHanaSamboAttack::execute(TSpineBase<TLiveActor>* spine) const
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_attack[8];
-	(void)framePad_8_attack;
+
+	
+	
 	THanaSambo* self = (THanaSambo*)spine->getBody();
 
 	if (spine->getTime() == 0) {
@@ -1045,9 +1045,9 @@ u8 TSamboHead::mBodyJntIndex;
 
 static int SamboHeadRollCallback(J3DNode* node, int unk)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_SamboHeadRollCallback[8];
-	(void)framePad_8_SamboHeadRollCallback;
+
+	
+	
 	// TODO: the retail frame puts the axis/rate triple at +0xac, `up` at
 	// +0xdc, `side` at +0xe8, `velocity` at +0xf4 and the Mtx at +0x100; MWCC
 	// hands us a different set of slots, so every lfs/stfs in the three
@@ -1269,9 +1269,9 @@ void TSamboHead::setDeadAnm() { setBckAnm(3); }
 
 void TSamboHead::setAfterDeadEffect()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_setAfterDeadEffect[32];
-	(void)framePad_32_setAfterDeadEffect;
+
+	
+	
 	JPABaseEmitter* emitter;
 	if (isBckAnm(1)) {
 		emitter = gpMarioParticleManager->emit(0xE5, &mPosition, 0, nullptr);

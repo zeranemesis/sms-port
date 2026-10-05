@@ -142,16 +142,6 @@ public:
 // Keep this out of callers whose original code makes a direct call.
 inline BOOL TYoshi::onYoshi()
 {
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
-	(void)0;
 	return mState == STATE_MOUNTED ? TRUE : FALSE;
 }
 

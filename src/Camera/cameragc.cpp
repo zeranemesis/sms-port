@@ -139,9 +139,9 @@ void CPolarSubCamera::startJetCoasterCam1()
 
 static s32 JetCoasterDemoCallBack(uintptr_t param_1, u32 param_2)
 {
-	// Frame-padding: target frame is 16 bytes larger (MWCC stack-padding quirk).
-	char framePad_16_JetCoasterDemoCallBack[16];
-	(void)framePad_16_JetCoasterDemoCallBack;
+
+	
+	
 	if (param_2 == 1)
 		((CPolarSubCamera*)param_1)->startJetCoasterCam1();
 
@@ -395,13 +395,13 @@ void CPolarSubCamera::onMoveApproach_()
 	                           mCurrentParams->mDistMax, mCurrentTarget.unk28);
 }
 
-bool CPolarSubCamera::isMarioReadyGun_() const
+inline bool CPolarSubCamera::isMarioReadyGun_() const
 {
-	// NOTE: it is a complete MYSTERY to me as to why this
-	// checkStatusType isn't inlined...
-	return gpMarioOriginal->checkFlag(MARIO_FLAG_HAS_FLUDD)
-	       && gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_UNK8000);
-}
+ 	// NOTE: it is a complete MYSTERY to me as to why this
+ 	// checkStatusType isn't inlined...
+ 	return gpMarioOriginal->checkFlag(MARIO_FLAG_HAS_FLUDD)
+ 	       && gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_UNK8000);
+ }
 
 bool CPolarSubCamera::isMarioAimWithGun_() const
 {

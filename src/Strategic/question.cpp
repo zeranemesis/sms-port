@@ -63,8 +63,8 @@ void TQuestionManager::makeDL(JDrama::TGraphics* param_1) const
 	// ours (target frame 0xa8 against 0xa0). Declared last on purpose: mwcc
 	// gives the low addresses to the last-declared local, so this is what
 	// pushes the other locals and the saved registers up to the target.
-	char framePad_8_questionMakeDL[8];
-	(void)framePad_8_questionMakeDL;
+	
+	
 }
 #pragma dont_inline off
 
@@ -104,9 +104,9 @@ void TQuestionManager::draw() const
 
 void TQuestionManager::perform(u32 cue, JDrama::TGraphics* graphics)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_perform[8];
-	(void)framePad_8_perform;
+
+	
+	
 	if ((cue & CUE_CALC_VIEW) != 0) {
 		if (gpSilhouetteManager->isUnk48Positive()) {
 			unk20->reset();

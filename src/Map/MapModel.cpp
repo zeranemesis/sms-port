@@ -59,9 +59,9 @@ void TMapModel::perform(u32 cue, JDrama::TGraphics* graphics)
 
 void TMapModel::initUnderpass()
 {
-	// Frame-padding: target frame is 32 bytes larger (MWCC stack-padding quirk).
-	char framePad_32_initUnderpass[32];
-	(void)framePad_32_initUnderpass;
+
+	
+	
 	s32 nameIdx = mModelData->getJointName()->getIndex("underpass");
 	if (nameIdx < 0)
 		return;

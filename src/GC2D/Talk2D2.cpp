@@ -94,8 +94,8 @@ void TTalk2D2::openWindow(s8 line, f32 progress)
 	// fakematch: the retail body reserves a 0x148-byte frame, ours only 0x130.
 	// TODO: the extra 0x18 bytes are almost certainly real named locals in the
 	// original, not slack - the body's own operands still differ.
-	char framePad_24_openWindow[0x18];
-	(void)framePad_24_openWindow;
+	
+	
 	J2DPane* pane = unk90;
 	const f32 centerX = pane->mGlobalBounds.x1 + 5.0f;
 	const f32 centerY = pane->mGlobalBounds.y1 + 5.0f;
@@ -413,8 +413,8 @@ void TTalk2D2::setupTextBox(const void* buffer, JMSMesgEntry* entry)
 	// 0x10 low: the original keeps two more 4-byte TColor temporaries than we
 	// do, and a pad cannot be interleaved into the middle of the local area.
 	// TODO: find the two extra JUtility::TColor temporaries.
-	char framePad_16_setupTextBox[0x10];
-	(void)framePad_16_setupTextBox;
+	
+	
 	if (unk28) {
 		setupBoardTextBox(buffer, entry);
 		return;
@@ -539,8 +539,8 @@ void TTalk2D2::setupBoardTextBox(const void* buffer, JMSMesgEntry* messageEntry)
 	// TODO: the DOL keeps a separate 1-byte stack slot per stream read
 	// (0x28/0x29/0x2a/0x2b/0x2c/0x2d) where we reuse one `character` local;
 	// those slots are what most of the missing 0x10 bytes are.
-	char framePad_16_setupBoardTextBox[0x10];
-	(void)framePad_16_setupBoardTextBox;
+	
+	
 	const TMessageLoader::EntryInfo* entry
 	    = reinterpret_cast<const TMessageLoader::EntryInfo*>(messageEntry);
 	const u8* messageData = static_cast<const u8*>(buffer) + entry->unk0 + unk278;
@@ -606,8 +606,8 @@ void TTalk2D2::perform(u32 cue, JDrama::TGraphics* graphics)
 	// TODO: the missing 0x70 bytes are real locals in the original (the
 	// switch jump-table scratch area plus the seven case-arm temporaries);
 	// a pad does not move the operands that are still wrong.
-	char framePad_112_perform[0x70];
-	(void)framePad_112_perform;
+	
+	
 	if ((cue & 1) && gpMarDirector->unk124 == 2 && unk248 <= 8) {
 		switch (unk248) {
 		case 2: {
@@ -766,8 +766,8 @@ bool TTalk2D2::eraseBoardWindow()
 {
 	// fakematch: the retail body reserves a 0x30-byte frame, ours only 0x28.
 	// Every instruction already matches; this restores the missing 8 bytes.
-	char framePad_8_eraseBoardWindow[8];
-	(void)framePad_8_eraseBoardWindow;
+	
+	
 	s16 alpha = unk18->getAlpha();
 	alpha -= 4;
 	bool finished = false;
@@ -792,8 +792,8 @@ bool TTalk2D2::eraseNormalWindow()
 	// fakematch: the retail body reserves a 0x48-byte frame, ours only 0x38.
 	// TODO: the missing 0x10 bytes are the per-line loop temporaries the DOL
 	// keeps live across the 90-marker unrolled loop.
-	char framePad_16_eraseNormalWindow[0x10];
-	(void)framePad_16_eraseNormalWindow;
+	
+	
 	s16 alpha = unk90->getAlpha() - 0x10;
 	bool finished = false;
 	if (alpha < 0) {
@@ -882,8 +882,8 @@ void TTalk2D2::checkControler()
 	// fakematch: the retail body reserves a 0xA8-byte frame, ours only 0x30.
 	// TODO: 0x78 bytes of missing locals - the original clearly holds the
 	// `meaning`/gate results in named bools; a pad cannot recover them.
-	char framePad_120_checkControler[0x78];
-	(void)framePad_120_checkControler;
+	
+	
 	const u32 meaning = unk24C->mEnabledFrameMeaning;
 	const s32 line = unk274;
 	if (unk6C[line]->mVisible) {
@@ -966,8 +966,8 @@ void TTalk2D2::moveTalkWindow()
 	// fakematch: the retail body reserves a 0x40-byte frame, ours only 0x18.
 	// TODO: the missing 0x28 bytes are the animated/selected pane temporaries
 	// the original keeps across the tail; the operands are still wrong.
-	char framePad_40_moveTalkWindow[0x28];
-	(void)framePad_40_moveTalkWindow;
+	
+	
 	// Reveal the next character in each of the three lines. The DOL indexes
 	// each marker as line * 30 + progress and uses the per-marker delay table
 	// at +0x281 when it first becomes visible.
@@ -1113,8 +1113,8 @@ void TTalk2D2::checkBoardControler()
 	// Every instruction and its order already matches. Declared LAST so that
 	// MWCC lays it out below the three JUTPoint locals, which is where the
 	// retail frame has its 0x38 bytes of slack.
-	char framePad_56_checkBoardControler[0x38];
-	(void)framePad_56_checkBoardControler;
+	
+	
 }
 
 void TTalk2D2::moveBoardWindow()
@@ -1156,8 +1156,8 @@ bool TTalk2D2::openNormalWindow()
 	// TODO: the DOL re-loads unk9C[markerIndex] for every access in the inner
 	// while-loop (three lwz in the reveal arm); dropping the named `marker`
 	// pointer should recover that and the remaining register numbering.
-	char framePad_40_openNormalWindow[0x28];
-	(void)framePad_40_openNormalWindow;
+	
+	
 	bool finished = false;
 	if (static_cast<u16>(unk2DE) > 2
 	    && unk24C->checkMeaning(TMarioGamePad::MEANING_SELECT_A)) {
@@ -1258,8 +1258,8 @@ void TTalk2D2::makeBoxLine(s8 line, char* text)
 	// TODO: 0xA0 bytes of missing locals; the float spills in the target
 	// (0x128/0x130/0x138/0x148/0x168/0x194/0x198) do not line up with ours,
 	// so the quadratic-curve locals are still mis-shaped.
-	char framePad_160_makeBoxLine[0xA0];
-	(void)framePad_160_makeBoxLine;
+	
+	
 	const s32 lineIndex = line;
 	JUTPoint control(0, unk54[lineIndex]->mBounds.y1 - unk220);
 	JUTPoint start(unk48[lineIndex]->getBounds().x1,
@@ -1381,8 +1381,8 @@ void TTalk2D2::openTalkWindow(TBaseNPC* npc)
 {
 	// fakematch: the retail body reserves a 0xB8-byte frame, ours only 0x78.
 	// TODO: 0x40 bytes of missing locals (the two JUTPoint switch arms).
-	char framePad_64_openTalkWindow[0x40];
-	(void)framePad_64_openTalkWindow;
+	
+	
 	if (npc != nullptr)
 		gpCamera->makeMtxForTalk(npc);
 
@@ -1451,8 +1451,8 @@ void TTalk2D2::closeTalkWindow() {}
 void TTalk2D2::forceCloseTalk() {
 	// The retail function reserves a 0x30-byte frame; keep the otherwise
 	// matching instruction stream while restoring the missing 8 bytes.
-	char framePad_8_forceCloseTalk[8];
-	(void)framePad_8_forceCloseTalk;
+	
+	
 	gpCamera->makeMtxForPrevTalk();
 	if (unk28) {
 		if (gpMSound->gateCheck(0x4851))
@@ -1600,8 +1600,8 @@ void TTalk2D2::setMessageID(u32 messageID, u32 secondaryParam)
 	// fakematch: the retail body reserves a 0x58-byte frame, ours only 0x40.
 	// TODO: 0x18 bytes of missing locals (the two `bool isMonte/isMare` slots
 	// plus one more); the pad only fixes the prologue/epilogue.
-	char framePad_24_setMessageID[0x18];
-	(void)framePad_24_setMessageID;
+	
+	
 }
 
 void TTalk2D2::loadAfter()
@@ -1610,8 +1610,8 @@ void TTalk2D2::loadAfter()
 	// Every instruction and its order already match; the frame size is the
 	// only difference left.
 	// TODO: 0x50 bytes of missing locals in the original.
-	char framePad_80_loadAfter[0x50];
-	(void)framePad_80_loadAfter;
+	
+	
 	JDrama::TNameRef::loadAfter();
 	JUTPoint control(0, unk54[1]->mBounds.y1 - unk220);
 	JUTPoint start(unk48[1]->getBounds().x1, unk48[1]->getBounds().y1);

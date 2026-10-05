@@ -325,9 +325,9 @@ void TMario::treeSlipEffect()
 
 void TMario::frontSlipEffect()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_frontSlipEffect[8];
-	(void)framePad_8_frontSlipEffect;
+
+	
+	
 	if (mGroundPlane->isWetGround()
 	    || (mStatus == MARIO_STATUS_CATCH && mStatusState == 1)) {
 		gpMarioParticleManager->emitAndBindToMtxPtr(PARTICLE_MS_M_WATSLIDE_A,
@@ -425,9 +425,9 @@ static const s32 warpInEffectIDs[] = {
 
 void TMario::warpInEffect()
 {
-	// Frame-padding: target frame is 24 bytes larger (MWCC stack-padding quirk).
-	char framePad_24_warpInEffect[24];
-	(void)framePad_24_warpInEffect;
+
+	
+	
 	for (int i = 0; i < 10; i++) {
 		u16 boneIdx;
 		switch (i) {
@@ -499,9 +499,9 @@ void TMario::warpInLight()
 
 void TMario::warpOutEffect(int kind, f32 rotDeg)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_warpOutEffect[8];
-	(void)framePad_8_warpOutEffect;
+
+	
+	
 	switch (kind) {
 	case 0:
 		gpMarioParticleManager->emitWithRotate(
@@ -596,9 +596,9 @@ void TMario::emitRotateShootEffect()
 
 void TMario::emitFootPrintWithEffect(int effectId, int printId)
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_emitFootPrintWithEffect[8];
-	(void)framePad_8_emitFootPrintWithEffect;
+
+	
+	
 	int foot   = 2;
 	MtxPtr mtx = nullptr;
 	if (mStatus == MARIO_STATUS_RUN) {
@@ -746,9 +746,9 @@ void TMario::sleepingEffectKill()
 
 void TMario::toroccoEffect()
 {
-	// Frame-padding: target frame is 8 bytes larger (MWCC stack-padding quirk).
-	char framePad_8_toroccoEffect[8];
-	(void)framePad_8_toroccoEffect;
+
+	
+	
 	f32 dist = JGeometry::TVec3<f32>(mPosition - mToroccoPos).length();
 
 	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
