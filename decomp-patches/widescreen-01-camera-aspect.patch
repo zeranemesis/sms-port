@@ -14,13 +14,12 @@ Reason: port: SMS_WIDESCREEN widens the game camera's aspect by the displayed wi
  extern void* gpSceneCmnDat;
  extern int gpSceneCmnDatSize;
  
-@@ -397,6 +403,9 @@
- #endif
+@@ -374,5 +374,8 @@
+ // The retail code divides by the render height, not the video height.
  		cam->mAspect = (u16)SMSGetGameVideoWidth() * 0.91346145f
- 		               / (u16)SMSGetGameVideoHeight();
+ 		               / (u16)SMSGetGameRenderHeight();
 +#ifdef TARGET_PC
 +		cam->mAspect *= port_widescreen;
 +#endif
  	}
  
- 	unk80 = new JDrama::TViewObjPtrListT<JDrama::TViewObj>("イベントグループ");

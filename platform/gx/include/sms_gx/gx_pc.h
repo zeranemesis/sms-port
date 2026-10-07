@@ -48,6 +48,12 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h);
  * Skipped when settings.txt has `launcher = off` (unless Shift is held, or
  * force is set). Returns 1 to start the game, 0 when the player quit. */
 int GXPC_RunLauncher(const char* settingsPath, const char* bindingsPath, int force);
+/* Shared native frontend, opened by F1 in the PAL game window. */
+void GXPC_MenuInit(void* window, void* glContext);
+int GXPC_MenuProcessEvent(const void* event);
+void GXPC_MenuDraw(int width, int height);
+int GXPC_MenuVisible(void);
+void GXPC_MenuToggle(void);
 /* 1 while the window holds the mouse for mouse look (SMS_MOUSE_CAMERA). */
 int GXPC_MouseCaptured(void);
 /* Name tags over other players (online co-op), for the next presented frame:

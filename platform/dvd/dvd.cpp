@@ -37,6 +37,8 @@ struct Entry {
 };
 
 std::vector<Entry> g_fst;
+std::vector<Entry> g_baseFst;
+std::string g_overlaySignature;
 GCDisc* g_disc; // disc image (platform/disc), or NULL for an extracted folder
 u32 g_cwd;
 DVDDiskID g_disk_id;
@@ -408,6 +410,11 @@ static void apply_user_mods()
 	}
 }
 
+static std::string overlay_signature() {
+    const char* mod=getenv("SMS_MOD");
+    const char* movie=getenv("SMS_HD_CUTSCENES");
+    return std::string(mod?mod:"")+"\n"+(movie?movie:"");
+}
 static void apply_mods()
 {
 	if (const char* pack = port_hd_cutscene_directory()) {
@@ -418,12 +425,14 @@ static void apply_mods()
 	}
 	// Explicit mods may provide their own story movies or other assets.
 	apply_user_mods();
+	g_overlaySignature=overlay_signature();
 }
 
 extern "C" void port_dvd_init(void)
 {
 	if (open_image()) {
 		g_cwd = 0;
+		g_baseFst=g_fst;
 		apply_mods();
 		return;
 	}
@@ -457,7 +466,23 @@ extern "C" void port_dvd_init(void)
 		memcpy(g_disk_id.company, "01", 2);
 	}
 	port_log("[dvd] FST: %u entries from %s\n", (unsigned)g_fst.size(), root.c_str());
+	g_baseFst=g_fst;
 	apply_mods();
+}
+
+// Only call at a scene resource-load boundary, after the previous scene is
+// discarded. Disc entry numbers stay stable; currently loaded archives remain
+// in memory until the game's normal scene cleanup, never forcibly freed here.
+extern "C" void sms_frontend_commit_disc_overlays()
+{
+    if(g_baseFst.empty() || overlay_signature()==g_overlaySignature) return;
+    for(Entry& entry:g_fst) if(entry.fd>=0) close(entry.fd);
+    const u32 cwd=g_cwd;
+    g_fst=g_baseFst;
+    g_added.clear();
+    g_cwd=cwd<g_fst.size()?cwd:0;
+    apply_mods();
+    port_log("[dvd] frontend overlays changed at scene resource load\n");
 }
 
 // All of disc file `path`, read at once with no drive timing, for host use
@@ -489,6 +514,7 @@ extern "C" int port_dvd_override(const char* path, const void* data, u32 size)
 		return 0;
 	g_fst[e].mem    = (const u8*)data;
 	g_fst[e].length = size;
+	if ((u32)e<g_baseFst.size()) {g_baseFst[e].mem=(const u8*)data;g_baseFst[e].length=size;}
 	return 1;
 }
 

@@ -224,6 +224,17 @@ void textureInvalidateAll() {
     g_statTexInvalidates++;
 }
 
+void textureRefreshPacks() {
+    // The EFB copy cache is independent and must survive a pack switch.
+    for (auto& entry : s_cache) glDeleteTextures(1, &entry.second.tex);
+    s_cache.clear();
+    s_ranges.clear();
+    s_rangesSorted = true;
+    s_maxBytes = 0;
+    textureInvalidateAll();
+    glcInvalidate();
+}
+
 void textureInvalidateRange(const void* p, uint32_t size) {
     if (!s_rangesSorted) {
         std::sort(s_ranges.begin(), s_ranges.end(),
@@ -398,8 +409,8 @@ static std::unordered_map<uint64_t, GLuint> s_samplers;
 
 // SMS_ANISO=n: anisotropic filtering for every filtered texture, clamped to
 // the driver's maximum (EXT/ARB_texture_filter_anisotropic, core in GL 4.6).
+static float s_aniso = -1.0f;
 static float anisotropy() {
-    static float s_aniso = -1.0f;
     if (s_aniso >= 0.0f) return s_aniso;
     s_aniso = 0.0f;
     const char* e = getenv("SMS_ANISO");
@@ -412,6 +423,21 @@ static float anisotropy() {
     if (s_aniso > 1.0f) logmsg("anisotropic filtering %gx", double(s_aniso));
     else logmsg("anisotropic filtering is not supported by this driver");
     return s_aniso;
+}
+
+void textureSetAnisotropy(float want) {
+    float next = 0.0f;
+    if (want > 1.0f) {
+        while (glGetError() != GL_NO_ERROR) {}
+        GLint maxAniso = 0;
+        glGetIntegerv(0x84FF, &maxAniso);
+        if (glGetError() == GL_NO_ERROR && maxAniso > 1) next = std::min(want, float(maxAniso));
+    }
+    if (s_aniso == next) return;
+    s_aniso = next;
+    for (auto& entry : s_samplers) glDeleteSamplers(1, &entry.second);
+    s_samplers.clear();
+    glcInvalidate();
 }
 
 // hires: log2 of a texture pack replacement's size over the GX size (-1 for
@@ -566,7 +592,7 @@ unsigned bindTextureMap(int map, float* outW, float* outH) {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(levels - 1));
     }
-    if (!e.hires.empty()) {  // the replacement, once decoded (the original meanwhile)
+    if (hiresEnabled() && !e.hires.empty()) {  // the replacement, once decoded (the original meanwhile)
         int scale = 0;
         if (GLuint t = hiresTexture(e.hires, map, w, h, &scale)) {
             glcBindTexture(map, t);

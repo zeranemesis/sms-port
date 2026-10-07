@@ -6,6 +6,14 @@
 // Dear ImGui (third_party/imgui) draws it through SDL2 and OpenGL 3.3, with
 // its own GL loader: the game's renderer is not involved.
 #include "sms_gx/gx_pc.h"
+#include "gx_live_settings.h"
+#include "../include/gx_frontend_language.h"
+#include "../../frontend/pc_services.h"
+#ifdef SMS_PARTYBOARD_UI
+#include "../../frontend/partyboard_backend.h"
+#include "../../frontend/partyboard_menu.h"
+#include "../../frontend/retroachievements.h"
+#endif
 
 #ifdef SMS_GX_HAVE_SDL2
 #include <SDL.h>
@@ -24,6 +32,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -84,10 +93,21 @@ bool writeLines(const std::string& path, const std::vector<std::string>& lines) 
     std::string tmp = path + ".tmp";
     FILE* f = fopen(tmp.c_str(), "w");
     if (!f) return false;
-    for (const std::string& l : lines) fprintf(f, "%s\n", l.c_str());
-    fclose(f);
-    remove(path.c_str());
+    bool ok = true;
+    for (const std::string& l : lines) if (fprintf(f, "%s\n", l.c_str()) < 0) ok = false;
+    if (fclose(f) != 0) ok = false;
+    if (!ok) { remove(tmp.c_str()); return false; }
+#ifdef _WIN32
+    return MoveFileExW(std::filesystem::u8path(tmp).c_str(), std::filesystem::u8path(path).c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
     return rename(tmp.c_str(), path.c_str()) == 0;
+#endif
+}
+
+bool fileExists(const std::string& path) {
+    std::error_code error;
+    return std::filesystem::is_regular_file(std::filesystem::u8path(path), error);
 }
 
 bool isDir(const std::string& p) {
@@ -332,9 +352,9 @@ void applyTheme(float scale) {
 }
 
 // ------------------------------------------------------------------ the menu
-enum Page { P_INSTALL, P_DISPLAY, P_GRAPHICS, P_CAMERA, P_GAMEPLAY, P_ONLINE, P_AUDIO, P_CONTROLS, P_ABOUT, P_COUNT };
+enum Page { P_INSTALL, P_DISPLAY, P_GRAPHICS, P_CAMERA, P_GAMEPLAY, P_ONLINE, P_AUDIO, P_CONTROLS, P_SAVES, P_ACHIEVEMENTS, P_UPDATES, P_ABOUT, P_COUNT };
 const char* const kPageNames[P_COUNT] = {"Install", "Display", "Graphics", "Camera", "Gameplay",
-                                         "Online", "Audio", "Controls", "About"};
+                                         "Online", "Audio", "Controls", "Saves", "Achievements", "Updates", "About"};
 const char* const kPageBlurbs[P_COUNT] = {
     "Point the launcher at your own Super Mario Sunshine disc image to install the game.",
     "Window, monitor and how the picture fits your screen.",
@@ -344,6 +364,9 @@ const char* const kPageBlurbs[P_COUNT] = {
     "Play together: host a game or join a friend's, and see each other in the same level.",
     "Sound output and volume.",
     "Keyboard bindings for controller 1. Game controllers work automatically.",
+    "Back up your memory card. Restoring uses a new card on the next launch.",
+    "Local achievements based on your actual Shine and blue-coin progress.",
+    "Verified Windows PAL releases. Downloads never overwrite the running game.",
     "About this build.",
 };
 
@@ -1060,6 +1083,7 @@ int countTextures(const std::string& dir) {  // tex1_* files below dir
 }
 
 struct Launcher {
+    bool inGame = false;
     SettingsFile settings;
     BindingsFile bindings;
     std::string baseDir;
@@ -1096,7 +1120,7 @@ struct Launcher {
         const float x0 = ImGui::GetCursorPosX();
         const float wrap = rowControlX() - 16.0f * scale;
         ImGui::PushFont(bold, 0.0f);
-        ImGui::TextUnformatted(label);
+        ImGui::TextUnformatted(sms_frontend::translate(label));
         ImGui::PopFont();
         if (help && *help) {
             ImGui::PushStyleColor(ImGuiCol_Text, kDim);
@@ -1174,8 +1198,8 @@ struct Launcher {
     void toggle(const char* label, const char* help, const char* key, bool def) {
         std::string cur = settings.get(key, def ? "on" : "off");
         bool on = cur == "on" || cur == "1" || cur == "yes" || cur == "true";
+        settings.set(key, on ? "on" : "off");
         choice(label, help, key, def ? "on" : "off", {{"off", "Off"}, {"on", "On"}});
-        (void)on;
     }
 
     void sliderInt(const char* label, const char* help, const char* key, int def, int lo, int hi,
@@ -1325,7 +1349,7 @@ struct Launcher {
         choice("Scaling filter",
                "How the picture is scaled to the window. Smooth averages extra pixels when supersampling; Sharp keeps "
                "crisp pixel edges; Nearest is unfiltered.",
-               "present_filter", "bilinear", {{"bilinear", "Smooth"}, {"sharp", "Sharp"}, {"nearest", "Nearest"}});
+               "present_filter", "bilinear", {{"bilinear", "Smooth"}, {"nearest", "Nearest"}});
     }
 
     void pageGraphics() {
@@ -1357,7 +1381,6 @@ struct Launcher {
                false);
         choice("Anisotropic filtering", "Keeps ground and wall textures sharp at steep angles.", "anisotropic", "0",
                {{"0", "Off"}, {"2", "2x"}, {"4", "4x"}, {"8", "8x"}, {"16", "16x"}});
-        sliderInt("Sharpening", "Contrast-adaptive sharpening of the final picture.", "sharpen", 0, 0, 100, "%d%%");
         sliderFloat("Brightness", "1.00 is the original image.", "brightness", 1.0f, 0.5f, 2.0f, "%.2f");
         textureRows();
     }
@@ -1523,6 +1546,14 @@ struct Launcher {
     }
 
     void pageGameplay() {
+        choice("Language", "Game language changes take effect after restarting the game.",
+               "language", "en", {{"en", "English"}, {"fr", "Français"},
+                                   {"de", "Deutsch"}, {"es", "Español"}, {"it", "Italiano"}});
+#ifdef _WIN32
+        _putenv_s("SMS_LANGUAGE", settings.get("language", "en").c_str());
+#else
+        setenv("SMS_LANGUAGE", settings.get("language", "en").c_str(), 1);
+#endif
         choice("Frame rate", "60 runs gameplay at twice the original frame rate, at the game's normal speed. "
                "Menus and movies stay at 30.",
                "frame_rate", "30", {{"30", "30 fps (original)"}, {"60", "60 fps"}});
@@ -1653,6 +1684,11 @@ struct Launcher {
 
     void refreshInstalled() {
         installed.clear();
+        const std::string extracted = settings.get("SMS_DISC_ROOT", "");
+        if (!extracted.empty() && fileExists(extracted + "/data/nintendo.szs")) {
+            installed = extracted;
+            return;
+        }
         if (!discSource.empty()) {
             installed = discSource == "bundled" ? "Built into this executable" : discSource;
             return;
@@ -1839,9 +1875,56 @@ struct Launcher {
         info("Settings file", settings.path.c_str());
         info("Key bindings", bindings.path.c_str());
         info("In-game keys", "F11 or Alt+Enter: fullscreen.   ` (backtick): performance overlay.   "
-             "F7 with the overlay open: game speed.   Esc: quit.");
+             "F7 with the overlay open: game speed.   F1: menu and pause.");
         info("About", "Super Mario Sunshine PC port, built from the decompilation. The game itself is read from "
              "your own disc image. Launcher drawn with Dear ImGui.");
+    }
+
+    void serviceMessage(const sms_frontend::ServiceResult& result) {
+        status = result.message;
+        statusUntil = ImGui::GetTime() + 15.0;
+    }
+    void pageSaves() {
+        info("Memory card", sms_frontend::save_directory().c_str());
+        if (ImGui::Button(sms_frontend::text("Back up memory card", "Sauvegarder la carte mémoire")))
+            serviceMessage(sms_frontend::backup_saves());
+        ImGui::TextWrapped("%s", sms_frontend::text("Restore creates a separate card for the next launch. Your currently loaded card is preserved.", "La restauration crée une carte séparée au prochain lancement. La carte chargée reste intacte."));
+        const auto backups = sms_frontend::save_backups();
+        if (backups.empty()) ImGui::TextUnformatted(sms_frontend::text("No backups yet.", "Aucune sauvegarde de secours."));
+        for (const auto& path : backups) {
+            ImGui::PushID(path.c_str());
+            ImGui::TextWrapped("%s", std::filesystem::path(path).filename().string().c_str());
+            if (ImGui::Button(sms_frontend::text("Restore on next launch", "Restaurer au prochain lancement")))
+                serviceMessage(sms_frontend::prepare_save_restore(path));
+            ImGui::PopID();
+        }
+    }
+    void pageAchievements() {
+        ImGui::TextWrapped("%s", sms_frontend::text("Progress is read from the loaded game. Existing saves count. These are local achievements.", "La progression vient du jeu chargé. Les sauvegardes existantes comptent. Ces succès sont locaux."));
+        for (const auto& achievement : sms_frontend::achievements()) {
+            ImGui::TextWrapped("%s  %s", achievement.unlocked ? "[+]" : "[ ]", achievement.title.c_str());
+            ImGui::TextWrapped("%s", achievement.description.c_str());
+            ImGui::Separator();
+        }
+    }
+    void pageUpdates() {
+        if (ImGui::Button(sms_frontend::translate("Check for updates")))
+            sms_frontend::check_updates(sms_frontend::installed_release());
+        const auto update = sms_frontend::update_status();
+        ImGui::TextWrapped("%s", update.message.c_str());
+        if (!update.version.empty()) info("Release", update.version.c_str());
+        if (update.state == sms_frontend::UpdateState::Available &&
+            ImGui::Button(sms_frontend::text("Download verified update", "Télécharger la mise à jour vérifiée")))
+            sms_frontend::download_update();
+        if (update.state == sms_frontend::UpdateState::Ready) {
+            info("Downloaded archive", update.staged_path.c_str());
+            ImGui::TextWrapped("%s", sms_frontend::text("Install after quitting. Existing binaries are backed up; saves, mods and settings are preserved.", "Installation après fermeture. Les exécutables sont sauvegardés ; sauvegardes, mods et réglages sont conservés."));
+            if (ImGui::Button(sms_frontend::text("Install and restart", "Installer et redémarrer"))) {
+                const auto result = sms_frontend::prepare_update_installation();
+                serviceMessage(result);
+                if (result.ok) { SDL_Event event = {}; event.type = SDL_QUIT; SDL_PushEvent(&event); }
+            }
+        }
     }
 
     // --- chrome
@@ -1882,7 +1965,7 @@ struct Launcher {
         dl->AddText(bold, titleSize, ImVec2(tp.x + 3 * scale, tp.y + 4 * scale), IM_COL32(10, 40, 90, 140), title);
         dl->AddText(bold, titleSize, tp, IM_COL32(255, 255, 255, 255), title);
         dl->AddText(bold, 20.0f * scale, ImVec2(tp.x + 2 * scale, tp.y + titleSize + 4 * scale),
-                    IM_COL32(255, 225, 120, 255), "PC PORT   \xC2\xB7   LAUNCHER");
+                    IM_COL32(255, 225, 120, 255), inGame ? "DOLPHINJET PAL   \xC2\xB7   MENU" : "DOLPHINJET PAL   \xC2\xB7   PC PORT");
     }
 
     bool frame(bool& quit) {
@@ -1913,6 +1996,7 @@ struct Launcher {
         const float navH = std::min(46.0f * scale, (bodyH - 28.0f * scale) / float(P_COUNT) -
                                                        ImGui::GetStyle().ItemSpacing.y);
         for (int i = 0; i < P_COUNT; i++) {
+            if (i == P_ONLINE || (inGame && i == P_INSTALL)) continue;
             const bool on = page == i;
             ImGui::PushStyleColor(ImGuiCol_Header, on ? kAccent : ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, on ? kAccentHot : ImVec4(1, 1, 1, 0.08f));
@@ -1920,7 +2004,7 @@ struct Launcher {
             ImGui::PushStyleVar(ImGuiStyleVar_SelectableTextAlign, ImVec2(0.0f, 0.5f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 10.0f * scale);
             char id[64];
-            snprintf(id, sizeof id, "   %s##nav%d", kPageNames[i], i);
+            snprintf(id, sizeof id, "   %s##nav%d", sms_frontend::translate(kPageNames[i]), i);
             if (ImGui::Selectable(id, true, 0, ImVec2(sideW - 24 * scale, navH))) {
                 page = Page(i);
                 capture = -1;
@@ -1937,7 +2021,7 @@ struct Launcher {
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(28 * scale, 22 * scale));
         ImGui::BeginChild("page", ImVec2(W - sideW - pad * 3, bodyH), ImGuiChildFlags_AlwaysUseWindowPadding);
         ImGui::PushFont(bold, ImGui::GetStyle().FontSizeBase * 1.6f);
-        ImGui::TextUnformatted(kPageNames[page]);
+        ImGui::TextUnformatted(sms_frontend::translate(kPageNames[page]));
         ImGui::PopFont();
         ImGui::PushStyleColor(ImGuiCol_Text, kDim);
         ImGui::TextUnformatted(kPageBlurbs[page]);
@@ -1952,6 +2036,9 @@ struct Launcher {
         case P_ONLINE: pageOnline(); break;
         case P_AUDIO: pageAudio(); break;
         case P_CONTROLS: pageControls(); break;
+        case P_SAVES: pageSaves(); break;
+        case P_ACHIEVEMENTS: pageAchievements(); break;
+        case P_UPDATES: pageUpdates(); break;
         default: pageAbout(); break;
         }
         ImGui::EndChild();
@@ -1967,17 +2054,17 @@ struct Launcher {
             ImGui::TextUnformatted(status.c_str());
             ImGui::PopStyleColor();
         } else {
-            ImGui::TextUnformatted("Enter: play     Esc: quit     Arrows / controller: navigate");
+            ImGui::TextUnformatted(inGame ? sms_frontend::text("F1 / Esc: resume   Arrows / controller: navigate", "F1 / Échap : reprendre   Flèches / manette : naviguer") : sms_frontend::text("Enter: play     Esc: quit     Arrows / controller: navigate", "Entrée : jouer   Échap : quitter   Flèches / manette : naviguer"));
         }
-        ImGui::TextUnformatted("Settings are saved to settings.txt when you press Play.");
+        ImGui::TextUnformatted(inGame ? sms_frontend::text("Window, volume and controls apply on resume. Rendering and game language need a restart.", "Fenêtre, volume et commandes appliqués à la reprise. Rendu et langue du jeu : redémarrage.") : sms_frontend::text("Settings are saved to settings.txt when you press Play.", "Les réglages sont enregistrés au lancement du jeu."));
         ImGui::PopStyleColor();
         ImGui::EndGroup();
 
         const float bw = 150 * scale, bh = 56 * scale, playW = 220 * scale;
         ImGui::SetCursorPos(ImVec2(W - pad - playW - (bw + 12 * scale) * 2, fy + (footerH - bh) / 2));
-        if (ImGui::Button("Quit", ImVec2(bw, bh))) quit = true;
+        if (ImGui::Button(sms_frontend::translate("Quit"), ImVec2(bw, bh))) quit = true;
         ImGui::SameLine(0, 12 * scale);
-        if (ImGui::Button("Save", ImVec2(bw, bh))) {
+        if (ImGui::Button(sms_frontend::translate("Save"), ImVec2(bw, bh))) {
             const bool ok = settings.save() & bindings.save();
             status = ok ? "Settings saved." : "Could not write the settings files.";
             statusUntil = ImGui::GetTime() + 3.0;
@@ -1991,7 +2078,7 @@ struct Launcher {
         // the play button pulses gently
         const float pulse = 0.5f + 0.5f * sinf(t * 3.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, bh * 0.5f);
-        if (ImGui::Button("PLAY  \xE2\x96\xB6", ImVec2(playW, bh))) play = true;
+        if (ImGui::Button(inGame ? sms_frontend::text("RESUME", "REPRENDRE") : sms_frontend::text("PLAY  \xE2\x96\xB6", "JOUER  \xE2\x96\xB6"), ImVec2(playW, bh))) play = true;
         ImGui::GetWindowDrawList()->AddRect(ImGui::GetItemRectMin() - ImVec2(3, 3) * pulse * scale,
                                             ImGui::GetItemRectMax() + ImVec2(3, 3) * pulse * scale,
                                             IM_COL32(255, 214, 64, int(120 * (1.0f - pulse))), bh * 0.5f, 0,
@@ -2004,10 +2091,13 @@ struct Launcher {
             if (ImGui::IsKeyPressed(ImGuiKey_Enter, false) || ImGui::IsKeyPressed(ImGuiKey_KeypadEnter, false)) {
                 if (!ImGui::IsAnyItemActive()) play = true;
             }
-            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) quit = true;
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+                if (inGame) play = true;
+                else quit = true;
+            }
             if (ImGui::IsKeyPressed(ImGuiKey_GamepadStart, false)) play = true;
         }
-        if (play && (installed.empty() || job.running)) {  // nothing to play yet
+        if (!inGame && play && (installed.empty() || job.running)) {  // nothing to play yet
             play = false;
             page = P_INSTALL;
             status = job.running ? "Wait for the install to finish." : "Install the game first: select your disc image.";
@@ -2046,7 +2136,260 @@ ImFont* loadFont(const char* const* paths, float size) {
 
 }  // namespace
 
+namespace {
+std::string s_frontendSettings = "settings.txt", s_frontendBindings = "bindings.txt";
+std::unique_ptr<Launcher> s_gameMenu;
+#ifdef SMS_PARTYBOARD_UI
+std::unique_ptr<sms_frontend::PartyBoardMenu> s_partyboardMenu;
+#endif
+bool s_gameMenuVisible = false;
+SDL_Window* s_gameMenuWindow = nullptr;
+}
+
+extern "C" void sms_frontend_audio_volume(int percent);
+extern "C" void sms_frontend_audio_menu_pause(int paused);
+extern "C" void sms_frontend_reload_input();
+extern "C" float sms_frontend_apply_game_settings(const char*, int, int);
+extern "C" void sms_frontend_sync_game_rate();
+extern "C" void sms_frontend_apply_language(const char*);
+
+static bool saveGameMenu() {
+    Launcher& menu = *s_gameMenu;
+    const auto enabled = [](const std::string& value) {
+        return value == "on" || value == "1" || value == "yes" || value == "true";
+    };
+    if (!(menu.settings.save() & menu.bindings.save())) {
+        menu.status = sms_frontend::text("Could not save settings. Check file permissions.", "Impossible d'enregistrer les réglages. Vérifiez les droits des fichiers.");
+        menu.statusUntil = double(SDL_GetTicks()) / 1000.0 + 15;
+        return false;
+    }
+    GXPC_ApplyMenuWindowSettings(menu.settings.get("vsync", "off").c_str(),
+                               menu.settings.get("window_mode", "windowed").c_str(),
+                               menu.settings.get("fullscreen_mode", "desktop").c_str(),
+                               atoi(menu.settings.get("display", "0").c_str()),
+                               atoi(menu.settings.get("window_scale", "0").c_str()),
+                               enabled(menu.settings.get("mouse_camera", "off")));
+    static const char* cameraKeys[] = {"camera_invert_x", "camera_invert_y", "camera_speed", "free_camera", "mouse_sensitivity"};
+    static const char* cameraEnv[] = {"SMS_CAMERA_INVERT_X", "SMS_CAMERA_INVERT_Y", "SMS_CAMERA_SPEED", "SMS_FREE_CAMERA", "SMS_MOUSE_SENSITIVITY"};
+    static const char* cameraDefault[] = {"off", "off", "100", "off", "100"};
+    for (int i = 0; i < 5; ++i) {
+        const std::string value = menu.settings.get(cameraKeys[i], cameraDefault[i]);
+#ifdef _WIN32
+        _putenv_s(cameraEnv[i], value.c_str());
+        _putenv_s("SMS_BINDINGS", menu.bindings.path.c_str());
+#else
+        setenv(cameraEnv[i], value.c_str(), 1);
+        setenv("SMS_BINDINGS", menu.bindings.path.c_str(), 1);
+#endif
+    }
+    sms_frontend_audio_volume(!enabled(menu.settings.get("audio", "on"))
+                             ? 0 : atoi(menu.settings.get("volume", "100").c_str()));
+    sms_frontend_reload_input();
+    const float wide = sms_frontend_apply_game_settings(menu.settings.get("widescreen", "off").c_str(),
+        atoi(menu.settings.get("frame_rate", "30").c_str()), enabled(menu.settings.get("skip_movies", "off")));
+    sms_frontend_sync_game_rate();
+    sms_frontend_apply_language(menu.settings.get("language", "en").c_str());
+    GXPC_ApplyMenuGraphicsSettings(atoi(menu.settings.get("resolution", "1").c_str()),
+        atoi(menu.settings.get("msaa", "0").c_str()), enabled(menu.settings.get("fxaa", "off")),
+        atoi(menu.settings.get("anisotropic", "0").c_str()), atof(menu.settings.get("brightness", "1.0").c_str()),
+        menu.settings.get("aspect", "keep").c_str(), menu.settings.get("present_filter", "bilinear").c_str(),
+        wide, menu.settings.get("widescreen_hud", "centre") == "edges");
+    const float actualWide=GXPC_GetMenuWidescreen();
+    if(fabs(actualWide-wide)>0.0001f) {
+        // A failed GPU allocation retains the previous EFB. Keep the game's
+        // camera/frustum in agreement with that retained framebuffer.
+        const std::string ratio=std::to_string(actualWide*(4.0f/3.0f));
+        sms_frontend_apply_game_settings(ratio.c_str(),atoi(menu.settings.get("frame_rate","30").c_str()),enabled(menu.settings.get("skip_movies","off")));
+    }
+
+    const std::string selectedMod=menu.settings.get("mod","none");
+#ifdef _WIN32
+    _putenv_s("SMS_MOD",selectedMod.c_str());
+    _putenv_s("SMS_HD_CUTSCENES",enabled(menu.settings.get("hd_cutscenes","on"))?"":"0");
+#else
+    setenv("SMS_MOD",selectedMod.c_str(),1);
+    setenv("SMS_HD_CUTSCENES",enabled(menu.settings.get("hd_cutscenes","on"))?"":"0",1);
+#endif
+    GXPC_ApplyMenuTexturePacks(enabled(menu.settings.get("texture_packs", "on")));
+    if (GXPC_OverlayVisible() != enabled(menu.settings.get("overlay", "off"))) GXPC_OverlayToggle();
+    return true;
+}
+
+extern "C" void GXPC_MenuInit(void* window, void* glContext) {
+    if (!window || !glContext || s_gameMenu) return;
+    if (const char* path = getenv("SMS_SETTINGS")) s_frontendSettings = path;
+    else if (!fileExists(s_frontendSettings) && fileExists("../../settings.txt")) s_frontendSettings = "../../settings.txt";
+    if (const char* path = getenv("SMS_BINDINGS")) s_frontendBindings = path;
+    else if (s_frontendSettings.compare(0, 6, "../../") == 0) s_frontendBindings = "../../bindings.txt";
+    s_gameMenuWindow = static_cast<SDL_Window*>(window);
+#ifndef SMS_PARTYBOARD_UI
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_NavEnableGamepad;
+#endif
+    s_gameMenu.reset(new Launcher);
+    Launcher& menu = *s_gameMenu;
+    menu.inGame = true;
+    menu.settings.path = s_frontendSettings;
+    menu.bindings.path = s_frontendBindings;
+    menu.settings.load();
+    if (const char* language = getenv("SMS_LANGUAGE")) menu.settings.set("language", language);
+    static const char* settingKeys[] = {"vsync", "window_mode", "fullscreen_mode", "display", "window_scale", "mouse_camera", "volume", "audio", "resolution", "frame_rate", "widescreen", "aspect", "overlay", "camera_invert_x", "camera_invert_y", "camera_speed", "free_camera", "mouse_sensitivity"};
+    static const char* settingEnvs[] = {"SMS_VSYNC", "SMS_WINDOW_MODE", "SMS_FULLSCREEN_MODE", "SMS_DISPLAY", "SMS_WINDOW_SCALE", "SMS_MOUSE_CAMERA", "SMS_VOLUME", "SMS_AUDIO", "SMS_GX_SCALE", "SMS_FRAME_RATE", "SMS_WIDESCREEN", "SMS_ASPECT", "SMS_OVERLAY", "SMS_CAMERA_INVERT_X", "SMS_CAMERA_INVERT_Y", "SMS_CAMERA_SPEED", "SMS_FREE_CAMERA", "SMS_MOUSE_SENSITIVITY"};
+    for (size_t i = 0; i < sizeof settingKeys / sizeof settingKeys[0]; ++i)
+        if (const char* value = getenv(settingEnvs[i])) menu.settings.set(settingKeys[i], value);
+    static const char* booleanKeys[] = {"audio", "mouse_camera", "overlay", "camera_invert_x", "camera_invert_y", "free_camera"};
+    for (const char* key : booleanKeys) {
+        const std::string value = menu.settings.get(key, !strcmp(key, "audio") ? "on" : "off");
+        menu.settings.set(key, value == "on" || value == "1" || value == "yes" || value == "true" ? "on" : "off");
+    }
+    if (menu.settings.get("vsync", "off") == "1") menu.settings.set("vsync", "on");
+    if (menu.settings.get("vsync", "off") == "0") menu.settings.set("vsync", "off");
+    if (menu.settings.get("widescreen", "off") == "on" || menu.settings.get("widescreen", "off") == "1")
+        menu.settings.set("widescreen", "16:9");
+    menu.bindings.load();
+    const size_t slash = s_frontendSettings.find_last_of("/\\");
+    menu.baseDir = slash == std::string::npos ? "" : s_frontendSettings.substr(0, slash + 1);
+#ifdef SMS_PARTYBOARD_UI
+    int width = 0, height = 0;
+    SDL_GL_GetDrawableSize(s_gameMenuWindow, &width, &height);
+    if (!sms_partyboard::Initialize(window, glContext, width, height)) {
+        fprintf(stderr, "[partyboard] menu initialization failed\n");
+        return;
+    }
+    sms_frontend::ra::initialize();
+    if(const char* disc=getenv("SMS_DISC_IMAGE")) sms_frontend::ra::set_disc_path(disc);
+    else if(const char* root=getenv("SMS_DISC_ROOT")) sms_frontend::ra::set_disc_path(root);
+    sms_frontend::MenuBindings bindings;
+    menu.scanMods();
+    bindings.onModsInstalled = [] { GXPC_RefreshMenuTexturePacks(); };
+    bindings.availableMods = menu.mods;
+    bindings.refreshMods = [] { s_gameMenu->scanMods(); return s_gameMenu->mods; };
+    bindings.getSetting = [](const char* key, const char* fallback) { return s_gameMenu->settings.get(key, fallback); };
+    bindings.setSetting = [](const char* key, const std::string& value) { s_gameMenu->settings.set(key, value); };
+    bindings.getBinding = [](int index) { return index >= 0 && index < kNumControls ? s_gameMenu->bindings.keys[index] : std::string(); };
+    bindings.setBinding = [](int index, const std::string& value) { if (index >= 0 && index < kNumControls) { s_gameMenu->bindings.keys[index] = value; saveGameMenu(); } };
+    bindings.onSave = [] { return saveGameMenu(); };
+    bindings.onResume = [] {
+        if (!saveGameMenu()) return false;
+        s_gameMenuVisible = false;
+        sms_frontend_audio_menu_pause(0);
+        sms_partyboard::ResetInput();
+        return true;
+    };
+    bindings.onQuit = [] { SDL_Event event = {}; event.type = SDL_QUIT; SDL_PushEvent(&event); };
+    if (char* base = SDL_GetBasePath()) {
+        std::error_code resourceError;
+        const std::filesystem::path resourcePath = std::filesystem::path(base) / "res" / "partyboard";
+        const std::filesystem::path relativeResourcePath = std::filesystem::relative(resourcePath, std::filesystem::current_path(resourceError), resourceError);
+        if (!resourceError && !relativeResourcePath.is_absolute()) bindings.resourceDirectory = relativeResourcePath.generic_string();
+        SDL_free(base);
+    }
+    s_partyboardMenu.reset(new sms_frontend::PartyBoardMenu(sms_partyboard::GetContext(), std::move(bindings)));
+    if (!s_partyboardMenu->available()) {
+        fprintf(stderr, "[partyboard] could not load the settings document\n");
+        sms_frontend::ra::shutdown();
+    s_partyboardMenu.reset();
+        return;
+    }
+    fprintf(stderr, "[partyboard] native RmlUi menu initialized\n");
+    if (const char* open = getenv("SMS_MENU_ON_START"))
+        if (*open && strcmp(open, "0") && strcmp(open, "off") && strcmp(open, "false")) GXPC_MenuToggle();
+#else
+    applyTheme(1.0f);
+    static const char* fonts[] = {"C:\\Windows\\Fonts\\segoeui.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", nullptr};
+    menu.body = loadFont(fonts, 18.0f);
+    if (!menu.body) menu.body = io.Fonts->AddFontDefault();
+    menu.bold = menu.body;
+    io.FontDefault = menu.body;
+    ImGui::GetStyle().FontSizeBase = 18.0f;
+    ImGui_ImplSDL2_InitForOpenGL(s_gameMenuWindow, glContext);
+    ImGui_ImplOpenGL3_Init("#version 330 core");
+    menu.scanDisplays();
+    menu.scanMods();
+#endif
+}
+extern "C" int GXPC_MenuVisible(void) { return s_gameMenu && s_gameMenuVisible; }
+extern "C" void GXPC_MenuToggle(void) {
+    if (!s_gameMenu) return;
+#ifdef SMS_PARTYBOARD_UI
+    if (!s_partyboardMenu) return;
+#endif
+    if (s_gameMenuVisible && !saveGameMenu()) return;
+    s_gameMenuVisible = !s_gameMenuVisible;
+    sms_frontend_audio_menu_pause(s_gameMenuVisible);
+    if (s_gameMenuVisible) s_gameMenu->bindings.load();
+#ifdef SMS_PARTYBOARD_UI
+    sms_partyboard::ResetInput();
+    if (s_gameMenuVisible) s_partyboardMenu->show();
+    else s_partyboardMenu->hide();
+#endif
+}
+extern "C" int GXPC_MenuProcessEvent(const void* event) {
+    if (!s_gameMenu || !s_gameMenuVisible || !event) return 0;
+    const SDL_Event& ev = *static_cast<const SDL_Event*>(event);
+#ifdef SMS_PARTYBOARD_UI
+    if (!s_partyboardMenu) return 1;
+    if (s_partyboardMenu->waitingForBinding() && ev.type == SDL_KEYDOWN && !ev.key.repeat)
+        s_partyboardMenu->captureBinding(keyName(int(ev.key.keysym.scancode)));
+    else sms_partyboard::ProcessEvent(event);
+#else
+    if (s_gameMenu->capture >= 0 && ev.type == SDL_KEYDOWN && !ev.key.repeat) {
+        const std::string name = keyName(int(ev.key.keysym.scancode));
+        std::string& keys = s_gameMenu->bindings.keys[s_gameMenu->capture];
+        keys = s_gameMenu->captureAdd && !keys.empty() ? keys + " " + name : name;
+        s_gameMenu->capture = -1;
+    } else ImGui_ImplSDL2_ProcessEvent(&ev);
+#endif
+    return 1;
+}
+extern "C" void GXPC_MenuDraw(int width, int height) {
+    if (!s_gameMenu) return;
+    #ifdef SMS_PARTYBOARD_UI
+    sms_frontend::ra::pump();
+    #endif
+    if (!s_gameMenuVisible) return;
+#ifdef SMS_PARTYBOARD_UI
+    if (s_partyboardMenu) {
+        s_partyboardMenu->update();
+        sms_partyboard::Render(width, height);
+    }
+#else
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+    bool quit = false;
+    if (s_gameMenu->frame(quit) && saveGameMenu()) {
+        s_gameMenuVisible = false;
+        sms_frontend_audio_menu_pause(0);
+    }
+    if (quit) { SDL_Event event = {}; event.type = SDL_QUIT; SDL_PushEvent(&event); s_gameMenuVisible = false; }
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+#endif
+}
+
+extern "C" void GXPC_MenuShutdown(void) {
+    if (!s_gameMenu) return;
+#ifdef SMS_PARTYBOARD_UI
+    sms_frontend::ra::shutdown();
+    s_partyboardMenu.reset();
+    sms_partyboard::Shutdown();
+#else
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplSDL2_Shutdown();
+    ImGui::DestroyContext();
+#endif
+    s_gameMenu.reset();
+    s_gameMenuVisible = false;
+    s_gameMenuWindow = nullptr;
+}
+
 extern "C" int GXPC_RunLauncher(const char* settingsPath, const char* bindingsPath, int force) {
+    s_frontendSettings = settingsPath ? settingsPath : "settings.txt";
+    s_frontendBindings = bindingsPath ? bindingsPath : "bindings.txt";
     Launcher L;
     L.settings.path = settingsPath && *settingsPath ? settingsPath : "settings.txt";
     L.bindings.path = bindingsPath && *bindingsPath ? bindingsPath : "bindings.txt";
@@ -2202,4 +2545,10 @@ extern "C" int GXPC_RunLauncher(const char* settingsPath, const char* bindingsPa
 
 #else  // no SDL2: no launcher, the game starts directly
 extern "C" int GXPC_RunLauncher(const char*, const char*, int) { return 1; }
+extern "C" void GXPC_MenuInit(void*, void*) { }
+extern "C" int GXPC_MenuProcessEvent(const void*) { return 0; }
+extern "C" void GXPC_MenuDraw(int, int) { }
+extern "C" int GXPC_MenuVisible(void) { return 0; }
+extern "C" void GXPC_MenuToggle(void) { }
+extern "C" void GXPC_MenuShutdown(void) { }
 #endif

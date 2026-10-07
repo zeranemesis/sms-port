@@ -262,6 +262,7 @@ static PrimClass s_bclass = PRIM_TRIS;
 struct Xfb {
     GLuint tex;
     int w, h;
+    int nativeHeight;  // retained XFB may use the previous live EFB scale
 };
 static std::unordered_map<const void*, Xfb> s_xfbs;
 static const void* s_lastXfb = nullptr;
@@ -364,7 +365,7 @@ void main() {
 // ------------------------------------------------------------ post-processing
 // The XFB reaches the window through up to two passes: FXAA at the XFB's own
 // size (SMS_FXAA), then a scaling pass into the letterboxed viewport that also
-// sharpens (SMS_SHARPEN) and applies the brightness curve (SMS_GAMMA).
+// applies the brightness curve (SMS_GAMMA).
 // SMS_PRESENT_FILTER picks the scaler: bilinear (an area average when the
 // XFB is larger than the window, so a high internal resolution supersamples),
 // nearest, or sharp (bilinear only between texels: crisp pixels at any size).
@@ -409,7 +410,6 @@ uniform sampler2D u_tex;
 uniform vec2 u_src;      // texture size in texels
 uniform vec2 u_dst;      // viewport size in pixels
 uniform int u_filter;    // 0 bilinear/area, 1 nearest, 2 sharp
-uniform float u_sharpen; // 0..1
 uniform float u_gamma;   // 1: unchanged; above 1 brightens
 in vec2 v_uv;
 out vec4 o_color;
@@ -440,16 +440,6 @@ vec3 fetch(vec2 uv) {
 }
 void main() {
   vec3 c = fetch(v_uv);
-  if (u_sharpen > 0.0) {
-    // contrast-adaptive: sharpen less where the neighbourhood already has contrast
-    vec2 d = max(1.0 / u_src, 1.0 / u_dst);
-    vec3 n = texture(u_tex, v_uv + vec2(0.0, -d.y)).rgb, s = texture(u_tex, v_uv + vec2(0.0, d.y)).rgb;
-    vec3 w = texture(u_tex, v_uv + vec2(-d.x, 0.0)).rgb, e = texture(u_tex, v_uv + vec2(d.x, 0.0)).rgb;
-    vec3 mn = min(c, min(min(n, s), min(w, e))), mx = max(c, max(max(n, s), max(w, e)));
-    vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-4), 0.0, 1.0));
-    vec3 wgt = -amp * mix(0.125, 0.2, u_sharpen);
-    c = clamp((c + (n + s + w + e) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);
-  }
   if (u_gamma != 1.0) c = pow(max(c, vec3(0.0)), vec3(1.0 / u_gamma));
   o_color = vec4(c, 1.0);
 }
@@ -458,13 +448,12 @@ void main() {
 struct PostSettings {
     bool fxaa = false;
     int filter = 0;        // 0 bilinear/area, 1 nearest, 2 sharp
-    float sharpen = 0.0f;  // 0..1
     float gamma = 1.0f;
     int aspect = 0;        // 0 keep, 1 stretch, 2 integer
 };
 static PostSettings s_post;
 static GLuint s_fxaaProg, s_scaleProg, s_postTex, s_postFbo;
-static GLint s_fxaaURcp, s_fxaaUFlip, s_scaleUSrc, s_scaleUDst, s_scaleUFilter, s_scaleUSharpen, s_scaleUGamma,
+static GLint s_fxaaURcp, s_fxaaUFlip, s_scaleUSrc, s_scaleUDst, s_scaleUFilter, s_scaleUGamma,
     s_scaleUFlip;
 static int s_postW, s_postH;
 
@@ -472,7 +461,6 @@ static void postInit() {
     if (const char* e = getenv("SMS_FXAA")) s_post.fxaa = atoi(e) != 0;
     if (const char* e = getenv("SMS_PRESENT_FILTER"))
         s_post.filter = !strcmp(e, "nearest") ? 1 : !strcmp(e, "sharp") ? 2 : 0;
-    if (const char* e = getenv("SMS_SHARPEN")) s_post.sharpen = std::max(0.0f, std::min(1.0f, float(atof(e)) / 100.0f));
     if (const char* e = getenv("SMS_GAMMA")) {
         float v = float(atof(e));
         if (v >= 0.3f && v <= 3.0f) s_post.gamma = v;
@@ -489,13 +477,12 @@ static void postInit() {
     s_scaleUSrc = glGetUniformLocation(s_scaleProg, "u_src");
     s_scaleUDst = glGetUniformLocation(s_scaleProg, "u_dst");
     s_scaleUFilter = glGetUniformLocation(s_scaleProg, "u_filter");
-    s_scaleUSharpen = glGetUniformLocation(s_scaleProg, "u_sharpen");
     s_scaleUGamma = glGetUniformLocation(s_scaleProg, "u_gamma");
     s_scaleUFlip = glGetUniformLocation(s_scaleProg, "u_flip");
     static const char* const kFilters[] = {"bilinear", "nearest", "sharp"};
     static const char* const kAspects[] = {"keep", "stretch", "integer"};
-    logmsg("post-processing: FXAA %s, scaler %s, sharpen %d%%, brightness %.2f, aspect %s", s_post.fxaa ? "on" : "off",
-           kFilters[s_post.filter], int(s_post.sharpen * 100.0f + 0.5f), double(s_post.gamma), kAspects[s_post.aspect]);
+    logmsg("post-processing: FXAA %s, scaler %s, brightness %.2f, aspect %s", s_post.fxaa ? "on" : "off",
+           kFilters[s_post.filter], double(s_post.gamma), kAspects[s_post.aspect]);
 }
 
 // Draws `tex` (w x h, row 0 at the top) into the viewport (ox, oy, vw, vh) of
@@ -541,7 +528,6 @@ static void postPresent(GLuint tex, int w, int h, int ox, int oy, int vw, int vh
     glUniform2f(s_scaleUSrc, float(w), float(h));
     glUniform2f(s_scaleUDst, float(vw), float(vh));
     glUniform1i(s_scaleUFilter, s_post.filter);
-    glUniform1f(s_scaleUSharpen, s_post.sharpen);
     glUniform1f(s_scaleUGamma, s_post.gamma);
     glUniform1i(s_scaleUFlip, 1);  // XFB row 0 is the top; the window's row 0 is its bottom
     glBindTexture(GL_TEXTURE_2D, tex);
@@ -549,21 +535,8 @@ static void postPresent(GLuint tex, int w, int h, int ox, int oy, int vw, int vh
     glBindVertexArray(s_vao);
 }
 
-void rendererInit(int efbScale) {
-    s_scale = efbScale < 1 ? 1 : efbScale;
-    g_gxStats = g_gxStats || statsEnv();  // settings.txt is read after static initialisation
-    const char* renderer = (const char*)glGetString(GL_RENDERER);
-    logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), renderer,
-           (const char*)glGetString(GL_VENDOR));
-    if (renderer && (strstr(renderer, "llvmpipe") || strstr(renderer, "softpipe") || strstr(renderer, "Software")))
-        logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
-               "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
-               "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
-    s_efbW = s_wide > 1.0f ? (int(float(EFB_W) * s_wide + 1.0f) & ~1) : EFB_W;
-    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudEdges = s_efbW != EFB_W && !strcmp(e, "edges");
-    s_ox = (s_efbW - EFB_W) / 2;
-    if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
-    int W = s_efbW * s_scale, H = EFB_H * s_scale;
+static bool allocateEfb() {
+    const int W = s_efbW * s_scale, H = EFB_H * s_scale;
     glGenTextures(1, &s_efbColor);
     glBindTexture(GL_TEXTURE_2D, s_efbColor);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -578,7 +551,6 @@ void rendererInit(int efbScale) {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    if (const char* e = getenv("SMS_MSAA")) s_msaa = atoi(e);
     if (s_msaa > 1) {
         GLint maxSamples = 0;
         glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
@@ -618,6 +590,25 @@ void rendererInit(int efbScale) {
     glClearColor(0, 0, 0, 1);
     glClearDepth(1.0);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+}
+
+void rendererInit(int efbScale) {
+    s_scale = efbScale < 1 ? 1 : efbScale;
+    g_gxStats = g_gxStats || statsEnv();  // settings.txt is read after static initialisation
+    const char* renderer = (const char*)glGetString(GL_RENDERER);
+    logmsg("OpenGL %s, renderer %s (%s)", (const char*)glGetString(GL_VERSION), renderer,
+           (const char*)glGetString(GL_VENDOR));
+    if (renderer && (strstr(renderer, "llvmpipe") || strstr(renderer, "softpipe") || strstr(renderer, "Software")))
+        logmsg("WARNING: %s renders on the CPU and cannot keep the game at full speed. On Linux the 32-bit build "
+               "gets a GPU driver only if its 32-bit GL libraries are installed; the 64-bit build "
+               "(SMS_ARCH=64 ./build.sh) uses the system's driver.", renderer);
+    s_efbW = s_wide > 1.0f ? (int(float(EFB_W) * s_wide + 1.0f) & ~1) : EFB_W;
+    if (const char* e = getenv("SMS_WIDESCREEN_HUD")) s_hudEdges = s_efbW != EFB_W && !strcmp(e, "edges");
+    s_ox = (s_efbW - EFB_W) / 2;
+    if (s_efbW != EFB_W) logmsg("widescreen: EFB %dx%d", s_efbW, EFB_H);
+    if (const char* e = getenv("SMS_MSAA")) s_msaa = atoi(e);
+    allocateEfb();
     glGenFramebuffers(1, &s_tmpFbo);
 
     glcInvalidate();
@@ -1601,6 +1592,7 @@ static void copyEfb(uint32_t ctrl) {
             xfb.w = w * S;
             xfb.h = h * S;
         }
+        xfb.nativeHeight = h;
         glBindFramebuffer(GL_READ_FRAMEBUFFER, efbReadFbo());
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_tmpFbo);
         glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, xfb.tex, 0);
@@ -1851,7 +1843,7 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
         if (float(vw) > float(vh) * aspect) vw = int(float(vh) * aspect + 0.5f);
         else vh = int(float(vw) / aspect + 0.5f);
     }
-    const int baseH = x.h / s_scale;  // the picture's height at the GameCube's resolution
+    const int baseH = x.nativeHeight;  // the picture's height at the GameCube's resolution
     if (s_post.aspect == 2 && baseH > 0 && vh >= baseH) {
         vh = vh / baseH * baseH;
         vw = int(float(vh) * aspect + 0.5f);
@@ -1908,6 +1900,122 @@ void GXPC_GetLastFrameStats(GXPCStats* out) {
     *out = s_lastFrameStats;
     out->shaderCompiles = g_statShaderCompiles;
     out->textureUploads = g_statTexUploads;
+}
+
+float GXPC_GetMenuWidescreen() { return s_wide; }
+
+void GXPC_RefreshMenuTexturePacks() {
+    if(!s_ready) return;
+    flushBatch();
+    hiresRefreshIndex();
+    textureRefreshPacks();
+}
+
+void GXPC_ApplyMenuTexturePacks(int enabled) {
+    if (!s_ready) return;
+    static int previous = -1;
+    if (previous == enabled) return;
+    flushBatch();
+    hiresSetEnabled(enabled != 0);
+    textureRefreshPacks();
+    previous = enabled;
+}
+
+// Game thread only, at a menu/presentation boundary. Shader and vertex state
+// stay alive; only EFB attachments are replaced when geometry changes.
+void GXPC_ApplyMenuGraphicsSettings(int scale, int msaa, int fxaa, int aniso,
+                                    float gamma, const char* aspect,
+                                    const char* filter, float widescreen,
+                                    int hudEdges) {
+    if (!s_ready) return;
+    flushBatch();
+    scale = std::max(1, std::min(8, scale));
+    widescreen = std::max(1.0f, std::min(3.0f, widescreen));
+    GLint maxTexture = 0, maxSamples = 0, maxRenderbuffer = 0;
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+    glGetIntegerv(GL_MAX_SAMPLES, &maxSamples);
+    glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &maxRenderbuffer);
+    maxTexture = std::min(maxTexture, maxRenderbuffer);
+    const int newWidth = widescreen > 1.0f ? (int(EFB_W * widescreen + 1) & ~1) : EFB_W;
+    scale = std::max(1, std::min(scale, maxTexture / std::max(newWidth, int(EFB_H))));
+    msaa = msaa >= 2 ? std::min(msaa, int(maxSamples)) : 0;
+    if (msaa < 2) msaa = 0;
+    if (scale != s_scale || msaa != s_msaa || newWidth != s_efbW) {
+        const int oldW = s_efbW * s_scale, oldH = EFB_H * s_scale;
+        const int oldScale = s_scale, oldWidth = s_efbW, oldMsaa = s_msaa;
+        const float oldWide = s_wide;
+        const GLuint oldRead = efbReadFbo();
+        GLuint oldFbo = s_efbFbo, oldResolve = s_efbResolveFbo;
+        GLuint oldColor = s_efbColor, oldDepth = s_efbDepth;
+        GLuint oldMsColor = s_efbMsColor, oldMsDepth = s_efbMsDepth;
+        s_efbFbo = s_efbResolveFbo = s_efbColor = s_efbDepth = s_efbMsColor = s_efbMsDepth = 0;
+        s_scale = scale; s_msaa = msaa; s_efbW = newWidth; s_wide = widescreen;
+        glDisable(GL_SCISSOR_TEST);
+        glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+        glDepthMask(GL_TRUE);
+        while (glGetError() != GL_NO_ERROR) {}
+        bool valid = allocateEfb();
+        if (valid) {
+            // Resize into the single-sample resolve texture first; a single ->
+            // multisample blit then requires identical dimensions (GL 3.3).
+            const GLuint newRead = s_msaa ? s_efbResolveFbo : s_efbFbo;
+            glBindFramebuffer(GL_READ_FRAMEBUFFER, oldRead);
+            glBindFramebuffer(GL_DRAW_FRAMEBUFFER, newRead);
+            glBlitFramebuffer(0, 0, oldW, oldH, 0, 0, s_efbW * s_scale, EFB_H * s_scale,
+                              GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            if (s_msaa) {
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, newRead);
+                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_efbFbo);
+                glBlitFramebuffer(0, 0, s_efbW * s_scale, EFB_H * s_scale,
+                                  0, 0, s_efbW * s_scale, EFB_H * s_scale,
+                                  GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+            }
+            valid = glGetError() == GL_NO_ERROR;
+        }
+        if (!valid) {
+            std::swap(oldFbo, s_efbFbo); std::swap(oldResolve, s_efbResolveFbo);
+            std::swap(oldColor, s_efbColor); std::swap(oldDepth, s_efbDepth);
+            std::swap(oldMsColor, s_efbMsColor); std::swap(oldMsDepth, s_efbMsDepth);
+            s_scale = oldScale; s_efbW = oldWidth; s_msaa = oldMsaa; s_wide = oldWide;
+            logmsg("live graphics: EFB allocation/copy failed; retaining previous settings");
+        }
+        if (oldFbo) glDeleteFramebuffers(1, &oldFbo);
+        if (oldResolve) glDeleteFramebuffers(1, &oldResolve);
+        if (oldColor) glDeleteTextures(1, &oldColor);
+        if (oldDepth) glDeleteTextures(1, &oldDepth);
+        if (oldMsColor) glDeleteRenderbuffers(1, &oldMsColor);
+        if (oldMsDepth) glDeleteRenderbuffers(1, &oldMsDepth);
+        s_ox = (s_efbW - EFB_W) / 2;
+        if (valid) {
+            // Peek buffers carry dimensions and mapped offsets; discard stale
+            // snapshots, without touching the game's cached XFB textures.
+            for (auto& parity : s_peek) for (auto& group : parity) for (auto& snap : group) {
+                if (snap.map) {
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, snap.pbo);
+                    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                }
+                if (snap.fence) glDeleteSync(snap.fence);
+                if (snap.pbo) glDeleteBuffers(1, &snap.pbo);
+                snap = PeekSnap{};
+            }
+            glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            if (s_peekFbo) glDeleteFramebuffers(1, &s_peekFbo);
+            if (s_peekColor) glDeleteRenderbuffers(1, &s_peekColor);
+            if (s_peekDepth) glDeleteRenderbuffers(1, &s_peekDepth);
+            s_peekFbo = s_peekColor = s_peekDepth = 0;
+            s_peekDrawGen = s_peekFrame = ~0u; s_peekIssued = 0; s_peekGroup = -1;
+            ++s_drawGen;
+            logmsg("live graphics: EFB %dx%d, scale %d, MSAA %d", s_efbW, EFB_H, s_scale, s_msaa);
+        }
+    }
+    s_hudEdges = s_efbW != EFB_W && hudEdges != 0;
+    s_post.fxaa = fxaa != 0;
+    s_post.gamma = std::max(0.3f, std::min(3.0f, gamma));
+    s_post.aspect = aspect && !strcmp(aspect, "stretch") ? 1 : aspect && !strcmp(aspect, "integer") ? 2 : 0;
+    s_post.filter = filter && !strcmp(filter, "nearest") ? 1 : filter && !strcmp(filter, "sharp") ? 2 : 0;
+    textureSetAnisotropy(float(aniso));
+    glBindFramebuffer(GL_FRAMEBUFFER, s_efbFbo);
+    glcInvalidate();
 }
 
 void GXPC_SetHud(int on) {

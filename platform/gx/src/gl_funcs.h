@@ -61,6 +61,7 @@
     X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
     X(PFNGLFENCESYNCPROC, glFenceSync) X(PFNGLCLIENTWAITSYNCPROC, glClientWaitSync) X(PFNGLDELETESYNCPROC, glDeleteSync) \
     X(PFNGLGENRENDERBUFFERSPROC, glGenRenderbuffers) X(PFNGLBINDRENDERBUFFERPROC, glBindRenderbuffer) \
+    X(PFNGLDELETERENDERBUFFERSPROC, glDeleteRenderbuffers)                          \
     X(PFNGLRENDERBUFFERSTORAGEPROC, glRenderbufferStorage)                          \
     X(PFNGLFRAMEBUFFERRENDERBUFFERPROC, glFramebufferRenderbuffer)                  \
     X(PFNGLGENSAMPLERSPROC, glGenSamplers) X(PFNGLBINDSAMPLERPROC, glBindSampler)   \
@@ -182,6 +183,7 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glFenceSync gx_glFenceSync
 #define glClientWaitSync gx_glClientWaitSync
 #define glDeleteSync gx_glDeleteSync
+#define glDeleteRenderbuffers gx_glDeleteRenderbuffers
 #define glGenRenderbuffers gx_glGenRenderbuffers
 #define glBindRenderbuffer gx_glBindRenderbuffer
 #define glRenderbufferStorage gx_glRenderbufferStorage

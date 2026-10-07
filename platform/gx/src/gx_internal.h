@@ -170,6 +170,10 @@ unsigned bindTextureMap(int map, float* outW, float* outH);  // returns GL name
 void textureInvalidateAll();
 void textureInvalidateRange(const void* p, uint32_t size);
 void textureShutdown();
+void textureSetAnisotropy(float amount);
+void textureRefreshPacks();
+void hiresSetEnabled(bool enabled);
+void hiresRefreshIndex();
 unsigned efbCopyLookup(const void* addr, int* w, int* h);
 void efbCopyRegister(const void* addr, unsigned tex, int w, int h, uint32_t fmt);
 void efbCopySetBytes(const void* addr, uint32_t bytes);

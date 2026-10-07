@@ -1,0 +1,33 @@
+/* Sunshine document glue. PartyBoard window.rcss/tabbing.rcss remain untouched. */
+window footer {
+    display: flex;
+    flex-flow: row;
+    gap: 12dp;
+    padding: 16dp 24dp;
+    border-top: 1dp #009dda;
+    flex: 0 0 auto;
+}
+window footer button { flex: 1 1 0; }
+window #status-line {
+    padding: 8dp 24dp;
+    min-height: 24dp;
+    font-size: 12dp;
+    color: #E0DBC8;
+}
+window .help { opacity: 0.75; font-size: 14dp; }
+window .button-row { display: flex; gap: 12dp; }
+window .button-row button { flex: 1 1 0; }
+window .numeric-value { font-size: 28dp; text-align: center; }
+window .capture { color: #00b4fa; }
+window .achievement { padding: 12dp; border-bottom: 1dp #009dda; }
+window .achievement.locked { opacity: 0.6; }
+window .achievement.unlocked { color: #b2e5a7; }
+tab { focus: auto; }
+close { focus: auto; }
+@media (max-width: 800dp) {
+    window tab-bar tab { padding: 0 14dp; }
+    window content pane { padding: 16dp; }
+    window footer { padding: 12dp 16dp; }
+}
+
+window input { display: block; width: 90%; margin: 8dp 0 16dp; padding: 8dp; background: #122e40; border: 1dp #00b4fa; color: #ffffff; font-family: Inter; font-size: 18dp; }

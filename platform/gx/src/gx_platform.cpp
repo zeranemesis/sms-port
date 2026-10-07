@@ -6,12 +6,15 @@
 // GXPC_Init itself, and every GXCopyDisp presents the XFB to the window.
 #include "gx_internal.h"
 #include "gx_window_layout.h"
+#include "gx_live_settings.h"
 #include "sms_gx/gx_pc.h"
+extern "C" void GXPC_MenuShutdown(void);
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <string>
 #include <vector>
 
 #ifdef SMS_GX_HAVE_SDL2
@@ -68,6 +71,9 @@ void* sdlGetProc(const char* name) { return SDL_GL_GetProcAddress(name); }
 enum WindowMode { WM_WINDOWED, WM_BORDERLESS, WM_FULLSCREEN };
 WindowMode s_fullscreenKind = WM_BORDERLESS;
 bool s_isFullscreen = false;
+WindowMode s_configuredWindowMode = WM_WINDOWED;
+int s_configuredDisplay = -1, s_configuredWindowScale = 0;
+std::string s_configuredFullscreenMode = "desktop";
 
 WindowMode parseWindowMode(const char* e) {
     if (!e) return WM_WINDOWED;
@@ -109,11 +115,50 @@ void setFullscreen(bool on) {
 // the window has focus; F10 releases it, a click in the window takes it back,
 // and losing focus always frees it.
 bool s_mouseCamera = false, s_mouseCaptured = false, s_mouseReleased = false;
+bool s_menuWasVisible = false;
 
 void captureMouse(bool on) {
     if (!s_mouseCamera) on = false;
     if (on == s_mouseCaptured) return;
     if (SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE) == 0) s_mouseCaptured = on;
+}
+
+// The PAD bridge remembers event state. Clear it on both transitions so menu
+// navigation cannot leave Mario walking, jumping or holding a trigger.
+void syncMenuInput() {
+    const bool visible = GXPC_MenuVisible() != 0;
+    if (visible == s_menuWasVisible) return;
+    s_menuWasVisible = visible;
+    if (s_eventCb) {
+        SDL_Event release = {};
+        release.type = SDL_KEYUP;
+        release.key.state = SDL_RELEASED;
+        for (int key = 0; key < SDL_NUM_SCANCODES; ++key) {
+            release.key.keysym.scancode = SDL_Scancode(key);
+            s_eventCb(&release);
+        }
+        release = {};
+        release.type = SDL_CONTROLLERBUTTONUP;
+        release.cbutton.state = SDL_RELEASED;
+        for (int button = 0; button < SDL_CONTROLLER_BUTTON_MAX; ++button) {
+            release.cbutton.button = Uint8(button);
+            s_eventCb(&release);
+        }
+        release = {};
+        release.type = SDL_CONTROLLERAXISMOTION;
+        for (int axis = 0; axis < SDL_CONTROLLER_AXIS_MAX; ++axis) {
+            release.caxis.axis = Uint8(axis);
+            s_eventCb(&release);
+        }
+    }
+    if (visible) {
+        captureMouse(false);
+        SDL_ShowCursor(SDL_ENABLE);
+    } else {
+        captureMouse(!s_mouseReleased &&
+                     (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0);
+        SDL_ShowCursor(s_isFullscreen && !s_mouseCaptured ? SDL_DISABLE : SDL_ENABLE);
+    }
 }
 
 void applyIcon() {
@@ -193,6 +238,7 @@ bool openWindow(int scale) {
         SDL_Quit();
         return false;
     }
+    GXPC_MenuInit(s_window, s_glctx);
     SDL_ShowWindow(s_window);
     // Some window managers choose their own placement when mapping a hidden
     // window. Center the decorated frame after showing it, using a conservative
@@ -206,6 +252,11 @@ bool openWindow(int scale) {
     logmsg("window %dx%d centered on display %d, internal resolution scale %d, OpenGL context ready",
            layout.w, layout.h, display, scale);
     const WindowMode mode = parseWindowMode(getenv("SMS_WINDOW_MODE"));
+    s_configuredWindowMode = mode;
+    s_configuredDisplay = display;
+    s_configuredWindowScale = windowScale;
+    if (const char* resolution = getenv("SMS_FULLSCREEN_MODE"))
+        s_configuredFullscreenMode = resolution;
     if (mode != WM_WINDOWED) {
         s_fullscreenKind = mode;
         setFullscreen(true);
@@ -296,6 +347,77 @@ void onDisplayCopy(const void* xfb) {
 
 extern "C" {
 
+void GXPC_ApplyMenuWindowSettings(const char* vsync, const char* windowMode,
+                                const char* fullscreenMode, int display,
+                                int windowScale, int mouseCamera) {
+#ifdef SMS_GX_HAVE_SDL2
+    if (!s_window || !s_glctx) return;
+    const int requestedVsync = vsync && !strcmp(vsync, "adaptive") ? -1 :
+                               vsync && (!strcmp(vsync, "on") || !strcmp(vsync, "1")) ? 1 : 0;
+    int appliedVsync = requestedVsync;
+    if (SDL_GL_SetSwapInterval(requestedVsync) != 0) {
+        if (requestedVsync != -1 || SDL_GL_SetSwapInterval(1) != 0) {
+            logmsg("live vsync change failed: %s", SDL_GetError());
+            appliedVsync = s_vsync;
+        } else appliedVsync = 1;
+    }
+    s_vsync = appliedVsync;
+    const WindowMode requestedMode = windowMode ? parseWindowMode(windowMode) : s_configuredWindowMode;
+    const std::string resolution = fullscreenMode && *fullscreenMode ? fullscreenMode : s_configuredFullscreenMode;
+    const bool modeChanged = requestedMode != s_configuredWindowMode;
+    const bool resolutionChanged = resolution != s_configuredFullscreenMode;
+    const bool displayChanged = display >= 0 && display < SDL_GetNumVideoDisplays() &&
+                                display != s_configuredDisplay;
+    const bool sizeChanged = windowScale >= 0 && windowScale <= 16 &&
+                             windowScale != s_configuredWindowScale;
+    const bool restoreFullscreen = modeChanged ? requestedMode != WM_WINDOWED : s_isFullscreen;
+    if (s_isFullscreen && (modeChanged || resolutionChanged || displayChanged || sizeChanged)) setFullscreen(false);
+#ifdef _WIN32
+    _putenv_s("SMS_FULLSCREEN_MODE", resolution.c_str());
+    _putenv_s("SMS_WINDOW_MODE", requestedMode == WM_FULLSCREEN ? "fullscreen" :
+                                  requestedMode == WM_BORDERLESS ? "borderless" : "windowed");
+    _putenv_s("SMS_VSYNC", appliedVsync == -1 ? "adaptive" : appliedVsync ? "1" : "0");
+    _putenv_s("SMS_MOUSE_CAMERA", mouseCamera ? "1" : "0");
+#else
+    setenv("SMS_FULLSCREEN_MODE", resolution.c_str(), 1);
+    setenv("SMS_WINDOW_MODE", requestedMode == WM_FULLSCREEN ? "fullscreen" :
+                              requestedMode == WM_BORDERLESS ? "borderless" : "windowed", 1);
+    setenv("SMS_VSYNC", appliedVsync == -1 ? "adaptive" : appliedVsync ? "1" : "0", 1);
+    setenv("SMS_MOUSE_CAMERA", mouseCamera ? "1" : "0", 1);
+#endif
+    if (displayChanged) s_configuredDisplay = display;
+    if (sizeChanged) s_configuredWindowScale = windowScale;
+    if (displayChanged || sizeChanged) {
+        SDL_Rect desktop = {0, 0, 1280, 800};
+        const int targetDisplay = std::max(0, s_configuredDisplay);
+        if (SDL_GetDisplayUsableBounds(targetDisplay, &desktop) != 0)
+            SDL_GetDisplayBounds(targetDisplay, &desktop);
+        const WindowArea layout = initialWindowLayout({desktop.x, desktop.y, desktop.w, desktop.h},
+                                                      640.0 * GXPC_GetWidescreen() / 480.0,
+                                                      s_configuredWindowScale);
+        SDL_SetWindowPosition(s_window, layout.x, layout.y);
+        if (!s_isFullscreen) SDL_SetWindowSize(s_window, layout.w, layout.h);
+    }
+    s_configuredWindowMode = requestedMode;
+    s_configuredFullscreenMode = resolution;
+    if (requestedMode != WM_WINDOWED) s_fullscreenKind = requestedMode;
+    if (restoreFullscreen && !s_isFullscreen) setFullscreen(true);
+    const bool mouseEnabled = mouseCamera != 0;
+    if (s_mouseCamera != mouseEnabled) {
+        captureMouse(false);
+        s_mouseCamera = mouseEnabled;
+        s_mouseReleased = false;
+    }
+    captureMouse(mouseEnabled && !GXPC_MenuVisible() && !s_mouseReleased &&
+                 (SDL_GetWindowFlags(s_window) & SDL_WINDOW_INPUT_FOCUS) != 0);
+    logmsg("live menu settings applied: vsync %d, window mode %d, mouse look %s",
+           s_vsync, int(requestedMode), mouseEnabled ? "on" : "off");
+#else
+    (void)vsync; (void)windowMode; (void)fullscreenMode;
+    (void)display; (void)windowScale; (void)mouseCamera;
+#endif
+}
+
 int GXPC_ParseArgs(int* argc, char** argv) {
     int out = 1;
     for (int i = 1; i < *argc; i++) {
@@ -381,6 +503,8 @@ void GXPC_Present(const void* xfb) {
         double t0 = nowSeconds();
         GXPC_PresentXFB(xfb, w, h);
         GXPC_OverlayDraw(w, h);
+        GXPC_MenuDraw(w, h);
+        syncMenuInput();
         double t1 = nowSeconds();
         SDL_GL_SwapWindow(s_window);
         double t2 = nowSeconds();
@@ -388,6 +512,19 @@ void GXPC_Present(const void* xfb) {
         g_swapSeconds += t2 - t1;
         GXPC_EndPresent();
         sms_gx_pump_events();
+        // Stop at the presentation boundary: the game cannot mutate its state
+        // while the menu is open. Reuse the copied XFB rather than drawing game
+        // actors again, and keep pumping events so the menu remains responsive.
+        while (GXPC_MenuVisible()) {
+            SDL_GL_GetDrawableSize(s_window, &w, &h);
+            GXPC_PresentXFB(xfb, w, h);
+            GXPC_MenuDraw(w, h);
+            syncMenuInput();
+            SDL_GL_SwapWindow(s_window);
+            GXPC_EndPresent();
+            sms_gx_pump_events();
+            SDL_Delay(16);
+        }
     }
 #else
     (void)xfb;
@@ -424,6 +561,30 @@ void sms_gx_pump_events(void) {
         default:
             break;
         }
+        // F1 (or the controller Guide button) opens the native settings menu.
+        // Reserve the complete key pair so it never reaches game bindings.
+        if (((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) &&
+             ev.key.keysym.scancode == SDL_SCANCODE_F1) ||
+            ((ev.type == SDL_CONTROLLERBUTTONDOWN || ev.type == SDL_CONTROLLERBUTTONUP) &&
+             ev.cbutton.button == SDL_CONTROLLER_BUTTON_GUIDE)) {
+            if ((ev.type == SDL_KEYDOWN && !ev.key.repeat) || ev.type == SDL_CONTROLLERBUTTONDOWN) {
+                GXPC_MenuToggle();
+                syncMenuInput();
+            }
+            continue;
+        }
+        const bool menuWasVisible = GXPC_MenuVisible() != 0;
+        const bool menuCaptured = GXPC_MenuProcessEvent(&ev) != 0;
+        syncMenuInput();
+        // Window close remains available even when a menu captures inputs.
+        if (ev.type == SDL_QUIT ||
+            (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
+            logmsg("window closed, exiting");
+            GXPC_MenuShutdown();
+            GXPC_Shutdown();
+            exit(0);
+        }
+        if (menuWasVisible || GXPC_MenuVisible() || menuCaptured) continue;
         // backtick toggles the debug overlay and is kept from the pad layer
         if ((ev.type == SDL_KEYDOWN || ev.type == SDL_KEYUP) && ev.key.keysym.scancode == SDL_SCANCODE_GRAVE) {
             if (ev.type == SDL_KEYDOWN && !ev.key.repeat) GXPC_OverlayToggle();
@@ -460,12 +621,6 @@ void sms_gx_pump_events(void) {
             continue;
         }
         if (s_eventCb) s_eventCb(&ev);
-        if (ev.type == SDL_QUIT ||
-            (ev.type == SDL_WINDOWEVENT && ev.window.event == SDL_WINDOWEVENT_CLOSE)) {
-            logmsg("window closed, exiting");
-            GXPC_Shutdown();
-            exit(0);
-        }
     }
 #endif
 }

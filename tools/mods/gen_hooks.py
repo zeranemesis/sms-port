@@ -260,7 +260,7 @@ def cw_signature(sym):
 # (#ifdef VERSION_GMSP01, #if defined(VERSION_GMSJ01) || ...) are resolved so
 # that another region's calls are not counted; any other condition keeps
 # every branch.
-PORT_VERSION = "VERSION_GMSE01"
+PORT_VERSION = "VERSION_GMSP01"
 
 
 def _region_condition(kind, expr):

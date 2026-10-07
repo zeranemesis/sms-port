@@ -393,6 +393,17 @@ extern "C" BOOL PADInit()
 	init();
 	return TRUE;
 }
+// Called only on the game thread at the menu presentation boundary.
+extern "C" void sms_frontend_reload_input()
+{
+	if (!g_inited) return;
+	memset(g_key, 0, sizeof g_key);
+	memset(g_axis, 0, sizeof g_axis);
+	memset(g_cbtn, 0, sizeof g_cbtn);
+	g_mouseDX = g_mouseDY = 0;
+	g_inited = false;
+	init();
+}
 extern "C" int PADReset(unsigned long) { return TRUE; }
 extern "C" BOOL PADRecalibrate(u32) { return TRUE; }
 extern "C" BOOL PADSync(void) { return TRUE; }

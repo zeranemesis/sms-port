@@ -14,3 +14,7 @@
 __pycache__/
 # Release packages (packaging/package.sh).
 /dist/
+
+# Local alternate decomp checkout and proprietary optional font.
+/decomp-usa/
+/res/partyboard/FOT-NewRodin Pro DB.otf

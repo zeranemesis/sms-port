@@ -434,6 +434,8 @@ static const struct {
 	const char* name;
 	const char* env;
 } kSettings[] = {
+	{ "language", "SMS_LANGUAGE" },
+	{ "menu_start", "SMS_MENU_ON_START" },
 	{ "texture_packs", "SMS_TEXTURE_PACKS" }, // on (mods/textures), off, or folders
 	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // follows HD textures; 0 disables
@@ -689,10 +691,27 @@ static void load_settings()
 		port_log("[port] %d settings from %s\n", n, path);
 }
 
+// Frontend runs this on the paused game thread; future scenes read these same values.
+extern "C" void sms_frontend_camera_aspect_changed(float ratio);
+extern "C" float sms_frontend_apply_game_settings(const char* widescreen, int frameRate, int skipMovies)
+{
+    const float previous = port_widescreen;
+    port_widescreen = parse_widescreen(widescreen);
+    port_frame_rate = frameRate == 60 ? 60 : 30;
+    port_skip_movies = skipMovies != 0;
+    if (previous != port_widescreen)
+        sms_frontend_camera_aspect_changed(port_widescreen / previous);
+    return port_widescreen;
+}
+
+extern "C" void sms_frontend_activate_save_restore();
 extern "C" void port_init(int argc, char** argv)
 {
 	run_launcher(argc, argv);
 	load_settings();
+	// The PAL DolphinJet frontend is local-only.
+	port_setenv("SMS_NET_MODE", "off", 1);
+	sms_frontend_activate_save_restore();
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;

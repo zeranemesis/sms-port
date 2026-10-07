@@ -23,7 +23,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector::setupObjects stage r
  	TFlagManager::getInstance()->resetStage();
  	TFlagManager::getInstance()->setFlag(0x60003, 1);
  	TGameSequence& currArea = gpApplication.mCurrArea;
-@@ -371,8 +379,22 @@
+@@ -370,9 +370,23 @@
  			obj->load(leftoversStream);
  		}
  
@@ -43,6 +43,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector::setupObjects stage r
  		JDrama::TLookAtCamera* cam
  		    = (JDrama::TLookAtCamera*)JDrama::TNameRefGen::search2("camera 1");
 +#endif
+ // The retail code divides by the render height, not the video height.
  		cam->mAspect = (u16)SMSGetGameVideoWidth() * 0.91346145f
- 		               / (u16)SMSGetGameVideoHeight();
+ 		               / (u16)SMSGetGameRenderHeight();
  	}

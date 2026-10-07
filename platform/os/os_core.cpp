@@ -346,6 +346,48 @@ extern "C" u32 OSGetSoundMode(void) { return s_sound_mode; }
 extern "C" void OSSetSoundMode(u32 mode) { s_sound_mode = mode; }
 extern "C" u32 OSGetProgressiveMode(void) { return s_progressive; }
 extern "C" void OSSetProgressiveMode(u32 mode) { s_progressive = mode; }
+// PAL only: whether the player chose 60 Hz (EuRGB60). The port runs at 60 fps,
+// so default to it; the PAL game's own 50/60 Hz prompt can still change it.
+static u32 s_eurgb60 = 1;
+extern "C" u32 OSGetEuRgb60Mode(void) { return s_eurgb60; }
+extern "C" void OSSetEuRgb60Mode(u32 mode) { s_eurgb60 = mode; }
+
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned short __stdcall GetUserDefaultUILanguage(void);
+#endif
+#include <stdlib.h>
+#include <string.h>
+
+// PAL only: the console language from SRAM, which the game turns into its
+// language option (0 English, 1 German, 2 French, 3 Spanish, 4 Italian).
+// SMS_LANGUAGE (en/de/fr/es/it) overrides it; otherwise follow the system.
+extern "C" u8 OSGetLanguage(void)
+{
+	static int lang = -1;
+	if (lang < 0) {
+		const char* codes[] = { "en", "de", "fr", "es", "it" };
+		const char* e       = getenv("SMS_LANGUAGE");
+		lang                = 0;
+#ifdef _WIN32
+		if (!e || !*e) {
+			// PRIMARYLANGID of the UI language: 0x07 German, 0x0C French,
+			// 0x0A Spanish, 0x10 Italian.
+			switch (GetUserDefaultUILanguage() & 0x3FF) {
+			case 0x07: lang = 1; break;
+			case 0x0C: lang = 2; break;
+			case 0x0A: lang = 3; break;
+			case 0x10: lang = 4; break;
+			default: lang = 0; break;
+			}
+		}
+#endif
+		if (e && *e)
+			for (int i = 0; i < 5; i++)
+				if (strncmp(e, codes[i], 2) == 0)
+					lang = i;
+	}
+	return (u8)lang;
+}
 extern "C" unsigned long OSGetResetCode(void) { return 0; }
 extern "C" BOOL OSGetResetSwitchState(void) { return FALSE; }
 extern "C" BOOL OSGetResetButtonState(void) { return FALSE; }

@@ -1,0 +1,14 @@
+Reason: native frontend: commit requested file overlays at the next scene resource load, without replacing archives used by the current scene
+--- a/src/System/MarDirectorLoadResource.cpp
++++ b/src/System/MarDirectorLoadResource.cpp
+@@ -28,6 +28,10 @@
+ 
+ int TMarDirector::loadResource()
+ {
++#ifdef TARGET_PC
++	extern void sms_frontend_commit_disc_overlays_bridge();
++	sms_frontend_commit_disc_overlays_bridge();
++#endif
+ 	gpMarioParticleManager = new TMarioParticleManager;
+ 
+ 	int particleNum = 1000;

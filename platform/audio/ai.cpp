@@ -68,6 +68,7 @@ struct Ai {
 	bool running;
 	bool swap;
 	int volume;                // SMS_VOLUME (0..100) as a Q8 output gain; 256 is unity
+	bool menuMuted;            // Host menu pause; DMA timing remains unchanged.
 	u32 start, length;         // registers
 	u32 latchedStart, latchedLen;
 	AIDCallback cb;
@@ -150,8 +151,8 @@ void sdl_callback(void*, uint8_t* stream, int len)
 				g.head = (g.head + consumed) % cap;
 				g.count -= consumed;
 			}
-			out[i * 2]     = (int16_t)((g.lastL * g.volume) >> 8);
-			out[i * 2 + 1] = (int16_t)((g.lastR * g.volume) >> 8);
+			out[i * 2]     = g.menuMuted ? 0 : (int16_t)((g.lastL * g.volume) >> 8);
+			out[i * 2 + 1] = g.menuMuted ? 0 : (int16_t)((g.lastR * g.volume) >> 8);
 		}
 		low = g.count < fifo_target(speed);
 	}
@@ -241,7 +242,7 @@ void init_output()
 	e             = getenv("SMS_AUDIO_SWAP");
 	g.swap        = !(e && strcmp(e, "0") == 0);
 	e             = getenv("SMS_VOLUME");
-	g.volume      = e && *e ? std::max(0, std::min(100, atoi(e))) * 256 / 100 : 256;
+	g.volume      = g.output ? (e && *e ? std::max(0, std::min(100, atoi(e))) * 256 / 100 : 256) : 0;
 	g.fifo.assign(32768 * 2, 0);
 	g.head = g.count = 0;
 	if (!g.enabled) {
@@ -266,7 +267,8 @@ void init_output()
 		port_log("[audio] deterministic VI clock: AI DMA paced by retraces, no output device\n");
 		return;
 	}
-	g.sdl          = g.output && wantSdl && open_sdl();
+	// Keep the device open while muted so the frontend can enable audio live.
+	g.sdl          = wantSdl && open_sdl();
 	if (!g.sdl) {
 		if (g.output)
 			port_log("[audio] no audio device: pacing AI DMA from the host clock\n");
@@ -374,6 +376,16 @@ extern "C" void AIInit(u8*)
 	port_irq_add_source(ai_poll);
 }
 extern "C" BOOL AICheckInit(void) { return g.inited; }
+extern "C" void sms_frontend_audio_volume(int percent)
+{
+	std::lock_guard<std::mutex> lock(g.mu);
+	g.volume = std::max(0, std::min(100, percent)) * 256 / 100;
+}
+extern "C" void sms_frontend_audio_menu_pause(int paused)
+{
+	std::lock_guard<std::mutex> lock(g.mu);
+	g.menuMuted = paused != 0;
+}
 extern "C" void AIReset(void) {}
 extern "C" AIDCallback AIRegisterDMACallback(AIDCallback cb)
 {

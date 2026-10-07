@@ -116,6 +116,8 @@ struct PackFile {
 };
 static std::unordered_map<std::string, PackFile>& s_index =
     *new std::unordered_map<std::string, PackFile>;  // key: the texture name (read by the worker; never destroyed)
+static std::mutex s_indexMutex;
+static int s_liveEnabled = -1;
 static int s_state = -1;                                   // -1 not scanned, 0 off, 1 on
 static uint32_t s_uploaded = 0;                            // replacements in GL
 
@@ -158,7 +160,8 @@ static void scan() {
     s_state = 0;
     std::vector<std::string> dirs;
     const char* e = getenv("SMS_TEXTURE_PACKS");
-    if (e && strcmp(e, "0") == 0) return;
+    if (e && strcmp(e, "0") == 0 && s_liveEnabled != 1) return;
+    if (e && strcmp(e, "0") == 0) e = nullptr;
     if (e && *e) {
         std::string all = e, cur;
         for (char c : all + ";") {
@@ -188,7 +191,22 @@ static void scan() {
     if (s_state) queryFormats();
 }
 
+void hiresRefreshIndex() {
+    // New installations become available without restarting the decode worker.
+    // Worker takes a value copy under this lock before reading image files.
+    std::lock_guard<std::mutex> indexLock(s_indexMutex);
+    scan();
+}
+
+void hiresSetEnabled(bool enabled) {
+    s_liveEnabled = enabled ? 1 : 0;
+    // An empty index has never started the decode worker. Once populated the
+    // index remains immutable, including while replacements are disabled.
+    if (enabled) s_state = s_index.empty() ? -1 : 1;
+}
+
 bool hiresEnabled() {
+    if (s_liveEnabled == 0) return false;
     if (s_state < 0) scan();
     return s_state == 1;
 }
@@ -494,7 +512,9 @@ static void worker() {
             name = s_queue.front();
             s_queue.pop_front();
         }
-        Loaded* L = decode(s_index.at(name));  // the index is read-only after the scan
+        PackFile file;
+        { std::lock_guard<std::mutex> indexLock(s_indexMutex); file = s_index.at(name); }
+        Loaded* L = decode(file);
         std::lock_guard<std::mutex> lk(s_mu);
         s_decoded.emplace_back(name, L);
     }

@@ -72,7 +72,18 @@ include(${CMAKE_BINARY_DIR}/decomp_sources.cmake)
 # source lists.
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches.cmake)
 
-set(SMS_COMMON_DEFS GEKKO TARGET_PC VERSION_GMSE01 BUILD_VERSION=2 NDEBUG=1)
+set(SMS_REGION "GMSP01" CACHE STRING "Game region: GMSP01, GMSJ01, GMSE01")
+set_property(CACHE SMS_REGION PROPERTY STRINGS GMSP01 GMSJ01 GMSE01)
+if(SMS_REGION STREQUAL "GMSP01")
+  set(SMS_BUILD_VERSION 1)
+elseif(SMS_REGION STREQUAL "GMSJ01")
+  set(SMS_BUILD_VERSION 0)
+elseif(SMS_REGION STREQUAL "GMSE01")
+  set(SMS_BUILD_VERSION 2)
+else()
+  message(FATAL_ERROR "Unsupported SMS_REGION: ${SMS_REGION}")
+endif()
+set(SMS_COMMON_DEFS GEKKO TARGET_PC VERSION_${SMS_REGION} BUILD_VERSION=${SMS_BUILD_VERSION} NDEBUG=1)
 set(SMS_GAME_FLAGS
   -w -fno-strict-aliasing -fwrapv -fno-omit-frame-pointer
   # Retail MSL has no _FORTIFY_SOURCE checks (Ubuntu g++ enables them at -O1+;
@@ -220,6 +231,7 @@ if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt
 endif()
 
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
+target_sources(sms_game PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/platform/frontend/game_progress.cpp)
 # Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
@@ -297,6 +309,8 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/game_progress\\.cpp$")
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/partyboard_(backend|menu)\\.cpp$")
 # platform/mods/eclipse is built by cmake/eclipse.cmake, and only with SMS_ECLIPSE.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/mods/eclipse/")
 # net_game.cpp is built into the game library (above).
@@ -305,7 +319,30 @@ list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/tests/")
 if(WIN32 OR APPLE)
   list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/trace/trace\\.cpp$")
 endif()
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/retroachievements.*\\.cpp$")
 add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
+set_source_files_properties(platform/frontend/gamebanana.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
+include(cmake/retroachievements.cmake)
+target_link_libraries(sms PRIVATE sms_retroachievements)
+if(WIN32)
+  target_link_libraries(sms PRIVATE wininet crypt32)
+endif()
+if(WIN32 AND MINGW)
+  get_filename_component(SMS_WINDOWS_RUNTIME_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+  foreach(runtime_dll SDL2.dll libgcc_s_seh-1.dll libwinpthread-1.dll libstdc++-6.dll)
+    if(EXISTS "${SMS_WINDOWS_RUNTIME_DIR}/${runtime_dll}")
+      add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${SMS_WINDOWS_RUNTIME_DIR}/${runtime_dll}" "$<TARGET_FILE_DIR:sms>/${runtime_dll}")
+    endif()
+  endforeach()
+endif()
+if(WIN32 AND SMS_ARCH STREQUAL "64")
+  file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/sms-build.json"
+    CONTENT "{\"region\":\"${SMS_REGION}\",\"architecture\":\"x64\"}\n")
+  add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${CMAKE_BINARY_DIR}/sms-build.json" "$<TARGET_FILE_DIR:sms>/sms-build.json")
+endif()
+
 # MSL's maths and the MTX/VEC library round every operation to single or
 # double as the Gekko does: SSE on x86 (never x87 extended precision) and no
 # contraction (their fused multiply-adds are explicit), on every host.
@@ -414,6 +451,19 @@ else()
   if(TARGET sms_gx)
     target_link_libraries(sms PRIVATE -Wl,--whole-archive sms_gx -Wl,--no-whole-archive)
   endif()
+endif()
+
+option(SMS_PARTYBOARD_UI "Use the PartyBoard RmlUi menu for the native game" ON)
+if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND NOT TARGET SDL2::SDL2)
+  find_package(SDL2 QUIET CONFIG)
+endif()
+if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND TARGET SDL2::SDL2)
+  include(cmake/partyboard_ui.cmake)
+  target_sources(sms_partyboard_backend PRIVATE platform/frontend/partyboard_menu.cpp)
+  target_link_libraries(sms_gx PRIVATE sms_partyboard_backend sms_retroachievements)
+  target_compile_definitions(sms_gx PRIVATE SMS_PARTYBOARD_UI=1)
+  add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory
+    "${CMAKE_CURRENT_SOURCE_DIR}/res/partyboard" "$<TARGET_FILE_DIR:sms>/res/partyboard")
 endif()
 
 option(SMS_ECLIPSE "Build Super Mario Eclipse in (fetches its sources, see docs/ECLIPSE.md)" OFF)

@@ -1,0 +1,1 @@
+Reason: port: code-mod hooks (sms_modhook.h): the flag-type handlers mods put in setFlag's and getFlag's switch tables, and BetterSunshineEngine's shine count
