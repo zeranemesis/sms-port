@@ -1,0 +1,147 @@
+cmake_minimum_required(VERSION 3.25)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 20)
+
+project(dolphinjet LANGUAGES C CXX)
+
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "_cmake")
+
+if (NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif ()
+
+if ((CMAKE_SYSTEM_NAME STREQUAL Linux) OR APPLE)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+    set(CMAKE_BUILD_RPATH "$ORIGIN")
+elseif (MSVC)
+    add_compile_options(/bigobj)
+endif ()
+
+include(FetchContent)
+
+FetchContent_Declare(json
+        URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+        URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable(json)
+
+# Aurora provides the GX->Vulkan/Metal/D3D12 rendering layer, the Dolphin-SDK
+# platform shims (PAD/VI/OS/CARD/DVD), and (with RmlUi enabled) the UI
+# renderer the Party-Board-style menu is built on. It also brings in fmt and
+# abseil, which the port layer links against directly below.
+set(AURORA_ENABLE_DVD ON)
+set(AURORA_ENABLE_RMLUI ON CACHE BOOL "Enable RmlUi UI support" FORCE)
+
+# extern/aurora and extern/libco are pinned submodule commits; two local,
+# uncommitted patches apply on top (patches/aurora-port-fixes.patch,
+# patches/aurora-render-fixes.patch - see docs/port_bootstrap.md for why they
+# are not committed into the submodule itself). CI must apply them at
+# checkout, the same way Marioparty4's build.yml does for its own patches.
+# Debug info in Release builds.
+#
+# Not for debugging in the usual sense - there is no debugger installed on the
+# development machine (cdb, windbg and ntsd are all absent) - but so the
+# in-process crash reporter (src/port/recomp_crash.cpp) can put a function name
+# and a line number on a fault instead of a bare address. Two investigations
+# have already been spent guessing at crash locations that left no message at
+# all. /DEBUG does not change code generation; /OPT:REF and /OPT:ICF are
+# restored because /DEBUG otherwise turns them off and would change what ships.
+if (MSVC)
+    add_compile_options($<$<CONFIG:Release>:/Zi>)
+    add_link_options($<$<CONFIG:Release>:/DEBUG> $<$<CONFIG:Release>:/OPT:REF> $<$<CONFIG:Release>:/OPT:ICF>)
+endif ()
+
+add_subdirectory(extern/aurora EXCLUDE_FROM_ALL)
+
+# The DolRecomp host tool (build-time code generator, not linked into
+# dolphinjet) plus dr_cpu, the small register-file/memory runtime its plain
+# C backend targets. DOLRECOMP_ENABLE_LLVM stays off: the LLVM object
+# backend is a separate, heavier codegen path this port does not use - see
+# docs/recompilation.md's "DolRecomp runtime contract" section for why the
+# plain C backend needs no external runtime (no ModernGekko, no LLVM) at
+# all, only this dr_cpu-based host-call bridge into Aurora.
+add_subdirectory(extern/dolrecomp EXCLUDE_FROM_ALL)
+
+include(extern/aurora/cmake/AuroraCopyRuntimeDLLs.cmake)
+
+include(files.cmake)
+
+source_group("Port" FILES ${PORT_FILES})
+
+# Recompiled game code (docs/recompilation.md) derives from a copyrighted
+# disc image and is never committed - see .gitignore. If
+# tools/port/recompile.py has already been run against a real GMSP01
+# dump, its output lands in generated/ and gets picked up here
+# automatically; nothing to edit in this file to build it. Without that
+# dump - the normal case for a fresh checkout, and for CI - this glob is
+# empty and dolphinjet builds exactly as before (menu shell only).
+#
+# generated.c lives directly under generated/, but the per-function split
+# dolrecomp writes goes to generated/chunks/*.c instead - each chunk
+# includes its sibling generated.h via a relative "../generated.h", so
+# that nesting (dolrecomp's own convention, not this project's choice)
+# must stay intact rather than being flattened. Both locations are globbed.
+file(GLOB DOLPHINJET_GENERATED_GAME_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/generated/*.c"
+        "${CMAKE_CURRENT_SOURCE_DIR}/generated/chunks/*.c")
+if (DOLPHINJET_GENERATED_GAME_FILES)
+    message(STATUS "dolphinjet: found generated/ - building recompiled game code")
+    add_library(game_recompiled STATIC ${DOLPHINJET_GENERATED_GAME_FILES})
+    target_include_directories(game_recompiled PRIVATE extern/dolrecomp/src "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+    target_link_libraries(game_recompiled PUBLIC dr_cpu)
+endif ()
+
+add_executable(dolphinjet ${PORT_FILES})
+target_compile_definitions(dolphinjet PRIVATE TARGET_PC NON_MATCHING)
+# extern/aurora/include(/dolphin) must come before include/: both provide a
+# dolphin/ header tree, but include/ is the decomp's own (MWCC/GCC-only -
+# include/dolphin/types.h #errors on any other compiler, verified building
+# dolphinjet with MSVC), while extern/aurora/include/dolphin is the portable
+# one this native port actually wants. include/ still has to stay on the
+# path at all for include/port/*.h (config.hpp, main.h, settings.h,
+# recomp_*.h), which is PORT_FILES' own code, not decomp headers.
+target_include_directories(dolphinjet PRIVATE extern/aurora/include extern/aurora/include/dolphin include extern extern/dolrecomp/src)
+if (WIN32)
+    # DbgHelp symbolises the crash reporter's stack (src/port/recomp_crash.cpp).
+    target_link_libraries(dolphinjet PRIVATE dbghelp)
+endif ()
+
+target_link_libraries(dolphinjet PRIVATE
+        # aurora::os must precede any other aurora:: static lib that calls
+        # OSPanic/OSReport (dvd does, at least) - verified as real MSVC
+        # LNK2019s (OSPanic from aurora_dvd.lib, OSReport from dolphinjet's
+        # own io.cpp) with os listed later: MSVC's linker doesn't reliably
+        # backtrack to an already-passed static library to resolve a symbol
+        # only needed by something discovered afterward, even a few
+        # positions later in the same AdditionalDependencies list.
+        aurora::main aurora::core aurora::os aurora::card aurora::dvd aurora::gx aurora::mtx aurora::si aurora::vi aurora::pad
+        dr_cpu
+        absl::flat_hash_map nlohmann_json::nlohmann_json fmt::fmt)
+if (TARGET game_recompiled)
+    target_link_libraries(dolphinjet PRIVATE game_recompiled)
+    target_compile_definitions(dolphinjet PRIVATE DOLPHINJET_HAVE_RECOMPILED_GAME)
+    # src/port/recomp_boot.cpp (built as part of dolphinjet itself, not
+    # game_recompiled) includes generated/generated.h and
+    # generated/generated_symbols.h directly - game_recompiled's own
+    # include dir below doesn't extend to dolphinjet's other sources.
+    target_include_directories(dolphinjet PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/generated")
+endif ()
+if (TARGET rmlui_debugger)
+    target_link_libraries(dolphinjet PRIVATE rmlui_debugger)
+endif ()
+
+if (WIN32)
+    target_link_libraries(dolphinjet PRIVATE ws2_32)
+endif ()
+
+aurora_copy_runtime_dlls(dolphinjet dolphinjet)
+
+# res/ holds the fonts and RmlUi (.rcss) stylesheets the menu shell needs at
+# runtime; ship it next to the executable the same way Marioparty4 does.
+add_custom_command(TARGET dolphinjet POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/res" "$<TARGET_FILE_DIR:dolphinjet>/res"
+        COMMENT "Copying menu resources (fonts, RmlUi stylesheets)")

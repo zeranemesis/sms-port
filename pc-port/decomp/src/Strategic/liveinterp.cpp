@@ -1,0 +1,655 @@
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/spcinterp.hpp>
+#include <Strategic/Spine.hpp>
+#include <Enemy/SmallEnemy.hpp>
+#include <Enemy/WalkerEnemy.hpp>
+#include <Enemy/NameKuri.hpp>
+#include <Enemy/BossGesso.hpp>
+#include <Enemy/BossPakkun.hpp>
+#include <Enemy/BossWanwan.hpp>
+#include <Enemy/BossEel.hpp>
+#include <Enemy/BossHanachan.hpp>
+#include <Enemy/SleepBossHanachan.hpp>
+#include <Enemy/TypicalEnemy.hpp>
+#include <Animal/AnimalNerve.hpp>
+#include <NPC/NpcNerve.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <M3DUtil/MActor.hpp>
+
+#include <M3DUtil/InfectiousStrings.hpp> // TODO: removeme
+
+const TNerveBase<TLiveActor>* NerveGetByIndex(int param_1)
+{
+	switch (param_1) {
+	case 0:
+		return &TNerveSmallEnemyFreeze::theNerve();
+
+	case 1:
+		return &TNerveSmallEnemyDie::theNerve();
+
+	case 2:
+		return &TNerveSmallEnemyJump::theNerve();
+
+	case 3:
+		return &TNerveSmallEnemyHitWaterJump::theNerve();
+
+	case 4:
+		return &TNerveWalkerGenerate::theNerve();
+
+	case 5:
+		return &TNerveWalkerGraphWander::theNerve();
+
+	case 6:
+		return &TNerveWalkerEscape::theNerve();
+
+	case 7:
+		return &TNerveWalkerAttack::theNerve();
+
+	case 8:
+		return &TNerveWalkerPostAttack::theNerve();
+
+	case 9:
+		return &TNerveWalkerTraceMario::theNerve();
+
+	case 10:
+		return &TNerveNameKuriDrawPollute::theNerve();
+
+	case 0xb:
+		return &TNerveNameKuriLand::theNerve();
+
+	case 0xc:
+		return &TNerveNameKuriJumpAttack::theNerve();
+
+	case 0xd:
+		return &TNerveNameKuriJumpAttackPrepare::theNerve();
+
+	case 0xe:
+		return &TNerveNameKuriExplosion::theNerve();
+
+	case 0xf:
+		return &TNerveNameKuriDiffuse::theNerve();
+
+	case 0x10:
+		return &TNerveNKFollowMario::theNerve();
+
+	case 0x11:
+		return &TNerveBGWait::theNerve();
+
+	case 0x12:
+		return &TNerveBGTentacleDamage::theNerve();
+
+	case 0x13:
+		return &TNerveBGEyeDamage::theNerve();
+
+	case 0x14:
+		return &TNerveBGBeakDamage::theNerve();
+
+	case 0x15:
+		return &TNerveBGTug::theNerve();
+
+	case 0x16:
+		return &TNerveBGDie::theNerve();
+
+	case 0x17:
+		return &TNerveBGPollute::theNerve();
+
+	case 0x18:
+		return &TNerveBGPolDrop::theNerve();
+
+	case 0x19:
+		return &TNerveBGRoll::theNerve();
+
+	case 0x1a:
+		return &TNerveBPWait::theNerve();
+
+	case 0x1b:
+		return &TNerveBPCannon::theNerve();
+
+	case 0x1c:
+		return &TNerveBPVomit::theNerve();
+
+	case 0x1d:
+		return &TNerveBPTornado::theNerve();
+
+	case 0x1e:
+		return &TNerveBPPivot::theNerve();
+
+	case 0x1f:
+		return &TNerveBPSwallow::theNerve();
+
+	case 0x20:
+		return &TNerveBPTumbleIn::theNerve();
+
+	case 0x21:
+		return &TNerveBPTumble::theNerve();
+
+	case 0x22:
+		return &TNerveBPTumbleOut::theNerve();
+
+	case 0x23:
+		return &TNerveBPGetUp::theNerve();
+
+	case 0x24:
+		return &TNerveBPSwing::theNerve();
+
+	case 0x25:
+		return &TNerveBPStompReact::theNerve();
+
+	case 0x26:
+		return &TNerveBPJumpReact::theNerve();
+
+	case 0x27:
+		return &TNerveBPPreDie::theNerve();
+
+	case 0x28:
+		return &TNerveBPDie::theNerve();
+
+	case 0x29:
+		return &TNerveBPTakeOff::theNerve();
+
+	case 0x2a:
+		return &TNerveBPFly::theNerve();
+
+	case 0x2b:
+		return &TNerveBPTouchDown::theNerve();
+
+	case 0x2c:
+		return &TNerveBPFlyCannon::theNerve();
+
+	case 0x2d:
+		return &TNerveBPFlyPivot::theNerve();
+
+	case 0x2e:
+		return &TNerveBPFall::theNerve();
+
+	case 0x2f:
+		return &TNerveBPHover::theNerve();
+
+	case 0x30:
+		return &TNerveBPSleep::theNerve();
+
+	case 0x31:
+		return &TNerveBPBreakSleep::theNerve();
+
+	case 0x32:
+		return &TNerveBPWaitL::theNerve();
+
+	case 0x33:
+		return &TNerveBPCannonL::theNerve();
+
+	case 0x34:
+		return &TNerveBWGraphWander::theNerve();
+
+	case 0x35:
+		return &TNerveBWRoll::theNerve();
+
+	case 0x36:
+		return &TNerveBWBark::theNerve();
+
+	case 0x37:
+		return &TNerveBWJump::theNerve();
+
+	case 0x38:
+		return &TNerveBWStun::theNerve();
+
+	case 0x39:
+		return &TNerveBWWakeup::theNerve();
+
+	case 0x3a:
+		return &TNerveBWJumpToBath::theNerve();
+
+	case 0x3b:
+		return &TNerveBWDie::theNerve();
+
+	case 0x3c:
+		return &TNerveBWJumpAway::theNerve();
+
+	case 0x3d:
+		return &TNerveBWShake::theNerve();
+
+	case 0x3e:
+		return &TNerveBWFall::theNerve();
+
+	case 0x3f:
+		return &TNerveBEelTearsGenerate::theNerve();
+
+	case 0x40:
+		return &TNerveBEelTearsMarioRecover::theNerve();
+
+	case 0x41:
+		return &TNerveBEelTearsSplit::theNerve();
+
+	case 0x42:
+		return &TNerveBEelTearsWaterHit::theNerve();
+
+	case 0x43:
+		return &TNerveBEelTearsMoveUp::theNerve();
+
+	case 0x44:
+		return &TNerveOilBallStay::theNerve();
+
+	case 0x45:
+		return &TNerveBossEelWaitAppear::theNerve();
+
+	case 0x46:
+		return &TNerveBossEelFirstSpin::theNerve();
+
+	case 0x47:
+		return &TNerveBossEelSecondSpin::theNerve();
+
+	case 0x48:
+		return &TNerveBossEelAppear::theNerve();
+
+	case 0x49:
+		return &TNerveBossEelOutWait::theNerve();
+
+	case 0x4a:
+		return &TNerveBossEelSlowBack::theNerve();
+
+	case 0x4b:
+		return &TNerveBossEelQuickBack::theNerve();
+
+	case 0x4c:
+		return &TNerveBossEelEat::theNerve();
+
+	case 0x4d:
+		return &TNerveBossEelDie::theNerve();
+
+	case 0x4e:
+		return &TNerveBossEelMouthOpenWait::theNerve();
+
+	case 0x4f:
+		return &TNerveBossEelSleepOnBottom::theNerve();
+
+	case 0x50:
+		return &TNerveBossHanachanGraphWander::theNerve();
+
+	case 0x51:
+		return &TNerveBossHanachanTumble::theNerve();
+
+	case 0x52:
+		return &TNerveBossHanachanDown::theNerve();
+
+	case 0x53:
+		return &TNerveBossHanachanGetUp::theNerve();
+
+	case 0x54:
+		return &TNerveBossHanachanDamage::theNerve();
+
+	case 0x55:
+		return &TNerveBossHanachanSnort::theNerve();
+
+	case 0x56:
+		return &TNerveBossHanachanDead::theNerve();
+
+	case 0x57:
+		return &TNerveSBH_SleepContinue::theNerve();
+
+	case 0x58:
+		return &TNerveSBH_Fall::theNerve();
+
+	case 0x59:
+		return &TNerveTypicalGraphWander::theNerve();
+
+	case 0x5a:
+		return &TNerveNPCGraphWander::theNerve();
+
+	case 0x5b:
+		return &TNerveNPCUTurn::theNerve();
+
+	case 0x5c:
+		return &TNerveNPCGraphWait::theNerve();
+
+	case 0x5d:
+		return &TNerveNPCWaitContinue::theNerve();
+
+	case 0x5e:
+		return &TNerveNPCWaitMarioApproach::theNerve();
+
+	case 0x5f:
+		return &TNerveNPCTurnToMario::theNerve();
+
+	case 0x60:
+		return &TNerveNPCWet::theNerve();
+
+	case 0x61:
+		return &TNerveNPCSink::theNerve();
+
+	case 0x62:
+		return &TNerveNPCRecoverFromSink::theNerve();
+
+	case 99:
+		return &TNerveNPCRecoverAfter::theNerve();
+
+	case 100:
+		return &TNerveNPCSetPosAfterSinkBottom::theNerve();
+
+	case 0x65:
+		return &TNerveNPCTalk::theNerve();
+
+	case 0x66:
+		return &TNerveNPCThrow::theNerve();
+
+	case 0x67:
+		return &TNerveNPCMad::theNerve();
+
+	case 0x68:
+		return &TNerveNPCBlown::theNerve();
+
+	case 0x69:
+		return &TNerveNPCMareStand::theNerve();
+
+	case 0x6a:
+		return &TNerveAnimalGraphWander::theNerve();
+
+	default:
+		return nullptr;
+	}
+}
+
+static void linSetBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		actor->setBck(arg.getDataString());
+
+	interp->push();
+}
+
+static void linSetSubBck(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num) { }
+
+static void linSetBpk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		actor->setBpk(arg.getDataString());
+
+	interp->push();
+}
+
+static void linSetBtp(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		actor->setBtp(arg.getDataString());
+
+	interp->push();
+}
+
+static void linSetBtk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		actor->setBtk(arg.getDataString());
+
+	interp->push();
+}
+
+static void linSetBlk(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		actor->setBlk(arg.getDataString());
+
+	interp->push();
+}
+
+static void linSetBls(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TSpcSlice arg = interp->pop();
+
+	MActor* actor = interp->getOwner()->getMActor();
+	if (actor)
+		arg.getDataString(); // NOTE: there's no BLS
+
+	interp->push();
+}
+
+static void linSetAnmRate(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(2, &arg_num);
+	TLiveActor* owner = interp->getOwner();
+	TSpcSlice arg1    = interp->pop();
+	TSpcSlice arg2    = interp->pop();
+
+	switch (arg2.getDataInt()) {
+	case 0:
+		owner->getMActor()->setFrameRate(arg1.getDataFloat(), ANM_TYPE_BCK);
+		break;
+	case 1:
+		owner->getMActor()->setFrameRate(arg1.getDataFloat(), ANM_TYPE_BTP);
+		break;
+	}
+
+	interp->push();
+}
+
+// The nine float arms set mType and mData directly instead of calling
+// TSpcSlice::setDataFloat: the setter's by-value f32 parameter costs one
+// instruction per site. A `const f32&` binder on each member read is
+// load-bearing: it lands the ROM's 0xe0 frame and the 12-byte slice spacing
+// (nine 4-byte reference temps interleaved with the nine TSpcSlice locals).
+// Without the binders the frame collapses to 0xc0 with 8-byte packing.
+// Outer `case 1` before `case 0` is also load-bearing (batch 122 source-order
+// arm emission); earlier trials without the binders saw no effect.
+//
+// TODO: the two `pop()` return temps still sit at 0x44/0x3c (bottom of the
+// low pool) against the ROM's 0xb0/0xa8 (immediately below arg1/arg2). That
+// 0x10 shift lifts every push-slice slot by the same amount (ours 0xac.. vs
+// ROM 0x9c..). Same "we hoist the whole function's pool bytes, the ROM
+// allocates per statement" residue as research batches 116/119; catalog
+// parks it with NPCNeckCallBack / TSpider::bind. Tried and rejected here:
+// `push(f32)` (92.5%), if/else outer (97.4%), separate arg decl+assign
+// (95.7%), TU-local pop wrapper (forces out-of-line TSpcStack::pop, 90.3%).
+// Header `setDataFloat(const f32&)` still regresses exact spcFloat.
+// c-d11: moving each float arm into `static inline void f(interp, const f32&
+// value) { TSpcSlice slice; <direct writes>; interp->push(slice); }` is
+// instruction-exact and puts pop temps and every slice in retail's source
+// order (slices become depth-1 callee locals); retail then still has one
+// 4-byte object under each float slice (the arg is simple, so no binding).
+// c-m25, on that helper: setDataFloat(value) inside it loads the member one
+// slot early (96.1), accessor arguments overshoot (+0x48), `+member` is inert.
+// c-k3: `pushFloat(interp, const f32& value)` (slice, direct writes, push)
+// at all nine sites is instruction-exact at 0xc0; by-value `f32 value` or
+// setDataFloat inside it change code (93.7).
+static void linGetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(2, &arg_num);
+	TLiveActor* owner = interp->getOwner();
+	TSpcSlice arg1    = interp->pop();
+	TSpcSlice arg2    = interp->pop();
+
+	switch (arg2.getDataInt()) {
+	case 1:
+		switch (arg1.getDataInt()) {
+		case 0: {
+			TSpcSlice slice;
+			const f32& v        = owner->mRotation.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 1: {
+			TSpcSlice slice;
+			const f32& v        = owner->mRotation.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 2: {
+			TSpcSlice slice;
+			const f32& v        = owner->mRotation.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		default:
+			interp->push();
+			break;
+		}
+		break;
+	case 0:
+		switch (arg1.getDataInt()) {
+		case 0: {
+			TSpcSlice slice;
+			const f32& v        = owner->mPosition.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 1: {
+			TSpcSlice slice;
+			const f32& v        = owner->mPosition.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 2: {
+			TSpcSlice slice;
+			const f32& v        = owner->mPosition.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		default:
+			interp->push();
+			break;
+		}
+		break;
+	case 2:
+		switch (arg1.getDataInt()) {
+		case 0: {
+			TSpcSlice slice;
+			const f32& v        = owner->mScaling.x;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 1: {
+			TSpcSlice slice;
+			const f32& v        = owner->mScaling.y;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		case 2: {
+			TSpcSlice slice;
+			const f32& v        = owner->mScaling.z;
+			slice.mType         = TSpcSlice::TYPE_FLOAT;
+			slice.mData.asFloat = v;
+			interp->push(slice);
+		} break;
+		default:
+			interp->push();
+			break;
+		}
+		break;
+	default:
+		interp->push();
+		break;
+	}
+}
+
+static void linSetSRT(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(3, &arg_num);
+	TLiveActor* owner = interp->getOwner();
+	TSpcSlice arg1    = interp->pop();
+	TSpcSlice arg2    = interp->pop();
+	TSpcSlice arg3    = interp->pop();
+
+	f32 value = arg1.getDataFloat();
+
+	switch (arg3.getDataInt()) {
+	case 1:
+		value = MsWrap(value, 0.0f, 360.0f);
+		switch (arg2.getDataInt()) {
+		case 0:
+			owner->mRotation.x = value;
+			break;
+		case 1:
+			owner->mRotation.y = value;
+			break;
+		case 2:
+			owner->mRotation.z = value;
+			break;
+		}
+		break;
+
+	case 0:
+		switch (arg2.getDataInt()) {
+		case 0:
+			owner->mPosition.x = value;
+			break;
+		case 1:
+			owner->mPosition.y = value;
+			break;
+		case 2:
+			owner->mPosition.z = value;
+			break;
+		}
+		break;
+
+	case 2:
+		switch (arg2.getDataInt()) {
+		case 0:
+			owner->mScaling.x = value;
+			break;
+		case 1:
+			owner->mScaling.y = value;
+			break;
+		case 2:
+			owner->mScaling.z = value;
+			break;
+		}
+		break;
+	}
+
+	interp->push();
+}
+
+static void linPushNerve(TSpcTypedInterp<TLiveActor>* interp, u32 arg_num)
+{
+	interp->verifyArgNum(1, &arg_num);
+	TLiveActor* owner = interp->getOwner();
+	TSpcSlice arg     = interp->pop();
+
+	const TNerveBase<TLiveActor>* nerve = NerveGetByIndex(arg.getDataInt());
+
+	if (!nerve) {
+		interp->push();
+	} else {
+		owner->mSpine->pushNerve(nerve);
+		interp->push();
+	}
+}
+
+template <> void TSpcTypedBinary<TLiveActor>::initUserBuiltin()
+{
+	bindSystemDataToSymbol("pushNerve", (u32)&linPushNerve);
+	bindSystemDataToSymbol("setBck", (u32)&linSetBck);
+	bindSystemDataToSymbol("setBpk", (u32)&linSetBpk);
+	bindSystemDataToSymbol("setBtp", (u32)&linSetBtp);
+	bindSystemDataToSymbol("setBtk", (u32)&linSetBtk);
+	bindSystemDataToSymbol("setBlk", (u32)&linSetBlk);
+	bindSystemDataToSymbol("setBls", (u32)&linSetBls);
+	bindSystemDataToSymbol("setSRT", (u32)&linSetSRT);
+	bindSystemDataToSymbol("getSRT", (u32)&linGetSRT);
+	bindSystemDataToSymbol("setAnmRate", (u32)&linSetAnmRate);
+}

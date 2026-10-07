@@ -1,0 +1,693 @@
+#include <System/EmitterViewObj.hpp>
+#include <JSystem/JParticle/JPAEmitterManager.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <System/MarDirector.hpp>
+#include <MarioUtil/DrawUtil.hpp>
+#include <MarioUtil/ScreenUtil.hpp>
+#include <System/Application.hpp>
+#include <Camera/Camera.hpp>
+
+// TODO: place in correct header
+static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
+static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
+
+TMarioParticleManager* gpMarioParticleManager = nullptr;
+TMarioEmitterCallBackBindToPosPtr emitterCallBackBindToPosPtr;
+TMarioEmitterCallBackBindToMtxPtr emitterCallBackBindToMtxPtr;
+TMarioEmitterCallBackBindToSRTMtxPtr emitterCallBackBindToSRTMtxPtr;
+
+// Binding level over a raw member read, worth +8 of low region in the
+// emit family (frame ladder 271).
+static inline JPAEmitterManager* EmitterMgr(const TMarioParticleManager* p)
+{
+	JPAEmitterManager* mgr = p->unk3B8;
+	return mgr;
+}
+
+// Setter level around a scalar assignment, +4 of pool.
+static inline void setVecX(JGeometry::TVec3<f32>& v, f32 x)
+{
+	v.x = x;
+}
+
+// Binder over the setRotation receiver; +8 at two sites in emitWithRotate.
+static inline void emitSetRotation(JPABaseEmitter* e, s16 x, s16 y, s16 z)
+{
+	JPABaseEmitter* emitter = e;
+	emitter->setRotation(x, y, z);
+}
+
+// Two-local binder over the screen-texture chain; +0x10 at the swapImage site.
+static inline const ResTIMG* emitScreenTexInfo()
+{
+	TScreenTexture* screen = gpScreenTexture;
+	JUTTexture* tex        = screen->getTexture();
+	return tex->getTexInfo();
+}
+
+TEmitterViewObj::TEmitterViewObj(JPAEmitterManager* param_1, const char* name)
+    : JDrama::TViewObj(name)
+    , unk10(param_1)
+{
+}
+
+void TEmitterViewObj::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_CALC_ANIM) {
+		for (int i = SMSGetAnmFrameRate(); i > 0; --i)
+			unk10->calc();
+	}
+
+	if (cue & CUE_DRAW) {
+		JPADrawInfo drawInfo(graphics->getViewMtx());
+		unk10->draw(&drawInfo);
+	}
+}
+
+void TEmitterIndirectViewObj::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_CALC_ANIM) {
+		for (int i = SMSGetAnmFrameRate(); i > 0; --i)
+			unk10->calc();
+	}
+
+	if (cue & CUE_DRAW) {
+		SMS_DrawInit();
+		JPADrawInfo drawInfo(graphics->getViewMtx());
+		drawInfo.setFovy(gpCamera->getFovy());
+		drawInfo.setAspect(gpCamera->getAspect());
+		unk10->draw(&drawInfo);
+	}
+}
+
+void TMarioEmitterCallBackBindToPosPtr::execute(JPABaseEmitter* emitter)
+{
+	JGeometry::TVec3<f32>* vec = (JGeometry::TVec3<f32>*)emitter->getUserWork();
+	emitter->setGlobalTranslation(*vec);
+}
+
+void TMarioEmitterCallBackBindToPosPtr::draw(JPABaseEmitter*) { }
+
+void TMarioEmitterCallBackBindToMtxPtr::execute(JPABaseEmitter* emitter)
+{
+	MtxPtr mtx = (MtxPtr)emitter->getUserWork();
+	emitter->setGlobalRTMatrix(mtx);
+}
+
+void TMarioEmitterCallBackBindToMtxPtr::draw(JPABaseEmitter*) { }
+
+void TMarioEmitterCallBackBindToSRTMtxPtr::execute(JPABaseEmitter* emitter)
+{
+	MtxPtr mtx = (MtxPtr)emitter->getUserWork();
+	emitter->setGlobalSRTMatrix(mtx);
+}
+
+void TMarioEmitterCallBackBindToSRTMtxPtr::draw(JPABaseEmitter*) { }
+
+TMarioParticleManager::TInfo::TInfo()
+    : unk0(nullptr)
+    , unk4(nullptr)
+{
+	unk4            = nullptr;
+	mPrevFrameFlags = 0;
+	mFlags          = 0;
+	mEmitter        = nullptr;
+}
+
+TMarioParticleManager::TMarioParticleManager(const char* name)
+    : JDrama::TViewObj(name)
+    , unk3B8(nullptr)
+{
+}
+
+void TMarioParticleManager::createEffectInfoAry(int param_1)
+{
+	unk3B4 = param_1;
+	for (int i = 0; i < 214; ++i)
+		unk10[i] = new TInfo[unk3B4];
+	for (int i = 0; i < 19; ++i)
+		unk368[i] = new TInfo[unk3B4];
+}
+
+void TMarioParticleManager::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_CALC_ANIM) {
+		for (int i = SMSGetAnmFrameRate(); i > 0; --i)
+			unk3B8->calc();
+
+		for (int i = 486; i < 505; ++i) {
+			for (int j = 0; j < unk3B4; ++j) {
+				TInfo* info = &unk368[i - 486][j];
+				if ((info->mPrevFrameFlags & INFO_FLAG_UNK4)
+				    && (info->mFlags & INFO_FLAG_UNK4)) {
+					JPABaseEmitter* emitter = info->mEmitter;
+					if (emitter == nullptr) {
+						emitTry(i, info, 3);
+					} else if (emitter->isEnableDeleteEmitter()) {
+						emitter->becomeInvalidEmitter();
+						info->mEmitter = nullptr;
+						emitTry(i, info, 3);
+					}
+				}
+				if ((info->mPrevFrameFlags & INFO_FLAG_UNK4)
+				    && !(info->mFlags & INFO_FLAG_UNK4)) {
+					if (JPABaseEmitter* emitter = info->mEmitter) {
+						emitter->becomeInvalidEmitter();
+						info->mEmitter = nullptr;
+						info->unk0     = nullptr;
+						info->unk4     = nullptr;
+						info->unk4     = nullptr;
+					}
+				}
+				info->mPrevFrameFlags = info->mFlags;
+				info->offFlag(INFO_FLAG_UNK4);
+			}
+		}
+
+		for (int i = 253; i < 467; ++i) {
+			for (int j = 0; j < unk3B4; ++j) {
+				TInfo* info = &unk10[i - 253][j];
+				if ((info->mPrevFrameFlags & INFO_FLAG_UNK4)
+				    && (info->mFlags & INFO_FLAG_UNK4)) {
+					JPABaseEmitter* emitter = info->mEmitter;
+					if (emitter == nullptr) {
+						emitTry(i, info, 1);
+					} else if (emitter->isEnableDeleteEmitter()) {
+						emitter->becomeInvalidEmitter();
+						info->mEmitter = nullptr;
+						emitTry(i, info, 1);
+					}
+				}
+				if ((info->mPrevFrameFlags & INFO_FLAG_UNK4)
+				    && !(info->mFlags & INFO_FLAG_UNK4)) {
+					if (JPABaseEmitter* emitter = info->mEmitter) {
+						emitter->becomeInvalidEmitter();
+						info->mEmitter = nullptr;
+						info->unk0     = nullptr;
+						info->unk4     = nullptr;
+						info->unk4     = nullptr;
+					}
+				}
+				info->mPrevFrameFlags = info->mFlags;
+				info->offFlag(INFO_FLAG_UNK4);
+			}
+		}
+	}
+
+	if (cue & CUE_DRAW) {
+		if (cue & CUE_UNK40000000) {
+			SMS_DrawInit();
+			JPADrawInfo drawInfo(graphics->getViewMtx());
+			drawInfo.setFovy(gpCamera->getFovy());
+			drawInfo.setAspect(gpCamera->getAspect());
+			EmitterMgr(this)->draw(&drawInfo, 2);
+			EmitterMgr(this)->draw(&drawInfo, 3);
+		}
+
+		if (cue & CUE_UNK80000000) {
+			JPADrawInfo drawInfo(graphics->getViewMtx());
+			EmitterMgr(this)->draw(&drawInfo, 0);
+			unk3B8->draw(&drawInfo, 1);
+		}
+	}
+}
+
+JPABaseEmitter*
+TMarioParticleManager::emit(s32 param_1, const JGeometry::TVec3<f32>* param_2,
+                            u8 param_3, const void* param_4)
+{
+	if (param_3 == 0)
+		if (JPABaseEmitter* emitter = EmitterMgr(this)->createSimpleEmitterID(
+		        *param_2, param_1, param_3, 0, nullptr, nullptr))
+			return emitter;
+
+	if (param_3 == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        *param_2, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->mDraw.swapImage(
+			    gpScreenTexture->getTexture()->getTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	if (param_3 == 1) {
+		int tmp     = param_1 - 253;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk10[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	if (param_3 == 3) {
+		int tmp     = param_1 - 486;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk368[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	return nullptr;
+}
+
+JPABaseEmitter* TMarioParticleManager::emitWithRotate(
+    s32 param_1, const JGeometry::TVec3<f32>* param_2, s16 param_3, s16 param_4,
+    s16 param_5, u8 param_6, const void* param_7)
+{
+	u8 group = param_6;
+
+	if (group == 0)
+		if (JPABaseEmitter* emitter = EmitterMgr(this)->createSimpleEmitterID(
+		        *param_2, param_1, group, 0, nullptr, nullptr)) {
+			emitSetRotation(emitter, param_3, param_4, param_5);
+			return emitter;
+		}
+
+	if (group == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        *param_2, param_1, group, 0, nullptr, nullptr)) {
+			emitSetRotation(emitter, param_3, param_4, param_5);
+			emitter->mDraw.swapImage(
+			    emitScreenTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	return nullptr;
+}
+
+JPABaseEmitter*
+TMarioParticleManager::emitAndBindToPosPtr(s32 param_1,
+                                           const JGeometry::TVec3<f32>* param_2,
+                                           u8 param_3, const void* param_4)
+{
+	if (param_3 == 0)
+		if (JPABaseEmitter* emitter = EmitterMgr(this)->createSimpleEmitterID(
+		        *param_2, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToPosPtr);
+			return emitter;
+		}
+
+	if (param_3 == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        *param_2, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToPosPtr);
+			emitter->mDraw.swapImage(
+			    gpScreenTexture->getTexture()->getTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	if (param_3 == 1) {
+		int tmp     = param_1 - 253;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk10[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	if (param_3 == 3) {
+		int tmp     = param_1 - 486;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk368[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	return nullptr;
+}
+
+JPABaseEmitter* TMarioParticleManager::emitAndBindToMtxPtr(s32 param_1,
+                                                           MtxPtr param_2,
+                                                           u8 param_3,
+                                                           const void* param_4)
+{
+	JGeometry::TVec3<f32> local_24;
+	setVecX(local_24, param_2[0][3]);
+	local_24.y = param_2[1][3];
+	local_24.z = param_2[2][3];
+
+	if (param_3 == 0)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToMtxPtr);
+			return emitter;
+		}
+
+	if (param_3 == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToMtxPtr);
+			emitter->mDraw.swapImage(
+			    gpScreenTexture->getTexture()->getTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	if (param_3 == 1) {
+		int tmp     = param_1 - 253;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk10[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	if (param_3 == 3) {
+		int tmp     = param_1 - 486;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk368[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	return nullptr;
+}
+
+JPABaseEmitter*
+TMarioParticleManager::emitAndBindToSRTMtxPtr(s32 param_1, MtxPtr param_2,
+                                              u8 param_3, const void* param_4)
+{
+	JGeometry::TVec3<f32> local_24;
+	setVecX(local_24, param_2[0][3]);
+	local_24.y = param_2[1][3];
+	local_24.z = param_2[2][3];
+
+	if (param_3 == 0)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToSRTMtxPtr);
+			return emitter;
+		}
+
+	if (param_3 == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, param_3, 0, nullptr, nullptr)) {
+			emitter->setUserWork((uintptr_t)param_2);
+			emitter->setEmitterCallBackPtr(&emitterCallBackBindToSRTMtxPtr);
+			emitter->mDraw.swapImage(
+			    gpScreenTexture->getTexture()->getTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	if (param_3 == 1) {
+		int tmp     = param_1 - 253;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk10[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	if (param_3 == 3) {
+		int tmp     = param_1 - 486;
+		int idx     = getAvailableIdx(tmp, param_3, param_4);
+		TInfo* info = &unk368[tmp][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->onFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->unk4 = param_2;
+		info->unk0 = param_4;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr)
+			return info->mEmitter;
+	}
+
+	return nullptr;
+}
+
+JPABaseEmitter* TMarioParticleManager::emitAndBindToMtx(s32 param_1,
+                                                        MtxPtr param_2,
+                                                        u8 param_3,
+                                                        const void* param_4)
+{
+	JGeometry::TVec3<f32> local_24;
+	setVecX(local_24, param_2[0][3]);
+	local_24.y = param_2[1][3];
+	local_24.z = param_2[2][3];
+	u8 group = param_3;
+
+	if (group == 0)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, group, 0, nullptr, nullptr)) {
+			emitter->setGlobalRTMatrix(param_2);
+			return emitter;
+		}
+
+	if (group == 2)
+		if (JPABaseEmitter* emitter = unk3B8->createSimpleEmitterID(
+		        local_24, param_1, group, 0, nullptr, nullptr)) {
+			emitter->setGlobalRTMatrix(param_2);
+			emitter->mDraw.swapImage(
+			    gpScreenTexture->getTexture()->getTexInfo(),
+			    emitter->mDraw.getMainTextureID(0));
+			return emitter;
+		}
+
+	return nullptr;
+}
+
+JPABaseEmitter* TMarioParticleManager::emitParticleCallBack(
+    s32 param_1, const JGeometry::TVec3<f32>* param_2, u8 param_3,
+    JPACallBackBase2<JPABaseEmitter*, JPABaseParticle*>* param_4,
+    const void* param_5)
+{
+	if (param_3 == 1) {
+		int type    = param_1 - 253;
+		int idx     = getAvailableIdx(type, param_3, param_5);
+		TInfo* info = &unk10[type][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_5;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr) {
+			info->mEmitter->setParticleCallBackPtr(param_4);
+			return info->mEmitter;
+		}
+	}
+
+	if (param_3 == 3) {
+		int type    = param_1 - 486;
+		int idx     = getAvailableIdx(type, param_3, param_5);
+		TInfo* info = &unk368[type][idx];
+		info->onFlag(INFO_FLAG_UNK4);
+		info->offFlag(INFO_FLAG_BIND_TO_POS);
+		info->offFlag(INFO_FLAG_BIND_TO_RT_MTX);
+		info->offFlag(INFO_FLAG_BIND_TO_SRT_MTX);
+		info->unk4 = param_2;
+		info->unk0 = param_5;
+		if (info->mEmitter == nullptr)
+			emitTry(param_1, info, param_3);
+		if (info->mEmitter != nullptr) {
+			info->mEmitter->setParticleCallBackPtr(param_4);
+			return info->mEmitter;
+		}
+	}
+
+	return nullptr;
+}
+
+void TMarioParticleManager::emitTry(s32 param_1,
+                                    TMarioParticleManager::TInfo* param_2,
+                                    u8 param_3)
+{
+	if (param_2->checkFlag(INFO_FLAG_BIND_TO_POS)) {
+		param_2->mEmitter = unk3B8->createSimpleEmitterID(
+		    *(const JGeometry::TVec3<f32>*)param_2->unk4, param_1, param_3, 0,
+		    nullptr, nullptr);
+
+		if (param_2->mEmitter != nullptr) {
+			param_2->mEmitter->setUserWork((uintptr_t)param_2->unk4);
+			param_2->mEmitter->setEmitterCallBackPtr(
+			    &emitterCallBackBindToPosPtr);
+		}
+	} else {
+		if (param_2->checkFlag(INFO_FLAG_BIND_TO_RT_MTX
+		                       | INFO_FLAG_BIND_TO_SRT_MTX)) {
+			JGeometry::TVec3<f32> local_14;
+			setVecX(local_14, ((MtxPtr)param_2->unk4)[0][3]);
+			local_14.y = ((MtxPtr)param_2->unk4)[1][3];
+			local_14.z = ((MtxPtr)param_2->unk4)[2][3];
+
+			param_2->mEmitter = unk3B8->createSimpleEmitterID(
+			    local_14, param_1, param_3, 0, nullptr, nullptr);
+
+			if (param_2->mEmitter != nullptr) {
+				param_2->mEmitter->setUserWork((uintptr_t)param_2->unk4);
+				if (param_2->checkFlag(INFO_FLAG_BIND_TO_RT_MTX))
+					param_2->mEmitter->setEmitterCallBackPtr(
+					    &emitterCallBackBindToMtxPtr);
+				else
+					param_2->mEmitter->setEmitterCallBackPtr(
+					    &emitterCallBackBindToSRTMtxPtr);
+			}
+		} else {
+			param_2->mEmitter = unk3B8->createSimpleEmitterID(
+			    *(const JGeometry::TVec3<f32>*)param_2->unk4, param_1, param_3,
+			    0, nullptr, nullptr);
+		}
+	}
+
+	if (param_3 == 3 && param_2->mEmitter != nullptr) {
+		JPABaseEmitter* emitter = param_2->mEmitter;
+		emitter->mDraw.swapImage(gpScreenTexture->getTexture()->getTexInfo(),
+		                         emitter->mDraw.getMainTextureID(0));
+	}
+}
+
+int TMarioParticleManager::getAvailableIdx(s32 param_1, u8 param_2,
+                                           const void* param_3)
+{
+	for (int i = 0; i < unk3B4; ++i) {
+		if (param_2 == 3 && unk368[param_1][i].mEmitter != nullptr
+		    && unk368[param_1][i].unk0 == param_3)
+			return i;
+		if (param_2 == 1 && unk10[param_1][i].mEmitter != nullptr
+		    && unk10[param_1][i].unk0 == param_3)
+			return i;
+	}
+
+	for (int i = 0; i < unk3B4; ++i) {
+		if (param_2 == 3 && !unk368[param_1][i].checkFlag(0x4)
+		    && unk368[param_1][i].mEmitter == nullptr)
+			return i;
+		if (param_2 == 1 && !unk10[param_1][i].checkFlag(0x4)
+		    && unk10[param_1][i].mEmitter == nullptr)
+			return i;
+	}
+
+	return 0;
+}
+
+void SMSSetEmitterPolColor(JPABaseEmitter* param_1, int param_2)
+{
+	if (param_1 == nullptr)
+		return;
+	if (param_2 < 0 || param_2 > 7)
+		return;
+
+	if (param_2 == 6) {
+		switch (gpMarDirector->mMap) {
+		case 1:
+			if (gpMarDirector->unk7D == 5) {
+				param_2 = 3;
+				break;
+			}
+			// FALLTHROUGH
+
+		case 2:
+		case 55:
+			param_2 = 2;
+			break;
+
+		case 9:
+		case 0:
+		case 57:
+			param_2 = 1;
+			break;
+
+		case 3:
+			param_2 = 3;
+			break;
+
+		case 8:
+			param_2 = 4;
+			break;
+
+		case 6:
+		case 7:
+		case 14:
+		case 56:
+			param_2 = 5;
+			break;
+
+		default:
+			param_2 = 0;
+			break;
+		}
+	}
+
+	static const GXColor prmarray[6] = {
+		{ 0xB5, 0x84, 0x66, 0xFF }, { 0xFF, 0xE3, 0xA8, 0xFF },
+		{ 0xB5, 0x84, 0x66, 0xFF }, { 0x6E, 0x67, 0x57, 0xFF },
+		{ 0xEF, 0xB0, 0x2E, 0xFF }, { 0xB0, 0xBF, 0x30, 0xFF },
+	};
+
+	static const GXColor envarray[6] = {
+		{ 0x62, 0x0E, 0x00, 0xFF }, { 0xD8, 0x30, 0x60, 0xFF },
+		{ 0x62, 0x0E, 0x00, 0xFF }, { 0x00, 0x00, 0x00, 0xFF },
+		{ 0xB7, 0x24, 0x08, 0xFF }, { 0x00, 0x73, 0x6C, 0xFF },
+	};
+
+	param_1->setGlobalPrmColor(prmarray[param_2].r, prmarray[param_2].g,
+	                           prmarray[param_2].b);
+
+	param_1->setGlobalEnvColor(envarray[param_2].r, envarray[param_2].g,
+	                           envarray[param_2].b);
+}

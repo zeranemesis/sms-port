@@ -1,0 +1,33 @@
+diff --git a/cmake/aurora_dvd.cmake b/cmake/aurora_dvd.cmake
+index c7e8eac..2322169 100644
+--- a/cmake/aurora_dvd.cmake
++++ b/cmake/aurora_dvd.cmake
+@@ -7,3 +7,11 @@ set_target_properties(aurora_dvd PROPERTIES FOLDER "aurora")
+ target_compile_definitions(aurora_dvd PUBLIC AURORA TARGET_PC)
+ target_include_directories(aurora_dvd PUBLIC include)
+ target_link_libraries(aurora_dvd PUBLIC nod::nod fmt::fmt ${AURORA_SDL3_TARGET})
++# lib/dolphin/dvd/dvd.cpp calls OSPanic (defined in aurora_os), but this
++# target never declared that dependency - verified as a real MSVC link
++# failure (LNK2019: unresolved external symbol OSPanic) building
++# dolphinjet, which links aurora::dvd before aurora::os in its own list;
++# MSVC's linker doesn't rescan earlier static libraries for symbols only
++# needed by ones later, so this must be declared here rather than left to
++# consumers to order correctly by luck.
++target_link_libraries(aurora_dvd PRIVATE aurora::os)
+diff --git a/lib/dolphin/os/OSReport.cpp b/lib/dolphin/os/OSReport.cpp
+index 319422b..08129c0 100644
+--- a/lib/dolphin/os/OSReport.cpp
++++ b/lib/dolphin/os/OSReport.cpp
+@@ -8,7 +8,6 @@
+ 
+ #include <cstdarg>
+ 
+-#if 0
+ static aurora::Module reporter("aurora::os::report");
+ 
+ void OSReport(const char* msg, ...) {
+@@ -40,4 +39,3 @@ void OSPanic(const char* file, int line, const char* msg, ...) {
+ void OSFatal(GXColor fg, GXColor bg, const char* msg) {
+   reporter.fatal("{}", msg);
+ }
+-#endif

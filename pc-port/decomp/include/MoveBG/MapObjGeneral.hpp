@@ -1,0 +1,98 @@
+#ifndef MOVE_BG_MAP_OBJ_GENERAL_HPP
+#define MOVE_BG_MAP_OBJ_GENERAL_HPP
+
+#include <MoveBG/MapObjBase.hpp>
+
+struct TBGWallCheckRecord;
+
+class TMapObjGeneral : public TMapObjBase {
+public:
+	void initPhysicalData();
+
+	TMapObjGeneral(const char* name = "汎用地形オブジェ");
+
+	virtual void initMapObj();
+	virtual void loadAfter();
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+	virtual BOOL receiveMessage(THitActor* sender, u32 message);
+	virtual void ensureTakeSituation();
+	virtual void calcRootMatrix();
+	virtual void control();
+	virtual void bind();
+	virtual void kill();
+	virtual void appear();
+	virtual void touchPlayer(THitActor*);
+	virtual u32 touchWater(THitActor*);
+	virtual u32 getLivingTime() const { return mNormalLivingTime; }
+	// checkIllegalAttr is an override of TMapObjBase's slot, so its position
+	// in this list costs no vtable slot -- but it does decide the order MWCC
+	// flushes the weak inherited bodies in, most-derived class first and then
+	// declaration order within each class. Retail's WoodBarrel.o emits
+	// getLivingTime before checkIllegalAttr, so the declaration has to sit
+	// here rather than next to kill()/appear(); with it there, WoodBarrel.o
+	// swapped the pair and linking it changed the DOL.
+	virtual void checkIllegalAttr() const { }
+	virtual int getFlushTime() const { return mNormalFlushTime; }
+	virtual bool isPollutedGround(const JGeometry::TVec3<f32>&) const;
+	virtual void work();
+	virtual void appearing();
+	virtual void appeared();
+	virtual void breaking();
+	virtual void sinking();
+	virtual void holding();
+	virtual void waitingToRecover();
+	virtual void recovering();
+	virtual void waitingToAppear();
+	virtual void touchingPlayer();
+	virtual void touchingWater();
+	virtual void hold(TTakeActor*);
+	virtual void put();
+	virtual void thrown();
+	virtual void sink();
+	virtual void recover();
+	virtual void waitToAppear(s32);
+	virtual void makeObjBuried();
+	virtual void makeObjRecovered();
+	virtual void receiveMessageFromPlayer();
+	virtual void calcVelocity();
+	virtual void checkGroundCollision(JGeometry::TVec3<f32>*);
+	virtual void touchGround(JGeometry::TVec3<f32>*);
+	virtual void checkWallCollision(JGeometry::TVec3<f32>*);
+	virtual void touchWall(JGeometry::TVec3<f32>*, TBGWallCheckRecord*);
+	virtual void checkRoofCollision(JGeometry::TVec3<f32>*);
+	virtual void touchRoof(JGeometry::TVec3<f32>*);
+
+	static struct TMapObjSoundData mDefaultSound;
+
+	static u32 mNormalLivingTime;
+	static u32 mNormalFlushTime;
+	static int mNormalFlushInterval;
+	static u32 mNormalWaitToAppearTime;
+	static f32 mNormalAppearingScaleUp;
+	static f32 mNormalThrowSpeedRate;
+
+	enum {
+		STATE_APPEARING         = 0x2,
+		STATE_BREAKING          = 0x3,
+		STATE_TOUCHING_PLAYER   = 0x4,
+		STATE_TOUCHING_WATER    = 0x5,
+		STATE_HOLDING           = 0x6,
+		STATE_SINKING           = 0x7,
+		STATE_BURIED            = 0x8,
+		STATE_RECOVERING        = 0x9,
+		STATE_WAITING_TO_APPEAR = 0xA,
+		// Added by TResetFruit: alive and counting down to disappear,
+		// rotting on its way out, and broken and asleep.
+		STATE_LIVING            = 0xB,
+		STATE_ROTTING           = 0xC,
+		STATE_BROKEN            = 0xD,
+	};
+
+public:
+	/* 0x138 */ const TBGCheckData* unk138; // TODO: maybe not const
+	/* 0x13C */ const TBGCheckData* unk13C;
+	/* 0x140 */ f32 unk140;
+	/* 0x144 */ f32 unk144;
+};
+
+#endif

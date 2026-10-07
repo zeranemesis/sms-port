@@ -1,0 +1,1557 @@
+#include <Enemy/Igaiga.hpp>
+
+#include <Enemy/Conductor.hpp>
+
+#include <Enemy/Graph.hpp>
+
+#include <Strategic/LiveActor.hpp>
+
+#include <Strategic/Spine.hpp>
+
+#include <Strategic/ObjModel.hpp>
+
+#include <Strategic/SharedParts.hpp>
+
+#include <M3DUtil/MActor.hpp>
+
+#include <M3DUtil/SDLModel.hpp>
+
+#include <MarioUtil/MathUtil.hpp>
+
+#include <MarioUtil/RandomUtil.hpp>
+
+#include <Player/MarioAccess.hpp>
+
+#include <Player/ModelWaterManager.hpp>
+
+#include <Map/Map.hpp>
+
+#include <Map/MapData.hpp>
+
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+
+#include <Map/MapEventSink.hpp>
+
+#include <Enemy/AreaCylinder.hpp>
+
+#include <Map/PollutionManager.hpp>
+
+#include <MarioUtil/RumbleMgr.hpp>
+
+#include <MarioUtil/TexUtil.hpp>
+
+#include <MarioUtil/PacketUtil.hpp>
+
+#include <MoveBG/ItemManager.hpp>
+
+#include <MoveBG/MapObjBianco.hpp>
+
+#include <Map/MapCollisionData.hpp>
+
+#include <Map/MapMirror.hpp>
+
+#include <Strategic/MirrorActor.hpp>
+
+#include <System/Particles.hpp>
+
+#include <JSystem/JParticle/JPAEmitter.hpp>
+
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+
+#include <MSound/MSound.hpp>
+
+#include <MSound/MSoundSE.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
+
+#include <MSound/MSSetSound.hpp>
+
+#include <MSound/MSoundBGM.hpp>
+
+static const char* igaiga_bastable[] = {
+	"/scene/igaiga/bas/igaiga_down1.bas",
+	"/scene/igaiga/bas/igaiga_down2.bas",
+	nullptr,
+	nullptr,
+	"/scene/igaiga/bas/igaiga_shoot1.bas",
+	"/scene/igaiga/bas/igaiga_waterdown1.bas",
+	"/scene/igaiga/bas/igaiga_waterhit1.bas",
+	nullptr,
+};
+
+static const char* gorogoro_bastable[] = {
+	nullptr,
+	nullptr,
+	nullptr,
+	nullptr,
+};
+
+f32 TRollEnemy::mBoundVal     = 80.0f;
+
+f32 TRollEnemy::mTransYOffset;
+
+f32 TIgaiga::mReachNodeDist   = 300.0f;
+
+// UNUSED in the map; the values are not recoverable from the binary.
+f32 TIgaiga::mTremblePow      = 1.0f;
+
+f32 TIgaiga::mTrembleAcc      = 1.0f;
+
+f32 TIgaiga::mTrembleBrk      = 1.0f;
+
+static TRollEnemy* gpCurRollEnemy;
+
+static int RollEnemyBodyCallback(J3DNode* node, int param);
+
+// UNUSED, 0x160 in the map: only ever constructed inline by the managers.
+TRollEnemySaveLoadParams::TRollEnemySaveLoadParams(const char* prm)
+    : TWalkerEnemyParams(prm)
+    , PARAM_INIT(mSLGenerateInterval, 300)
+    , PARAM_INIT(mSLExpandRate, 1.0f)
+    , PARAM_INIT(mSLExpandMax, 1.5f)
+    , PARAM_INIT(mSLBoundVYMax, 15.0f)
+    , PARAM_INIT(mSLGroundOffsetY, 150.0f)
+{
+	TParams::load(mPrmPath);
+}
+
+// Binding level over the raw tracer member. The getTracer() form was +0x10
+// on the two nerves that paste rollMove; the raw member is the +8 that
+// lands both frames.
+static inline TGraphTracer* IgaigaRollTracer(TIgaiga* p)
+{
+	TGraphTracer* tracer = p->unk124;
+	return tracer;
+}
+
+// UNUSED, 0xf8 in the map: the rolling-along-the-graph step that the three
+// igaiga nerves share.
+void TIgaiga::rollMove()
+{
+	if (isReachedToGoalXZ()) {
+		if (jumpToNextGraphNode() >= 0)
+			flagJump();
+		const TGraphNode& current = IgaigaRollTracer(this)->getCurrent();
+		if (current.getRailNode()->mFlags & 0x40)
+			return;
+
+		goToRandomNextGraphNode();
+	}
+
+	walkBehavior(2, 1.0f);
+}
+
+// UNUSED, 0x48 in the map: pop after too many sprays. TNerveIgaigaWaterHit
+// pastes the flag-and-push through its own spine parameter; a named mSpine
+// local here is the extra lwz that kept that execute at 99.4.
+void TIgaiga::waterExplosion()
+{
+	TSpineBase<TLiveActor>* spine = mSpine;
+	onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+	spine->pushAfterCurrent(&TNerveSmallEnemyDie::theNerve());
+}
+
+// UNUSED, 0x94 in the map: only ever constructed inline by the manager.
+TGorogoro::TGorogoro(const char* name)
+    : TRollEnemy(name)
+{
+	unk1E4            = 0;
+	mGenerateGraphIdx = 0;
+	unk1EC            = 0;
+	gpCurRollEnemy    = nullptr;
+}
+
+// TODO: 36%. The original carries TRollEnemy::behaveToWater's whole body
+// inline here (that function itself matches to 99.8%) where our build
+// calls it. Either MWCC inlined the call or the original pasted the body;
+
+// UNUSED, 0x1e8 in the map, and this body compiles to exactly that. The ROM
+// inlines it twice into TGorogoroManager::perform (nodes 10 and 16, each
+// after a reset()), which is where its code comes from.
+void TGorogoro::setGenerateGraphIdx(int idx)
+{
+	JGeometry::TVec3<f32> point;
+	unk124->unk0->unk0[idx].getPoint((Vec*)&point);
+	mPosition        = point;
+	unk124->mCurrIdx = idx;
+	unk124->mPrevIdx = idx - 1;
+	unk124->unk0->unk0[idx + 1].getPoint((Vec*)&point);
+	JGeometry::TVec3<f32> dir(point.x - mPosition.x, 0.0f,
+	                          point.z - mPosition.z);
+	mRotation.y = MsWrap(MsGetRotFromZaxisY(dir), 0.0f, 360.0f);
+	TPathNode goal(point);
+	unkF4  = goal;
+	unk104 = goal;
+	unk114.clear();
+}
+
+// UNUSED, 0x24 in the map.
+void TIgaigaManager::requestPolluteModel(JGeometry::TVec3<f32>& pos,
+                                         JGeometry::TVec3<f32>& scale)
+{
+	unk60->generatePolluteModel(pos, scale);
+}
+
+// UNUSED, 0x24 in the map.
+void TGorogoroManager::requestPolluteModel(JGeometry::TVec3<f32>& pos,
+                                           JGeometry::TVec3<f32>& scale)
+{
+	unk6C->generatePolluteModel(pos, scale);
+}
+
+// UNUSED, 0x34 in the map. Its one expansion, in TGorogoroManager::perform,
+// yields the null manager pointer itself (FALSE) when there is no area.
+BOOL TGorogoroManager::inArea(const JGeometry::TVec3<f32>& pos)
+{
+	return unk70 ? unk70->contain(pos) : FALSE;
+}
+
+TRollEnemy::TRollEnemy(const char* name)
+    : TWalkerEnemy(name)
+{
+	mRollAngle = 0.0f;
+	unk198     = 0.0f;
+	unk19C     = 0.0f;
+	unk1A0     = 0.0f;
+	unk1A4     = nullptr;
+	unk1A8     = 0;
+	unk1AC     = 0.0f;
+	unk1B0     = 1.0f;
+}
+
+// TODO: 99.8%, every instruction in place; frame 0x80 against retail's 0xb0,
+// so the TVec3 slots sit low.
+// TODO: instruction-exact; frame 0x90 vs retail 0xb0 with getTracer() and
+// getMarchSpeed() at every read (+0x10, c-hs6, as in TGorogoro::walkBehavior).
+void TRollEnemy::reset()
+{
+	gpCurRollEnemy = this;
+	TWalkerEnemy::reset();
+
+	TMsRange<f32> angle(0.0f, 360.0f);
+	mRollAngle = angle.rand();
+	unk158     = 1.0f;
+
+	// Start on the first graph node, 10 up, facing the second.
+	JGeometry::TVec3<f32> point;
+	getTracer()->getGraph()->getFirstGraphNode().getPoint((Vec*)&point);
+	mPosition = point;
+	mPosition.y += 10.0f;
+
+	getTracer()->getGraph()->getGraphNode(1).getPoint((Vec*)&point);
+	JGeometry::TVec3<f32> dir;
+	dir.sub(point, mPosition);
+	mRotation.y = MsWrap(MsGetRotFromZaxisY(dir), 0.0f, 360.0f);
+
+	unk198                = getMarchSpeed() * 1.5f;
+	unk19C                = getMarchSpeed();
+	unk1A0                = 0.0f;
+	getTracer()->mCurrIdx = 0;
+}
+
+// The arc block reads the ground through getGroundHeight(), which gives the
+// frame its missing 8 bytes; all three reads through it are 8 too many.
+void TRollEnemy::walkBehavior(int param_1, f32 param_2)
+{
+	if (!unk1A8)
+		TWalkerEnemy::walkBehavior(param_1, param_2);
+
+	if (isAirborne() && mPosition.y > 20.0f + getGroundHeight()) {
+		// Remember the highest point of the arc, in bounce units.
+		f32 height = MsWrap((mPosition.y - getGroundHeight()) / mBoundVal, 0.0f,
+		                    unk1A4->mSLBoundVYMax.get());
+		if (unk1A0 < height)
+			unk1A0 = height;
+	} else if (!mGroundPlane->isWaterSurface()) {
+		unk1A8 = 0;
+		if (unk1A0 > unk1B0) {
+			// Landed hard enough to bounce.
+			bound();
+			JGeometry::TVec3<f32> vel;
+			vel.x = 0.0f;
+			vel.y = unk1A0;
+			vel.z = 0.0f;
+			mVelocity = vel;
+			onLiveFlag(LIVE_FLAG_AIRBORNE);
+			mPosition.y += 5.0f;
+			unk1A0 = 0.0f;
+			boundSE();
+		}
+	}
+
+	if (mPosition.y < 30.0f + mGroundHeight)
+		rollSE();
+
+	if (unk128 > 300) {
+		onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+		kill();
+	}
+}
+
+void TRollEnemy::behaveToWater(THitActor* param_1)
+{
+	mSprayedByWaterCooldown = 0;
+
+	// Each spray swells the body, and the hit radii with it.
+	if (unk158 < unk1A4->mSLExpandMax.get()) {
+		f32 rate = unk1A4->mSLExpandRate.value;
+		mBodyScale *= rate;
+		unk158 *= rate;
+		mScaledBodyRadius *= rate;
+		mScaling.x = mScaling.y = mScaling.z = mScaling.z * rate;
+
+		calcHitScale();
+		calcEntryRadius();
+	}
+}
+
+void TRollEnemy::attackToMario() { SMS_SendMessageToMario(this, HIT_MESSAGE_ATTACK); }
+
+// Graph.hpp declares no accessor for the tracer's trace speed; parked here
+// rather than in the shared header.
+static inline f32 IgaigaTraceSpeed(const TGraphTracer* tracer)
+{
+	f32 r = tracer->unkC;
+	return r;
+}
+
+// Binding level over the raw tracer member, unique to TRollEnemy::flagJump
+// (the rollMove binder is a different function so the families stay separate).
+static inline TGraphTracer* IgaigaJumpTracer(TRollEnemy* p)
+{
+	TGraphTracer* tracer = p->unk124;
+	return tracer;
+}
+
+void TRollEnemy::flagJump()
+{
+	// Hop toward the current graph node, 30 up, at the tracer's speed.
+	JGeometry::TVec3<f32> target;
+	getTracer()->getCurrent().getPoint((Vec*)&target);
+	mPosition.y += 30.0f;
+
+	f32 speed = IgaigaTraceSpeed(IgaigaJumpTracer(this));
+	JGeometry::TVec3<f32> vel
+	    = calcVelocityToJumpToY(target, speed, getGravityY());
+	unk1A8    = 1;
+	mVelocity = vel;
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	// TODO: frame-exact; the three 12-byte objects sit 4 bytes low of
+	// retail (allocation order). Declaration order of speed vs target
+	// does not move them.
+}
+
+bool TRollEnemy::isCollidMove(THitActor* param_1)
+{
+	// Running into a cannon shell kills it; anything else it just hits.
+	if (param_1->isActorType(0x4000022B)) {
+		kill();
+		return true;
+	}
+	param_1->receiveMessage(this, HIT_MESSAGE_ATTACK);
+	return false;
+}
+
+bool TRollEnemy::isReachedToGoalXZ()
+{
+	JGeometry::TVec3<f32> d(getUnk104().getPointRaw());
+	d.x -= mPosition.x;
+	d.y -= mPosition.y;
+	d.z -= mPosition.z;
+	if (!unk1A8)
+		d.y = 0.0f;
+	if (MsVECMag2(d) < 200.0f)
+		return true;
+	return false;
+}
+
+// TODO: 96.1%. Naming the sine (`f32 s = JMASin(...)`) puts the amplitude
+// arm's magic-double slots in retail's order; a named z gives retail's
+// z, 32 * range, x order. Left: retail loads 32.0f after z's fmadds and
+// gpPollution last; inert: raw gpPollution, `range * 32.0f`, sums spelled
+// position-first, a named receiver (+8 frame), a named x.
+// c-m14 also inert: named x and z position-first, a named `32.0f * range`, `range *= 32.0f`.
+void TRollEnemy::setBehavior()
+{
+	if (getPosition().y > 50.0f + mGroundHeight)
+		return;
+
+	if (mSpine->getTime() % getSaveParams()->mSLPolluteInterval.get() != 0)
+		return;
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve())
+		return;
+	if (!TSmallEnemy::mIsPolluter)
+		return;
+
+	// Stamp goop just ahead of the roll; the amplitude version pulses the
+	// stamp radius with the body scale.
+	f32 range = 2.0f;
+	if (!checkLiveFlag(LIVE_FLAG_HIDDEN)) {
+		if (!TSmallEnemy::mIsAmpPolluter) {
+			range = getSaveParams()->mSLPolluteRange.get();
+		} else {
+			s32 rmin  = getSaveParams()->mSLPolluteRMin.get();
+			s32 rmax  = getSaveParams()->mSLPolluteRMax.get();
+			s32 cycle = getSaveParams()->mSLPolluteCycle.get();
+			f32 s     = JMASin(180.0f * (mSpine->getTime() % cycle) / cycle);
+			range     = rmin + mBodyScale * (s * (rmax - rmin));
+		}
+	}
+
+	f32 z = unk1AC * mLinearVelocity.z + mPosition.z;
+	SMSGetPollution()->stampGround(
+	    1, unk1AC * mLinearVelocity.x + mPosition.x, getPosition().y, z,
+	    32.0f * range);
+}
+
+void TIgaigaPolluteModelManager::init(TLiveActor* param_1)
+{
+	TEnemyPolluteModelManager::init(param_1);
+
+	void* res = JKRFileLoader::getGlbResource(
+	    "/scene/igaiga/stamp_igaiga_model1.bmd");
+	SDLModelData* modelData = new SDLModelData(J3DModelLoaderDataBase::load(
+	    res, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+	             | (1 << J3DMLF_TevStageNumShift)));
+
+	for (int i = 0; i < unk14; ++i)
+		unk18[i] = new TIgaigaPolluteModel(param_1, modelData);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TIgaigaPolluteModel::setAnm (batch 127).
+static inline TSharedParts* IgaigaUnk10(const TIgaigaPolluteModel* p)
+{
+	TSharedParts* v10 = p->unk10;
+	return v10;
+}
+
+void TIgaigaPolluteModel::setAnm()
+{
+	IgaigaUnk10(this)->unk18->setBckFromIndex(7);
+	IgaigaUnk10(this)->unk18->getFrameCtrl(0)->setFrame(0.0f);
+}
+
+TIgaigaManager::TIgaigaManager(const char* name)
+    : TSmallEnemyManager(name)
+{
+	unk64          = 0;
+	unk68          = nullptr;
+	gpCurRollEnemy = nullptr;
+}
+
+void TIgaigaManager::load(JSUMemoryInputStream& stream)
+{
+	TSmallEnemyManager::load(stream);
+	unk38 = new TRollEnemySaveLoadParams("/enemy/igaiga.prm");
+	unk68 = new TWaterEmitInfo("/enemy/igaigawater.prm");
+}
+
+void TIgaigaManager::createModelData()
+{
+	static TModelDataLoadEntry entry[] = {
+		{ "igaiga_model1.bmd", 0x11240000, 0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
+}
+
+TSpineEnemy* TIgaigaManager::createEnemyInstance()
+{
+	return new TIgaiga;
+}
+
+void TIgaigaManager::initSetEnemies()
+{
+	unk60 = new TIgaigaPolluteModelManager("イガイガモデル汚染");
+	unk60->init((TLiveActor*)unk18[0]);
+}
+
+void TIgaigaManager::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TEnemyManager::perform(cue, graphics);
+	unk60->perform(cue, graphics);
+}
+
+// Rolls the body joint about Z by the accumulated roll angle, and lifts it
+// by mTransYOffset.
+// TODO: 92.5%. The header MsMtxSetRotX (weak in the map) through the rollMtx
+// pointer puts the roll matrix at retail's 0x2c. Left: the joint number and
+// rollMtx swap r30/r31, and ours hoists the 1.0/0.0/mTransYOffset loads above
+// the fctiwz where retail loads each just before use. Inert: rollMtx or the
+// Mtx declared above the joint, a named joint number, concats on `roll`.
+// A binding level over the file-scope current-roller pointer.
+static inline TRollEnemy* IgaigaCurRoller()
+{
+	TRollEnemy* roller = gpCurRollEnemy;
+	return roller;
+}
+
+static int RollEnemyBodyCallback(J3DNode* node, int param)
+{
+	if (param == 0) {
+		if (gpCurRollEnemy == nullptr || !IgaigaCurRoller()->isRolling())
+			return true;
+
+		J3DJoint* joint = (J3DJoint*)node;
+		MtxPtr anmMtx
+		    = gpCurRollEnemy->getModel()->getAnmMtx(joint->getJntNo());
+
+		Mtx roll;
+		MtxPtr rollMtx = roll;
+		MsMtxSetRotX(rollMtx, gpCurRollEnemy->mRollAngle);
+		anmMtx[1][3] += TRollEnemy::mTransYOffset;
+		MTXConcat(anmMtx, rollMtx, anmMtx);
+		MTXConcat(J3DSys::mCurrentMtx, rollMtx, J3DSys::mCurrentMtx);
+	}
+	return true;
+}
+
+TIgaiga::TIgaiga(const char* name)
+    : TRollEnemy(name)
+{
+	unk1B4 = 0;
+	unk1B8 = 0;
+	unk1BC = 1;
+	unk1CC = 1.0f;
+	unk1D0 = 0;
+	unk1E4 = 1.0f;
+	unk1E8 = 0;
+}
+
+void TIgaiga::init(TLiveManager* manager)
+{
+	TWalkerEnemy::init(manager);
+	mActorType = 0x10000017;
+	unk150     = 0x11;
+	offHitFlag(HIT_FLAG_UNK8000000 | HIT_FLAG_UNK10000000);
+	onHitFlag(HIT_FLAG_UNK40000000);
+	mSpine->initWith(&TNerveIgaigaRollOnGraph::theNerve());
+	unk1A4 = (TRollEnemySaveLoadParams*)getSaveParam();
+	mMActor->setJointCallback(1, RollEnemyBodyCallback);
+	mMActor->setBtkFromIndex(0);
+	unk124->setGraph(gpConductor->getGraphByName("igaiga"));
+}
+
+void TIgaiga::setMActorAndKeeper()
+{
+	mMActorKeeper = new TMActorKeeper(mManager, 1);
+	mMActor       = mMActorKeeper->createMActor("igaiga_model1.bmd", 0);
+}
+
+// Rogue include, deliberately mid-file: retail's zero + (1,1,1) `TVec3` pair
+// from MapCollisionEntry::setUpTrans sits at .rodata 0x1B0, between
+// "igaiga_model1.bmd" and "bosspaku_head_move", not with the header block at
+// the top of the file.
+#include <Map/MapCollisionManager.hpp>
+
+void TIgaiga::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TSmallEnemy::perform(cue, graphics);
+}
+
+void TIgaiga::calcRootMatrix()
+{
+	gpCurRollEnemy = this;
+	TSpineEnemy::calcRootMatrix();
+}
+
+bool TIgaiga::isRolling()
+{
+	if (mSpine->getCurrentNerve() == &TNerveIgaigaRollOnGraph::theNerve()
+	    || mSpine->getCurrentNerve()
+	           == &TNerveIgaigaShootFromCannon::theNerve()
+	    || mSpine->getCurrentNerve() == &TNerveIgaigaWaterHit::theNerve())
+		return true;
+	return false;
+}
+
+void TIgaiga::behaveToWater(THitActor* param_1)
+{
+	mSprayedByWaterCooldown = 0;
+
+	// Every hit swells it by mSLExpandRate, up to mSLExpandMax.
+	if (unk1E4 < unk1A4->mSLExpandMax.get())
+		unk1E4 *= unk1A4->mSLExpandRate.get();
+
+	unk165 = true;
+	if (getSpine()->getCurrentNerve() != &TNerveIgaigaWaterHit::theNerve())
+		mSpine->pushNerve(&TNerveIgaigaWaterHit::theNerve());
+}
+
+void TIgaiga::reset()
+{
+	TRollEnemy::reset();
+	initialGraphNode();
+	offLiveFlag(LIVE_FLAG_UNK10);
+
+	// Tremble timer: fires every 50..100 seconds.
+	unk1B4 = 0;
+	TMsRange<int> seconds(50, 100);
+	unk1B8 = seconds.rand() * 120;
+	unk1BC = 1;
+
+	mPosition.y += 20.0f;
+	gpMap->checkGround(mPosition.x, mPosition.y + mHeadHeight, mPosition.z,
+	                   &mGroundPlane);
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	unk1E4 = 1.0f;
+	unk1CC = 1.0f;
+	unk1AC = -30.0f;
+	unk1B0 = 2.0f;
+	unk1E8 = 0;
+}
+
+void TIgaiga::kill()
+{
+	mRollAngle = 0.0f;
+	TSmallEnemy::kill();
+}
+
+// Binding level over the virtual getSaveParam(), unique to moveObject so
+// it does not reprice calcHitScale / behaveToWater.
+static inline TSmallEnemyParams* IgaigaMoveParams(TIgaiga* p)
+{
+	TSmallEnemyParams* params = p->getSaveParams();
+	return params;
+}
+
+void TIgaiga::moveObject()
+{
+	TWalkerEnemy::moveObject();
+
+	// It slowly deflates back toward half size after being swollen.
+	unk1CC = MsClamp(unk1CC - 0.0002f, 0.5f, 1.0f);
+
+	f32 attackRadius = IgaigaMoveParams(this)->getSLAttackRadius();
+	f32 attackHeight = IgaigaMoveParams(this)->getSLAttackHeight();
+	f32 damageRadius = getSaveParams()->getSLDamageRadius();
+	f32 damageHeight = getSaveParams()->getSLDamageHeight();
+
+	f32 base   = unk154 * unk1CC;
+	mBodyScale = MsClamp(unk1E4 * base, base, 3.0f * mBodyScale);
+	// TODO: frame-exact; the two MsClamp products sit in f6/f7 swapped
+	// and the getCurrent tracer/web pair is r3/r4 swapped. Naming the
+	// unk1E4*base product made the first clamp worse. Also inert: a named
+	// swell clamp or product, the clamp-first product, a named 3x limit.
+
+	f32 ratio         = mBodyScale / unk154;
+	mScaledBodyRadius = 8.0f * (mBodyScale * mBodyRadius)
+	    * MsClamp(unk1CC * unk1E4, 1.0f, 1.2f);
+	mScaling.x = mScaling.y = mScaling.z = mBodyScale;
+	mAttackRadius = attackRadius * ratio;
+	mAttackHeight = attackHeight * ratio;
+	mDamageRadius = damageRadius * ratio;
+	mDamageHeight = damageHeight * ratio;
+	calcEntryRadius();
+
+	mMarchSpeed = unk1A4->mSLMarchSpeedLow.get();
+	mTurnSpeed  = unk1A4->mSLTurnSpeedLow.get();
+
+	// Fallen below the node it is heading for: dead, and not by Mario.
+	// getCurrent() is expanded twice: once for the rail-flag test (lwzx of
+	// the rail pointer) and again for getPoint (add of the node address).
+	if (unk124->getCurrent().getRailNode()->mFlags & 0x40) {
+		JGeometry::TVec3<f32> node;
+		unk124->getCurrent().getPoint((Vec*)&node);
+		if (mPosition.y < 50.0f + node.y) {
+			kill();
+			unk1BC = 1;
+		}
+	}
+}
+
+void TIgaiga::rollSE()
+{
+	SMSGetMSound()->startSoundActorSpecial(MSD_SE_EN_IGAIGA_ROLL, &mPosition,
+	                                       mScaling.x, mMarchSpeed, 0, nullptr,
+	                                       0, 4);
+}
+
+void TIgaiga::boundSE()
+{
+	SMSGetMSound()->startSoundActorWithInfo(
+	    MSD_SE_EN_IGAIGA_BOUND, &mPosition, nullptr,
+	    abs(getGroundPlane()->getNormal().y), 0, 0, nullptr, 0, 4);
+}
+
+// TODO: instruction-exact; frame 0x70 vs retail 0xc8 with getGroundPlane()
+// at all three plane reads (c-hs6). getLinearVelocity() and getVelocity(),
+// never used in this file, are +0x10 more.
+void TIgaiga::walkBehavior(int param_1, f32 param_2)
+{
+	TRollEnemy::walkBehavior(param_1, param_2);
+
+	// Spin the body by how far it moved this frame over its radius.
+	f32 dx = mLinearVelocity.x;
+	f32 dz = mLinearVelocity.z;
+	if (unk1A8) {
+		JGeometry::TVec3<f32> vel(mVelocity);
+		dx = JGeometry::TVec3<f32>(vel).x;
+		dz = JGeometry::TVec3<f32>(vel).z;
+	}
+	mRollAngle += 4.0f
+	    * (JGeometry::TUtil<f32>::sqrt(dx * dx + dz * dz)
+	       / (unk1E4 * (mBodyRadius * unk1CC)));
+
+	if (unk1B4 != 0) {
+		unk1B4++;
+		if (unk1B4 > unk1B8)
+			unk1B4 = 0;
+	}
+
+	// Whatever it is resting on or leaning against gets hit.
+	// Retail loads the actor into r0 for the null test and only then
+	// `mr`s it to r3, so the name is declared after both guards. The
+	// wall actor is the load destination and needs no name.
+	if (!isAirborne()) {
+		if (getGroundPlane() && getGroundPlane()->getActor()) {
+			const TLiveActor* actor = getGroundPlane()->getActor();
+			((THitActor*)actor)
+			    ->receiveMessage(this, HIT_MESSAGE_ATTACK);
+		}
+	}
+	if (unk138 && unk138->getActor())
+		((THitActor*)unk138->getActor())->receiveMessage(this, HIT_MESSAGE_ATTACK);
+}
+
+bool TIgaiga::isReachedToGoalXZ()
+{
+	JGeometry::TVec3<f32> d(getUnk104().getPointRaw());
+	d.x -= mPosition.x;
+	d.y -= mPosition.y;
+	d.z -= mPosition.z;
+	if (!unk1A8)
+		d.y = 0.0f;
+	d.y = 0.0f;
+	if (MsVECMag2(d) < mReachNodeDist)
+		return true;
+	return false;
+}
+
+void TIgaiga::setWalkAnm() { setBckAnm(3); }
+
+// Two-local binder over getMActor()->getModel(), unique to TIgaiga so it
+// does not reprice TGorogoro's IgaigaMActor family. +0x10 is the setDeadAnm
+// frame residue.
+static inline J3DModel* IgaigaIgaModel(TIgaiga* p)
+{
+	MActor* mActor = p->getMActor();
+	J3DModel* model = mActor->getModel();
+	return model;
+}
+
+void TIgaiga::setDeadAnm()
+{
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		unk1C0 = mPosition;
+	} else {
+		MtxPtr mtx = IgaigaIgaModel(this)->getAnmMtx(0);
+		unk1C0.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	}
+
+	gpMarioParticleManager->emit(0xCB, &unk1C0, 0, nullptr);
+	if (unk1BC)
+		setBckAnm(0);
+	else
+		setBckAnm(1);
+
+	// The goop it leaves is the body's scale, clamped. Retail loads the
+	// manager before the stamp copy so r6 is live across the clamp.
+	TIgaigaManager* mgr = (TIgaigaManager*)mManager;
+	JGeometry::TVec3<f32> stamp(mScaling);
+	stamp.scale(unk1CC * unk1E4);
+	mPosition.y = mGroundHeight;
+	stamp.x = MsClamp(stamp.x, 0.8f, 1.5f);
+	stamp.y = stamp.z = stamp.x;
+	mgr->unk60->generatePolluteModel(mPosition, stamp);
+}
+
+// TODO: the operator* temporary sits at 0x48 (retail 0x38); every
+// instruction and the named block match (the rumble test's getScaling()
+// placed the block).
+void TIgaiga::setMeltAnm()
+{
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		unk1C0 = mPosition;
+	} else {
+		MtxPtr mtx = IgaigaIgaModel(this)->getAnmMtx(0);
+		unk1C0.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	}
+
+	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && SMS_IsMarioTouchGround4cm()) {
+		if (getScaling().x > mBodyScale)
+			SMSRumbleMgr->start(0x15, 10, (Vec*)&mPosition);
+		else
+			SMSRumbleMgr->start(0x14, 10, (Vec*)&mPosition);
+	}
+
+	// Burst into water, then a puff of smoke.
+	TIgaigaManager* mgr = (TIgaigaManager*)mManager;
+	mgr->unk68->mPos.value = mPosition;
+	gpModelWaterManager->emitRequest(*mgr->unk68);
+
+	// Copy-initialised from operator*, so retail copies its temporary once.
+	JGeometry::TVec3<f32> scale = mScaling * 0.5f;
+
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(0xA1, &unk1C0, 0, nullptr);
+	if (emitter)
+		emitter->setGlobalScale(scale);
+	emitter = gpMarioParticleManager->emit(0xA2, &unk1C0, 0, nullptr);
+	if (emitter)
+		emitter->setGlobalScale(scale);
+
+	setBckAnm(5);
+
+	// One time in five it leaves a coin behind.
+	TMsRange<f32> chance(0.0f, 1.0f);
+	if (chance.rand() < 0.2f) {
+		gpItemManager->makeObjAppear(mPosition.x, 20.0f + mPosition.y,
+		                             mPosition.z, 0x20000002, true);
+	}
+}
+
+const char** TIgaiga::getBasNameTable() const { return igaiga_bastable; }
+
+bool TIgaiga::isHitValid(u32 param_1)
+{
+	// A hip drop is the one hit that does not count as a proper kill.
+	unk1BC = 1;
+	if (param_1 == HIT_MESSAGE_HIP_DROP)
+		unk1BC = 0;
+	return true;
+}
+
+void TIgaiga::bound()
+{
+	if (unk1A0 > 5.0f) {
+		setBckAnm(2);
+		if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && SMS_IsMarioTouchGround4cm()) {
+			if (mScaling.x > mBodyScale)
+				SMSRumbleMgr->start(0x15, 10, (Vec*)&mPosition);
+			else
+				SMSRumbleMgr->start(0x14, 10, (Vec*)&mPosition);
+		}
+	}
+}
+
+void TIgaiga::shoot(JGeometry::TVec3<f32>& velocity)
+{
+	mSpine->setNext(&TNerveIgaigaShootFromCannon::theNerve());
+	mShootVelocity = velocity;
+	offLiveFlag(LIVE_FLAG_UNK10);
+	unk1A8 = 1;
+}
+
+DEFINE_NERVE(TNerveIgaigaRollOnGraph, TLiveActor)
+{
+	TIgaiga* igaiga = (TIgaiga*)spine->getBody();
+
+	if (spine->getTime() == 0)
+		igaiga->setWalkAnm();
+
+	if (igaiga->checkCurAnmEnd(0) && igaiga->isBckAnm(2))
+		igaiga->setBckAnm(3);
+
+	igaiga->rollMove();
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveIgaigaWaterHit, TLiveActor)
+{
+	TIgaiga* igaiga = (TIgaiga*)spine->getBody();
+
+	if (spine->getTime() == 0)
+		igaiga->setBckAnm(6);
+
+	// Fully swollen: twenty more hits and it bursts. The die-nerve push
+	// goes through this execute's spine, not a reload of mSpine; that
+	// extra lwz is the whole remaining residue of waterExplosion.
+	if (igaiga->unk1E4 >= igaiga->unk1A4->mSLExpandMax.get()) {
+		if (igaiga->unk1E8 > 20) {
+			igaiga->onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+			spine->pushAfterCurrent(&TNerveSmallEnemyDie::theNerve());
+			return TRUE;
+		}
+		igaiga->unk1E8++;
+	} else if (igaiga->checkCurAnmEnd(0)) {
+		bool sprayed = igaiga->unk165;
+		if (sprayed)
+			igaiga->unk165 = false;
+
+		if (!sprayed) {
+			igaiga->setBckAnm(3);
+			spine->pushAfterCurrent(&TNerveIgaigaRollOnGraph::theNerve());
+			return TRUE;
+		}
+	}
+
+	if (igaiga->checkCurAnmEnd(0) && igaiga->isBckAnm(2))
+		igaiga->setBckAnm(3);
+
+	igaiga->rollMove();
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveIgaigaShootFromCannon, TLiveActor)
+{
+	TIgaiga* igaiga = (TIgaiga*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		igaiga->setBckAnm(4);
+		igaiga->mPosition.y += 10.0f;
+		igaiga->mVelocity = igaiga->mShootVelocity;
+		igaiga->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	} else if (igaiga->checkCurAnmEnd(0) && !igaiga->isAirborne()) {
+		igaiga->bound();
+		spine->pushAfterCurrent(&TNerveIgaigaRollOnGraph::theNerve());
+		return TRUE;
+	}
+
+	igaiga->walkBehavior(2, 1.0f);
+	return FALSE;
+}
+
+void TGorogoroPolluteModelManager::init(TLiveActor* param_1)
+{
+	TEnemyPolluteModelManager::init(param_1);
+
+	void* res = JKRFileLoader::getGlbResource(
+	    "/scene/gorogoro/bosspaku_head_stamp.bmd");
+	SDLModelData* modelData = new SDLModelData(J3DModelLoaderDataBase::load(
+	    res, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+	             | (1 << J3DMLF_TevStageNumShift)));
+
+	for (int i = 0; i < unk14; ++i)
+		unk18[i] = new TGorogoroPolluteModel(param_1, modelData);
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TGorogoroPolluteModel::setAnm (batch 127).
+static inline TSharedParts* IgaigaUnk10(const TGorogoroPolluteModel* p)
+{
+	TSharedParts* v10 = p->unk10;
+	return v10;
+}
+
+void TGorogoroPolluteModel::setAnm()
+{
+	IgaigaUnk10(this)->unk18->setBckFromIndex(3);
+	IgaigaUnk10(this)->unk18->getFrameCtrl(0)->setFrame(0.0f);
+}
+
+TGorogoroManager::TGorogoroManager(const char* name)
+    : TSmallEnemyManager(name)
+{
+	unk60 = 0;
+	unk64 = nullptr;
+	unk68 = 1;
+	unk6C = nullptr;
+	unk70 = nullptr;
+}
+
+void TGorogoroManager::load(JSUMemoryInputStream& stream)
+{
+	TSmallEnemyManager::load(stream);
+	unk38 = new TRollEnemySaveLoadParams("/enemy/gorogoro.prm");
+
+	static const char* anmlist[] = { "bosspaku_head_move", nullptr };
+	createSharedMActorSet(anmlist);
+}
+
+void TGorogoroManager::loadAfter()
+{
+	unk64 = JDrama::TNameRefGen::search<TMapEventSink>(
+	    "イベント（地形沈むビアンコ）");
+	unk70 = (TAreaCylinderManager*)gpConductor->search("ゴロゴロ発生マネージャー");
+}
+
+TSpineEnemy* TGorogoroManager::createEnemyInstance()
+{
+	return new TGorogoro;
+}
+
+// The header accessors getObjNum(), getObj(), getTracer() and getNodeNum()
+// supply the forced-load words retail has below the new manager's `this`
+// temporary. `web` declared at function scope gives `i` and `web` retail's
+// registers (with the old binders it was inert).
+void TGorogoroManager::initSetEnemies()
+{
+	TGraphWeb* web;
+	unk6C = new TGorogoroPolluteModelManager("ゴロゴロモデル汚染");
+	unk6C->init((TLiveActor*)unk18[0]);
+
+	static const char* graphlist[] = { "gorogoro0", "gorogoro1" };
+
+	// Alternate the two graphs; fall back to the first if one is missing.
+	for (int i = 0; i < getObjNum(); ++i) {
+		JGeometry::TVec3<f32> point;
+		web = gpConductor->getGraphByName(graphlist[i % 2]);
+		if (web->isDummy())
+			web = gpConductor->getGraphByName(graphlist[0]);
+		if (web->isDummy())
+			continue;
+
+		TGorogoro* goro = (TGorogoro*)getObj(i);
+		web->unk0[0].getPoint(&point);
+		goro->getTracer()->setGraph(web);
+		goro->mPosition         = point;
+		goro->mGenerateGraphIdx = web->getNodeNum() - 1;
+	}
+}
+
+void TGorogoroManager::createModelData()
+{
+	static TModelDataLoadEntry entry[] = {
+		{ "bosspaku_head.bmd", 0x10300000, 0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
+}
+
+static inline f32 wrapAngle(f32 angle) { return MsWrap(angle, 0.0f, 360.0f); }
+
+// TODO: 96.4%. wrapAngle's extra inline level makes MsWrap<f> the ROM's `bl`.
+// The two seating blocks are TGorogoro::setGenerateGraphIdx(10/16) inlined
+// (retail frame 0x170 with two point/goal blocks, goro and second in r27/r28),
+// but calling it leaves MsGetRotFromZaxisY out of line at depth 2 (the
+// MathUtil.hpp known-open block): 71.4% with or without wrapAngle there.
+void TGorogoroManager::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_MOVE) {
+		unk60++;
+		s32 interval = ((TRollEnemySaveLoadParams*)unk38)
+		                   ->mSLGenerateInterval.get();
+		if (unk60 > interval) {
+			unk60 = 0;
+
+			// Only spawn while Mario is inside the spawning area. Retail
+			// tests the cylinder manager twice and normalises inArea's BOOL,
+			// which is this spelling (+2.5% over a bare inArea call).
+			if (unk70 ? (inArea(SMS_GetMarioPos()) ? TRUE : FALSE) : TRUE) {
+				for (int i = 0; i < getActiveObjNum(); ++i) {
+					TGorogoro* goro = (TGorogoro*)getObj(i);
+					if (!goro->checkLiveFlag(LIVE_FLAG_DEAD))
+						continue;
+
+					if (unk64 && !unk64->isBuried(1)) {
+						if (unk68) {
+							// First spawn after the ground sinks: seat the
+							// first two on fixed nodes, facing along the
+							// rail, and aim them at the next node.
+							unk68 = 0;
+
+							goro->reset();
+							JGeometry::TVec3<f32> point;
+							goro->getTracer()->getGraph()->getGraphNode(10).getPoint(
+							    (Vec*)&point);
+							goro->mPosition             = point;
+							goro->getTracer()->mCurrIdx = 10;
+							goro->getTracer()->mPrevIdx = 9;
+							goro->getTracer()->getGraph()->getGraphNode(11).getPoint(
+							    (Vec*)&point);
+							JGeometry::TVec3<f32> dir(
+							    point.x - goro->getPosition().x, 0.0f,
+							    point.z - goro->getPosition().z);
+							goro->mRotation.y = wrapAngle(MsGetRotFromZaxisY(dir));
+							TPathNode goal(point);
+							goro->unkF4  = goal;
+							goro->unk104 = goal;
+							goro->unk114.clear();
+
+							TGorogoro* second = (TGorogoro*)getObj(1);
+							second->reset();
+							second->getTracer()->getGraph()->getGraphNode(16).getPoint(
+							    (Vec*)&point);
+							second->mPosition             = point;
+							second->getTracer()->mCurrIdx = 16;
+							second->getTracer()->mPrevIdx = 15;
+							second->getTracer()->getGraph()->getGraphNode(17).getPoint(
+							    (Vec*)&point);
+							JGeometry::TVec3<f32> dir2(
+							    point.x - second->getPosition().x, 0.0f,
+							    point.z - second->getPosition().z);
+							second->mRotation.y = wrapAngle(MsGetRotFromZaxisY(dir2));
+							TPathNode goal2(point);
+							second->unkF4  = goal2;
+							second->unk104 = goal2;
+							second->unk114.clear();
+						} else {
+							goro->reset();
+						}
+					} else if (unk64) {
+						// Still buried: try again next frame.
+						unk60 = interval;
+					} else {
+						goro->reset();
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	TEnemyManager::perform(cue, graphics);
+	unk6C->perform(cue, graphics);
+}
+
+// TODO: retail keeps this in r31 and mirror in r30 (ours swapped). Inert:
+// top-declared mirror, timg or i.
+void TGorogoro::init(TLiveManager* manager)
+{
+	TWalkerEnemy::init(manager);
+	mActorType = 0x10000019;
+	unk150     = 0x31;
+	offHitFlag(HIT_FLAG_UNK8000000 | HIT_FLAG_UNK10000000 | HIT_FLAG_UNK40000000);
+	mSpine->initWith(&TNerveGorogoroRollOnGraph::theNerve());
+	unk1A4 = (TRollEnemySaveLoadParams*)getSaveParam();
+
+	TMirrorActor* mirror = new TMirrorActor("ゴロゴロin鏡");
+	mirror->init(getMActor()->getModel(), 0x18);
+
+	mTevKColor.a = 0xFF;
+
+	// Both the live model and its reflection get the goop texture.
+	const ResTIMG* timg = (const ResTIMG*)JKRFileLoader::getGlbResource(
+	    "/scene/map/pollution/H_ma_rak.bti");
+	if (timg) {
+		SMS_ChangeTextureAll(getMActor()->getModel()->getModelData(), "M_dummy",
+		                     *timg);
+		SMS_ChangeTextureAll(mirror->getUnk14()->getModelData(), "M_dummy", *timg);
+	}
+
+	for (u16 i = 0;
+	     i < getMActor()->getModel()->getModelData()->getMaterialNum(); ++i) {
+		SMS_InitPacket_OneTevKColor(getMActor()->getModel(), i, GX_KCOLOR0,
+		                            &mTevKColor);
+		SMS_InitPacket_OneTevKColor(mirror->getUnk14(), i, GX_KCOLOR0,
+		                            &mTevKColor);
+	}
+
+	getMActor()->setJointCallback(1, RollEnemyBodyCallback);
+	unk130 = 1;
+}
+
+// Binding level over the actor's model; parked here rather than in MActor.hpp.
+static inline J3DModel* IgaigaModel(const MActor* mActor)
+{
+	J3DModel* model = mActor->getModel();
+	return model;
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TGorogoro::perform (batch 127).
+static inline MActor* IgaigaMActor(const TGorogoro* p)
+{
+	MActor* mActor = p->mMActor;
+	return mActor;
+}
+
+void TGorogoro::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TSmallEnemy::perform(cue, graphics);
+
+	// Keep animating a clipped-out one whose reflection is still visible.
+	if (checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)
+	    && gpMirrorModelManager->isInMirror(mPosition)) {
+		if (cue & CUE_CALC_ANIM) {
+			calcRootMatrix();
+			IgaigaMActor(this)->calc();
+		}
+		if (cue & CUE_CALC_VIEW)
+			IgaigaMActor(this)->viewCalc();
+	}
+}
+
+void TGorogoro::calcRootMatrix()
+{
+	gpCurRollEnemy = this;
+
+	if (mSpine->getCurrentNerve() == &TNerveGorogoroDie::theNerve()) {
+		TSpineEnemy::calcRootMatrix();
+		if (checkLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH)) {
+			unk1B4.ref(0, 3) = mPosition.x;
+			unk1B4.ref(2, 3) = mPosition.z;
+		}
+		return;
+	}
+
+	if (isEaten())
+		return;
+
+	// Kick up dust while it is on the ground.
+	f32 offsetY = unk1A4->mSLGroundOffsetY.get();
+	if (mPosition.y < 30.0f + mGroundHeight) {
+		JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    0x175, getMActor()->getModel()->getAnmMtx(0), 1, this);
+		if (emitter)
+			emitter->setGlobalScale(mScaling);
+	}
+
+	MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
+	               offsetY * unk158 + mPosition.y, mPosition.z, mRotation.x,
+	               mRotation.y, mRotation.z);
+	getModel()->setBaseScale(*(Vec*)&mScaling);
+}
+
+void TGorogoro::reset()
+{
+	unk130 = 1;
+	TRollEnemy::reset();
+	offLiveFlag(LIVE_FLAG_UNK1000);
+	mTevKColor.a = 0xFF;
+	unk1AC       = -10.0f;
+	unk1B0 = 1.0f;
+}
+
+void TGorogoro::kill()
+{
+	mRollAngle = 0.0f;
+	if (mSpine->getCurrentNerve() == &TNerveSmallEnemyDie::theNerve())
+		return;
+	if (mSpine->getCurrentNerve() == &TNerveGorogoroDie::theNerve())
+		return;
+
+	mSpine->reset();
+	mSpine->setNext(&TNerveGorogoroDie::theNerve());
+	mSpine->pushAfterCurrent(mSpine->getDefault());
+	onLiveFlag(LIVE_FLAG_UNK8);
+}
+
+void TGorogoro::forceKill()
+{
+	// Standing on water kills it outright; illegal ground is left alone.
+	if (mGroundPlane->isIllegalData())
+		return;
+	if (!mGroundPlane->isPool() && !mGroundPlane->isWaterSurface())
+		return;
+
+	if (isAirborne())
+		return;
+	if (mSpine->getCurrentNerve() == &TNerveGorogoroDie::theNerve())
+		return;
+
+	mSpine->reset();
+	mSpine->setNext(&TNerveGorogoroDie::theNerve());
+	mSpine->pushAfterCurrent(mSpine->getDefault());
+	onLiveFlag(LIVE_FLAG_UNK20000);
+	onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+}
+
+// duplicating it to find out would be a fakematch, so it stays a call.
+// TODO: 99.6%. The inlined calcHitScale's attack-radius and damage-radius
+// conversions take f31/f29 where retail has f29/f31. Inert: unnamed params,
+// ratio first, `ratio * x` products, C-style declarations in reverse order.
+// Register model (c-g4): the four locals are depth-2 objects @2261/5/9/73
+// created in declaration order, so attackRadius is coloured first (f31);
+// retail's f29/f30/f31 is the reverse creation order. C-style declarations
+// in forward order with later assignments are inert too.
+void TGorogoro::behaveToWater(THitActor* param_1)
+{
+	TRollEnemy::behaveToWater(param_1);
+
+	// Fade the goop tint with the hit points that are left.
+	u8 maxHp = getSaveParams() ? getSaveParams()->mSLHitPointMax.get() : 1;
+	mTevKColor.a = (mHitPoints * 255) / maxHp;
+	if (mHitPoints < 2)
+		mHitPoints = 1;
+
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0x176, IgaigaModel(IgaigaMActor(this))->getAnmMtx(0), 1, this);
+	if (emitter)
+		emitter->setGlobalScale(mScaling);
+}
+
+void TGorogoro::rollSE()
+{
+	SMSGetMSound()->startSoundActorWithInfo(
+	    MSD_SE_BS_KRPAKU_ROLL, &mPosition, nullptr,
+	    abs(getGroundPlane()->getNormal().y), 0, 0, nullptr, 0, 4);
+}
+
+// Binding level over the address of a struct member, worth +16 of low region
+// in TGorogoro::boundSE (batch 130).
+static inline const JGeometry::TVec3<f32>* IgaigaNormal(const TBGCheckData* p)
+{
+	const JGeometry::TVec3<f32>* normal = &p->mNormal;
+	return normal;
+}
+
+void TGorogoro::boundSE()
+{
+	SMSGetMSound()->startSoundActorWithInfo(
+	    MSD_SE_BS_KRPAKU_GND, &mPosition, nullptr,
+	    abs(IgaigaNormal(mGroundPlane)->y), 0, 0, nullptr, 0, 4);
+}
+
+// TODO: 99.9%, every instruction in place; the frame is 0xd8 against
+// retail's 0x150 (0xb8 before the ground, actor type, march speed and spine
+// reads went through their accessors, c-hs5; getPosition() at every position
+// read breaks instructions), the whole gap sitting below the wall record (a
+// missing inline level's temporaries, not found yet).
+void TGorogoro::walkBehavior(int param_1, f32 param_2)
+{
+	if (mPosition.y > getGroundHeight())
+		onLiveFlag(LIVE_FLAG_AIRBORNE);
+
+	// Rolling into a watermill turns the wheel and slows the roll; the
+	// ground, the roof and every touched wall are all checked for one.
+	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+		if (getGroundPlane()) {
+			const TLiveActor* actor = getGroundPlane()->getActor();
+			if (actor && actor->getActorType() == 0x4000009A) {
+				TBiancoWatermill* mill = (TBiancoWatermill*)actor;
+				mill->turnByEnemy(this, getGroundPlane());
+				TRollEnemy::walkBehavior(param_1, 0.2f * param_2);
+				return;
+			}
+		}
+
+		const TBGCheckData* roof;
+		gpMap->checkRoof(mPosition.x, mPosition.y + mHeadHeight, mPosition.z,
+		                 &roof);
+		if (roof) {
+			const TLiveActor* actor = roof->getActor();
+			if (actor && actor->getActorType() == 0x4000009A) {
+				TBiancoWatermill* mill = (TBiancoWatermill*)actor;
+				mill->turnByEnemy(this, roof);
+				TRollEnemy::walkBehavior(param_1, 0.3f * param_2);
+				return;
+			}
+		}
+
+		if (unk138 && unk138->getActor()) {
+			TBGWallCheckRecord record(mPosition.x, mPosition.y + mHeadHeight,
+			                          mPosition.z, mBodyScale * mWallRadius, 4,
+			                          0);
+			if (gpMap->isTouchedWallsAndMoveXZ(&record)) {
+				for (int i = 0; i < record.mResultWallsNum; ++i) {
+					const TLiveActor* actor = record.mResultWalls[i]->getActor();
+					if (actor && actor->getActorType() == 0x4000009A) {
+						TBiancoWatermill* mill = (TBiancoWatermill*)actor;
+						mill->turnByEnemy(this, record.mResultWalls[i]);
+					}
+				}
+				TRollEnemy::walkBehavior(param_1, 0.2f * param_2);
+				return;
+			}
+		}
+	}
+
+	mTurnSpeed = unk1A4->mSLTurnSpeedLow.get();
+	TRollEnemy::walkBehavior(param_1, param_2);
+	mRollAngle += 0.4f * getMarchSpeed();
+
+	// Rolling onto water while alive drowns it.
+	if (getSpine()->getCurrentNerve() != &TNerveGorogoroDie::theNerve()
+	    && mPosition.y < 10.0f + getGroundHeight()
+	    && getGroundPlane()->isWaterSurface()) {
+		onLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+		onLiveFlag(LIVE_FLAG_UNK20000);
+		kill();
+	}
+}
+
+// Retail's body is TRollEnemy::flagJump expanded one inline level down, which
+// is what puts the velocity return above the jump target.
+void TGorogoro::flagJump() { TRollEnemy::flagJump(); }
+
+void TGorogoro::setDeadAnm()
+{
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToMtxPtr(
+	    0xBF, getMActor()->getModel()->getAnmMtx(1), 0, nullptr);
+	if (emitter)
+		emitter->setGlobalScale(mScaling);
+
+	setBckAnm(0);
+	SMSGetMSound()->startSoundActor(MSD_SE_BS_KRPAKU_DOWN, &mPosition);
+}
+
+void TGorogoro::setMeltAnm()
+{
+	setBckAnm(1);
+	unk130 = 0;
+	onLiveFlag(LIVE_FLAG_UNK1000);
+
+	// Freeze where it died, on the ground, and sink there.
+	MTXCopy(getMActor()->getModel()->getBaseTRMtx(), unk1B4);
+	unk1B4.ref(1, 3) = mGroundHeight;
+
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emitAndBindToMtxPtr(0xBE, unk1B4, 0, nullptr);
+	if (emitter)
+		emitter->setGlobalScale(mScaling);
+
+	SMSGetMSound()->startSoundActor(MSD_SE_BS_KRPAKU_SINK, &mPosition, 0,
+	                                nullptr, 0, 4);
+}
+
+void TGorogoro::bound()
+{
+	((TGorogoroManager*)mManager)->unk6C->generatePolluteModel(mPosition, mScaling);
+	if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT) && SMS_IsMarioTouchGround4cm())
+		SMSRumbleMgr->start(0x15, 10, (Vec*)&mPosition);
+}
+
+const char** TGorogoro::getBasNameTable() const { return gorogoro_bastable; }
+
+bool TGorogoro::isRolling()
+{
+	if (mSpine->getCurrentNerve() == &TNerveGorogoroRollOnGraph::theNerve()
+	    || isBckAnm(1))
+		return true;
+	return false;
+}
+
+void TGorogoro::setMActorAndKeeper()
+{
+	mMActorKeeper = new TMActorKeeper(mManager, 1);
+	mMActor       = mMActorKeeper->createMActor("bosspaku_head.bmd", 3);
+}
+
+// Binding level unique to generateByGateKeeper. A function-scope
+// SMS_GetMarioPos() name CSEd the three loads and dropped the match;
+// a per-site binder keeps the reloads and lands the frame.
+static inline const JGeometry::TVec3<f32>& IgaigaGateMarioPos()
+{
+	const JGeometry::TVec3<f32>& p = SMS_GetMarioPos();
+	return p;
+}
+
+// +4 setter level to shift the named TVec3/Mtx block up one slot
+// (target and rot sit 4 bytes low of retail).
+static inline void IgaigaSetCurr(TGraphTracer* t, int idx)
+{
+	t->mCurrIdx = idx;
+}
+
+// Push the current goal and chase the given node next. Retail's node is the
+// temporary created right after the two jump-velocity returns, below them and
+// above every inline object, which is what a temporary argument gives.
+static inline void IgaigaPushGoal(TGorogoro* p, const TPathNode& goal)
+{
+	p->unk114.push(p->unkF4);
+	p->unkF4 = goal;
+}
+
+void TGorogoro::generateByGateKeeper(const JGeometry::TVec3<f32>& pos,
+                                     const JGeometry::TVec3<f32>& dir)
+{
+	reset();
+
+	// Snap the tracer to the nearest node, then either charge at Mario if
+	// he is in sight or head for that node.
+	TGraphWeb* web    = unk124->unk0;
+	int nearest       = web->findNearestNodeIndex(pos, 0xffffffff);
+	IgaigaSetCurr(unk124, nearest);
+	unk124->mPrevIdx  = nearest - 1;
+	TGraphNode* node  = &web->unk0[nearest];
+
+	BOOL sawMario;
+	JGeometry::TVec3<f32> target;
+	Mtx rot;
+	if (MsIsInSight(pos, dir.y, IgaigaGateMarioPos(), 2000.0f, 360.0f, -1.0f)) {
+		sawMario = true;
+		target   = IgaigaGateMarioPos();
+	} else {
+		node->getPoint((Vec*)&target);
+		sawMario = false;
+	}
+
+	target.x -= pos.x;
+	target.y -= pos.y;
+	target.z -= pos.z;
+	mPosition = pos;
+
+	if (!target.isZero()) {
+		// Aim up to 15 degrees either side, then jump 0..1500 that way.
+		VECNormalize(&target, &target);
+		MsMtxSetRotY(rot, 30.0f * MsRandF() - 15.0f);
+		MTXMultVec(rot, &target, &target);
+
+		mRotation.y = MsWrap(MsGetRotFromZaxisY(target), 0.0f, 360.0f);
+
+		target.scale(1500.0f * MsRandF());
+		target.x += pos.x;
+		target.y += pos.y;
+		target.z += pos.z;
+		mVelocity = calcVelocityToJumpToY(target, 15.0f, getGravityY());
+	} else {
+		mVelocity   = calcVelocityToJumpToY(pos, 15.0f, getGravityY());
+		mRotation.y = MsWrap(MsGetRotFromZaxisY(target), 0.0f, 360.0f);
+	}
+
+	// Chasing Mario: push the current goal and make him the next one.
+	if (sawMario)
+		IgaigaPushGoal(this, TPathNode(IgaigaGateMarioPos()));
+
+	unk1A8 = 1;
+}
+
+DEFINE_NERVE(TNerveGorogoroRollOnGraph, TLiveActor)
+{
+	TGorogoro* goro = (TGorogoro*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		goro->goToShortestNextGraphNode();
+		goro->setBckAnm(2);
+	}
+
+	if (goro->isReachedToGoalXZ()) {
+		if (goro->jumpToNextGraphNode() >= 0)
+			goro->flagJump();
+		else
+			goro->goToShortestNextGraphNode();
+	}
+
+	goro->walkBehavior(2, 1.0f);
+	return FALSE;
+}
+
+DEFINE_NERVE(TNerveGorogoroDie, TLiveActor)
+{
+	TGorogoro* goro = (TGorogoro*)spine->getBody();
+
+	if (spine->getTime() < 2) {
+		goro->onHitFlag(HIT_FLAG_NO_COLLISION);
+
+		// Dying over water splashes; dying on land stamps goop.
+		BOOL onWater = goro->getGroundPlane()->isWaterSurface();
+		if (onWater && !goro->isAirborne())
+			goro->generateEffectColumWater();
+
+		if (goro->checkLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH)) {
+			goro->setMeltAnm();
+		} else {
+			((TGorogoroManager*)goro->mManager)
+			    ->unk6C->generatePolluteModel(goro->mPosition, goro->mScaling);
+			goro->setDeadAnm();
+			goro->setDeadEffect();
+		}
+	} else if (goro->checkCurAnmEnd(0) || spine->getTime() > 360) {
+		goro->onHitFlag(HIT_FLAG_NO_COLLISION);
+		goro->onLiveFlag(LIVE_FLAG_DEAD);
+		goro->onLiveFlag(LIVE_FLAG_UNK8);
+		goro->offLiveFlag(LIVE_FLAG_HIDDEN);
+		goro->offLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH);
+		goro->mHolder = nullptr;
+		goro->stopAnmSound();
+		spine->reset();
+		spine->setNext(&TNerveSmallEnemyDie::theNerve());
+		spine->pushAfterCurrent(spine->getDefault());
+		goro->genRandomItem();
+		return TRUE;
+	}
+
+	if (goro->checkLiveFlag(TSmallEnemy::LIVE_FLAG_MELT_ON_DEATH))
+		goro->walkBehavior(2, 0.5f);
+	return FALSE;
+}

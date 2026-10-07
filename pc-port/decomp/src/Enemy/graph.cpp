@@ -1,0 +1,1033 @@
+#include <Enemy/Graph.hpp>
+#include <Enemy/Spline.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Map/MapData.hpp>
+#include <Map/Map.hpp>
+#include <stdlib.h>
+#include <dolphin/types.h>
+
+// rogue include
+#include <M3DUtil/InfectiousStrings.hpp>
+
+// Binding level over a raw member read, worth +8 of low region in
+// TGraphWeb::getNeighborNodeIndexByFlag (batch 127) and
+// TGraphWeb::getRandomNextIndex (the TRailNode filter temporary sits at
+// 0x24 only with this named step; getGraphNode() on the start node
+// overshoots the frame by 8).
+static inline s16 GraphConnectionNum(const TRailNode* p)
+{
+	s16 connectionNum = p->mConnectionNum;
+	return connectionNum;
+}
+
+TGraphNode::TGraphNode()
+    : unk0(nullptr)
+    , unk4(0)
+    , unk8(0.0f)
+    , unkC(-0x7FFF)
+{
+}
+
+void TGraphNode::getPoint(Vec* v) const
+{
+	v->x = unk0->mPosition.x;
+	v->y = unk0->mPosition.y;
+	v->z = unk0->mPosition.z;
+}
+
+TSplineRail::TSplineRail(const TGraphWeb* graph)
+    : unk0(nullptr)
+    , unk4(0)
+{
+	if (graph->startIsEnd()) {
+		unk4 = 1;
+		unk0 = new TSplinePath(graph->getNodeNum() + 3);
+
+		unk0->setPoint(0, graph->getLastGraphNode().getPoint());
+
+		for (int i = 0; i < graph->getNodeNum(); ++i)
+			unk0->setPoint(i + 1, graph->getGraphNode(i).getPoint());
+
+		int lastest = graph->getNodeNum() + 1;
+		unk0->setPoint(lastest, graph->getGraphNode(0).getPoint());
+
+		unk0->setPoint(graph->getNodeNum() + 2,
+		               graph->getGraphNode(1).getPoint());
+	} else {
+		unk0 = new TSplinePath(graph->getNodeNum());
+
+		for (int i = 0; i < graph->getNodeNum(); ++i)
+			unk0->setPoint(i, graph->getGraphNode(i).getPoint());
+	}
+
+	unk0->getPoint(0.0f);
+
+}
+
+f32 TSplineRail::wrapT(f32 param_1)
+{
+	if (unk4)
+		param_1 = MsWrap<f32>(param_1, unk0->getNthT(1),
+		                      unk0->getNthT(unk0->getPointNum() - 2));
+
+	return param_1;
+}
+
+// 0x24 in the map: a looped rail's parameter table carries a leading guard
+// point, so the looped index is shifted by one here (the tracers' general
+// cases rely on it; their loop-seam cases read the path's table directly).
+f32 TSplineRail::getNthT(int n)
+{
+	return unk0->getNthT(unk4 ? n + 1 : n);
+}
+
+JGeometry::TVec3<f32> TSplineRail::getPosition(f32 t)
+{
+	return unk0->getPoint(wrapT(t));
+}
+
+// TODO: frame 0xf8 vs 0xe8: retail has 4 more above the point/dir block and
+// 0xc more low region (dir declared before point is closer). Inert
+// (fo1): set() for either output, a named t + dt,
+// a named wrapT result, `dt` first; a named rot local fixes the frame at +6.
+void TSplineRail::getPosAndRot(f32 t, JGeometry::TVec3<f32>* out_pos,
+                               JGeometry::TVec3<f32>* out_rot)
+{
+	t      = wrapT(t);
+	f32 dt = 0.01f;
+
+	JGeometry::TVec3<f32> dir;
+	JGeometry::TVec3<f32> point;
+
+
+	for (;;) {
+		if (t + dt > 1.0f)
+			t = 1.0f - dt;
+
+		point = getPosition(t);
+		dir   = getPosition(t + dt);
+
+		dir -= point;
+
+		if (!dir.isZero())
+			break;
+
+		dt *= 2.0f;
+		if (dt > 1.0f) {
+			*out_pos   = point;
+			out_rot->x = 0.0f;
+			out_rot->y = 0.0f;
+			out_rot->z = 0.0f;
+			return;
+		}
+	}
+
+	*out_pos = point;
+	*out_rot = MsGetRotFromZaxis(dir);
+}
+
+static TRailNode grDummyRail[3] = {
+	{ { 0, 0, 0 }, 1, 0, 0, 0, 0, 0, { 1 }, { 1.0f } },
+	{ { 0, 0, 0 }, 1, 0, 0, 0, 0, 0, { 0 }, { 1.0f } },
+	{},
+};
+
+TGraphWeb::TGraphWeb(TRailNode* param_1, const char* param_2, int param_3)
+    : unk0(nullptr)
+    , unk4(param_1)
+    , unk8(0)
+    , unkC(param_2)
+    , unk10(-1)
+    , unk14(nullptr)
+{
+	if (!param_1) {
+		param_1 = grDummyRail;
+		unk4    = grDummyRail;
+	}
+
+	if (param_3 <= 0) {
+		int i = 0;
+		while (param_1[i].mConnectionNum > 0)
+			++i;
+		unk8 = i;
+	} else {
+		unk8 = param_3;
+	}
+
+	unk0 = new TGraphNode[unk8];
+
+	for (int i = 0; i < unk8; ++i)
+		getGraphNode(i).unk0 = &param_1[i];
+
+	translateNodes(param_1);
+	if (param_2[0] == 'S' && param_2[1] == '_')
+		unk14 = new TSplineRail(this);
+}
+
+TGraphWeb::~TGraphWeb() { }
+
+int TGraphWeb::filterRailNode(u32 param_1, const TRailNode* param_2,
+                              const TRailNode* param_3,
+                              TRailNode* param_4) const
+{
+	if (param_1 == 0xffffffff) {
+		if (param_4 != param_2)
+			*param_4 = *param_2;
+		return param_2->mConnectionNum;
+	}
+
+	TRailNode node = *param_2;
+
+	int filteredCons = 0;
+	for (int j = 0; j < param_2->mConnectionNum; ++j) {
+		const TRailNode& other = param_3[param_2->mConnections[j]];
+		if (other.mFlags == 0 || (other.mFlags & param_1)) {
+			node.mConnections[filteredCons] = param_2->mConnections[j];
+			node.mPeriods[filteredCons]     = param_2->mPeriods[j];
+			++filteredCons;
+		}
+	}
+	node.mConnectionNum = filteredCons;
+
+	*param_4 = node;
+
+	return filteredCons;
+}
+
+void TGraphWeb::translateNodes(TRailNode* param_1)
+{
+	for (int i = 0; i < unk8; ++i) {
+		TRailNode& nodeRef = param_1[i];
+
+		if (nodeRef.mFlags & 0x8) {
+			TRailNode node = nodeRef;
+			int conns      = 0;
+			for (int j = 0; j < param_1[i].mConnectionNum; ++j) {
+				if (!(param_1[param_1[i].mConnections[j]].mFlags & 0x4)) {
+					node.mConnections[conns] = param_1[i].mConnections[j];
+					node.mPeriods[conns]     = param_1[i].mPeriods[j];
+					++conns;
+				}
+			}
+			node.mConnectionNum = conns;
+			nodeRef             = node;
+		}
+
+		if (nodeRef.mFlags & 0x200) {
+			TRailNode node = nodeRef;
+			int conns      = 0;
+			for (int j = 0; j < param_1[i].mConnectionNum; ++j) {
+				if (param_1[i].mConnections[j] >= i) {
+					node.mConnections[conns] = param_1[i].mConnections[j];
+					node.mPeriods[conns]     = param_1[i].mPeriods[j];
+					++conns;
+				}
+			}
+			node.mConnectionNum = conns;
+			nodeRef             = node;
+		}
+	}
+}
+
+void TGraphWeb::getAimToGoalNextIndex(int, int, u32, f32) const { }
+
+int TGraphWeb::getShortestNextIndex(int param_1, int param_2, u32 param_3) const
+{
+	TGraphNode* graphNode = &unk0[param_1];
+
+	TRailNode tmp;
+	TRailNode* railNode;
+	if (param_3 == 0xffffffff) {
+		railNode = graphNode->getRailNode();
+	} else {
+		filterRailNode(param_3, graphNode->getRailNode(), unk4, &tmp);
+		railNode = &tmp;
+	}
+
+	if (railNode->mConnectionNum == 0)
+		return param_1;
+
+	if (railNode->mConnectionNum == 1)
+		return railNode->mConnections[0];
+
+	if (railNode->mConnectionNum == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	JGeometry::TVec3<f32> railNodePos;
+	graphNode->getPoint(&railNodePos);
+
+	int result  = -1;
+	f32 minDist = 0.0f;
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		JGeometry::TVec3<f32> pos;
+		unk0[railNode->mConnections[i]].getPoint(&pos);
+		pos.sub(railNodePos);
+		f32 dist = pos.squared();
+		if (result < 0 || minDist > dist) {
+			minDist = dist;
+			result  = railNode->mConnections[i];
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::getRandomNextIndex(int param_1, int param_2, u32 param_3) const
+{
+	const TGraphNode* graphNode = &unk0[param_1];
+
+	TRailNode tmp;
+	const TRailNode* railNode;
+	if (param_3 == 0xffffffff) {
+		railNode = graphNode->getRailNode();
+	} else {
+		filterRailNode(param_3, graphNode->getRailNode(), unk4, &tmp);
+		railNode = &tmp;
+	}
+
+	s16 num = GraphConnectionNum(railNode);
+	if (num == 0)
+		return param_1;
+
+	if (num == 1)
+		return railNode->mConnections[0];
+
+	if (num == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	int rnd = MsRandF() * num;
+
+	int result = rnd;
+
+	if (railNode->mConnections[rnd] == param_2) {
+		if (rnd == railNode->mConnectionNum - 1)
+			result = 0;
+		else
+			result = railNode->mConnectionNum - 1;
+	}
+
+	return railNode->mConnections[result];
+}
+
+int TGraphWeb::getEscapeFromMarioIndex(int param_1, int param_2,
+                                       const JGeometry::TVec3<f32>& param_3,
+                                       u32 param_4) const
+{
+	const TGraphNode* node = &unk0[param_1];
+	TRailNode fakeNode;
+	const TRailNode* railNode;
+	if (param_4 == -1) {
+		railNode = node->getRailNode();
+	} else {
+		filterRailNode(param_4, node->getRailNode(), unk4, &fakeNode);
+		railNode = &fakeNode;
+	}
+
+	if (!railNode->mConnectionNum)
+		return param_1;
+
+	if (railNode->mConnectionNum == 1)
+		return railNode->mConnections[0];
+
+	if (railNode->mConnectionNum == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	JGeometry::TVec3<f32> local_a0(gpMarioPos->x, gpMarioPos->y, gpMarioPos->z);
+	local_a0 -= param_3;
+	MsVECNormalize(&local_a0, &local_a0);
+
+	int result = -1;
+	f32 fVar1  = 0.0f;
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		JGeometry::TVec3<f32> local_ac;
+		getGraphNode(railNode->mConnections[i]).getPoint(&local_ac);
+		local_ac -= param_3;
+		MsVECNormalize(&local_ac, &local_ac);
+
+		f32 fVar3 = local_ac.dot(local_a0);
+		if (result < 0 || fVar3 < fVar1) {
+			fVar1  = fVar3;
+			result = railNode->mConnections[i];
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::getAimToDirNextIndex(int param_1, int param_2,
+                                    const JGeometry::TVec3<f32>& param_3,
+                                    const JGeometry::TVec3<f32>& param_4,
+                                    u32 param_5) const
+{
+	const TGraphNode& graphNode = getGraphNode(param_1);
+
+	TRailNode tmp;
+	const TRailNode* railNode;
+	if (param_5 == 0xffffffff) {
+		railNode = graphNode.getRailNode();
+	} else {
+		filterRailNode(param_5, graphNode.getRailNode(), unk4, &tmp);
+		railNode = &tmp;
+	}
+
+	if (railNode->mConnectionNum == 0)
+		return param_1;
+
+	if (railNode->mConnectionNum == 1)
+		return railNode->mConnections[0];
+
+	if (railNode->mConnectionNum == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	JGeometry::TVec3<f32> local_a4 = param_3;
+	MsVECNormalize(&local_a4, &local_a4);
+
+	int result = -1;
+	f32 maxCos = 0.0f;
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		JGeometry::TVec3<f32> local_b0;
+		unk0[railNode->mConnections[i]].getPoint(&local_b0);
+		local_b0.sub(param_4);
+		MsVECNormalize(&local_b0, &local_b0);
+
+		f32 cos = local_b0.dot(local_a4);
+		if (result < 0 || cos > maxCos) {
+			maxCos = cos;
+			result = railNode->mConnections[i];
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::getRandomButDirLimited(int param_1, int param_2,
+                                      const JGeometry::TVec3<f32>& param_3,
+                                      const JGeometry::TVec3<f32>& param_4,
+                                      f32 param_5, u32 param_6) const
+{
+	const TGraphNode& graphNode = getGraphNode(param_1);
+
+	TRailNode tmp;
+	const TRailNode* railNode;
+	if (param_6 == 0xffffffff) {
+		railNode = graphNode.getRailNode();
+	} else {
+		filterRailNode(param_6, graphNode.getRailNode(), unk4, &tmp);
+		railNode = &tmp;
+	}
+
+	if (railNode->mConnectionNum == 0)
+		return param_1;
+
+	if (railNode->mConnectionNum == 1)
+		return railNode->mConnections[0];
+
+	if (railNode->mConnectionNum == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	JGeometry::TVec3<f32> local_cc = param_3;
+	JGeometry::TVec3<f32> local_d8;
+	JGeometry::TVec3<f32> local_e4;
+	f32 cos;
+	MsVECNormalize(&local_cc, &local_cc);
+
+	int result;
+	int iVar13 = 0;
+	result     = -1;
+
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		getGraphNode(railNode->mConnections[i]).getPoint(&local_d8);
+		local_d8 -= param_4;
+		MsVECNormalize(&local_d8, &local_d8);
+
+		JGeometry::TVec3<f32> local_f4;
+		local_f4.cross(local_cc, local_d8);
+		f32 angle = abs(matan(local_cc.dot(local_d8), MsVECMag2(&local_f4))
+		                * (360.0f / 65536.0f));
+		if (abs(angle) < param_5) {
+			if (iVar13 == 0) {
+				result = railNode->mConnections[i];
+			} else {
+				if (MsRandF() < 1.0f / (iVar13 + 1))
+					result = railNode->mConnections[i];
+			}
+			++iVar13;
+		}
+	}
+
+	if (iVar13 > 0)
+		return result;
+
+	result     = -1;
+	f32 maxCos = 0.0f;
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		unk0[railNode->mConnections[i]].getPoint(&local_e4);
+		local_e4.sub(param_4);
+		MsVECNormalize(&local_e4, &local_e4);
+
+		cos = local_e4.dot(local_cc);
+		if (result < 0 || cos > maxCos) {
+			maxCos = cos;
+			result = railNode->mConnections[i];
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::getEscapeDirLimited(int param_1, int param_2,
+                                   const JGeometry::TVec3<f32>& param_3,
+                                   const JGeometry::TVec3<f32>& param_4,
+                                   f32 param_5, u32 param_6) const
+{
+	const TGraphNode* graphNode = &unk0[param_1];
+
+	TRailNode tmp;
+	const TRailNode* railNode;
+	if (param_6 == 0xffffffff) {
+		railNode = graphNode->getRailNode();
+	} else {
+		filterRailNode(param_6, graphNode->getRailNode(), unk4, &tmp);
+		railNode = &tmp;
+	}
+
+	if (railNode->mConnectionNum == 0)
+		return param_1;
+
+	if (railNode->mConnectionNum == 1)
+		return railNode->mConnections[0];
+
+	if (railNode->mConnectionNum == 2 && param_2 >= 0) {
+		if (railNode->mConnections[0] != param_2)
+			return railNode->mConnections[0];
+		else
+			return railNode->mConnections[1];
+	}
+
+	JGeometry::TVec3<f32> local_c0 = param_3;
+	JGeometry::TVec3<f32> local_cc = SMS_GetMarioPos();
+	JGeometry::TVec3<f32> local_d8;
+	f32 cos;
+	JGeometry::TVec3<f32> local_e4;
+	MsVECNormalize(&local_c0, &local_c0);
+	local_cc -= param_4;
+	MsVECNormalize(&local_cc, &local_cc);
+
+	int result;
+	result = -1;
+	f32 unaff_f29;
+
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		const TGraphNode& node = getGraphNode(railNode->mConnections[i]);
+		node.getPoint(&local_d8);
+		local_d8 -= param_4;
+		MsVECNormalize(&local_d8, &local_d8);
+
+		f32 dirCos;
+		JGeometry::TVec3<f32> local_f4;
+		local_f4.cross(local_c0, local_d8);
+		f32 angle = abs(matan(local_c0.dot(local_d8), MsVECMag2(&local_f4))
+		                * (360.0f / 65536.0f));
+		if (abs(angle) < param_5) {
+			if (result < 0) {
+				result    = railNode->mConnections[i];
+				unaff_f29 = local_d8.dot(local_cc);
+			} else {
+				dirCos = local_d8.dot(local_cc);
+				if (dirCos < unaff_f29) {
+					result    = railNode->mConnections[i];
+					unaff_f29 = dirCos;
+				}
+			}
+		}
+	}
+
+	if (result >= 0)
+		return result;
+
+	result = -1;
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		if (param_2 == railNode->mConnections[i])
+			continue;
+
+		unk0[railNode->mConnections[i]].getPoint(&local_e4);
+		local_e4.sub(param_4);
+		MsVECNormalize(&local_e4, &local_e4);
+
+		cos = local_e4.dot(local_cc);
+		if (result < 0 || cos < unaff_f29) {
+			unaff_f29 = cos;
+			result    = railNode->mConnections[i];
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::findNearestNodeIndex(const JGeometry::TVec3<f32>& param_1,
+                                    u32 param_2) const
+{
+	int i;
+	int result  = -1;
+	f32 minDist = -1.0f;
+	for (i = 0; i < unk8; ++i) {
+		if (param_2 != 0xffffffff && getGraphNode(i).checkFlag(param_2))
+			continue;
+
+		JGeometry::TVec3<f32> pos;
+		getGraphNode(i).getPoint(&pos);
+		pos -= param_1;
+		f32 dist = pos.squared();
+		if (minDist < 0.0f || dist < minDist) {
+			minDist = dist;
+			result  = i;
+		}
+	}
+	return result;
+}
+
+// UNUSED (0xfc): findNearestNodeIndex with the comparison reversed.
+int TGraphWeb::findFarthestNodeIndex(const JGeometry::TVec3<f32>& param_1,
+                                     u32 param_2) const
+{
+	int i;
+	int result  = -1;
+	f32 maxDist = -1.0f;
+	for (i = 0; i < unk8; ++i) {
+		if (param_2 != 0xffffffff && getGraphNode(i).checkFlag(param_2))
+			continue;
+
+		JGeometry::TVec3<f32> pos;
+		getGraphNode(i).getPoint(&pos);
+		pos -= param_1;
+		f32 dist = pos.squared();
+		if (maxDist < 0.0f || dist > maxDist) {
+			maxDist = dist;
+			result  = i;
+		}
+	}
+	return result;
+}
+
+int TGraphWeb::findNearestVisibleIndex(const JGeometry::TVec3<f32>& param_1,
+                                       f32 param_2, f32 param_3, f32 param_4,
+                                       u32 param_5) const
+{
+	int i;
+	int result;
+
+	f32 minDist = -1.0f;
+	result      = -1;
+	for (i = 0; i < unk8; ++i) {
+		if (param_5 != 0xffffffff && getGraphNode(i).checkFlag(param_5))
+			continue;
+		JGeometry::TVec3<f32> point;
+		getGraphNode(i).getPoint(&point);
+		if (MsIsInSight(param_1, param_2, point, param_3, param_4, 0.0f)) {
+			point -= param_1;
+			f32 len = point.squared();
+			if (minDist < 0.0f || len < minDist) {
+				minDist = len;
+				result  = i;
+			}
+		}
+	}
+
+	return result;
+}
+
+int TGraphWeb::findNearestNodeIndexCheckY(const JGeometry::TVec3<f32>&, f32,
+                                          u32) const
+{
+}
+
+void TGraphWeb::getNodeIndexInXZRange(const JGeometry::TVec3<f32>&, f32,
+                                      u32) const
+{
+}
+
+// Retail calls this from initGoalIndex and from itself (MWCC would expand the
+// self-recursive call one level): the named `period` is the fifteenth
+// statement over the depth-1 budget. Measured and rejected: naming
+// railNode->mConnectionNum as the loop bound (does not tip it), naming the
+// n-th graph node a second time, or an early `continue` (both cost bytes).
+void TGraphWeb::calcGraphDirection(int n)
+{
+	TGraphNode& graphNode = getGraphNode(n);
+	TRailNode* railNode   = getGraphNode(n).getRailNode();
+	for (int i = 0; i < railNode->mConnectionNum; ++i) {
+		f32 period      = railNode->mPeriods[i];
+		f32 totalPeriod = period + graphNode.getUnk8();
+		u32 conn        = railNode->mConnections[i];
+
+		// are we trying to find shortest paths in a graph here and failing
+		// miserably at it or what?
+		TGraphNode& otherGraphNode = getGraphNode(conn);
+		if (getGraphNode(conn).getUnk4() == 0
+		    || getGraphNode(conn).getUnk8() > totalPeriod) {
+			otherGraphNode.incUnk4();
+			otherGraphNode.setUnk8(totalPeriod);
+			calcGraphDirection(conn);
+		}
+	}
+}
+
+void TGraphWeb::initGoalIndex(const Vec& param_1)
+{
+	unk10 = findNearestNodeIndex(
+	    JGeometry::TVec3<f32>(param_1.x, param_1.y, param_1.z), 0xffffffff);
+	for (int i = 0; i < unk8; ++i)
+		getGraphNode(i).unk4 = 0;
+	getCurrentNode().unk4 += 1;
+	getCurrentNode().unk8 = 0.0f;
+	calcGraphDirection(unk10);
+}
+
+void TGraphWeb::attachToGround()
+{
+	for (int j = 0; j < unk8; ++j) {
+		TRailNode* railNode = &unk4[j];
+		if (railNode->mFlags & 0x10) {
+			const TBGCheckData* checkData;
+			JGeometry::TVec3<f32> pos;
+			pos.set(railNode->mPosition.x, railNode->mPosition.y,
+			        railNode->mPosition.z);
+			pos.y = gpMap->checkGround(pos, &checkData);
+			if (!checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+				railNode->mPosition.y = pos.y;
+		}
+	}
+}
+
+void TGraphWeb::isOnePath() const { }
+
+BOOL TGraphWeb::startIsEnd() const
+{
+	if (getFirstGraphNode().unk0->mConnectionNum > 2
+	    || (getFirstGraphNode().getRailNode()->mConnections[0] != getNodeNum() - 1
+	        && getFirstGraphNode().unk0->mConnections[1] != getNodeNum() - 1))
+		return false;
+
+	if (getLastGraphNode().unk0->mConnectionNum > 2
+	    || (getLastGraphNode().unk0->mConnections[0] != 0
+	        && getLastGraphNode().unk0->mConnections[1] != 0))
+		return false;
+
+	return true;
+}
+
+JGeometry::TVec3<f32> TGraphWeb::indexToPoint(int param_1) const
+{
+	JGeometry::TVec3<f32> result;
+	const TGraphNode& graphNode = unk0[param_1];
+	const TRailNode* railNode   = graphNode.getRailNode();
+	result.x                    = railNode->mPosition.x;
+	result.y                    = railNode->mPosition.y;
+	result.z                    = railNode->mPosition.z;
+	return result;
+}
+
+void TGraphWeb::perform(u32 cue, JDrama::TGraphics* graphics) { }
+
+BOOL TGraphWeb::isDummy() const
+{
+	if (unk4 == grDummyRail)
+		return true;
+	return false;
+}
+
+// TODO: instructions match; only stack offsets differ. Retail has 4 more
+// bytes above local_48 (0x58 vs our 0x5c), 8 more between `point` and
+// point2 (0x38 vs 0x40), and an 8-byte smaller low region (thing 0x2c vs
+// 0x34). Reordering the top declarations, a hoisted `point`, a point2
+// constructor and dropping `nodes` are inert or worse.
+// c-d13: `f32 dVar18;` declared first in the inner loop plus
+// `unk0[i].getRailNode()` lands the frame and every slot, but the rail node
+// pointer is then reloaded after getPoint (one extra lwz); a named node
+// reference keeps the single load but drops one more low word.
+JGeometry::TVec3<f32>
+TGraphWeb::getNearestPosOnGraphLink(const JGeometry::TVec3<f32>& param_1) const
+{
+	BOOL bVar9 = true;
+
+	JGeometry::TVec3<f32> local_48(param_1);
+	f32 min;
+	for (int i = 0; i < unk8; ++i) {
+		JGeometry::TVec3<f32> point;
+		unk0[i].getPoint(&point);
+		const TGraphNode* nodes = unk0;
+		const TRailNode* railNode = getGraphNode(i).getRailNode();
+		int connNum               = railNode->mConnectionNum;
+		for (int i = 0; i < connNum; ++i) {
+			const TRailNode* connNode
+			    = nodes[railNode->mConnections[i]].unk0;
+			JGeometry::TVec3<f32> point2;
+			point2.x = connNode->mPosition.x;
+			point2.y = connNode->mPosition.y;
+			point2.z = connNode->mPosition.z;
+			point2 -= point;
+
+			f32 fVar4 = (param_1.dot(point2) - point.dot(point2));
+			fVar4 /= point2.squared();
+			if (fVar4 < 0.0f)
+				fVar4 = 0.0f;
+			else if (fVar4 > 1.0f)
+				fVar4 = 1.0f;
+			JGeometry::TVec3<f32> thing(point2);
+			thing.scale(fVar4);
+			thing.add(point);
+			thing.sub(param_1);
+			f32 dVar18 = thing.squared();
+			if (bVar9 || dVar18 < min) {
+				local_48.scaleAdd(fVar4, point2, point);
+				bVar9 = false;
+				min   = dVar18;
+			}
+		}
+	}
+
+	return local_48;
+}
+
+int TGraphWeb::getNeighborNodeIndexByFlag(int param_1, int param_2,
+                                          u32 param_3) const
+{
+	int index;
+	int goodConnectionNum = 0;
+	int goodConnections[8];
+
+	const TRailNode* railNode = getGraphNode(param_1).getRailNode();
+	for (int i = 0; i < GraphConnectionNum(railNode); ++i) {
+		int conn = railNode->mConnections[i];
+		if (conn != param_2 && getGraphNode(conn).checkFlag(param_3)) {
+			goodConnections[goodConnectionNum] = conn;
+			++goodConnectionNum;
+		}
+	}
+
+	if (goodConnectionNum == 0)
+		return -1;
+
+	index = (int)(MsRandF() * goodConnectionNum);
+	return goodConnections[index];
+}
+
+void TGraphWeb::getDesignatedNodeIndex(u32, int, f32) const { }
+
+TGraphGroup::TGraphGroup(void* param_1)
+    : unk0((GraphDesc*)param_1)
+    , unk4(0)
+    , unk8(nullptr)
+{
+	if (unk0 == nullptr) {
+		unkC = new TGraphWeb(nullptr, "<nullrail>", -1);
+		return;
+	}
+
+	unk4 = 0;
+	while (unk0[unk4].mNodeNum != 0)
+		++unk4;
+	if (unk4 > 0) {
+		unk8 = new TGraphWeb*[unk4];
+		for (int i = 0; i < unk4; ++i) {
+			unk8[i]
+			    = new TGraphWeb(getNode(i), getNodeName(i), unk0[i].mNodeNum);
+		}
+	}
+
+	unkC = new TGraphWeb(nullptr, "<nullrail>", -1);
+}
+
+TGraphGroup::~TGraphGroup() { }
+
+void TGraphGroup::initGraphGroup()
+{
+	// TODO: the zero vector sits 4 high (0x58, retail 0x54) and attachToGround's
+	// pos/checkData pair is swapped (0x4c/0x48, retail 0x44/0x50). The named
+	// `zero` equals the old pass-through binder's score; inert (c-m19): pos
+	// declared first, `zero` hoisted out of the loop, `if (< 0) {}` form.
+	for (int i = 0; i < unk4; ++i) {
+		if (unk8[i]->unk10 >= 0)
+			continue;
+
+		JGeometry::TVec3<f32> zero(0.0f, 0.0f, 0.0f);
+		unk8[i]->initGoalIndex(zero);
+		unk8[i]->attachToGround();
+	}
+}
+
+TGraphWeb* TGraphGroup::getGraphByName(const char* name)
+{
+	if (!name)
+		return unkC;
+
+	for (int i = 0; i < unk4; ++i)
+		if (strcmp(name, getNodeName(i)) == 0)
+			return unk8[i];
+
+	return unkC;
+}
+
+void TGraphGroup::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	// TODO: retail's scratch registers start one higher (r5/r6/r7 for our
+	// r4/r5/r6), i.e. the `graphics` parameter stays live past the first
+	// temporary; the loop is fully elided otherwise. A named bound (-9pp), a
+	// getGraph(i) accessor (inert) and a named TGraphWeb* (worse) refuted.
+	// Also inert: unnamed callee params, a hoisted graphs array, a while loop,
+	// an outer-declared i or TGraphWeb*, pointer arithmetic; u32 i is worse.
+	// A `cue` test with an empty body in the inlined TGraphWeb::perform closes
+	// it (cue kept live), but that is forced control flow, so it is not used.
+	for (int i = 0; i < unk4; ++i)
+		unk8[i]->perform(cue, graphics);
+}
+
+TGraphTracer::TGraphTracer()
+    : unk0(nullptr)
+    , mCurrIdx(-1)
+    , mPrevIdx(-1)
+    , unkC(100.0f)
+    , unk10(1.0f)
+    , unk14(0.0f)
+{
+}
+
+void TGraphTracer::setParamFromGraph()
+{
+	if (mCurrIdx >= 0) {
+		unk10 = getCurrent().getRailNode()->mPitch * (1.0f / 65535.0f);
+	} else {
+		unk10 = 0.0f;
+	}
+
+	if (mPrevIdx >= 0)
+		unkC = getPrevious().getRailNode()->mYaw * 0.01f;
+}
+
+void TGraphTracer::setTo(int node_idx)
+{
+	mPrevIdx = -1;
+	mCurrIdx = node_idx;
+	setParamFromGraph();
+}
+
+int TGraphTracer::moveTo(int node_idx)
+{
+	if (node_idx < 0)
+		return node_idx;
+
+	mPrevIdx = mCurrIdx;
+	mCurrIdx = node_idx;
+	setParamFromGraph();
+	return node_idx;
+}
+
+f32 TGraphTracer::calcSplineSpeed(f32 param_1)
+{
+	if (unk0->unk14 == nullptr)
+		return 0.001f;
+
+	if (mPrevIdx < 0)
+		return 0.001f;
+
+	// TODO: retail subtracts the second point as an unnamed getPoint()
+	// temporary (p at 0x88 copied to 0x100, then `-=`), which this spelling
+	// reproduces, but it builds v1 straight from the first getPoint's `p`
+	// (0x9c -> 0x10c) where we copy through a return temporary. Retail's frame
+	// is 0x158 against our 0x100, with 0x58 bytes unused between the two
+	// point blocks, so a missing inline level holds the rest. Taking VECMag of
+	// the `getPoint() -= getPoint()` temporary is worse (-3pp). (The FPR
+	// swap closed with the map-sized getNthT; frame now 0x100.) Neither an
+	// indexToPoint() spelling (frame 0xf0/0x100), a named second point, nor
+	// `operator-` (worse) reaches retail's layout.
+	JGeometry::TVec3<f32> v1 = unk0->unk0[mCurrIdx].getPoint();
+	v1 -= unk0->unk0[mPrevIdx].getPoint();
+	f32 fVar13 = VECMag(&v1);
+
+	TSplineRail* rail = unk0->getSplineRail();
+	BOOL isLoop       = rail->isUnk4();
+
+	f32 fVar1;
+	f32 fVar2;
+	if (isLoop && mPrevIdx == unk0->unk8 - 1 && mCurrIdx == 0) {
+		fVar1 = rail->unk0->getNthT(0);
+		fVar2 = rail->unk0->getNthT(1);
+	} else if (isLoop && mPrevIdx == 0 && mCurrIdx == unk0->unk8 - 1) {
+		fVar1 = rail->unk0->getNthT(unk0->unk8 + 1);
+		fVar2 = rail->unk0->getNthT(unk0->unk8);
+	} else {
+		fVar1 = rail->getNthT(mPrevIdx);
+		fVar2 = rail->getNthT(mCurrIdx);
+	}
+
+	return param_1 * (fVar2 - fVar1) / fVar13;
+}
+
+BOOL TGraphTracer::traceSpline(f32 param_1)
+{
+	if (!unk0->unk14)
+		return FALSE;
+
+	f32 dVar8 = unk14;
+	f32 dVar9 = dVar8 + param_1;
+
+	f32 dVar10;
+	if (unk0->getSplineRail()->isUnk4() && mPrevIdx == unk0->unk8 - 1 && mCurrIdx == 0) {
+		dVar10 = unk0->unk14->unk0->getNthT(unk0->unk8 + 1);
+	} else if (unk0->getSplineRail()->isUnk4() && mPrevIdx == 0
+	           && mCurrIdx == unk0->unk8 - 1) {
+		dVar10 = unk0->unk14->unk0->getNthT(unk0->unk8);
+	} else {
+		dVar10 = unk0->getSplineRail()->getNthT(mCurrIdx);
+	}
+
+	BOOL result;
+	if ((param_1 >= 0.0f && dVar8 <= dVar10 && dVar10 <= dVar9)
+	    || (param_1 < 0.0f && dVar9 <= dVar10 && dVar10 <= dVar8)) {
+		result = TRUE;
+	} else {
+		result = FALSE;
+	}
+
+	unk14 = unk0->unk14->wrapT(dVar9);
+	return result;
+}

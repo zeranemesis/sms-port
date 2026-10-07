@@ -1,0 +1,17 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Explicitly declare text files
+*.py   text
+
+# Enforce platform-specific encodings
+*.bat  text eol=crlf
+*.sh   text eol=lf
+*.sha1 text eol=lf
+# git apply chokes on CRLF-normalized patches (a blank context line becomes
+# "\r", which corrupts hunk parsing) - verified while applying
+# patches/aurora-*.patch on a Windows checkout with core.autocrlf=true.
+*.patch text eol=lf
+
+# decomp-toolkit writes files with LF
+config/**/*.txt  text eol=lf

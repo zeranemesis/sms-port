@@ -1,0 +1,111 @@
+#ifndef GC2D_SCRN_FADER_HPP
+#define GC2D_SCRN_FADER_HPP
+
+#include <GC2D/hx_wiper.h>
+#include <JSystem/JUtility/JUTColor.hpp>
+#include <JSystem/JDrama/JDRViewObj.hpp>
+
+class TSMSFader : public JDrama::TViewObj {
+public:
+	enum EFadeStatus {
+		FADE_STATUS_FULLY_FADED_OUT = 0,
+		FADE_STATUS_FULLY_FADED_IN  = 1,
+		FADE_STATUS_FADING_IN       = 2,
+		FADE_STATUS_FADING_OUT      = 3,
+	};
+
+	// TODO: maybe this is from the hx_wipe.h header/libary type thing?
+	enum {
+		UNK30_UNK_12 = 12,
+		UNK30_UNK_13 = 13,
+		UNK30_UNK_14 = 14,
+		UNK30_UNK_15 = 15,
+		UNK30_UNK_16 = 16,
+		UNK30_UNK_17 = 17,
+		UNK30_UNK_18 = 18,
+	};
+
+	struct WipeRequest {
+		/* 0x0 */ u32 unk0;
+		/* 0x4 */ f32 unk4;
+		/* 0x8 */ f32 unk8;
+	};
+
+	TSMSFader(JUtility::TColor, f32, const char* name);
+
+	virtual void load(JSUMemoryInputStream& stream);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+	virtual void update();
+	virtual void draw(const JDrama::TRect&);
+
+	void updateRequest();
+	void updateDelay();
+	void updateFadeinout();
+	void drawWipe(const JDrama::TRect&);
+	void drawFadeinout(const JDrama::TRect&);
+	void setupGraphicsFadeinout();
+	void requestWipe(WipeRequest*);
+	void startWipe(u32, f32, f32);
+	void startFadein(int);
+	void startFadeinT(f32);
+	void startFadeout(int);
+	void startFadeoutT(f32);
+	void setColor(JUtility::TColor);
+	void setDisplaySize(int, int);
+	void setFadeStatus(EFadeStatus);
+	void getGameOverBtiResource();
+	void getMmarkBtiResource();
+	void getLogoBtiResource();
+
+	bool isFullyFadedIn() const
+	{
+		return mFadeStatus == FADE_STATUS_FULLY_FADED_IN;
+	}
+	bool isFullyFadedOut() const
+	{
+		return mFadeStatus == FADE_STATUS_FULLY_FADED_OUT;
+	}
+	f32 getRate() const { return mRate; }
+
+public:
+	/* 0x10 */ u16 unk10;
+	/* 0x12 */ u16 unk12;
+	/* 0x14 */ f32 mRate;
+	/* 0x18 */ JUtility::TColor mFadeColor;
+	/* 0x1C */ bool unk1C;
+	/* 0x20 */ TSMSFader::EFadeStatus mFadeStatus;
+	/* 0x24 */ WipeRequest mWipeRequest;
+	/* 0x30 */ int unk30;
+	/* 0x34 */ f32 unk34;
+};
+
+class TSmplFader : public TSMSFader {
+public:
+	TSmplFader(JUtility::TColor param_1 = JUtility::TColor(0, 0, 0, 0),
+	           f32 param_2 = 60.0f, const char* name = "<ScrnFader>")
+	    : TSMSFader(param_1, param_2, name)
+	{
+	}
+};
+
+class TShineFader : public TSmplFader {
+public:
+	TShineFader(JUtility::TColor param_1 = JUtility::TColor(0, 0, 0, 0),
+	            f32 param_2 = 60.0f, const char* name = "<ShineFader>")
+	    : TSmplFader(param_1, param_2, name)
+	    , unk38(0)
+	{
+		mFadeStatus = TSMSFader::FADE_STATUS_FULLY_FADED_IN;
+	}
+
+	virtual void load(JSUMemoryInputStream&);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+
+	virtual void update();
+
+	bool registFadeout(u16, u16);
+
+	/* 0x38 */ u16 unk38;
+};
+
+#endif

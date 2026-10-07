@@ -1,0 +1,90 @@
+#ifndef FLAG_MANAGER_HPP
+#define FLAG_MANAGER_HPP
+
+#include <version.h>
+#include <JSystem/JKernel/JKRHeap.hpp>
+#include <JSystem/JSupport/JSUMemoryInputStream.hpp>
+#include <JSystem/JSupport/JSUMemoryOutputStream.hpp>
+
+enum {
+	FLAG_SAVED_OPTION_BOOL_END
+	= VERSION_SELECT(GMSJ01(0x70002), GMSP01(0x70003), GMSE01(0x70003)),
+	FLAG_OPTION_BOOL_END = VERSION_SELECT(GMSJ01(0x90001), GMSP01(0x90002), GMSE01(0x90002)),
+};
+
+class TFlagManager {
+public:
+	void saveOption(JSUMemoryOutputStream& out);
+	void loadOption(JSUMemoryInputStream& in);
+	void correctOptFlag();
+	void resetOpt();
+	void saveFail();
+	void saveSuccess();
+	void save(JSUMemoryOutputStream& out);
+	void correctFlag();
+	void firstStart();
+	void restore();
+	void load(JSUMemoryInputStream& in);
+	void setNozzleRight(u8 area, u8 nozzle);
+	bool getNozzleRight(u8 area, u8 nozzle) const;
+	void setBlueCoinFlag(u8 area, u8 blueCoin);
+	bool getBlueCoinFlag(u8 area, u8 blueCoin) const;
+	void incGoldCoinFlag(u8 area, s32 amount);
+	void setShineFlag(u8 shine);
+	bool getShineFlag(u8 shine) const;
+	void incMario(s32 amount);
+	void decFlag(u32 flag, s32 amount);
+	void incFlag(u32 flag, s32 amount);
+	void setBool(bool value, u32 flag);
+	bool getBool(u32 flag) const;
+	void setFlag(u32 flag, s32 value);
+	s32 getFlag(u32 flag) const;
+	void resetStage();
+	void resetGame();
+	void resetCard();
+	static TFlagManager* start(JKRHeap* heap);
+	static void end();
+
+	static TFlagManager* getInstance() { return smInstance; }
+
+	static TFlagManager* smInstance;
+
+	s64 getLastSaveTime() const { return mLastSaveTime; }
+
+private:
+	TFlagManager();
+
+	u8 mCardBools[119];
+	s32 mCardInts[21];
+	u8 mGameBools[4];
+	s32 mGameInts[5];
+	u8 mStageBools[13];
+	s32 mStageInts[100];
+	u8 mSavedOptionBools[1];
+	s32 mSavedOptionInts[1];
+	u8 mOptionBools[1];
+	s32 mOptionInts[2];
+	s64 mLastSaveTime;
+	s64 mLastSaveTimeBackup;
+	u8 mSavedCardBools[119];
+	s32 mSavedCardInts[21];
+	s64 mSavedLastSaveTime;
+};
+
+// The house global-accessor idiom (cf. SMSGetMarDirector, SMSGetCamera,
+// SMSGetMSound). A global accessor level is +4 bytes of low-region frame per
+// read site with no instruction change, so converting a raw
+// TFlagManager::getInstance() site is a per-site decision (194 raw sites
+// remain; sweep them against their frame gaps, not in bulk).
+inline TFlagManager* SMSGetFlagManager() { return TFlagManager::getInstance(); }
+
+// Fabricated: the singleton bound to a named local before it is returned, +8
+// of low region per expansion over a raw TFlagManager::smInstance read.
+// Formerly parked TU-locally in four units.
+inline TFlagManager* SMSGetFlagManagerBound()
+{
+	TFlagManager* flagManager = TFlagManager::smInstance;
+	return flagManager;
+}
+
+#endif

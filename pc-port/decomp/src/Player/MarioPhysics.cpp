@@ -1,0 +1,544 @@
+#include <Player/Mario.hpp>
+#include <Player/Yoshi.hpp>
+#include <System/Particles.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapCollisionData.hpp>
+#include <math.h>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+void TMario::playerRefrection(int param_1)
+{
+	if (mWallPlane != nullptr) {
+		s16 ang = matan(mWallPlane->getNormal().z, mWallPlane->getNormal().x);
+		mFaceAngle.y = ang - (s16)(mFaceAngle.y - ang);
+	}
+	if (param_1 != 0) {
+		setPlayerVelocity(-mForwardVel);
+	} else {
+		mFaceAngle.y += 0x8000;
+	}
+}
+
+// A zero distance resets dx too: retail loads 1.0f into dx's register and
+// copies it to dist, and matan later reads that dx.
+// thresh initialised at its declaration gives retail's entry registers.
+// TODO: instruction-exact; only slots differ (named block exact with ground
+// declared before floorY). hsearch dbg: retail stacks the `diff * step`
+// operand copy (0x5c) over the two sqrt volatiles (0x58/0x54), then the
+// `newPos - mPosition` copy (0x44) and the product (0x34); ours keeps the
+// three TVec3 temporaries together above the volatiles. The by-value
+// operator-/operator* header class (frame-gaps.md c-r20/c-r21).
+// c-r39: under by-value `TVec3 r(fst); r op= snd; return r;` operators for
+// -, + and * (uncast operator=) this function is byte-exact with the clamp
+// written `f32 max = 50.0f; if (max < step) step = max;` (the named limit is
+// retail's one word under `diff`); under today's header that is 24 -> 55
+// markers, so it waits for the header migration.
+void TMario::keepDistance(const JGeometry::TVec3<f32>& target, f32 param_2,
+                          f32 param_3)
+{
+	f32 thresh = param_3 + (param_2 + unk15C);
+	f32 dx;
+	f32 dz   = mPosition.z - target.z;
+	dx       = mPosition.x - target.x;
+	f32 dist = MsSqrtf(dx * dx + dz * dz);
+
+	if (dist == 0.0f)
+		dist = dx = 1.0f;
+
+	if (!(dist < thresh))
+		return;
+
+	if (!onYoshi()) {
+		bool burst = false;
+		if (mForwardVel > mDeParams.mClashSpeed.get())
+			burst = true;
+
+		f32 velSq = std::sqrtf(mVel.x * mVel.x + mVel.z * mVel.z);
+
+		if (velSq > mDeParams.mClashSpeed.get())
+			burst = true;
+
+		if (burst == true) {
+			emitParticle(PARTICLE_MS_DMG_C);
+			changePlayerDropping(MARIO_STATUS_JUMP_SHORT_BACK_DOWN, 0);
+			return;
+		}
+	}
+
+	s16 angle;
+	if (dist == 0.0f) {
+		angle = mFaceAngle.y;
+	} else {
+		angle = matan(dz, dx);
+	}
+
+	JGeometry::TVec3<f32> newPos;
+	newPos.x = target.x + thresh * JMASSin(angle);
+	newPos.y = mPosition.y;
+	newPos.z = target.z + thresh * JMASCos(angle);
+
+	checkWallPlane(&newPos, 60.0f, unk15C);
+	const TBGCheckData* ground;
+	f32 floorY;
+	checkGroundPlane(newPos.x, newPos.y, newPos.z, &floorY, &ground);
+	if (!ground->isLegal())
+		return;
+
+	JGeometry::TVec3<f32> diff = newPos - mPosition;
+
+	f32 step = diff.length();
+	if (step > 0.0f) {
+		if (50.0f < step)
+			step = 50.0f;
+
+		diff.normalize();
+
+		mPosition += diff * step;
+	}
+}
+
+void TMario::keepDistance(const THitActor& actor, f32 param_2)
+{
+	keepDistance(actor.getPosition(), actor.getDamageRadius(), param_2);
+}
+
+void TMario::checkDescent()
+{
+	// TODO: instruction-exact (`(int)active != 1` gives retail's signed
+	// cmpwi); the frame is 8 short with floorY/ground swapped (retail floorY
+	// 0x28, ground 0x2c). getPosition() in the record ctor is +8; in the
+	// 160.0f test it lands the frame but adds a spilled temp; SMSGetMap(),
+	// swapping the floorY/ground declarations are inert.
+	bool active   = false;
+	f32 descentSp = mHangingParams.mDescentSp.get();
+	if (getHeldObject() == nullptr && !onYoshi())
+		active = true;
+
+	if ((int)active != 1)
+		return;
+
+	if (!(mForwardVel < descentSp))
+		return;
+
+	TBGWallCheckRecord rec(getPosition().x, getPosition().y - 10.0f,
+	                       getPosition().z, descentSp, 1, 0);
+	if (!gpMap->isTouchedWallsAndMoveXZ(&rec))
+		return;
+
+	const TBGCheckData* ground;
+	f32 floorY;
+	checkGroundPlane(rec.mCenter.x, mPosition.y + 30.0f, rec.mCenter.z, &floorY,
+	                 &ground);
+
+	if (ground->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+		return;
+
+	if (!(mPosition.y - floorY > 160.0f))
+		return;
+
+	const TBGCheckData* wall = rec.mResultWalls[0];
+
+	s16 wallAng = matan(wall->mNormal.z, wall->mNormal.x);
+	s16 diff    = wallAng - mFaceAngle.y;
+	if (diff > -0x4000 && diff < 0x4000) {
+		f32 dist     = 20.0f + descentSp;
+		mPosition.x  = rec.mCenter.x - dist * wall->mNormal.x;
+		mPosition.z  = rec.mCenter.z - dist * wall->mNormal.z;
+		mFaceAngle.y = wallAng + 0x8000;
+		changePlayerStatus(MARIO_STATUS_DESCEND, 0, false);
+		setAnimation(ANIM_HGDWN, 1.0f);
+	}
+}
+
+int TMario::checkGroundAtWalking(Vec* v)
+{
+	checkWallPlane(v, 30.0f, 0.5f * unk15C);
+	TBGCheckData* wall = checkWallPlane(v, 60.0f, unk15C);
+
+	const TBGCheckData* roof;
+	const TBGCheckData* ground;
+	f32 floorY;
+	if (checkStatusType(0x10000)) {
+		floorY = gpMap->checkGround(v->x, v->y + 30.0f, v->z, &ground);
+	} else {
+		checkGroundPlane(v->x, v->y + 30.0f, v->z, &floorY, &ground);
+	}
+
+	f32 roofY  = gpMap->checkRoof(v->x, mPosition.y + 80.0f, v->z, &roof);
+	mWallPlane = wall;
+
+	if (ground->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+		return 2;
+	if (v->y + 160.0f >= roofY)
+		return 2;
+
+	if (v->y > floorY + 100.0f) {
+		mPosition.x      = v->x;
+		mPosition.y      = v->y;
+		mPosition.z      = v->z;
+		mGroundPlane     = ground;
+		mFloorPosition.y = floorY;
+		return 0;
+	}
+
+	if (fabsf(mPosition.y - floorY) > 100000.0f) {
+		mPosition = mPrevPosition;
+	} else {
+		mPosition.x      = v->x;
+		mPosition.y      = floorY;
+		mPosition.z      = v->z;
+		mGroundPlane     = ground;
+		mFloorPosition.y = floorY;
+	}
+
+	if (wall != nullptr && !wall->isMarioThrough()) {
+		s16 diff
+		    = matan(wall->getNormal().z, wall->getNormal().x) - mFaceAngle.y;
+		if (diff >= 0x2aaa && diff <= 0x5555)
+			return 1;
+		if (diff <= -0x2aaa && diff >= -0x5555)
+			return 1;
+		return 3;
+	}
+
+	return 1;
+}
+
+void TMario::stopProcess()
+{
+	setPlayerVelocity(0.0f);
+	mVel.y          = 0.0f;
+	mPosition.y     = mFloorPosition.y;
+	mFaceAngle.x    = 0;
+	mModelFaceAngle = mFaceAngle.y;
+}
+
+int TMario::waitProcess()
+{
+	setPlayerVelocity(0.0f);
+	if (fabsf(mPosition.y - mFloorPosition.y) > 100000.0f) {
+		mPosition = mPrevPosition;
+		changePlayerStatus(MARIO_STATUS_ROCKET_LANDING, 0, false);
+	} else {
+		mPosition.y = mFloorPosition.y;
+	}
+	mFaceAngle.x    = 0;
+	mModelFaceAngle = mFaceAngle.y;
+	return walkProcess();
+}
+
+int TMario::walkProcess()
+{
+	if (mGroundPlane->isIllegalData())
+		return 2;
+
+	f32 normalY = 0.0f;
+	if (mGroundPlane)
+		normalY = mGroundPlane->getNormal().y;
+
+	JGeometry::TVec3<f32> next;
+	next.x = mPosition.x + mVel.x / 4 * normalY;
+	next.z = mPosition.z + mVel.z / 4 * normalY;
+	next.y = mPosition.y;
+
+	int ret         = checkGroundAtWalking(&next);
+	mFaceAngle.x    = 0;
+	mModelFaceAngle = mFaceAngle.y;
+	return ret == 3 ? 2 : ret;
+}
+
+int TMario::barProcess()
+{
+	int result = 0;
+
+	const TBGCheckData* ground;
+	const TBGCheckData* roof;
+	f32 floorY;
+
+	JGeometry::TVec3<f32> pos;
+	pos.x = mHolder->mPosition.x;
+	pos.y = getPosition().y;
+	pos.z = mHolder->mPosition.z;
+
+	TBGCheckData* wall1 = checkWallPlane(&pos, 60.0f, 43.0f);
+	TBGCheckData* wall2 = checkWallPlane(&pos, 30.0f, 24.0f);
+
+	BOOL passable1 = false;
+	BOOL passable2 = false;
+
+	if (wall1 == nullptr) {
+		passable1 = true;
+	} else if (wall1->isMarioThrough()) {
+		passable1 = true;
+	}
+
+	if (wall2 == nullptr) {
+		passable2 = true;
+	} else if (wall2->isMarioThrough()) {
+		passable2 = true;
+	}
+
+	if (passable1 == true && passable2 == true) {
+		mPosition.x = mHolder->mPosition.x;
+		mPosition.y = mHolder->mPosition.y + mHolderHeightDiff;
+		mPosition.z = mHolder->mPosition.z;
+	} else {
+		mPosition = pos;
+	}
+
+	f32 ceilY = gpMap->checkRoof(mPosition.x, mPosition.y + 80.0f, mPosition.z,
+	                             &roof);
+	if (mPosition.y > ceilY - 160.0f)
+		mPosition.y = ceilY - 160.0f;
+
+	checkGroundPlane(mPosition.x, mPosition.y, mPosition.z, &floorY, &ground);
+	if (mPosition.y < floorY) {
+		mPosition.y = floorY;
+		changePlayerStatus(MARIO_STATUS_WAIT, 0, false);
+		result = 1;
+	}
+
+	setPlayerVelocity(0.0f);
+	mFaceAngle.x    = 0;
+	mModelFaceAngle = mFaceAngle.y;
+
+	return result;
+}
+
+BOOL TMario::hangonCheck(const TBGCheckData* wall, const Vec& prev,
+                         const Vec& curr)
+{
+	const TBGCheckData* ground;
+	if (mVel.y > 0.0f)
+		return false;
+
+	if ((curr.x - prev.x) * getVel().x + (curr.z - prev.z) * getVel().z > 0.0f)
+		return false;
+
+	JGeometry::TVec3<f32> newPos;
+	newPos.x = curr.x - 60.0f * wall->getNormal().x;
+	newPos.z = curr.z - 60.0f * wall->getNormal().z;
+
+	checkGroundPlane(newPos.x, curr.y + 160.0f, newPos.z, &newPos.y, &ground);
+
+	if (newPos.y - curr.y <= 100.0f)
+		return false;
+
+	if (mFloorPosition.x < newPos.y + 160.0f)
+		return false;
+
+	if (ground->isUnk1())
+		return false;
+
+	if (ground->isNoLedgeGrab())
+		return false;
+
+	mPosition.set(newPos);
+
+	mGroundPlane     = ground;
+	mFloorPosition.y = newPos.y;
+	mSlopeAngle      = matan(ground->getNormal().z, ground->getNormal().x);
+	mFaceAngle.y     = matan(wall->getNormal().z, wall->getNormal().x) + 0x8000;
+	return true;
+}
+
+static inline BOOL MarioCanHang(TMario* mario)
+{
+	bool ok = false;
+	if (mario->mHeldObject == nullptr && !mario->onYoshi())
+		ok = true;
+	return ok;
+}
+
+// Retail tests "can hang" inside the wall `if` condition (`== 1`, a signed
+// compare, so the helper returns BOOL from its bool flag) and folds the roof
+// check into one `if`, both through the same no-held-object/no-Yoshi test
+// other TMario code spells out (changeWireHanging, wireWaitToHang, hangPole).
+// The hip-drop test reads the status through getStatus(): its forced-load
+// word is the one dead word below `pos` (frame 0x88 -> 0x90).
+int TMario::checkGroundAtJumping(const Vec& target, int param_2)
+{
+	Vec pos             = target;
+	TBGCheckData* wall1 = checkWallPlane(&pos, 150.0f, unk15C);
+	TBGCheckData* wall2 = checkWallPlane(&pos, 30.0f, unk15C);
+
+	if (checkStatusType(0x10000)) {
+		mFloorPosition.y
+		    = gpMap->checkGround(pos.x, pos.y + 30.0f, pos.z, &mGroundPlane);
+	} else {
+		checkGroundPlane(pos.x, pos.y + 30.0f, pos.z, &mFloorPosition.y,
+		                 &mGroundPlane);
+	}
+
+	mFloorPosition.x = checkRoofPlane(pos, mPosition.y + 80.0f, &mRoofPlane);
+
+	int groundCode = 7;
+	int wallCode   = 7;
+	int roofCode   = 7;
+
+	mPosition.set(pos);
+
+	if (mGroundPlane->isIllegalData()) {
+		mPosition  = mPrevPosition;
+		groundCode = 2;
+	} else {
+		BOOL passable = false;
+		if (mGroundPlane->isMarioThrough())
+			passable = true;
+
+		if (getStatus() == MARIO_STATUS_HIP_DROP
+		    && mGroundPlane->isGroundPoundToPassThrough())
+			passable = true;
+
+		if (checkStatusType(0x10000) && mGroundPlane->isWaterSurface())
+			passable = false;
+
+		if (passable == 0 && pos.y <= mFloorPosition.y) {
+			mPosition.y = mFloorPosition.y;
+			groundCode  = 1;
+		}
+	}
+
+	if (groundCode == 1)
+		unkBC = mVel.y;
+
+	if (mRoofPlane != nullptr && !mRoofPlane->isMarioThrough()) {
+		if (160.0f + pos.y > mFloorPosition.x) {
+			mPosition.y = mFloorPosition.x - 160.0f;
+
+			if (mRoofPlane->getActor() != nullptr)
+				((THitActor*)mRoofPlane->getActor())
+				    ->receiveMessage(this, HIT_MESSAGE_PUSH_UP);
+
+			setPlayerVelocity(0.0f);
+
+			if (mVel.y >= 0.0f) {
+				mVel.y = 0.0f;
+				if (checkFlag(MARIO_FLAG_VISIBLE))
+					onFlag(MARIO_FLAG_UNK200);
+
+				if ((param_2 & 0x2) && MarioCanHang(this) && mRoofPlane->isFence())
+					roofCode = 4;
+				else
+					roofCode = 0;
+			}
+		}
+	}
+
+	mWallPlane = nullptr;
+
+	BOOL wall1Passable = false;
+	BOOL wall2Passable = false;
+
+	if (wall1 == nullptr) {
+		wall1Passable = true;
+	} else if (wall1->isMarioThrough()) {
+		wall1Passable = true;
+	}
+
+	if (wall2 == nullptr) {
+		wall2Passable = true;
+	} else if (wall2->isMarioThrough()) {
+		wall2Passable = true;
+	}
+
+	if ((param_2 & 0x1) && wall1Passable == 1 && wall2Passable == 0
+	    && MarioCanHang(this) == 1) {
+		mWallPlane = wall2;
+		if (hangonCheck(wall2, target, pos))
+			wallCode = 3;
+		else
+			wallCode = 0;
+	} else if (wall1Passable == 0 || wall2Passable == 0) {
+		mWallPlane = wall1 != nullptr ? wall1 : wall2;
+		s16 diff   = matan(mWallPlane->getNormal().z, mWallPlane->getNormal().x)
+		           - (mFaceAngle.y + 0x8000);
+		s16 maxAng = mJumpParams.mClashAngle.get();
+		if (-maxAng < diff && diff < maxAng)
+			wallCode = 2;
+	}
+
+	if (groundCode != 7)
+		return groundCode;
+
+	if (roofCode != 7)
+		return roofCode;
+
+	if (wallCode != 7)
+		return wallCode;
+
+	return 0;
+}
+
+BOOL TMario::isFallCancel()
+{
+	if (!(unk78 & 0x100 ? true : false))
+		return false;
+
+	if (mStatus & 0x21000)
+		return false;
+
+	if (!(mInput & 0x80) && mVel.y > 20.0f)
+		return true;
+
+	return false;
+}
+
+void TMario::fallProcess()
+{
+	if (getStatus() == MARIO_STATUS_DIVE) {
+		mVel.y -= mDivingParams.mGravity.get();
+		if (mVel.y < -75.0f)
+			mVel.y = -75.0f;
+	} else {
+		if (isFallCancel()) {
+			mVel.y *= 0.75f;
+		} else if ((getStatus() == MARIO_STATUS_LEFT_ROTATE_JUMP
+		            || getStatus() == MARIO_STATUS_RIGHT_ROTATE_JUMP)
+		           && mVel.y < 0.0f) {
+			mVel.y -= mJumpParams.mSpinJumpGravity.get();
+		} else {
+			mVel.y -= mJumpParams.mGravity.get();
+		}
+		if (onYoshi()) {
+			mYoshi->thinkHoldOut();
+		}
+	}
+	if (mVel.y < -75.0f)
+		mVel.y = -75.0f;
+}
+
+int TMario::jumpProcess(int param_1)
+{
+	Vec next;
+	int result = 0;
+	f32 speed  = std::sqrtf(mVel.x * mVel.x + mVel.z * mVel.z);
+
+	if (speed > mJumpParams.mJumpingMax.get()) {
+		mVel.x = mVel.x * (mJumpParams.mJumpingMax.get() / speed);
+		mVel.z = mVel.z * (mJumpParams.mJumpingMax.get() / speed);
+	}
+
+	next.x  = mPosition.x + 0.25f * mVel.x;
+	next.y  = getPosition().y + 0.25f * mVel.y;
+	next.z  = getPosition().z + 0.25f * mVel.z;
+	int ret = checkGroundAtJumping(next, param_1);
+	if (ret != 0)
+		result = ret;
+
+	if (mVel.y >= 0.0f)
+		unk104 = mPosition.y;
+
+	fallProcess();
+
+	if (getStatus() != MARIO_STATUS_JUMP_CATCH)
+		mFaceAngle.x = 0;
+
+	mModelFaceAngle = mFaceAngle.y;
+	return result;
+}

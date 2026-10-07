@@ -1,0 +1,1170 @@
+#include <Camera/Camera.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <System/MarDirector.hpp>
+#include <Camera/cameralib.hpp>
+#include <Camera/CameraBck.hpp>
+#include <Camera/camerasave.hpp>
+#include <Camera/CameraShake.hpp>
+#include <Camera/CameraOption.hpp>
+#include <Camera/CameraKindParam.hpp>
+#include <Camera/CameraInbetween.hpp>
+#include <Camera/CameraJetCoaster.hpp>
+#include <Camera/CameraMapTool.hpp>
+#include <Camera/CameraMarioData.hpp>
+#include <Player/Mario.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <macros.h>
+#include <stdio.h>
+
+#include <System/StageUtil.hpp>
+
+static const char* dummyMactorStringValue1 = "\0\0\0\0\0\0\0\0\0\0\0";
+static const char* SMS_NO_MEMORY_MESSAGE   = "メモリが足りません\n";
+
+static const char* MtxCalcTypeName[] = {
+	"MActorMtxCalcType_Basic クラシックスケールＯＮ",
+	"MActorMtxCalcType_Softimage クラシックスケールＯＦＦ",
+	"MActorMtxCalcType_MotionBlend モーションブレンド",
+	"MActorMtxCalcType_User ユーザー定義",
+};
+
+#include <Player/MarioDirtyStrings.hpp>
+
+CPolarSubCamera* gpCamera;
+
+// The map has all three of these in this TU's .sdata ahead of cStartCamName.
+// MarDirectorEvent.cpp and CameraDemo.cpp refer to them as externs;
+// CameraBck.cpp carries unreferenced copies of the strings.
+const char* cCameraBckNameShineGetInside
+    = "/common/camera/camera_demo_shine_get_inside";
+const char* cCameraBckNameShineGetOutside
+    = "/common/camera/camera_demo_shine_get_outside";
+const char* cCameraBckNameGate = "/common/camera/camera_demo_gate_in";
+
+const char* cStartCamName          = "開始カメラ";
+const char* cStartAfterCamName     = "開始後カメラ";
+const char* cJetCoasterCam0BckName = "pinna2_camera";
+const char* cJetCoasterCam1BckName = "tinkoopa_camera";
+const char* cJetCoasterDemoBckName = "tinkoopa_killer_camera";
+const char* cStartCamBckFileName   = "/scene/map/camera/StartCamera.bck";
+
+// Named-local binders: CameragcBck + CameragcDemoFrame close
+// JetCoasterDemoCallBack's 16-byte frame; CameragcBck at the ctor
+// startDemo site is the last +8 of that constructor's 24-byte gap.
+static inline TCameraBck* CameragcBck(CPolarSubCamera* p)
+{
+	TCameraBck* bck = p->unk2B0;
+	return bck;
+}
+
+static inline s32 CameragcDemoFrame(TMarDirector* d)
+{
+	return d->unk58;
+}
+
+CPolarSubCamera::CPolarSubCamera(const char* name)
+    : JDrama::TLookAtCamera(CLBConstUpVec, CLBConstUpVec, CLBConstUpVec, 0.0f,
+                            0.0f, name, 10.0f, 300000.0f)
+    , mMode(CAMERA_MODE_INVALID)
+    , mPrevMode(CAMERA_MODE_INVALID)
+    , mSavedModeBeforeTalk(CAMERA_MODE_INVALID)
+    , mInitialMode(CAMERA_MODE_INVALID)
+    , unk60(nullptr)
+    , unk64(0)
+    , unk70(nullptr)
+    , unk74(0)
+    , mPosFreezeFrames(0)
+    , mTargetFreezeFrames(0)
+    , unk11C(0)
+    , unk120(nullptr)
+    , mHeightPanOffset(0.0f)
+    , unk250(0.0f)
+    , unk254(0)
+    , unk268(0.0f)
+    , unk26C(1.0f)
+    , unk274(0)
+    , unk276(0)
+    , unk278(0)
+    , unk27A(0)
+    , mDeadDemoCountdown(0)
+    , mDeadDemoCountdownToFovZoom(0)
+    , mDeadDemoFovZoomTimer(0)
+    , unk282(0)
+    , unk284(0)
+    , unk288(1.0f)
+    , unk28C(0)
+    , unk28E(0)
+    , unk290(0.0f)
+    , unk294(0.0f)
+    , unk298(0.0f)
+    , unk2AC(nullptr)
+    , unk2B0(nullptr)
+    , mCameraDemo(nullptr)
+    , unk2B8(nullptr)
+    , unk2BC(nullptr)
+    , unk2C0(3.0f)
+    , unk2C4(2.0f)
+{
+	gpCamera                    = this;
+	gpCameraShake               = new TCameraShake;
+	TCameraMarioData* marioData = new TCameraMarioData;
+	gpCameraOption              = nullptr;
+	gpCameraMario               = marioData;
+	unk60                       = new CameraUnk60Struct(4);
+	mCurrentParams              = new TCameraKindParam;
+	mInbetween                  = new TCameraInbetween;
+	unk2AC                      = new CameraUnk2ACStruct;
+	unk2B0                      = new TCameraBck;
+	mCameraDemo                 = new TCameraDemo;
+	mSaveNotice                 = new TCamSaveNotice;
+	mSaveEx                     = new TCamSaveEx;
+	for (int i = 0; i < ARRAY_COUNT(mSaveKindParam); ++i)
+		mSaveKindParam[i] = new TCamSaveKindParam(mCamKindNameSaveFile[i]);
+	if (SMS_isMultiPlayerMap())
+		createMultiPlayer(4);
+	u32 stage = SMSGetMarDirector()->getCurrentStage();
+	// TODO: frame now matches (0x58) after SMSGetMarDirector() at both
+	// stage/map sites and CameragcBck on startDemo; the `this` copy is still
+	// 0x24 against retail's 0x28.  A TU-local getCurrentMap fork was inert.
+	// The stage test is settled: `!stage` rather than `stage == 0` stops
+	// MWCC folding the pair into `cmplwi 1; bgt`, and unsigned `stage`
+	// gives the ROM's `cmplwi`.
+	// c-k13 debugger: the `this` copy is the TPlacement ctor's binding
+	// (depth 3 in the TLookAtCamera chain); retail has one fewer word among
+	// the depth-1 objects above it (the two SMSGetMarDirector() receivers and
+	// the CameragcBck local) and one more created after it. Raw unk2B0 at
+	// startDemo is frame 0x50, raw gpMarDirector at either site 0x48.
+	if (SMSGetMarDirector()->getCurrentMap() == 58 && (!stage || stage == 1)) {
+		unk64 |= CAMERA_FLAG_JET_COASTER_SCENE;
+		unk2B8 = new TCameraJetCoaster;
+		switch (stage) {
+		case 0:
+			CameragcBck(this)->startDemo(cJetCoasterCam0BckName, nullptr);
+			break;
+		}
+	}
+
+	unk2CA = -1;
+	unk2C8 = -1;
+	unk2CC = 0;
+}
+
+void CPolarSubCamera::startJetCoasterCam1()
+{
+	CameragcBck(this)->startDemo(cJetCoasterCam1BckName, nullptr);
+	unk2B0->setFrame(CameragcDemoFrame(gpMarDirector) * 0.5f);
+}
+
+static s32 JetCoasterDemoCallBack(uintptr_t param_1, u32 param_2)
+{
+	if (param_2 == 1)
+		((CPolarSubCamera*)param_1)->startJetCoasterCam1();
+
+	return true;
+}
+
+// TODO: 99.6%, frame 0xc8 against the ROM's 0x140. Every instruction matches
+// once the stack is padded out: 92 bytes below everything (a local declared
+// last, or inline-expansion temporaries), plus 20 more between the snprintf
+// buffer and `marPos`. What padding cannot reproduce is where the by-value
+// TCameraOption(TVec3) argument temporary lands -- 0xdc in the ROM, i.e. in
+// the named-local region, against 0x5c here -- and the r3/r4 numbering of the
+// two TTargetCamera copies, which follows the frame.
+void CPolarSubCamera::loadAfter()
+{
+	JDrama::TLookAtCamera::loadAfter();
+	mInitialMode = CAMERA_MODE_FOLLOW;
+	if (gpMarDirector->getCurrentMap() == 7) {
+		mInitialMode = CAMERA_MODE_DELFINO;
+	} else if (SMS_isExMap()) {
+		mInitialMode = CAMERA_MODE_EX_MAP_0;
+	} else if (SMS_isMultiPlayerMap()) {
+		mInitialMode = CAMERA_MODE_MULTI_PLAYER;
+	} else if (unk64 & CAMERA_FLAG_JET_COASTER_SCENE) {
+		mInitialMode = CAMERA_MODE_JET_COASTER;
+	}
+
+	TCameraMapTool* tool = (TCameraMapTool*)gpCamMapToolTable->searchF(
+	    JDrama::TNameRef::calcKeyCode(cStartCamName), cStartCamName);
+
+	if (tool)
+		changeCamModeSpecifyCamMapToolAndFrame_(tool, 1);
+	else
+		changeCamModeSpecifyFrame_(mInitialMode, 1);
+
+	mCurrentParams->copySaveParam(*mSaveKindParam[mMode]);
+	mFovy = mCurrentParams->mFovy;
+	mNear = mCurrentParams->mNearClip;
+
+	char acStack_54[0x40];
+	snprintf(acStack_54, 0x40, "%s%d", cStartAfterCamName,
+	         gpMarDirector->unkD0);
+	TCameraMapTool* tool2 = (TCameraMapTool*)gpCamMapToolTable->searchF(
+	    JDrama::TNameRef::calcKeyCode(acStack_54), acStack_54);
+	if (tool2) {
+		mCurrentTarget.unk28 = MsClamp(tool2->mPosition.y, unk268, unk26C);
+		mCurrentTarget.mYaw  = CLBDegToShortAngle(tool2->getYaw()) - 0x8000;
+	} else {
+		mCurrentTarget.unk28
+		    = MsClamp(mSaveEx->mXRotStart.get(), unk268, unk26C);
+		mCurrentTarget.mYaw = *gpMarioAngleY - 0x8000;
+	}
+
+	if ((unk64 & CAMERA_FLAG_JET_COASTER_SCENE) && unk2B8 != nullptr
+	    && (unk2B8->isLButtonMode()))
+		setUpToLButtonCamera_(CAMERA_MODE_JET_COASTER);
+
+	unk270 = mCurrentTarget.unk28;
+	mCurrentTarget.mPitch
+	    = CLBLinearInbetween(mCurrentParams->mXAngleMin,
+	                         mCurrentParams->mXAngleMax, mCurrentTarget.unk28);
+
+	JGeometry::TVec3<f32> marPos = SMS_GetMarioPos();
+	f32 fVar1;
+	if (isNormalDeadDemo()) {
+		fVar1 = 35.0f;
+	} else {
+		fVar1 = mCurrentTarget.unk28 * mCurrentParams->mXRotRatioAtOffsetY
+		        + mCurrentParams->mAtOffsetY;
+		if (SMS_GetMarioStatus() == MARIO_STATUS_KICK_ROOF_ROLL_UP)
+			fVar1 += 260.0f;
+		if (mMode == CAMERA_MODE_DEFINITE_D2)
+			fVar1 += unk290;
+	}
+
+	marPos.y += fVar1;
+	gpCameraMario->unk0.set(marPos);
+
+	if (unk70 != nullptr) {
+		unk70->calcPosAndAt(&mPosition, &mTarget);
+	} else {
+		mTarget.set(gpCameraMario->unk0);
+		f32 fVar7 = CLBLinearInbetween(mCurrentParams->mDistMin,
+		                               mCurrentParams->mDistMax,
+		                               mCurrentTarget.unk28);
+		CLBPolarToCross(mTarget, &mPosition, fVar7, mCurrentTarget.mPitch,
+		                mCurrentTarget.mYaw);
+	}
+
+	calcSecureViewTarget_(mCurrentTarget.mYaw, &unk294, &unk298);
+
+	mPosition.x += unk294;
+	mPosition.z += unk298;
+
+	mTarget.x += unk294;
+	mTarget.z += unk298;
+
+	mCurrentTarget.mPosition.set(mPosition);
+	mCurrentTarget.unk18.set(mPosition);
+	mCurrentTarget.mTarget.set(mTarget);
+
+	if (SMS_isOptionMap()) {
+		mCurrentTarget.mPosition.set(mPosition);
+		mCurrentTarget.mTarget.set(mTarget);
+		gpCameraOption = new TCameraOption(mPosition, &mCurrentTarget.mTarget);
+	}
+
+	unk256 = mCurrentTarget.mPitch;
+	unk258 = mCurrentTarget.mYaw;
+
+	mPreviousTarget        = mCurrentTarget;
+	mTargetBeforeFixedMode = mPreviousTarget;
+
+	unk124.set(mPosition);
+	unk130.set(mPosition);
+	unk13C.set(mPosition);
+	unk148.set(mTarget);
+	unk154.set(mTarget);
+	unk160.set(mTarget);
+
+	if (unk64 & CAMERA_FLAG_JET_COASTER_SCENE) {
+		unk2B8->unk10.set(mPosition);
+		unk2B8->unk1C.set(mTarget);
+	}
+
+	mInbetween->initCameraInbetween(mPosition, mTarget, SMS_GetMarioPos());
+
+	C_MTXPerspective(unk16C, mFovy, mAspect, mNear, mFar);
+	C_MTXLookAt(unk1EC, &unk124, &mUp, &unk148);
+
+	for (int i = 0; i < 4; ++i)
+		for (int j = 0; j < 4; ++j)
+			unk1AC[i][j] = unk16C[i][j];
+
+	// TODO: one instruction left (99.58%): MWCC binds &unk1EC into r30 for
+	// the C_MTXLookAt/MTXCopy pair while the ROM recomputes `addi rD, r31,
+	// 0x1ec` per site.  Ruled out: routing either or both sites through
+	// getUnk1EC() -- byte-identical, the binding survives.
+	MTXCopy(unk1EC, unk21C);
+
+	calcExternalData_();
+
+	if ((unk64 & CAMERA_FLAG_JET_COASTER_SCENE) && gpMarDirector->unk7D == 1) {
+		gpMarDirector->fireStartDemoCamera(cJetCoasterDemoBckName, nullptr, -1,
+		                                   0.0f, true, &JetCoasterDemoCallBack,
+		                                   (uintptr_t)this, nullptr,
+		                                   JDrama::TFlagT<u16>());
+	} else {
+		if (!JKRGetResource(cStartCamBckFileName))
+			calcInHouseNo_(true);
+	}
+}
+
+bool CPolarSubCamera::isNowInbetween() const
+{
+	if (mInbetween->getUnk4() > 0)
+		return true;
+	else
+		return false;
+}
+
+MtxPtr CPolarSubCamera::getToroccoMtx_() const
+{
+	return gpMarioOriginal->mTorocco->mModel->getAnmMtx(2);
+}
+
+void CPolarSubCamera::setMarioLookat_() { }
+
+JGeometry::TVec3<f32> CPolarSubCamera::getUsualLookat() const
+{
+	JGeometry::TVec3<f32> result;
+	const JGeometry::TVec3<f32>* thing = mCameraDemo->unk0;
+	if (thing)
+		result = *thing;
+	else
+		result = gpCameraMario->unk0;
+	return result;
+}
+
+s16 CPolarSubCamera::calcAngleXFromXRotRatio_() const
+{
+	return CLBLinearInbetween(mCurrentParams->mXAngleMin,
+	                          mCurrentParams->mXAngleMax, mCurrentTarget.unk28);
+}
+
+f32 CPolarSubCamera::calcDistFromXRotRatio_() const
+{
+	return CLBLinearInbetween(mCurrentParams->mDistMin,
+	                          mCurrentParams->mDistMax, mCurrentTarget.unk28);
+}
+
+void CPolarSubCamera::calcNowTargetFromPosAndAt_(const Vec& pos, const Vec& at)
+{
+	f32 radius;
+	s16 xAngle;
+	s16 yAngle;
+	CLBCrossToPolar(at, pos, &radius, &xAngle, &yAngle);
+	mCurrentTarget.unk28 = CLBCalcRatio(mCurrentParams->mXAngleMin,
+	                                    mCurrentParams->mXAngleMax, xAngle);
+	if (isLButtonCameraSpecifyMode(mMode)) {
+		mCurrentTarget.unk28 = MsClamp(mCurrentTarget.unk28, 0.0f, 1.0f);
+	} else {
+		mCurrentTarget.unk28 = MsClamp(mCurrentTarget.unk28, unk268, unk26C);
+	}
+
+	mCurrentTarget.mPitch
+	    = CLBLinearInbetween(mCurrentParams->mXAngleMin,
+	                         mCurrentParams->mXAngleMax, mCurrentTarget.unk28);
+	mCurrentTarget.mYaw = yAngle;
+	mCurrentTarget.mPosition.set(pos);
+	mCurrentTarget.unk18.set(pos);
+	mCurrentTarget.mTarget.set(at);
+}
+
+void CPolarSubCamera::rotateX_ByStickY_(f32 param_1)
+{
+	if (SMS_IsMarioOpeningDoor())
+		return;
+
+	mCurrentTarget.unk28 -= param_1 * mCurrentParams->mXRotRatioManualSpeed;
+	if (isLButtonCameraSpecifyMode(mMode)) {
+		mCurrentTarget.unk28 = MsClamp(mCurrentTarget.unk28, 0.0f, 1.0f);
+	} else {
+		mCurrentTarget.unk28 = MsClamp(mCurrentTarget.unk28, unk268, unk26C);
+	}
+}
+
+void CPolarSubCamera::rotateY_ByStickX_(f32 param_1)
+{
+	if (SMS_IsMarioOpeningDoor())
+		return;
+
+	s16 thing = param_1
+	            * CLBLinearInbetween(mCurrentParams->mYAngleManualSpeedXMin,
+	                                 mCurrentParams->mYAngleManualSpeedXMax,
+	                                 mCurrentTarget.unk28);
+	mCurrentTarget.mYaw += thing;
+}
+
+void CPolarSubCamera::offMoveApproach_() { mInbetween->unk44 = 0.0f; }
+
+void CPolarSubCamera::onMoveApproach_()
+{
+	// Why...
+	f32 d = MsSqrtf((mPosition.x - mTarget.x) * (mPosition.x - mTarget.x)
+	                + (mPosition.y - mTarget.y) * (mPosition.y - mTarget.y)
+	                + (mPosition.z - mTarget.z) * (mPosition.z - mTarget.z));
+	mInbetween->unk44
+	    = d
+	      - CLBLinearInbetween(mCurrentParams->mDistMin,
+	                           mCurrentParams->mDistMax, mCurrentTarget.unk28);
+}
+
+// TMario::checkStatusType is called out of line from the five sites this
+// helper is inlined into because it sits on the right of a short-circuit `&&`,
+// where MWCC refuses to expand a two-`return` body; Player/Mario.hpp spells
+// it that way (docs/catalog/codegen-tells.md, header round 8/9).
+bool CPolarSubCamera::isMarioReadyGun_() const
+{
+	return gpMarioOriginal->checkFlag(MARIO_FLAG_HAS_FLUDD)
+	       && gpMarioOriginal->checkStatusType(MARIO_STATUS_FLAG_UNK8000);
+}
+
+// Same +8 binding level isMarioCrabWalk_ below needs; defined here rather than
+// shared with CameragcUnk120, because moving that one shifts the pool.
+static inline TMarioGamePad* CameragcAimPad(const CPolarSubCamera* p)
+{
+	TMarioGamePad* v120 = p->unk120;
+	return v120;
+}
+
+bool CPolarSubCamera::isMarioAimWithGun_() const
+{
+	return isMarioReadyGun_() && CameragcAimPad(this)->checkMeaning(0x400);
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// CPolarSubCamera::isMarioCrabWalk_ (batch 127).
+static inline TMarioGamePad* CameragcUnk120(const CPolarSubCamera* p)
+{
+	TMarioGamePad* v120 = p->unk120;
+	return v120;
+}
+
+// Two sites in ctrlGameCamera_ close its 32-byte frame (param still +8).
+static inline TCameraKindParam* CameragcParams(CPolarSubCamera* p)
+{
+	TCameraKindParam* params = p->mCurrentParams;
+	return params;
+}
+
+bool CPolarSubCamera::isMarioCrabWalk_() const
+{
+	return isMarioReadyGun_() && CameragcUnk120(this)->checkMeaning(0x8000);
+}
+
+void CPolarSubCamera::execInvalidAutoChase_()
+{
+	unk284 = mCurrentParams->mAutoChaseCompleteFrame;
+}
+
+bool CPolarSubCamera::isMomentDefinite_() const
+{
+	bool result = false;
+	if (!(unk64 & CAMERA_FLAG_UNK100) && isNormalCameraCompletely()
+	    && unk250 > 0.001f
+	    && CLBLinearInbetween(mCurrentParams->mCushionMin,
+	                          mCurrentParams->mCushionMax, mCurrentTarget.unk28)
+	           > 0.001f)
+		result = true;
+	return result;
+}
+
+// The ground test is a predicate level with its own flag: its false arm then
+// reuses the flag's zero (`mr r0, r4`), which no spelling in the caller gives
+// (a plain `a && b` helper drops the materialisation, 95.6%).
+static inline bool CameragcIsOnThing(const TBGCheckData* plane)
+{
+	bool groundOK = false;
+	if (plane != nullptr && plane->isThing())
+		groundOK = true;
+	return groundOK;
+}
+
+// TODO: 98.4%. Frame 0xd0 against the ROM's 0x110, and one `fmr f2, f1`
+// (retail computes the height into f1 and copies it into matan's second
+// argument; `height -= grLevel` and a ternary are inert or worse). The
+// checkStatusType block: see the note on isMarioReadyGun_.
+// mwcc-stack (c-k10): retail's slots, first created highest, are diff 0xe0,
+// norm 0xd4, p3 0xc8, ground 0xc4, p2 0xb8, five more words, sample 0x98;
+// ours are diff, norm, sample, p2, p3, ground from 0xa0 down. p3 and ground
+// created before p2, and sample last, is the callee-local order of nested
+// inline levels (by-value copies of the sample point), not named locals.
+void CPolarSubCamera::calcSlopeAngleX_(s16* param_1)
+{
+	s16 result = 0;
+
+	if (!isMarioReadyGun_()) {
+		if (CameragcIsOnThing(*gpMarioGroundPlane) && isSlopeCameraMode()) {
+			JGeometry::TVec3<f32> diff;
+			diff.set(gpMarioPos->x - mPosition.x, 0.0f,
+			         gpMarioPos->z - mPosition.z);
+			bool b = diff.isZero();
+			if (!b) {
+				f32 grLevel = SMS_GetMarioGrLevel();
+				s16 maxAng  = mSaveEx->mSLSlopeMaxAngleX.get();
+				f32 fwdDist = mSaveEx->mSLSlopeForwardDistXZ.get();
+
+				JGeometry::TVec3<f32> norm;
+				MsVECNormalize(&diff, &norm);
+				norm *= fwdDist;
+
+				JGeometry::TVec3<f32> sample = SMS_GetMarioPos();
+				sample += norm;
+				JGeometry::TVec3<f32> p2;
+				p2 = sample;
+				JGeometry::TVec3<f32> p3 = p2;
+
+				const TBGCheckData* ground;
+				f32 height
+				    = gpMap->checkGroundIgnoreWaterSurface(
+				          p3.x,
+				          fwdDist * fakeTan(maxAng) + 10.0f + gpMarioPos->y,
+				          p3.z, &ground)
+				      - grLevel;
+				s16 angle = 0;
+				if (height > 0.0f)
+					angle = matan(fwdDist, height);
+				if (angle > maxAng)
+					result = 0;
+				else
+					result = angle;
+			}
+		}
+	}
+
+	s16 speed = mSaveEx->mSLSlopeSpeedAngleX.get();
+	CLBChaseGeneralConstantSpecifySpeed<s16>(&unk28C, result, speed);
+
+	*param_1 -= unk28C;
+	*param_1 = MsClamp(*param_1, mSaveEx->mSLLimitMinAngleX.get(),
+	                   mSaveEx->mSLLimitMaxAngleX.get());
+}
+
+// TODO: 96.3%. The angle chase now reads the ROM's HoldAngleXChase field.
+// What is left is the frame and the two inline decisions it drags along.
+// (1) Frame 0x1d0 against the ROM's
+// 0x2d0 -- 0x100 of locals the ROM allocates and we do not; nearly every
+// remaining mismatch is an r1 offset shifted by that 0x100. The ROM also
+// re-extends the two s16 angles inside each arm of the abs below. (2) CLOSED: the ROM
+// *calls* MsSqrtf out of the CLBCrossToPolar below the wall check, which the
+// CLBDistXZ level in cameralib.hpp reproduces (94.9 -> 96.3). (3) The two
+// checkStatusType blocks: see the note on isMarioReadyGun_.
+void CPolarSubCamera::calcPosAndAt_()
+{
+	if (gpCameraMario->mFrameMoveDistHorizontal >= 0.05f)
+		unk64 &= ~CAMERA_FLAG_UNK80;
+
+	if (!(unk64 & CAMERA_FLAG_UNK80)) {
+		if (unk284 > 0) {
+			s32 acf   = mCurrentParams->mAutoChaseCompleteFrame;
+			s32 acs   = mCurrentParams->mAutoChaseStartFrame;
+			s32 delta = (acf - unk284) + 1;
+			if (delta <= acs)
+				unk288 = 0.0f;
+			else
+				unk288 = CLBCalcRatio<s32>(acs, acf, delta);
+		} else {
+			unk288 = 1.0f;
+		}
+	}
+
+	s16 holdOffsetAngleX = 0;
+	f32 holdAddDistXZ    = 0.0f;
+	s16 offsetAngleXRange
+	    = CLBLinearInbetween<s16>(mCurrentParams->mHoldOffsetAngleXMin,
+	                              mCurrentParams->mHoldOffsetAngleXMax,
+	                              mCurrentTarget.unk28);
+	f32 addDistXZRange
+	    = CLBLinearInbetween<f32>(mCurrentParams->mHoldAddDistXZMin,
+	                              mCurrentParams->mHoldAddDistXZMax,
+	                              mCurrentTarget.unk28);
+
+	if (isNormalCameraSpecifyMode(mMode)) {
+		if (isMarioReadyGun_()) {
+			f32 mag          = gpCameraMario->unk1C;
+			holdAddDistXZ    = mag * addDistXZRange;
+			holdOffsetAngleX = (s16)(mag * (f32)offsetAngleXRange);
+		}
+	}
+
+	CLBChaseAngleDecrease(&unk2AC->unk0, holdOffsetAngleX,
+	                      mSaveEx->mSLHoldAngleXChase.get());
+	CLBChaseDecrease(&unk2AC->unk4, holdAddDistXZ, mSaveEx->mSLHoldDistChase.get(),
+	                 0.0f);
+
+	if (addDistXZRange < 0.001f) {
+		if (offsetAngleXRange != 0) {
+			unk2AC->unkC = (f32)CLBAbs<int>(holdOffsetAngleX)
+			               * (1.0f / (f32)CLBAbs<int>(offsetAngleXRange));
+			unk2AC->unkC = MsClamp(unk2AC->unkC, 0.0f, 1.0f);
+		}
+	} else {
+		unk2AC->unkC = holdAddDistXZ * (1.0f / addDistXZRange);
+		unk2AC->unkC = MsClamp(unk2AC->unkC, 0.0f, 1.0f);
+	}
+
+	CLBChaseDecrease(&unk2AC->unk8, unk2AC->unkC,
+	                 mSaveEx->mSLHoldDistChase.get(), 0.0f);
+
+	unk64 &= ~CAMERA_FLAG_UNK100;
+	if (mPosFreezeFrames != 0)
+		mPosFreezeFrames -= 1;
+	if (mTargetFreezeFrames != 0)
+		mTargetFreezeFrames -= 1;
+
+	bool freeze = true;
+	if (!(gpCameraMario->mFrameMoveDistHorizontal >= 0.05f
+	      || gpCameraMario->mFrameMoveDistVertical >= 0.05f))
+		freeze = false;
+
+	bool inputActive = true;
+
+	bool checkInput = true;
+	if (!isMarioReadyGun_() && !(unk64 & CAMERA_FLAG_UNK4))
+		checkInput = false;
+
+	if (!checkInput) {
+		bool hasInput = false;
+		if (unk120 != nullptr) {
+			bool nonZero = true;
+			if (unk120->mCompSPos[6] == 0.0f && unk120->mCompSPos[7] == 0.0f)
+				nonZero = false;
+			if (nonZero)
+				hasInput = true;
+		}
+		if (!hasInput)
+			inputActive = false;
+	}
+
+	if (unk64 & CAMERA_FLAG_UNK40) {
+		if (mPosFreezeFrames == 0)
+			mPosFreezeFrames = 1;
+		if (mTargetFreezeFrames == 0)
+			mTargetFreezeFrames = 1;
+	} else {
+		if (freeze || inputActive) {
+			mTargetFreezeFrames = 0;
+			mPosFreezeFrames    = 0;
+		}
+		if ((unk64 & CAMERA_FLAG_DEAD_DEMO) && mPosFreezeFrames == 0)
+			mPosFreezeFrames = 1;
+	}
+
+	JGeometry::TVec3<f32> finalAt;
+	if (mPosFreezeFrames == 0 || mTargetFreezeFrames == 0) {
+		if (mPosFreezeFrames == 0 && mTargetFreezeFrames == 0)
+			unk64 &= ~CAMERA_FLAG_UNK40;
+
+		if (!mInbetween->isThing() || freeze || inputActive) {
+			if (mTargetFreezeFrames == 0
+			    && isDefiniteCameraSpecifyMode(mMode)) {
+				const JGeometry::TVec3<f32>* ovr = mCameraDemo->unk0;
+				JGeometry::TVec3<f32> origin;
+				if (ovr != nullptr)
+					origin = *ovr;
+				else
+					origin = gpCameraMario->unk0;
+				JGeometry::TVec3<f32> copy = origin;
+				mCurrentTarget.mTarget.set(copy);
+			}
+
+			if (isFixOrDefiniteCameraSpecifyMode(mMode)) {
+				finalAt = mCurrentTarget.mTarget;
+				unk28C  = 0;
+			} else {
+				mCurrentTarget.mPitch = CLBLinearInbetween<s16>(
+				    mCurrentParams->mXAngleMin, mCurrentParams->mXAngleMax,
+				    mCurrentTarget.unk28);
+				s16 xAngle = mCurrentTarget.mPitch
+				             + mCurrentParams->mOffsetAngleX + unk2AC->unk0;
+				s16 yAngle
+				    = mCurrentTarget.mYaw + mCurrentParams->mOffsetAngleY;
+
+				if (gpCameraMario->mFrameMoveDistHorizontal >= 0.05f) {
+					s16 mAngle = *gpMarioAngleY - 0x8000;
+					f32 m      = MsClamp<f32>(
+                        (f32)mCurrentParams->mMaxAddAngleY
+                            * (0.5f * (1.0f - JMASCos((mAngle - unk258) * 2))),
+                        -32766.998f, 32766.998f);
+
+					if ((s16)(mAngle - yAngle) < 0)
+						m = -m;
+
+					s16 addAngleYSpeed = mSaveEx->mSLAddAngleYSpeed.get();
+					CLBChaseGeneralConstantSpecifySpeed<s16>(
+					    &unk28E, CLBRoundf<s16>(m), addAngleYSpeed);
+				}
+				yAngle += unk28E;
+
+				calcSlopeAngleX_(&xAngle);
+
+				if (mMode == CAMERA_MODE_TOWER_E) {
+					if (gpCameraMario->isMarioRocketing()) {
+						xAngle = mSaveEx->mSLLimitMaxAngleX.get() - 0x1770;
+					} else if (SMS_GetMarioStatus() == MARIO_STATUS_HIP_DROP) {
+						xAngle = 0x3E8;
+					}
+				}
+
+				finalAt.x = -(mCurrentParams->mOffsetLookatXZ
+				                  * JMASSin(yAngle - 0x4000)
+				              - mCurrentTarget.mTarget.x);
+				finalAt.y = mCurrentTarget.mTarget.y;
+				finalAt.z = -(mCurrentParams->mOffsetLookatXZ
+				                  * JMASCos(yAngle - 0x4000)
+				              - mCurrentTarget.mTarget.z);
+
+				if (mMode != CAMERA_MODE_MULTI_PLAYER) {
+					execSecureView_(yAngle, finalAt);
+
+					if (!isRailCameraSpecifyMode(mMode)) {
+						JGeometry::TVec3<f32> saveAt;
+						saveAt.set(finalAt);
+						f32 dist = CLBLinearInbetween<f32>(
+						    mCurrentParams->mDistMin, mCurrentParams->mDistMax,
+						    mCurrentTarget.unk28);
+						s16 cushAng = CLBLinearInbetween<s16>(
+						    mCurrentParams->mXAngleMin,
+						    mCurrentParams->mXAngleMax, mCurrentTarget.unk28);
+						f32 cushion = JMASCos(cushAng);
+
+						JGeometry::TVec3<f32> newPos;
+						CLBPolarToCross(saveAt, newPos,
+						                dist + mInbetween->unk44, xAngle,
+						                yAngle);
+
+						if (isNormalCameraCompletely()) {
+							JGeometry::TVec3<f32> base
+							    = mPreviousTarget.mPosition;
+							base.y = mPreviousTarget.unk18.y;
+							f32 nDist;
+							s16 nVA, nHA;
+							CLBCrossToPolar(saveAt, base, &nDist, &nVA, &nHA);
+							f32 cushDist = cushion * nDist;
+							if (cushDist > cushion * dist) {
+								unk64 |= CAMERA_FLAG_UNK100;
+								mCurrentTarget.unk18 = newPos;
+							} else {
+								f32 minDist
+								    = cushion
+								      * (dist
+								         - CLBLinearInbetween<f32>(
+								             mCurrentParams->mCushionMin,
+								             mCurrentParams->mCushionMax,
+								             mCurrentTarget.unk28));
+								if (minDist < mSaveEx->mSLMinCushionXZ.get())
+									minDist = mSaveEx->mSLMinCushionXZ.get();
+
+								if (fabricatedInline3() && cushDist < minDist) {
+									f32 diff = minDist - cushDist;
+									base.x += diff * JMASSin(nHA);
+									base.z += diff * JMASCos(nHA);
+									CLBCrossToPolar(saveAt, base, &nDist, &nVA,
+									                &nHA);
+								}
+
+								bool useMid = false;
+								if (!(unk64 & CAMERA_FLAG_UNK100)
+								    && isNormalCameraCompletely()
+								    && unk250 > 0.001f) {
+									if (CLBLinearInbetween<f32>(
+									        mCurrentParams->mCushionMin,
+									        mCurrentParams->mCushionMax,
+									        mCurrentTarget.unk28)
+									    > 0.001f)
+										useMid = true;
+								}
+								if (useMid) {
+									mCurrentTarget.unk18.set(base);
+								} else {
+									CLBPolarToCross(saveAt,
+									                mCurrentTarget.unk18,
+									                nDist, nVA, yAngle);
+								}
+								mCurrentTarget.unk18.y = newPos.y;
+							}
+						} else {
+							mCurrentTarget.unk18 = newPos;
+						}
+
+						f32 sY = JMASSin(yAngle);
+						f32 cY = JMASCos(yAngle);
+
+						if (fabricatedInline3()) {
+							f32 dx = gpMarioPos->x - mCurrentTarget.unk18.x;
+							f32 dz = gpMarioPos->z - mCurrentTarget.unk18.z;
+							f32 d  = MsSqrtf(dx * dx + dz * dz);
+							f32 minD = mSaveEx->mSLMinCushionXZ.get();
+							// The cushion radius is the smaller of the two (retail keeps
+							// dist * cushion when it is not above minD).
+							// TODO: retail compares minD against dist * cushion
+							// (fcmpo minD, dc; bge), this form compares dc first.
+							f32 dc  = dist * cushion;
+							f32 mD2 = dc > minD ? minD : dc;
+							if (d < mD2) {
+								f32 add = mD2 - d;
+								mCurrentTarget.unk18.x += sY * add;
+								mCurrentTarget.unk18.z += cY * add;
+							}
+						}
+
+						switch (mMode) {
+						case CAMERA_MODE_UNDER_GROUND:
+						case CAMERA_MODE_MARE_UNDER_GROUND:
+							break;
+						default:
+							mCurrentTarget.unk18.x = -(
+							    unk2AC->unk4 * sY - mCurrentTarget.unk18.x);
+							mCurrentTarget.unk18.z = -(
+							    unk2AC->unk4 * cY - mCurrentTarget.unk18.z);
+							break;
+						}
+
+						if (mInbetween->isThing() && inputActive) {
+							JGeometry::TVec3<f32> warpPos;
+							f32 d = CLBLinearInbetween<f32>(
+							    mCurrentParams->mDistMin,
+							    mCurrentParams->mDistMax, mCurrentTarget.unk28);
+							CLBPolarToCross(mInbetween->mAt, warpPos,
+							                d + mInbetween->unk44, xAngle,
+							                yAngle);
+							mInbetween->warpPosAndAt(warpPos, mInbetween->mAt);
+						}
+					}
+				}
+				mCurrentTarget.mPosition.x = mCurrentTarget.unk18.x;
+				mCurrentTarget.mPosition.z = mCurrentTarget.unk18.z;
+				execHeightPan_();
+				finalAt.y = mCurrentTarget.mTarget.y;
+				Vec posCpy;
+				posCpy = mCurrentTarget.mPosition;
+				if (isNeedWallCheck_() && execWallCheck_(&posCpy)) {
+					CLBCrossToPolar(mCurrentTarget.mTarget,
+					                mCurrentTarget.mPosition,
+					                &mCurrentTarget.mPitch,
+					                &mCurrentTarget.mYaw);
+					mCurrentTarget.unk28 = mPreviousTarget.unk28;
+				}
+				if (isNeedRoofCheck_()) {
+					Vec roofCheck = posCpy;
+					execRoofCheck_(roofCheck);
+				}
+				if (isNeedGroundCheck_()) {
+					Vec groundCheck = posCpy;
+					execGroundCheck_(groundCheck);
+				}
+			}
+			JGeometry::TVec3<f32> copy;
+			copy.set(finalAt);
+			mInbetween->execCameraInbetween(mCurrentTarget.mPosition, copy,
+			                                SMS_GetMarioPos());
+		}
+	}
+
+	if (mPosFreezeFrames == 0) {
+		f32 chaseXZ;
+		f32 chaseY;
+		if (isRailCameraSpecifyMode(mPrevMode) && isRailCameraSpecifyMode(mMode)
+		    && isNowInbetween()) {
+			chaseXZ = 1.0f;
+			chaseY  = 1.0f;
+		} else {
+			chaseXZ = mCurrentParams->mPosChaseRateXZ;
+			chaseY  = mCurrentParams->mPosChaseRateY;
+			if (mMode == CAMERA_MODE_TOWER_E
+			    && SMS_GetMarioStatus() == MARIO_STATUS_HIP_DROP) {
+				u32 v = gpCameraMario->mFramesSinceMarioStatusChange;
+				if (v < 120) {
+					chaseY = CLBLinearInbetween<f32>(
+					    mCurrentParams->mPosChaseRateY, 0.0f,
+					    (f32)(120 - v) / 120.0f);
+				}
+			}
+			if (unk64 & CAMERA_FLAG_UNK4) {
+				chaseXZ = 1.0f;
+			} else if (unk120->mSubStick.mPosY != 0.0f
+			           || unk120->mSubStick.mPosX != 0.0f) {
+				f32 v = gpCameraMario->mFrameMoveDistHorizontal;
+				if (v > 20.0f)
+					v = 20.0f;
+				chaseXZ = CLBEaseInInbetween<f32>(
+				    mCurrentParams->mPosChaseRateXZ,
+				    mCurrentParams->mPosChaseRateXZ_C,
+				    CLBCalcRatio<f32>(20.0f, 0.0f, v));
+			}
+			if (unk120->mSubStick.mPosY != 0.0f) {
+				f32 v = gpCameraMario->mFrameMoveDistVertical;
+				if (v > 20.0f)
+					v = 20.0f;
+				chaseY = CLBEaseInInbetween<f32>(
+				    mCurrentParams->mPosChaseRateY,
+				    mCurrentParams->mPosChaseRateY_C,
+				    CLBCalcRatio<f32>(20.0f, 0.0f, v));
+			}
+		}
+		const JGeometry::TVec3<f32>& v = mInbetween->mPos;
+		CLBChaseDecrease(&mPosition.x, v.x, chaseXZ, 0.0f);
+		CLBChaseDecrease(&mPosition.y, v.y, chaseY, 0.0f);
+		CLBChaseDecrease(&mPosition.z, v.z, chaseXZ, 0.0f);
+	}
+
+	if (mTargetFreezeFrames == 0) {
+		f32 atXZ = mCurrentParams->mAtChaseRateXZ;
+		f32 atY  = mCurrentParams->mAtChaseRateY;
+
+		const JGeometry::TVec3<f32>& v = mInbetween->mAt;
+		CLBChaseDecrease(&mTarget.x, v.x, atXZ, 0.0f);
+		CLBChaseDecrease(&mTarget.y, v.y, atY, 0.0f);
+		CLBChaseDecrease(&mTarget.z, v.z, atXZ, 0.0f);
+	}
+}
+
+void CPolarSubCamera::calcFinalPosAndAt_()
+{
+	if (mMode != CAMERA_MODE_REPRODUCE_DEMO) {
+		gpCameraShake->execShake(unk124, &unk148, &mUp);
+		if (mMode != CAMERA_MODE_JET_COASTER) {
+			if (!isFixCameraSpecifyMode(mMode) || isNowInbetween()) {
+				if (isHellDeadDemo()) {
+					if (unk256 > mSaveEx->mSLLimitMaxAngleX.get()) {
+						mTargetFreezeFrames = 1;
+						unk64 |= CAMERA_FLAG_UNK40;
+					}
+				} else {
+					CLBRevisionLookatByAngleX(mSaveEx->mSLLimitMinAngleX.get(),
+					                          mSaveEx->mSLLimitMaxAngleX.get(),
+					                          unk124, &unk148);
+				}
+			}
+		}
+	}
+
+	if (unk124 == unk148) {
+		unk124.set(unk130);
+		unk148.set(unk154);
+	} else {
+		unk130.set(unk124);
+		unk154.set(unk148);
+	}
+}
+
+// UNUSED (map size 0x13c): inlined into both loadAfter() and perform(), which
+// is where the polar angles, the lookat direction and the X-rotation ratio are
+// recomputed from the freshly calculated position and target. CLBCrossToPolar
+// sits here and the set/normalize one level below it: in perform the ROM
+// expands the former and calls TVec3::set, setLength and TUtil::one.
+void CPolarSubCamera::calcExternalData_()
+{
+	CLBCrossToPolar(mTarget, mPosition, &unk256, &unk258);
+	calcLookatPolar_();
+	unk270 = MsClamp(CLBCalcRatio(mCurrentParams->mXAngleMin,
+	                              mCurrentParams->mXAngleMax, unk256),
+	                 0.0f, 1.0f);
+}
+
+// TODO: 100.0%, frame 0x120 matches. Left: TCameraKindParam `param` sits at
+// 0x40 against retail's 0x38 (the lwzu copy dest 0x38 vs 0x30). Two
+// CameragcParams sites plus SMSGetCameraMario() closed the old 32-byte gap;
+// a second CameragcParams is +0x10 of frame, one site leaves the frame 0x10
+// short. SMS_GetMarioPos() is +4 of low region and throws the named-local
+// slots. getCamMode() at isTalkCameraSpecifyMode adds an instruction.
+//
+// The map lists this and calcSlopeAngleX_ as **weak**: both are `inline`
+// bodies that retail reaches one inlined level below their callers, where
+// they are too big to expand. For this one the level is ctrlCamera_ (see
+// perform). TODO: calcSlopeAngleX_ still needs its level; `inline` on it
+// alone expands it into calcPosAndAt_ (96.3 -> 78.1). The missing level is a
+// helper around its call site in calcPosAndAt_'s non-fixed-mode branch, and
+// may carry part of that function's 0x108 frame deficit.
+// TODO: instruction-exact; `param` sits at 0x40 vs retail 0x38 (retail has 8
+// more above it). Inert or worse: `param` declared at the top (any order),
+// yOffset initialised, marPos assigned later, named camera-mario/director
+// pointers, a named ratio, `code` in the inner block.
+inline void CPolarSubCamera::ctrlGameCamera_()
+{
+	if (!(unk64 & CAMERA_FLAG_DEAD_DEMO))
+		execDeadDemoProc_();
+	if (!(unk64 & CAMERA_FLAG_UNK80)) {
+		if (unk284 > 0)
+			unk284 -= 1;
+	}
+	if (unk278 != 0)
+		unk278 -= 1;
+	if (unk27A != 0)
+		unk27A -= 1;
+	if (unk282 != 0)
+		unk282 -= 1;
+
+	// The stack layout says `code` was declared before `marPos`: retail puts
+	// it at 0xf8 and `marPos` at 0xec, and offsets increase in reverse
+	// declaration order.
+	int code;
+	JGeometry::TVec3<f32> marPos = *gpMarioPos;
+	f32 yOffset;
+	if (isNormalDeadDemo()) {
+		yOffset = 35.0f;
+	} else {
+		TCameraKindParam* params = CameragcParams(this);
+		yOffset = mCurrentTarget.unk28 * params->mXRotRatioAtOffsetY
+		          + CameragcParams(this)->mAtOffsetY;
+		if (SMS_GetMarioStatus() == MARIO_STATUS_KICK_ROOF_ROLL_UP)
+			yOffset += 260.0f;
+		if (mMode == CAMERA_MODE_DEFINITE_D2)
+			yOffset += unk290;
+	}
+	marPos.y += yOffset;
+	gpCameraMario->unk0.set(marPos);
+	SMSGetCameraMario()->calcAndSetMarioData();
+
+	mPreviousTarget = mCurrentTarget;
+
+	if (SMSGetMarDirector()->mState == 4 && !(unk64 & CAMERA_FLAG_DEAD_DEMO)) {
+		if (isTalkCameraSpecifyMode(mMode)) {
+			TMarDirector* director = SMSGetMarDirector();
+			if (!director->isTalkModeNow())
+				changeCamMode_(mInitialMode);
+		} else if (!isSimpleDemoCamera()) {
+			if (controlByCameraCode_(&code))
+				execCameraModeChangeProc_(code);
+		}
+	}
+
+	TCameraKindParam param;
+	param.copySaveParam(*mSaveKindParam[mMode]);
+
+	if (isNowInbetween())
+		mCurrentParams->inbetweenData(param, (f32)mInbetween->getUnk4());
+	else
+		*mCurrentParams = param;
+
+	if (unk284 > mCurrentParams->mAutoChaseCompleteFrame)
+		unk284 = mCurrentParams->mAutoChaseCompleteFrame;
+
+	if (!isNormalDeadDemo()
+	    && !(unk64 & (CAMERA_FLAG_JET_COASTER_SCENE | CAMERA_FLAG_GATE_DEMO)))
+		mFovy = mCurrentParams->mFovy;
+	mNear = mCurrentParams->mNearClip;
+	mFar  = 300000.0f;
+
+	if (isNormalDeadDemo()) {
+		ctrlNormalDeadDemo_();
+	} else {
+		switch (mMode) {
+		case CAMERA_MODE_MULTI_PLAYER:
+			ctrlMultiPlayerCamera_();
+			break;
+		case CAMERA_MODE_JET_COASTER:
+			ctrlJetCoasterCamera_();
+			break;
+		default:
+			if (isFixOrDefiniteCameraSpecifyMode(mMode))
+				calcPosAndAt_();
+			else if (isLButtonCameraSpecifyMode(mMode))
+				ctrlLButtonCamera_();
+			else if (isTalkCameraSpecifyMode(mMode))
+				ctrlTalkCamera_();
+			else
+				ctrlNormalOrTowerCamera_();
+			break;
+		}
+	}
+
+	unk124.set(mPosition);
+	unk148.set(mTarget);
+}
+
+// Fabricated name for a real level. The map makes ctrlGameCamera_ weak, so it
+// is `inline`; an inline body has no budget at depth 1, so retail's `bl` to
+// it must sit one inlined level down, which is this member. The same level
+// puts calcExternalData_ at depth 2 here and at depth 1 in loadAfter, which
+// is why perform calls MsClamp, TVec3::set, TUtil::one and setLength while
+// loadAfter expands the first three (the UNUSED calcExternalData_ is then
+// exactly its map size, 0x13c). perform 94.7 -> 99.66, instruction-exact.
+// TODO: frame 0x58 against the ROM's 0x68; the argument setup of
+// TCameraBck::updateDemo and of the view-matrix copy follows the frame.
+// c-hs7: getCamMode() at every mode test (CameraWarp's spelling) is +0x18;
+// getUnk16C() at the three projection reads is +8 more but is never used in
+// this file.
+inline void CPolarSubCamera::ctrlCamera_()
+{
+	if (SMS_isOptionMap())
+		ctrlOptionCamera_();
+	else
+		ctrlGameCamera_();
+	calcFinalPosAndAt_();
+
+	calcExternalData_();
+}
+
+void CPolarSubCamera::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_MOVE) {
+		if (graphics->unk0 & 1) {
+			unk13C.set(unk124);
+			unk160.set(unk148);
+			for (int i = 0; i < 4; ++i)
+				for (int j = 0; j < 4; ++j)
+					unk1AC[i][j] = unk16C[i][j];
+			MTXCopy(unk1EC, unk21C);
+		}
+		mUp.set(CLBConstUpVec);
+		unk254 = 0;
+		if (getCamMode() != CAMERA_MODE_REPRODUCE_DEMO) {
+			ctrlCamera_();
+		}
+
+		if (getCamMode() != CAMERA_MODE_REPRODUCE_DEMO) {
+			C_MTXPerspective(unk16C, mFovy, mAspect, mNear, mFar);
+			C_MTXLookAt(unk1EC, &unk124, &mUp, &unk148);
+		}
+
+		bool flag2 = (graphics->unk0 & 2) ? true : false;
+		if (flag2) {
+			if (getCamMode() != CAMERA_MODE_REPRODUCE_DEMO) {
+				if (!(unk64 & CAMERA_FLAG_DEAD_DEMO)) {
+					if (unk64 & CAMERA_FLAG_GATE_DEMO) {
+						updateGateDemoCamera_();
+					} else if (unk64 & CAMERA_FLAG_JET_COASTER_SCENE) {
+						unk2B0->updateDemo(&unk2B8->unk10, &unk2B8->unk1C,
+						                   &unk2B8->unk28, &unk2B8->unk34);
+					}
+				}
+			}
+			if (!SMS_isOptionMap()) {
+				if (getCamMode() != CAMERA_MODE_JET_COASTER
+				    && getCamMode() != CAMERA_MODE_REPRODUCE_DEMO)
+					calcInHouseNo_(false);
+			}
+		}
+		updateDemoCamera_(flag2);
+	}
+
+	if (cue & (CUE_CALC_VIEW | CUE_SET_PROJECTION)) {
+		for (int i = 0; i < 4; ++i)
+			for (int j = 0; j < 4; ++j)
+				graphics->mProjMtx.mMtx[i][j] = unk16C[i][j];
+		graphics->setViewMtx(unk1EC);
+		graphics->mNearPlane = mNear;
+		graphics->mFarPlane  = mFar;
+		if (cue & CUE_SET_PROJECTION)
+			GXSetProjection(graphics->mProjMtx.mMtx, GX_PERSPECTIVE);
+	}
+}
+
+s16 CPolarSubCamera::getOffsetAngleX() const
+{
+	return mCurrentParams->mOffsetAngleX;
+}
+
+s16 CPolarSubCamera::getOffsetAngleY() const
+{
+	return mCurrentParams->mOffsetAngleY;
+}
+
+s16 CPolarSubCamera::getFinalAngleZ() const
+{
+	return unk254 + gpCameraShake->mRollAccum;
+}

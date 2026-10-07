@@ -1,0 +1,45 @@
+Reason: port: SMS_SKIP_MOVIES=1 skips THP preparation and reports the movie as finished, without starting decoder threads for frames that will never be shown
+--- a/libs/THPPlayer/src/THPPlayer.c
++++ b/libs/THPPlayer/src/THPPlayer.c
+@@ -348,12 +348,26 @@
+ 	              OS_MESSAGE_BLOCK);
+ }
+ 
++#ifdef TARGET_PC
++extern "C" int port_skip_movies; // SMS_SKIP_MOVIES (platform)
++#endif
++
+ BOOL THPPlayerPrepare(s32 frame, u8 flag, s32 audioTrack)
+ {
+ 	u8* threadData;
+ 	u32 offset;
+ 
+ 	if (ActivePlayer.open && ActivePlayer.state == 0) {
++#ifdef TARGET_PC
++		if (port_skip_movies) {
++			ActivePlayer.internalState = 0;
++			ActivePlayer.dispTextureSet = NULL;
++			ActivePlayer.playAudioBuffer = NULL;
++			OldVIPostCallback = VISetPostRetraceCallback(PlayControl);
++			ActivePlayer.state = 1;
++			return TRUE;
++		}
++#endif
+ 		if (frame > 0) {
+ 			offset = ActivePlayer.header.offsetDataOffsets;
+ 			if (offset == 0)
+@@ -439,6 +453,14 @@
+ 
+ BOOL THPPlayerPlay()
+ {
++#ifdef TARGET_PC
++	// SMS_SKIP_MOVIES: report the movie as played to the end.
++	if (port_skip_movies && ActivePlayer.open
++	    && (ActivePlayer.state == 1 || ActivePlayer.state == 4)) {
++		ActivePlayer.state = 3;
++		return TRUE;
++	}
++#endif
+ 	if (ActivePlayer.open
+ 	    && (ActivePlayer.state == 1 || ActivePlayer.state == 4)) {
+ 		ActivePlayer.state       = 2;

@@ -1,0 +1,88 @@
+# Game options, one per line: name = value (on/off for switches).
+# Remove the leading # to use a line. An environment variable of the same
+# meaning (listed in README.md) wins over this file.
+
+# HD texture packs from mods/textures/ (see mods/README.md): on, off, or
+# folders separated by ';'.
+texture_packs = on
+# Video memory for texture pack images before the least used are freed, in MiB.
+# texture_pack_mb = 1536
+# HD cutscenes (the launcher installs them into mods/hd-cutscenes): on or off.
+# hd_cutscenes = on
+
+# Widescreen: off, 16:9, 21:9, 16:10 (or on for 16:9). The game sees a wider
+# view; the HUD and menus stay at 4:3 in the middle.
+widescreen = 16:9
+# With widescreen, where the gameplay HUD goes: centre (with the menus), or
+# edges (counters to the left edge, the water gauge to the right one).
+# widescreen_hud = centre
+
+# Frame rate during gameplay: 30 (the game's own) or 60. Logos, menus and
+# movies stay at 30. 60 draws twice as many frames, so it needs a GPU.
+frame_rate = 60
+
+# Game file mods from mods/<name>/files/ (see mods/README.md), as name or a;b.
+# mod = none
+
+# Internal resolution: 1 is the GameCube's 640x528, 2 twice that, and so on.
+# resolution = 1
+# Window size, in multiples of 640x480.
+# window_scale = 1
+# Wait for the display's refresh when presenting: off, on or adaptive.
+# vsync = off
+
+# The launcher (a settings menu shown before the game) edits this file.
+# Turn it off to start the game directly; hold Shift at start to show it anyway.
+# launcher = on
+launcher = off
+
+# Window: windowed, borderless (fullscreen at desktop resolution) or fullscreen
+# (exclusive). F11 or Alt+Enter toggles fullscreen while playing.
+# window_mode = windowed
+# Monitor to open on (0 is the primary one).
+# display = 0
+# Exclusive fullscreen mode, as WxH@Hz, or desktop.
+# fullscreen_mode = desktop
+# Picture shape: keep (letterboxed), stretch (fill the window) or integer.
+# aspect = keep
+# Scaling to the window: bilinear (area-averaged when supersampling), sharp or
+# nearest.
+# present_filter = bilinear
+
+# Anti-aliasing: MSAA samples (0, 2, 4 or 8) and the FXAA post-process.
+# msaa = 0
+fxaa = off
+# Anisotropic texture filtering: 0 (off), 2, 4, 8 or 16.
+# anisotropic = 0
+# Contrast-adaptive sharpening, 0 to 100.
+sharpen = 0
+# Brightness curve: 1.0 is the original picture.
+# brightness = 1.0
+
+# skip_movies = off
+audio = on
+# Master volume, 0 to 100.
+# volume = 100
+
+# Camera: invert either axis (C-stick, right stick, camera keys and mouse),
+# a free camera that stays where you point it (L recentres it), rotation speed
+# in percent, and mouse look (F10 releases the mouse) with its sensitivity.
+camera_invert_x = off
+camera_invert_y = off
+free_camera = off
+# camera_speed = 100
+mouse_camera = off
+# mouse_sensitivity = 100
+
+# Online co-op (the launcher's Online page): off, host or join; the host's address
+# for join; the UDP port (the same for everyone); your name over your Mario.
+# net_mode = off
+# net_address =
+# net_port = 27016
+# net_name = Mario
+# Open the debug overlay (frame rate, where the time goes) at start.
+overlay = off
+
+# save_dir = /path/to/memory/card/folder
+# disc_image = /path/to/GMSE01.iso
+SMS_DISC_ROOT = C:/sms-pal-port/rom/GMSP01-extracted/files

@@ -1,0 +1,128 @@
+#ifndef MOVE_BG_MAP_OBJ_RAIL_BLOCK_HPP
+#define MOVE_BG_MAP_OBJ_RAIL_BLOCK_HPP
+
+#include <MoveBG/MapObjBase.hpp>
+#include <Enemy/Graph.hpp>
+
+class TGraphWeb;
+class TGraphTracer;
+class TGraphNode;
+
+class TRailMapObj : public TMapObjBase {
+public:
+	TRailMapObj(const char*);
+
+	virtual void load(JSUMemoryInputStream&);
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+	virtual void setGroundCollision();
+	virtual void control();
+	virtual u32 getShadowType();
+	virtual void initMapObj();
+	virtual BOOL calcRecycle();
+	virtual void resetPosition();
+	virtual void readRailFlag();
+
+	void initGraphTracer(TGraphWeb*);
+	void resetStep(f32);
+	BOOL moveToNextNode(f32);
+	bool checkMarioRiding();
+
+	// fabricated
+	void onRailFlag(u32 flag) { unk140 |= flag; }
+	void offRailFlag(u32 flag) { unk140 &= ~flag; }
+	// Rejected (header round 20): binding the result inside this body
+	// (`bool set = unk140 & flag ? TRUE : FALSE; return set;`) is not the same
+	// as the inline level *above* it that TRideCloud::control's parked
+	// `RideCloudRailFlag` supplies -- it costs TRailMapObj::control
+	// (100 -> 99.85) and moves TRideCloud::control the wrong way
+	// (99.87 -> 99.80). The extra level stays parked in the .cpp.
+	bool checkRailFlag(u32 flag) { return unk140 & flag ? TRUE : FALSE; }
+	f32 getUnk144() const { return unk144; }
+
+	// fabricated. The named locals are the bindings closure batch 110
+	// measured at TRideCloud::control.
+	TGraphWeb* getGraph()
+	{
+		TGraphWeb* graph = unk138->getGraph();
+		return graph;
+	}
+	TGraphNode& getCurrentNode()
+	{
+		TGraphNode& node = unk138->getCurrent();
+		return node;
+	}
+
+public:
+	// fabricated: header round 20 accessor candidates
+	TGraphTracer* getTracer() const { return unk138; }
+
+	/* 0x138 */ TGraphTracer* unk138;
+	/* 0x13C */ int unk13C;
+	/* 0x140 */ u32 unk140;
+	/* 0x144 */ f32 unk144;
+	/* 0x148 */ s8 unk148;
+	/* 0x14A */ volatile s16 unk14A; // TODO: fake or real?
+	/* 0x14C */ s8 unk14C;
+};
+
+class TNormalLift : public TRailMapObj {
+public:
+	TNormalLift(const char* name = "ノーマルリフト");
+	virtual void resetPosition();
+	virtual void load(JSUMemoryInputStream&);
+	virtual void readRailFlag();
+	virtual void initMapObj();
+	virtual void control();
+	virtual void setGroundCollision();
+	virtual void perform(u32 cue, JDrama::TGraphics* graphics);
+
+public:
+	/* 0x150 */ u16 unk150;
+	/* 0x152 */ u16 unk152;
+	/* 0x154 */ f32 unk154;
+	/* 0x158 */ s8 unk158;
+};
+
+class TRailBlock : public TRailMapObj {
+public:
+	TRailBlock(const char* name = "移動板");
+	virtual void initMapObj();
+	virtual Mtx* getRootJointMtx() const;
+	virtual void calcRootMatrix();
+	virtual void control();
+
+public:
+	/* 0x150 */ f32 unk150;
+	/* 0x154 */ f32 unk154;
+	/* 0x158 */ f32 unk158;
+	/* 0x15C */ JGeometry::TVec3<f32> unk15C;
+	/* 0x168 */ JGeometry::TVec3<f32> unk168;
+	/* 0x174 */ Mtx unk174;
+};
+
+class TRollBlock : public TMapObjBase {
+public:
+	TRollBlock(const char* name = "回転板");
+	virtual void load(JSUMemoryInputStream&);
+	virtual void setGroundCollision();
+	virtual Mtx* getRootJointMtx() const;
+	virtual void calcRootMatrix();
+	virtual void control();
+
+public:
+	/* 0x138 */ f32 unk138;
+	/* 0x13C */ f32 unk13C;
+};
+
+class TWoodBlock : public TNormalLift {
+public:
+	TWoodBlock(const char* name = "木のブロック");
+	virtual BOOL calcRecycle();
+	virtual void load(JSUMemoryInputStream&);
+
+public:
+	/* 0x15C */ GXColorS10 unk15C;
+	/* 0x164 */ GXColorS10 unk164;
+};
+
+#endif

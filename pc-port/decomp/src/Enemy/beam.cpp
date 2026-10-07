@@ -1,0 +1,274 @@
+#include <Enemy/Beam.hpp>
+#include <dolphin/gx.h>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/JMath.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <Map/Map.hpp>
+
+TBeamManager* gpBeamManager;
+
+static void coneInPlane(const JGeometry::TVec3<f32>& origin, f32 angle,
+                        const JGeometry::TVec3<f32>& axis,
+                        const JGeometry::TVec3<f32>& offsetDir,
+                        const JGeometry::TPartition3<f32>& plane,
+                        JGeometry::TVec3<f32>* outPos)
+{
+	// Scale perpendicular component by cone opening
+	JGeometry::TVec3<f32> dir = offsetDir;
+	dir.scale(JMASin(angle));
+
+	// Add the axis direction to get the final ray direction
+	dir += axis;
+
+	// Solve for intersection distance with the plane
+	f32 t = -(plane.mDist + plane.mNormal.dot(origin)) / plane.mNormal.dot(dir);
+
+	// Compute intersection point
+	*outPos = dir;
+	outPos->scale(t);
+	*outPos += origin;
+}
+
+TConeBeam::TConeBeam()
+    : mScale(0.0f)
+    , unk1C(false)
+    , unk1D(true)
+{
+	unk00.zero();
+	unk0C.zero();
+	mScale = 0.0f; // duplicate initialization
+}
+
+void TConeBeam::drawConeBeamAux(const GXColor& color, bool unk)
+{
+	// Draw outer?
+	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, mVtxCount + 2);
+
+	GXPosition3f32(unk00.x, unk00.y, unk00.z);
+
+	if (unk) {
+		GXColor4u8(color.r, color.g, color.b, 0);
+	} else {
+		GXColor4u8(color.r, color.g, color.b, color.a);
+	}
+
+	for (int i = 0; i <= mVtxCount; i++) {
+		const JGeometry::TVec3<f32>& vtx = mVtx[i];
+		GXPosition3f32(vtx.x, vtx.y, vtx.z);
+		GXColor4u8(color.r, color.g, color.b, color.a);
+	}
+
+	GXEnd();
+
+	// Draw inner?
+	GXBegin(GX_TRIANGLEFAN, GX_VTXFMT0, mVtxCount + 2);
+
+	GXPosition3f32(unk0C.x, unk0C.y, unk0C.z);
+	GXColor4u8(color.r, color.g, color.b, color.a);
+
+	for (int i = 0; i <= mVtxCount; i++) {
+		const JGeometry::TVec3<f32>& vtx = mVtx[i];
+		GXPosition3f32(vtx.x, vtx.y, vtx.z);
+		GXColor4u8(color.r, color.g, color.b, color.a);
+	}
+
+	GXEnd();
+}
+
+// TODO: Recover origin caching in coneInPlane and the remaining stack layout.
+// Preserve the map's 348-byte UNUSED coneInPlane body while testing callers.
+// TODO: 95.6%. The instruction stream is exact apart from two scheduled
+// loads; the residue is the local layout: retail's frame is 0x1c8 against our
+// 0x1b8 and the 16 extra bytes are not appended, they are redistributed --
+// retail's low vectors sit at 0x58/0x64/0x78/0x84 with a 0x38 hole between
+// 0x8c and 0xc4, ours at 0x88/0xa0/0xb8/0xd0 with no hole, so an inlined
+// callee in the middle of the function owns temporaries we do not create.
+// coneInPlane already compiles to the map's 0x15c, so its body is not the
+// cause. Measured but not applied: declaring sinA before cosA in the second
+// loop puts the sine table back in r6 the way retail has it in both loops, but
+// it then schedules the two lfsx in the opposite order, so the score is a
+// wash (95.67 -> 95.65); the register evidence still says the second loop
+// evaluates JMASin first and uses cosA first.
+// The "origin caching" is concrete: retail keeps coneInPlane's three origin
+// (unk00) loads from the dot product live in f5/f6/f0 and reuses them for the
+// final `+= origin`, where we reload all three from 0(r28)/4(r28)/8(r28).
+// c-tp1: naming origin.x/y/z at the top of coneInPlane and adding them back
+// one by one gives the caching here (98.3%) but shrinks the UNUSED
+// out-of-line copy from the map's 0x15c to 0x150 (retail's out-of-line copy
+// reloads them), so it is not the retail spelling; also 96.9% / 0x148 with the
+// numerator dot written out on the named components.
+// cc26: building the result in a coneInPlane-local TVec3 and storing it
+// through outPos = &mVtx[i] (so no address-taken caller local) is still a
+// reload (95.6%, frame unchanged); passing &mVtx[i] with the original body is
+// 94.3%.
+// c-k17: a coneInPlane-local `TVec3 pos = dir; pos.scale(t); pos += origin;
+// *outPos = pos;` with the caller's &local_f8 lands retail's 0x1c8 frame (so
+// retail has one more 12-byte object here) but still reloads origin and adds
+// the pos -> local_f8 copy (93.9%). `*outPos = dir * t + origin` (either
+// operand order, &local_f8 or &mVtx[i]) pushes scale and add out of line
+// (92.8-93.7%); `dir.scale(t); *outPos = dir + origin;` 89.2-90.8%.
+void TConeBeam::calcVertices(int count)
+{
+	JGeometry::TVec3<f32> local_140;
+	JGeometry::TVec3<f32> local_134(0.0f, 1.0f, 0.0f);
+
+	JGeometry::TVec3<f32> local_128 = unk0C;
+
+	mVtxCount = count;
+	local_128.sub(unk00);
+	local_140.cross(local_128, local_134);
+
+	if (local_140.isZero()) {
+		local_134.set(1.0f, 0.0f, 0.0f);
+		local_140.set(0.0f, 0.0f, 1.0f);
+	} else {
+		local_134.cross(local_140, local_128);
+
+		PSVECNormalize(&local_140, &local_140);
+		PSVECNormalize(&local_134, &local_134);
+	}
+
+	if (mBGCheckData == nullptr) {
+		for (int i = 0; i <= mVtxCount; i++) {
+			f32 s = 0.5f * (mScale * JMASin(i * (360.0f / mVtxCount)));
+			f32 c = 0.5f * (mScale * JMACos(i * (360.0f / mVtxCount)));
+
+			JGeometry::TVec3<f32> local_11c;
+			local_11c.zero();
+
+			local_11c += local_140 * c;
+			local_11c += local_134 * s;
+
+			local_11c += unk0C;
+
+			mVtx[i] = local_11c;
+		}
+	} else {
+		JGeometry::TPartition3<f32> partition;
+		partition.mDist = mBGCheckData->getPlaneDistance();
+		partition.mNormal.set(mBGCheckData->getNormal());
+		f32 local_128Len = PSVECMag(&local_128);
+		f32 angle        = matan(local_128Len, mScale)
+		            * (360.0f / 65536.0f); // this is SHORT2DEGANGLE constant
+
+		PSVECNormalize(&local_128, &local_128);
+
+		for (int i = 0; i <= mVtxCount; i++) {
+			f32 sinA = JMASin(i * (360.0f / mVtxCount));
+			f32 cosA = JMACos(i * (360.0f / mVtxCount));
+
+			JGeometry::TVec3<f32> local_ec;
+			local_ec.zero();
+
+			local_ec += local_140 * cosA;
+			local_ec += local_134 * sinA;
+
+			JGeometry::TVec3<f32> local_f8;
+			coneInPlane(unk00, angle, local_128, local_ec, partition,
+			            &local_f8);
+			mVtx[i] = local_f8;
+		}
+	}
+}
+
+void TConeBeam::drawConeBeam(const GXColor& color)
+{
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+	GXSetColorUpdate(GX_FALSE);
+	GXSetAlphaUpdate(GX_TRUE);
+	GXSetDstAlpha(GX_TRUE, 0);
+	GXSetCullMode(GX_CULL_NONE);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ZERO, GX_BL_ONE, GX_LO_NOOP);
+	GXSetZMode(GX_TRUE, GX_ALWAYS, GX_FALSE);
+	drawConeBeamAux(color, false);
+
+	GXSetDstAlpha(GX_TRUE, 128);
+	GXSetCullMode(GX_CULL_BACK);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+	drawConeBeamAux(color, false);
+
+	GXSetColorUpdate(GX_TRUE);
+	GXSetAlphaUpdate(GX_FALSE);
+	GXSetDstAlpha(GX_FALSE, 0);
+	GXSetCullMode(GX_CULL_FRONT);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_DSTALPHA, GX_BL_ONE, GX_LO_NOOP);
+	GXSetZMode(GX_TRUE, GX_GEQUAL, GX_FALSE);
+	drawConeBeamAux(color, false);
+
+	if (unk1C) {
+		GXSetCullMode(GX_CULL_BACK);
+		GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_ONE, GX_LO_NOOP);
+		GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+		drawConeBeamAux(color, unk1D);
+	}
+}
+
+TBeamManager::TBeamManager(const char* name)
+    : JDrama::TViewObj(name)
+    , mColor((GXColor) { 128, 128, 64, 255 })
+    , mBeamVtxCount(10)
+    , mBeamCount(0)
+{
+}
+
+void TBeamManager::setupMaterial()
+{
+	GXSetNumTexGens(0);
+	GXSetNumTevStages(1);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_CLR0, GX_DIRECT);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_CLR0, GX_CLR_RGB, GX_RGBA8, 0);
+	GXSetChanCtrl(GX_COLOR0A0, GX_TRUE, GX_SRC_REG, GX_SRC_VTX, 0, GX_DF_CLAMP,
+	              GX_AF_NONE);
+	GXSetChanMatColor(GX_COLOR0A0, mColor);
+}
+
+void TBeamManager::drawAllBeam()
+{
+	setupMaterial();
+	for (int i = 0; i < mBeamCount; i++) {
+		mBeams[i].drawConeBeam(mColor);
+	}
+}
+
+void TBeamManager::requestCone(const JGeometry::TVec3<f32>& pos,
+                               const JGeometry::TVec3<f32>& dir, f32 scale,
+                               bool param_4, bool param_5, bool param_6)
+{
+	TConeBeam& beam = mBeams[mBeamCount];
+	const TBGCheckData* bgCheckData;
+	JGeometry::TVec3<f32> intersect;
+
+	beam.unk1C = param_4;
+	mBeamCount++;
+	if (param_6) {
+		bgCheckData = gpMap->intersectLine(pos, dir, false, &intersect);
+	} else {
+		bgCheckData = nullptr;
+	}
+
+	if (bgCheckData == NULL) {
+		intersect = dir;
+	}
+
+	beam.unk00        = pos;
+	beam.unk1D        = param_5;
+	beam.unk0C        = intersect;
+	beam.mScale       = scale;
+	beam.mBGCheckData = bgCheckData;
+	beam.calcVertices(mBeamVtxCount);
+}
+
+void TBeamManager::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_DRAW) {
+		setupMaterial();
+		drawAllBeam();
+		mBeamCount = 0;
+	}
+}

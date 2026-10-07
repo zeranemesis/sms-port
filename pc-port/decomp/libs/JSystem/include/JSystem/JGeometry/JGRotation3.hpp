@@ -1,0 +1,437 @@
+#ifndef JG_ROTATION3_HPP
+#define JG_ROTATION3_HPP
+
+#include <dolphin/types.h>
+#include <algorithm>
+#include <JSystem/JMath.hpp>
+#include <JSystem/JGeometry/JGVec3.hpp>
+#include <JSystem/JGeometry/JGQuat4.hpp>
+#include <JSystem/JGeometry/JGMatrix34.hpp>
+
+namespace JGeometry {
+
+template <class T> inline T max(T a, T b) { return a >= b ? a : b; }
+template <class T> inline T min(T a, T b) { return a >= b ? b : a; }
+
+template <class T> class TRotation3 : public T {
+public:
+	TRotation3() { }
+
+	TRotation3(const JGeometry::TVec3<f32>& axis, f32 angle)
+	{
+		this->identity();
+		setRotate(axis, angle);
+	}
+
+	void identity33()
+	{
+		this->ref(0, 0) = 1.0f;
+		this->ref(1, 0) = 0.0f;
+		this->ref(2, 0) = 0.0f;
+
+		this->ref(0, 1) = 0.0f;
+		this->ref(1, 1) = 1.0f;
+		this->ref(2, 1) = 0.0f;
+
+		this->ref(0, 2) = 0.0f;
+		this->ref(1, 2) = 0.0f;
+		this->ref(2, 2) = 1.0f;
+	}
+
+	void setRotate(const JGeometry::TVec3<f32>& param_1, f32 param_2)
+	{
+		TVec3<f32> f27f28f29;
+		f27f28f29.normalize(param_1);
+		f32 f30 = sin(param_2);
+		f32 f1  = cos(param_2);
+
+		f32 f11 = 1.0f - f1;
+
+		TVec3<f32> f2f3f0;
+		f2f3f0.mul(f27f28f29, f27f28f29);
+
+		this->ref(0, 0) = f11 * f2f3f0.x + f1;
+		this->ref(0, 1) = f11 * f27f28f29.x * f27f28f29.y - f30 * f27f28f29.z;
+		this->ref(0, 2) = f11 * f27f28f29.x * f27f28f29.z + f30 * f27f28f29.y;
+
+		this->ref(1, 0) = f11 * f27f28f29.x * f27f28f29.y + f30 * f27f28f29.z;
+		this->ref(1, 1) = f11 * f2f3f0.y + f1;
+		this->ref(1, 2) = f11 * f27f28f29.y * f27f28f29.z - f30 * f27f28f29.x;
+
+		this->ref(2, 0) = f11 * f27f28f29.x * f27f28f29.z - f30 * f27f28f29.y;
+		this->ref(2, 1) = f11 * f27f28f29.y * f27f28f29.z + f30 * f27f28f29.x;
+		this->ref(2, 2) = f11 * f2f3f0.z + f1;
+	}
+
+	void setEular(s16 yaw, s16 pitch, s16 roll)
+	{
+		f32 f3 = JMASSin(yaw);
+		f32 f5 = JMASSin(pitch);
+		f32 f4 = JMASSin(roll);
+
+		f32 f6 = JMASCos(yaw);
+		f32 f7 = JMASCos(pitch);
+		f32 f8 = JMASCos(roll);
+
+		f32 f9  = f6 * f8;
+		f32 f10 = f3 * f5;
+		f32 f11 = f6 * f4;
+
+		setXDir(f7 * f8, f7 * f4, -f5);
+		setYDir(f10 * f8 - f11, f10 * f4 + f9, f3 * f7);
+		setZDir(f9 * f5 + f3 * f4, f11 * f5 - f3 * f8, f6 * f7);
+	}
+
+	void setEular(f32 yaw, f32 pitch, f32 roll)
+	{
+		f32 f3 = sin(yaw);
+		f32 f5 = sin(pitch);
+		f32 f4 = sin(roll);
+		f32 f6 = cos(yaw);
+		f32 f7 = cos(pitch);
+		f32 f8 = cos(roll);
+
+		f32 f9  = f6 * f8;
+		f32 f10 = f3 * f5;
+		f32 f11 = f6 * f4;
+
+		// The nine stores are written out, not setXDir/setYDir/setZDir calls
+		// (research c-r37): inlined into a caller, each call binds its three
+		// arguments and homes them, nine dead words per expansion, which
+		// TMapObjBase::rotateVecByAxisY (MapObjLib) does not have; the
+		// out-of-line copy in MapObjLib is exact either way. The wrapper
+		// `sin`/`cos` locals are homed in every context and are retail's.
+		this->ref(0, 0) = f7 * f8;
+		this->ref(1, 0) = f7 * f4;
+		this->ref(2, 0) = -f5;
+
+		this->ref(0, 1) = f10 * f8 - f11;
+		this->ref(1, 1) = f10 * f4 + f9;
+		this->ref(2, 1) = f3 * f7;
+
+		this->ref(0, 2) = f9 * f5 + f3 * f4;
+		this->ref(1, 2) = f11 * f5 - f3 * f8;
+		this->ref(2, 2) = f6 * f7;
+	}
+	void setLookDir(const JGeometry::TVec3<f32>& param_1,
+	                const JGeometry::TVec3<f32>& param_2)
+	{
+		// TODO: regswaps + stack size. "Orthogonalize" inline?
+		TVec3<f32> fVar958;
+		TVec3<f32> fVar1076;
+		TVec3<f32> fVar432;
+		fVar432.normalize(param_1);
+		fVar432.negate();
+		fVar958.cross(param_2, fVar432);
+		fVar1076.cross(fVar432, fVar958);
+		fVar958.normalize();
+		fVar1076.normalize();
+
+		this->ref(0, 0) = fVar958.x;
+		this->ref(0, 1) = fVar958.y;
+		this->ref(0, 2) = fVar958.z;
+
+		this->ref(1, 0) = fVar1076.x;
+		this->ref(1, 1) = fVar1076.y;
+		this->ref(1, 2) = fVar1076.z;
+
+		this->ref(2, 0) = fVar432.x;
+		this->ref(2, 1) = fVar432.y;
+		this->ref(2, 2) = fVar432.z;
+	}
+	// Body as reconstructed by the Mario Kart: Double Dash!! clean-room
+	// decompilation (doldecomp/mkdd, include/JSystem/JGeometry/Matrix.h at
+	// ffc513c): nine named products in the order yy zz xx xy xz yz wz wx wy,
+	// and each diagonal spelled `1.0f - a - b` with no named `1 - xx`. It makes
+	// the weak copy in fireWanwan byte-exact (98.5 -> 100), closes
+	// TKazekun::calcRootMatrix and TBathtub::calcRootMatrix, and lifts
+	// TTabePuku::getTakingMtx, TWireTrap::calcRootMatrix and
+	// KoopaNeckCallBack, with nothing lost tree-wide (research c-r22).
+	void setQuat(const JGeometry::TQuat4<f32>& q)
+	{
+		f32 yy = 2.0f * q.y * q.y;
+		f32 zz = 2.0f * q.z * q.z;
+		f32 xx = 2.0f * q.x * q.x;
+		f32 xy = 2.0f * q.x * q.y;
+		f32 xz = 2.0f * q.x * q.z;
+		f32 yz = 2.0f * q.y * q.z;
+		f32 wz = 2.0f * q.w * q.z;
+		f32 wx = 2.0f * q.w * q.x;
+		f32 wy = 2.0f * q.w * q.y;
+
+		this->ref(0, 0) = 1.0f - yy - zz;
+		this->ref(0, 1) = xy - wz;
+		this->ref(0, 2) = xz + wy;
+
+		this->ref(1, 0) = xy + wz;
+		this->ref(1, 1) = 1.0f - xx - zz;
+		this->ref(1, 2) = yz - wx;
+
+		this->ref(2, 0) = xz - wy;
+		this->ref(2, 1) = yz + wx;
+		this->ref(2, 2) = 1.0f - xx - yy;
+	}
+
+	void getQuat(JGeometry::TQuat4<f32>& quat) const
+	{
+		// TODO: 99.5% against the weak copy in Kazekun.o (0x2b0), and the only
+		// difference is one instruction: retail adds the diagonal sum to the
+		// literal as `fadds f3, f2(sum), f0(1.0)` where we emit
+		// `fadds f4, f0, f2`, after which f3/f4 are swapped for the rest of the
+		// branch. Tried and no better: hoisting the sum into a named `trace`
+		// local (99.5, byte-identical), `sqrt(at(2,2) + (at(0,0) + at(1,1))
+		// + 1.0f)` (99.5, byte-identical) and `sqrt(1.0f + at(0,0) + at(1,1)
+		// + at(2,2))` (97.8). MWCC reassociates the sum onto the CSE from the
+		// condition above regardless of how it is written here.
+		// c-r13: the literal is always the left operand at parse; `scale = sum;
+		// scale = sqrt(scale += 1.0f)` fixes the order (BeeHive reset left with
+		// its frame only) but adds an `fmr` to this weak copy; `trace += 1.0f`
+		// and a named `one` swap f3/f4 or worse. Retail binds no copy here.
+		//
+		// TODO: nasty regswap
+		if (this->at(0, 0) + this->at(1, 1) + this->at(2, 2) >= 0.0f) {
+			f32 scale = TUtil<f32>::sqrt(this->at(0, 0) + this->at(1, 1)
+			                             + this->at(2, 2) + 1.0f);
+			quat.w    = 0.5f * scale;
+			quat.x    = 0.5f / scale * (this->at(2, 1) - this->at(1, 2));
+			quat.y    = 0.5f / scale * (this->at(0, 2) - this->at(2, 0));
+			quat.z    = 0.5f / scale * (this->at(1, 0) - this->at(0, 1));
+			return;
+		}
+
+		f32 maxDiag = max(max(this->at(0, 0), this->at(1, 1)), this->at(2, 2));
+
+		if (maxDiag == this->at(0, 0)) {
+			f32 scale = TUtil<f32>::sqrt(
+			    this->at(0, 0) - (this->at(1, 1) + this->at(2, 2)) + 1.0f);
+			quat.x = 0.5f * scale;
+			quat.y = 0.5f / scale * (this->at(0, 1) + this->at(1, 0));
+			quat.z = 0.5f / scale * (this->at(2, 0) + this->at(0, 2));
+			quat.w = 0.5f / scale * (this->at(2, 1) - this->at(1, 2));
+			return;
+		}
+
+		if (maxDiag == this->at(1, 1)) {
+			f32 scale = TUtil<f32>::sqrt(
+			    this->at(1, 1) - (this->at(2, 2) + this->at(0, 0)) + 1.0f);
+			quat.y = 0.5f * scale;
+			quat.z = 0.5f / scale * (this->at(1, 2) + this->at(2, 1));
+			quat.x = 0.5f / scale * (this->at(0, 1) + this->at(1, 0));
+			quat.w = 0.5f / scale * (this->at(0, 2) - this->at(2, 0));
+			return;
+		}
+
+		f32 scale = TUtil<f32>::sqrt(
+		    this->at(2, 2) - (this->at(0, 0) + this->at(1, 1)) + 1.0f);
+		quat.z = 0.5f * scale;
+		quat.x = 0.5f / scale * (this->at(2, 0) + this->at(0, 2));
+		quat.y = 0.5f / scale * (this->at(1, 2) + this->at(2, 1));
+		quat.w = 0.5f / scale * (this->at(1, 0) - this->at(0, 1));
+	}
+
+	// setQuat's body with each row scaled. No sister project has setSQ, but
+	// the product order MKDD reconstructed for setQuat (see above) is what
+	// makes the only copy the ROM emits (weak in BeeHive.o, 0x100) byte-exact
+	// (91.0 -> 100, research c-r22). Batch-era trials of the old eleven-local
+	// body permuted the product groups but never took the squares as yy, zz,
+	// xx with no named `1 - n*n` terms. The locals must stay: without them
+	// the body falls under the statement budget and MWCC inlines it into
+	// TBeeHive::calcRootMatrix, which the ROM does not.
+	void setSQ(const JGeometry::TVec3<f32>& scale,
+	           const JGeometry::TQuat4<f32>& qt)
+	{
+		f32 yy = 2.0f * qt.y * qt.y;
+		f32 zz = 2.0f * qt.z * qt.z;
+		f32 xx = 2.0f * qt.x * qt.x;
+		f32 xy = 2.0f * qt.x * qt.y;
+		f32 xz = 2.0f * qt.x * qt.z;
+		f32 yz = 2.0f * qt.y * qt.z;
+		f32 wz = 2.0f * qt.w * qt.z;
+		f32 wx = 2.0f * qt.w * qt.x;
+		f32 wy = 2.0f * qt.w * qt.y;
+
+		this->ref(0, 0) = scale.x * (1.0f - yy - zz);
+		this->ref(0, 1) = scale.x * (xy - wz);
+		this->ref(0, 2) = scale.x * (xz + wy);
+
+		this->ref(1, 0) = scale.y * (xy + wz);
+		this->ref(1, 1) = scale.y * (1.0f - xx - zz);
+		this->ref(1, 2) = scale.y * (yz - wx);
+
+		this->ref(2, 0) = scale.z * (xz - wy);
+		this->ref(2, 1) = scale.z * (yz + wx);
+		this->ref(2, 2) = scale.z * (1.0f - xx - yy);
+	}
+
+	// from TP, may be useful in the future?
+	void getEulerXYZ(JGeometry::TVec3<f32>&) const;
+
+	// From SMG
+	void setXDir(const TVec3<f32>& param_1)
+	{
+		this->ref(0, 0) = param_1.x;
+		this->ref(1, 0) = param_1.y;
+		this->ref(2, 0) = param_1.z;
+	}
+	void setXDir(f32 x, f32 y, f32 z)
+	{
+		this->ref(0, 0) = x;
+		this->ref(1, 0) = y;
+		this->ref(2, 0) = z;
+	}
+	// `set(x, y, z)` and not three per-component assignments: it batches the
+	// three loads ahead of the stores, which is what
+	// JPABaseEmitter::calcEmitterGlobalParams does when it reads the three
+	// emitter axes out of eio.unkCC.
+	//
+	// TODO: the per-component spelling was tried, because TPopo::calcRootMatrix
+	// and TRocket::calcRootMatrix want the interleaved lfs/stfs it produces,
+	// and it is wrong: those two gain almost nothing (TPopo::calcRootMatrix
+	// 87.39% -> 87.44%, PopoPossessedCallback 87.34% -> 87.40%) while
+	// calcEmitterGlobalParams loses 98.54% -> 92.97% on exactly those loads.
+	// So popo and rocket read the columns out themselves rather than calling
+	// these, and their .cpp workarounds stay.
+	void getXDir(JGeometry::TVec3<f32>& param_1) const
+	{
+		param_1.set(this->at(0, 0), this->at(1, 0), this->at(2, 0));
+	}
+	void setYDir(const TVec3<f32>& param_1)
+	{
+		this->ref(0, 1) = param_1.x;
+		this->ref(1, 1) = param_1.y;
+		this->ref(2, 1) = param_1.z;
+	}
+	void setYDir(f32 x, f32 y, f32 z)
+	{
+		this->ref(0, 1) = x;
+		this->ref(1, 1) = y;
+		this->ref(2, 1) = z;
+	}
+	void getYDir(JGeometry::TVec3<f32>& param_1) const
+	{
+		param_1.set(this->at(0, 1), this->at(1, 1), this->at(2, 1));
+	}
+	void setZDir(const TVec3<f32>& param_1)
+	{
+		this->ref(0, 2) = param_1.x;
+		this->ref(1, 2) = param_1.y;
+		this->ref(2, 2) = param_1.z;
+	}
+	void setZDir(f32 x, f32 y, f32 z)
+	{
+		this->ref(0, 2) = x;
+		this->ref(1, 2) = y;
+		this->ref(2, 2) = z;
+	}
+	void getZDir(JGeometry::TVec3<f32>& param_1) const
+	{
+		param_1.set(this->at(0, 2), this->at(1, 2), this->at(2, 2));
+	}
+	void setXYZDir(const TVec3<f32>& param_1, const TVec3<f32>& param_2,
+	               const TVec3<f32>& param_3)
+
+	{
+		setXDir(param_1);
+		setYDir(param_2);
+		setZDir(param_3);
+	}
+
+	void setEularX(float param_1)
+	{
+		f32 s = sin(param_1);
+		f32 c = cos(param_1);
+
+		this->ref(1, 1) = c;
+		this->ref(1, 2) = -s;
+
+		this->ref(2, 1) = s;
+		this->ref(2, 2) = c;
+
+		this->ref(0, 0) = 1.0f;
+
+		this->ref(1, 0) = this->ref(0, 1) = this->ref(2, 0)
+		    = this->ref(0, 2) = 0.0f;
+	}
+
+	void setEularY(float param_1)
+	{
+		f32 s = sin(param_1);
+		f32 c = cos(param_1);
+
+		this->ref(2, 2) = c;
+		this->ref(2, 0) = -s;
+
+		this->ref(0, 2) = s;
+		this->ref(0, 0) = c;
+
+		this->ref(1, 1) = 1.0f;
+
+		this->ref(0, 1) = this->ref(1, 0) = this->ref(2, 1)
+		    = this->ref(1, 2) = 0.0f;
+	}
+
+	void setEularZ(float param_1)
+	{
+
+		f32 s = sin(param_1);
+		f32 c = cos(param_1);
+
+		this->ref(0, 0) = c;
+		this->ref(0, 1) = -s;
+
+		this->ref(1, 0) = s;
+		this->ref(1, 1) = c;
+
+		this->ref(2, 2) = 1.0f;
+
+		this->ref(0, 2) = this->ref(2, 0) = this->ref(1, 2)
+		    = this->ref(2, 1) = 0.0f;
+	}
+
+	void mult33(const TVec3<f32>& param_1, TVec3<f32>& param_2) const
+	{
+		param_2.set(
+		    // clang-format off
+		this->at(0, 0) * param_1.x + this->at(0, 1) * param_1.y + this->at(0, 2) * param_1.z,
+		this->at(1, 0) * param_1.x + this->at(1, 1) * param_1.y + this->at(1, 2) * param_1.z,
+		this->at(2, 0) * param_1.x + this->at(2, 1) * param_1.y + this->at(2, 2) * param_1.z
+		    // clang-format on
+		);
+	}
+
+	// Ruled out: a `multTranspose33(const TVec3&, TVec3&)` companion for the
+	// row-major world-to-local multiply that TBathtubData::getLocalPos spells
+	// out. The ROM has TVec3<f>::set<f> write straight into getLocalPos's
+	// by-value return temporary, so any out-param form needs a named local
+	// plus a copy: out-param 93.3 -> 87.0%, a by-value-returning overload
+	// 93.3 -> 66.7%, in-place `multTranspose33(diff, diff)` 93.3 -> 81.2%
+	// (TBathWaterManager::throwMario, batch 62). The multiply stays written
+	// out at that one call site.
+	//
+	// Ruled out: forwarding as `TVec3<f32> tmp(param_1); mult33(tmp, param_1);`
+	// so that the aliasing call reloads its operands from a copy. cameralib's
+	// RotateAboutAxis does want that copy, but it is the only caller that
+	// does: the one other one-argument user, TMapWire::init, drops 98.79 ->
+	// 95.91% with it. The copy therefore stays spelled out at the cameralib
+	// site, not here.
+	void mult33(TVec3<f32>& param_1) const { mult33(param_1, param_1); }
+
+	void setScale(f32 param_1, f32 param_2, f32 param_3)
+	{
+		this->ref(0, 0) = param_1;
+		this->ref(0, 1) = 0.0f;
+		this->ref(0, 2) = 0.0f;
+
+		this->ref(1, 0) = 0.0f;
+		this->ref(1, 1) = param_2;
+		this->ref(1, 2) = 0.0f;
+
+		this->ref(2, 0) = 0.0f;
+		this->ref(2, 1) = 0.0f;
+		this->ref(2, 2) = param_3;
+	}
+};
+
+} // namespace JGeometry
+
+#endif

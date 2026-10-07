@@ -1,0 +1,1309 @@
+#include <MoveBG/MapObjMare.hpp>
+#include <MoveBG/MapObjManager.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <Camera/CubeManagerBase.hpp>
+#include <Enemy/Cannon.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapEventMare.hpp>
+#include <Map/MapWireManager.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MoveBG/MapObjWave.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <Player/WaterGun.hpp>
+#include <System/MarDirector.hpp>
+#include <System/Particles.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <string.h>
+
+// rogue includes needed for matching sinit & bss
+#include <M3DUtil/InfectiousStrings.hpp>
+// After the mtx-calc names: retail's .rodata has setUpTrans's zero and one
+// literals between them and this unit's own strings (c-r35).
+#include <Map/MapCollisionData.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+f32 TCogwheelScale::mWaterLeakSpeed = 0.01f;
+
+/// Distance from the wheel's centre to either rope.
+static f32 sRadius = 800.0f;
+
+f32 TCogwheel::mRopeWidthX = 10.0f;
+f32 TCogwheel::mRopeWidthZ = 7.0f;
+f32 TCogwheel::mTexPosRate = 0.01f;
+f32 TCogwheel::mMinSpeed   = 3.0f;
+
+static f32 mGrowStartFrame = 90.0f;
+static f32 mGrowEndFrame   = 175.0f;
+
+/// Second emitter position for the waterfall's upper half.
+static JGeometry::TVec3<f32> fall_upper_pos(2827.0f, 8604.0f, 7202.0f);
+
+static inline J3DModel* MapObjMareGetModel(const TMapObjBase* object)
+{
+	return object->getModel();
+}
+
+static inline J3DFrameCtrl* MapObjMareGetBckCtrl(const TMapObjBase* object)
+{
+	MActor* actor         = object->getMActor();
+	J3DFrameCtrl* control = actor->getFrameCtrl(ANM_TYPE_BCK);
+	return control;
+}
+
+u32 TCogwheelScale::touchWater(THitActor* water)
+{
+	if (mWaterAmount < mWaterAmountMax)
+		mWaterAmount += 1.0f;
+
+	return 1;
+}
+
+static inline f32* MapObjMareGetMarioSpeedY()
+{
+	f32* speedY = gpMarioSpeedY;
+	return speedY;
+}
+
+static inline f32 CogwheelSpeed(const TCogwheel* wheel)
+{
+	return wheel->mSpeed;
+}
+
+BOOL TCogwheelScale::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_HIP_DROP) {
+		mCogwheel->mSpeed = mPushSpeed + CogwheelSpeed(mCogwheel);
+		return true;
+	}
+
+	return TMapObjBase::receiveMessage(sender, message);
+}
+
+void TCogwheelScale::touchPlayer(THitActor* player)
+{
+	if (marioIsOn())
+		mRiderWeight = mMarioWeight;
+
+	if (getPosition().y - getObjCollisionHeightOffset()
+	        > 150.0f + SMS_GetMarioPos().y
+	    && ((mIsUpper && CogwheelSpeed(mCogwheel) > 0.0f)
+	        || (!mIsUpper && CogwheelSpeed(mCogwheel) < 0.0f))) {
+		mCogwheel->rebound();
+
+		// Landing on the high bucket makes the wheel spin the other way at a
+		// rate proportional to how hard Mario hit it.
+		if (marioHeadAttack())
+			mCogwheel->mSpeed
+			    = mHeadAttackRate * (CogwheelSpeed(mCogwheel) * *MapObjMareGetMarioSpeedY());
+	}
+
+	mWaterAmount = 0.0f;
+}
+
+void TCogwheelScale::control()
+{
+	mRiderWeight = 0.0f;
+	TMapObjBase::control();
+
+	if (mWaterAmount > 0.0f) {
+		mWaterAmount -= mWaterLeakSpeed;
+		SMSGetMSound()->startSoundActorWithInfo(
+		    MSD_SE_OBJ_MR_TSUBO_WATER, &mPosition, nullptr,
+		    fabsf(mWaterAmount), 0, 0, nullptr, 0, 4);
+		if (mWaterAmount < 0.0f)
+			mWaterAmount = 0.0f;
+	}
+}
+
+TCogwheelScale::TCogwheelScale(const char* name)
+    : TMapObjBase(name)
+    , mWeight(0.0f)
+    , mMarioWeight(0.0f)
+    , mWaterAmount(0.0f)
+    , mWaterAmountMax(0.0f)
+    , mRiderWeight(0.0f)
+    , mHeadAttackRate(0.01f)
+    , mPushSpeed(5.0f)
+    , mIsUpper(0)
+    , mCogwheel(nullptr)
+{
+}
+
+// The colour is a file-scope constant (also in TWireBell::initDraw): a local
+// GXColor is a dead named slot above the texture (frame 0x88), and the
+// constant folds to the same immediate.
+static const GXColor sCogwheelColor = { 0, 0, 100, 255 };
+
+void TCogwheel::initDraw() const
+{
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+
+	GXSetChanMatColor(GX_COLOR0A0, JUtility::TColor(sCogwheelColor));
+
+	GXSetNumTexGens(1);
+	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
+
+	JUTTexture texture(gpMapObjManager->unkC8);
+	texture.load(GX_TEXMAP0);
+
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_TEXA, GX_CA_ZERO, GX_CA_ZERO,
+	                GX_CA_ZERO);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetCullMode(GX_CULL_BACK);
+}
+
+// TODO: frame 0x58 short (0x58 vs 0xb0) with no stack use in the body, and
+// the callee-saved FPRs are assigned in a different order (retail wheelY f29,
+// plateX1 f31, plateVB f28). The float literals and their load order match.
+// Inert: per-rope block scopes, a const-ref rope position, a static inline
+// drawRope(x0, x1, z0, z1, top, bottom, vT, vB, u2, u3). Worse: TVec3 corner
+// locals (frame 0x138) and TVec3 rope-position copies (extra loads).
+void TCogwheel::draw() const
+{
+	initDraw();
+
+	// The plate's rope: a cross of two quads from the wheel down to the plate.
+	f32 wheelY   = mPlateRopePos.y;
+	f32 plateY   = mPlate->mPosition.y - mPlate->mYOffset;
+	f32 plateTop = 600.0f + plateY;
+	f32 plateX1  = mPlateRopePos.x + mRopeWidthX;
+	f32 plateX0  = mPlateRopePos.x - mRopeWidthX;
+	f32 plateZ1  = mPlateRopePos.z + mRopeWidthZ;
+	f32 plateZ0  = mPlateRopePos.z - mRopeWidthZ;
+	f32 plateVT  = mTexPosRate * (plateTop - plateY);
+	f32 plateVB  = mTexPosRate * (wheelY - plateY);
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
+	GXPosition3f32(plateX0, plateTop, plateZ0);
+	GXTexCoord2f32(0.0f, plateVT);
+	GXPosition3f32(plateX0, wheelY, plateZ0);
+	GXTexCoord2f32(0.0f, plateVB);
+	GXPosition3f32(plateX1, plateTop, plateZ1);
+	GXTexCoord2f32(1.0f, plateVT);
+	GXPosition3f32(plateX1, wheelY, plateZ1);
+	GXTexCoord2f32(1.0f, plateVB);
+	GXPosition3f32(plateX1, plateTop, plateZ0);
+	GXTexCoord2f32(2.0f, plateVT);
+	GXPosition3f32(plateX1, wheelY, plateZ0);
+	GXTexCoord2f32(2.0f, plateVB);
+	GXPosition3f32(plateX0, plateTop, plateZ1);
+	GXTexCoord2f32(3.0f, plateVT);
+	GXPosition3f32(plateX0, wheelY, plateZ1);
+	GXTexCoord2f32(3.0f, plateVB);
+
+	// The pot's rope. Same shape, but it hangs twice as far and only uses two
+	// texture columns.
+	f32 potY   = mPot->mPosition.y - mPot->mYOffset;
+	f32 potX1  = mPotRopePos.x + mRopeWidthX;
+	f32 potX0  = mPotRopePos.x - mRopeWidthX;
+	f32 potZ1  = mPotRopePos.z + mRopeWidthZ;
+	f32 potZ0  = mPotRopePos.z - mRopeWidthZ;
+	f32 potTop = 1200.0f + potY;
+	f32 potVB  = mTexPosRate * (wheelY - potY);
+	f32 potVT  = mTexPosRate * (potTop - potY);
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
+	GXPosition3f32(potX0, potTop, potZ0);
+	GXTexCoord2f32(0.0f, potVT);
+	GXPosition3f32(potX0, wheelY, potZ0);
+	GXTexCoord2f32(0.0f, potVB);
+	GXPosition3f32(potX1, potTop, potZ1);
+	GXTexCoord2f32(1.0f, potVT);
+	GXPosition3f32(potX1, wheelY, potZ1);
+	GXTexCoord2f32(1.0f, potVB);
+	GXPosition3f32(potX1, potTop, potZ0);
+	GXTexCoord2f32(0.0f, potVT);
+	GXPosition3f32(potX1, wheelY, potZ0);
+	GXTexCoord2f32(0.0f, potVB);
+	GXPosition3f32(potX0, potTop, potZ1);
+	GXTexCoord2f32(1.0f, potVT);
+	GXPosition3f32(potX0, wheelY, potZ1);
+	GXTexCoord2f32(1.0f, potVB);
+}
+
+/**
+ * @brief Bounce the wheel back off one of its rope's end stops.
+ *
+ * @details UNUSED in the map (0x34): inlined at all three call sites, twice in
+ * control() and once in TCogwheelScale::touchPlayer().
+ */
+void TCogwheel::rebound()
+{
+	mSpeed *= -mReboundRate;
+	if (fabsf(mSpeed) < mMinSpeed)
+		mSpeed = 0.0f;
+}
+
+void TCogwheel::calc()
+{
+	mRotation.z = 360.0f * (-mPlateRopeLength / (3.14f * (2.0f * sRadius)));
+
+	Mtx rotZ;
+	makeRootMtxRotZ(rotZ);
+	rotZ[0][3] = 0.0f;
+	rotZ[1][3] = 0.0f;
+	rotZ[2][3] = 0.0f;
+
+	Mtx rotY;
+	makeRootMtxRotY(rotY);
+	rotY[0][3] = 0.0f;
+	rotY[1][3] = 0.0f;
+	rotY[2][3] = 0.0f;
+
+	MtxPtr mtx = getModel()->getAnmMtx(0);
+	MTXConcat(rotY, rotZ, mtx);
+	mtx[0][3] = getPosition().x;
+	mtx[1][3] = getPosition().y;
+	mtx[2][3] = mPosition.z;
+}
+
+/// The load one bucket puts on the rope: its own weight, the water in it and
+/// whoever is standing on it.
+static inline f32 CogwheelScaleTotalWeight(const TCogwheelScale* scale)
+{
+	return scale->mRiderWeight + (scale->mWeight + scale->mWaterAmount);
+}
+
+void TCogwheel::control()
+{
+	TMapObjBase::control();
+
+	mPlateRopeLength += mSpeed;
+	mSpeed += mAccelRate
+	    * (CogwheelScaleTotalWeight(mPlate) - CogwheelScaleTotalWeight(mPot));
+	mSpeed *= mSpeedDecay;
+
+	if (mPlateRopeLength < mUpperMargin && mSpeed < 0.0f)
+		rebound();
+
+	if (mPlateRopeLength > mRopeLength - mLowerMargin && mSpeed > 0.0f)
+		rebound();
+
+	mPlate->mPosition.y = getPosition().y - mPlateRopeLength
+	    + mPlate->getObjCollisionHeightOffset();
+	mPot->mPosition.y   = mPosition.y - (mRopeLength - mPlateRopeLength);
+
+	f32 speed = fabsf(mSpeed);
+	if (speed > 0.01f) {
+		f32 volume = 10.0f * speed;
+		SMSGetMSound()->startSoundActorWithInfo(
+		    MSD_SE_OBJ_MR_TSUBO_PULL, &mPosition, nullptr, volume, 0, 0,
+		    nullptr, 0, 4);
+	}
+}
+
+// The ROM keeps a literal `0.0f * sin` and `0.0f * cos`: the unrotated
+// (sRadius, 0, 0) offset goes through an inlined Y rotation, and MWCC does not
+// fold a multiply by zero across the inline boundary.
+static inline void CogwheelRotY(JGeometry::TVec3<f32>* v, f32 deg)
+{
+	f32 rad = 0.017453294f * deg;
+	f32 c   = cosf(rad);
+	f32 s   = sinf(rad);
+	f32 x   = v->x;
+	f32 z   = v->z;
+	v->x    = x * c - z * s;
+	v->z    = x * s + z * c;
+}
+
+// Both calls take newAndRegisterObj's default scale, which is why retail
+// computes the scale address first, and both pass the raw mRotation.
+// TODO: 99.7%, every instruction, the frame and every slot exact (no named
+// offsetX/offsetZ, the two getPosition().y reads fill retail's low region).
+// Retail keeps offset.x in f31 and offset.z in f30 (ours swapped). Inert: x/z
+// read or store order in the helper, named nx/nz, operand order, set(),
+// offset built by set() or stores.
+void TCogwheel::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	JGeometry::TVec3<f32> offset(sRadius, 0.0f, 0.0f);
+	CogwheelRotY(&offset, getRotation().y);
+
+	JGeometry::TVec3<f32> pos(mPosition.x + offset.x, mPosition.y,
+	                          mPosition.z - offset.z);
+	TCogwheelScale* plate = (TCogwheelScale*)TMapObjBaseManager::newAndRegisterObj(
+	    "cogwheel_plate", pos, mRotation);
+	mPlate = plate;
+	mPlate->mIsUpper  = true;
+	mPlate->mCogwheel = this;
+	plate->appear();
+
+	mPlateRopePos.set(pos.x, getPosition().y, pos.z);
+
+	pos.set(mPosition.x - offset.x, getPosition().y, mPosition.z + offset.z);
+	TCogwheelScale* pot = (TCogwheelScale*)TMapObjBaseManager::newAndRegisterObj(
+	    "cogwheel_pot", pos, mRotation);
+	mPot = pot;
+	mPot->mIsUpper  = false;
+	mPot->mCogwheel = this;
+	pot->appear();
+
+	mPotRopePos.set(pos.x, mPosition.y, pos.z);
+
+	// The Noki Bay pair of balances differ only in tuning; the upper one is
+	// slower and has a shorter rope.
+	if (strcmp(getName(), "天秤上") == 0) {
+		mAccelRate       = 0.003f;
+		mSpeedDecay      = 0.99f;
+		mReboundRate     = 0.8f;
+		mRopeLength      = 3800.0f;
+		mUpperMargin     = 1000.0f;
+		mLowerMargin     = 1800.0f;
+		mPot->mWeight    = 0.0f;
+		mPot->mMarioWeight = 0.0f;
+		mPot->mWaterAmountMax = 14.0f;
+		mPlate->mWeight  = 10.0f;
+		mPlate->mMarioWeight = 0.0f;
+		mPlate->mWaterAmountMax = 0.0f;
+	} else {
+		mAccelRate       = 0.008f;
+		mSpeedDecay      = 0.98f;
+		mReboundRate     = 0.8f;
+		mRopeLength      = 3950.0f;
+		mUpperMargin     = 1000.0f;
+		mLowerMargin     = 1900.0f;
+		mPot->mWeight    = 0.0f;
+		mPot->mMarioWeight = 0.0f;
+		mPot->mWaterAmountMax = 14.0f;
+		mPlate->mWeight  = 10.0f;
+		mPlate->mMarioWeight = 0.0f;
+		mPlate->mWaterAmountMax = 0.0f;
+	}
+
+	mPlateRopeLength = mRopeLength / 2.0f;
+}
+
+TCogwheel::TCogwheel(const char* name)
+    : TMapObjBase(name)
+    , mSpeed(0.0f)
+    , mPlateRopeLength(0.0f)
+    , mAccelRate(0.0f)
+    , mSpeedDecay(0.0f)
+    , mReboundRate(0.0f)
+    , mRopeLength(0.0f)
+    , mPlate(nullptr)
+    , mUpperMargin(0.0f)
+    , mPot(nullptr)
+    , mLowerMargin(0.0f)
+{
+	mPlateRopePos.x = mPlateRopePos.y = mPlateRopePos.z = 0.0f;
+	mPotRopePos.x = mPotRopePos.y = mPotRopePos.z = 0.0f;
+}
+
+void TMapObjElasticCode::draw() const
+{
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+
+	GXColor color = { 0, 0, 100, 255 };
+	GXSetChanMatColor(GX_COLOR0A0, JUtility::TColor(color));
+
+	GXSetNumTexGens(0);
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_RASC, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_RASA, GX_CA_ZERO, GX_CA_ZERO,
+	                GX_CA_ZERO);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+	GXSetCullMode(GX_CULL_NONE);
+	GXSetLineWidth(24, GX_TO_ZERO);
+
+	GXBegin(GX_LINES, GX_VTXFMT0, 2);
+	GXPosition3f32(mInitialPosition.x, 1000.0f + mInitialPosition.y,
+	               mInitialPosition.z);
+	GXPosition3f32(mPosition.x, mPosition.y, mPosition.z);
+}
+
+void TMapObjElasticCode::control()
+{
+	TMapObjBase::control();
+
+	mVelocity.y *= mSpeedDecay;
+	mVelocity.y += mSpringRate * (mInitialPosition.y - mPosition.y)
+	    - getGravityY();
+
+	if (mHeldObject != nullptr) {
+		mVelocity.y -= mHoldWeight;
+
+		JGeometry::TVec3<f32> pos      = mHeldObject->getPosition();
+		JGeometry::TVec3<f32> velocity = getVelocity();
+		pos.y += velocity.y;
+		mHeldObject->moveRequest(pos);
+	}
+
+	JGeometry::TVec3<f32> velocity = getVelocity();
+	mPosition.y += velocity.y;
+}
+
+void TMapObjElasticCode::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	mSpeedDecay = 0.997f;
+	mGravity    = 0.01f;
+	mHoldWeight = 2.0f;
+	mSpringRate = 0.0005f;
+}
+
+/**
+ * @brief How far the tree's collision has to move this frame.
+ *
+ * @details UNUSED in the map (0x88); inlined into control() and touchWater().
+ */
+f32 TMapObjGrowTree::getGrowHeightFromRate(f32 rate) const
+{
+	if (mGrowStartFrame < getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	        < mGrowEndFrame)
+		return rate * mGrowHeight / (mGrowEndFrame - mGrowStartFrame);
+
+	return 0.0f;
+}
+
+/**
+ * @brief Resize the damage cylinder to the tree's current height.
+ *
+ * @details UNUSED in the map (0xcc); inlined into control() and touchWater().
+ */
+void TMapObjGrowTree::updateHeight()
+{
+	if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	    > mGrowStartFrame) {
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+		    > mGrowEndFrame) {
+			setDamageHeight(mGrowHeight);
+		} else {
+			setDamageHeight(
+			    mInitialHeight
+			    + (mGrowHeight - mInitialHeight)
+			        * (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+			           - mGrowStartFrame)
+			        / (mGrowEndFrame - mGrowStartFrame));
+		}
+	} else {
+		setDamageHeight(mInitialHeight);
+	}
+}
+
+// TODO: control() and touchWater() are instruction-exact except that retail
+// calls getMActor() out of line in updateHeight()'s interpolated
+// setDamageHeight() argument, and both frames are larger (0xf8/0xe8 vs 0x90).
+// Probes show a small inline is refused only at depth 5 from the caller, so
+// retail reaches that site through two more inline levels; a TU-local frame
+// helper (1-3 levels, all or some sites), a named argument and raw mMActor in
+// getGrowHeightFromRate() were inert or worse.
+// c-k14, read by mode: updateHeight's setDamageHeight(...) is a statement-mode
+// call at level 2, so its argument (and the getMActor in it) is judged at 3;
+// retail's `bl` needs 5, two levels more, and nothing in the map (only
+// updateHeight and getGrowHeightFromRate are UNUSED here) supplies them. The
+// 0x68 of extra retail frame is all dead low region, consistent with more
+// accessor levels on the frame reads.
+u32 TMapObjGrowTree::touchWater(THitActor* water)
+{
+	if (water->mPosition.y > mPosition.y + mInitialHeight)
+		return 0;
+
+	if (isState(1)) {
+		startAnim(1);
+		getMActor()->getFrameCtrl(ANM_TYPE_BCK)->setRate(0.0f);
+		mState = 2;
+	}
+
+	if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+	    < (f32)getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getEnd()) {
+		soundBas(MSD_SE_OBJ_SANDBOMB_WATER_1, 3.0f, mGrowSpeed);
+		soundBas(MSD_SE_OBJ_SANDBOMB_WATER_2, 67.0f, mGrowSpeed);
+		soundBas(MSD_SE_OBJ_SANDBOMB_WATER_3, 103.0f, mGrowSpeed);
+		soundBas(MSD_SE_OBJ_SANDBOMB_WATER_4, 137.0f, mGrowSpeed);
+
+		f32 rate = mGrowSpeed;
+		getMActor()->getFrameCtrl(ANM_TYPE_BCK)
+		    ->setFrame(rate
+		               + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame());
+		updateHeight();
+
+		// The collision block rides up with the sprout.
+		if (mHeldObject != nullptr) {
+			JGeometry::TVec3<f32> pos = mHeldObject->mPosition;
+			pos.y += getGrowHeightFromRate(mGrowSpeed);
+			mHeldObject->moveRequest(pos);
+		}
+	}
+
+	if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() > mGrowEndFrame) {
+		setUpMapCollision(0);
+		mStateTimer = mGrownTime;
+	}
+
+	return 1;
+}
+
+void TMapObjGrowTree::control()
+{
+	TMapObjBase::control();
+
+	if (isState(2) && mColCount == 0 && !isStateTimerEngaged()
+	    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() > 0.0f) {
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame()
+		    < mGrowEndFrame)
+			removeMapCollision();
+
+		f32 rate = -mShrinkSpeed;
+		getMActor()->getFrameCtrl(ANM_TYPE_BCK)
+		    ->setFrame(rate
+		               + getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame());
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() < 0.0f) {
+			startAnim(0);
+			mState = 1;
+			return;
+		}
+
+		f32 frame = getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
+		if (67.0f <= frame && frame <= 240.0f)
+			gpMSound->startSoundActor(MSD_SE_OBJ_SAMDBOMB_REVERSE, &mPosition,
+			                          0, nullptr, 0, 4);
+
+		updateHeight();
+
+		if (mHeldObject != nullptr) {
+			JGeometry::TVec3<f32> pos = mHeldObject->mPosition;
+			pos.y -= getGrowHeightFromRate(mShrinkSpeed);
+			mHeldObject->moveRequest(pos);
+		}
+	}
+}
+
+void TMapObjGrowTree::loadAfter()
+{
+	TMapObjBase::loadAfter();
+	removeMapCollision();
+}
+
+void TMapObjGrowTree::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	mGrowHeight    = 1000.0f;
+	mGrowSpeed     = 0.5f;
+	mShrinkSpeed   = 0.1f;
+	mGrownTime     = 360;
+	mInitialHeight = mDamageHeight;
+	getMActor()->setBtp("moyasi_wink");
+}
+
+TMapObjGrowTree::TMapObjGrowTree(const char* name)
+    : TMapObjBase(name)
+    , mGrowHeight(0.0f)
+    , mGrowSpeed(0.0f)
+    , mShrinkSpeed(0.0f)
+    , mGrownTime(0)
+    , mInitialHeight(0.0f)
+{
+}
+
+static const GXColor sWireBellColor = { 0, 0, 100, 255 };
+
+void TWireBell::initDraw() const
+{
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_POS_XYZ, GX_F32, 0);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_TEX0, GX_TEX_ST, GX_F32, 0);
+
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxDesc(GX_VA_TEX0, GX_DIRECT);
+
+	GXLoadPosMtxImm(j3dSys.mViewMtx, GX_PNMTX0);
+	GXSetCurrentMtx(GX_PNMTX0);
+
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, GX_FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+
+	GXSetChanMatColor(GX_COLOR0A0, JUtility::TColor(sWireBellColor));
+
+	GXSetNumTexGens(1);
+	GXSetTexCoordGen2(GX_TEXCOORD0, GX_TG_MTX2x4, GX_TG_TEX0, GX_IDENTITY,
+	                  GX_FALSE, GX_PTIDENTITY);
+
+	JUTTexture texture(gpMapObjManager->unkC8);
+	texture.load(GX_TEXMAP0);
+
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD0, GX_TEXMAP0, GX_COLOR_NULL);
+	GXSetTevColorIn(GX_TEVSTAGE0, GX_CC_TEXC, GX_CC_ZERO, GX_CC_ZERO,
+	                GX_CC_ZERO);
+	GXSetTevColorOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+	GXSetTevAlphaIn(GX_TEVSTAGE0, GX_CA_TEXA, GX_CA_ZERO, GX_CA_ZERO,
+	                GX_CA_ZERO);
+	GXSetTevAlphaOp(GX_TEVSTAGE0, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1,
+	                GX_TRUE, GX_TEVPREV);
+
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetCullMode(GX_CULL_BACK);
+}
+
+void TWireBell::draw() const
+{
+	initDraw();
+
+	// A cross of two quads running up the wire from the bell to its hanger.
+	f32 bellY = mPosition.y;
+	f32 x1    = mWirePos.x + mRopeWidthX;
+	f32 x0    = mWirePos.x - mRopeWidthX;
+	f32 z1    = mWirePos.z + mRopeWidthZ;
+	f32 z0    = mWirePos.z - mRopeWidthZ;
+	f32 wireY = mWirePos.y;
+	f32 vWire = mTexPosRate * (wireY - bellY);
+	f32 vBell = mTexPosRate * (bellY - bellY);
+
+	GXBegin(GX_TRIANGLESTRIP, GX_VTXFMT0, 8);
+	GXPosition3f32(x0, wireY, z0);
+	GXTexCoord2f32(0.0f, vWire);
+	GXPosition3f32(x0, bellY, z0);
+	GXTexCoord2f32(0.0f, vBell);
+	GXPosition3f32(x1, wireY, z1);
+	GXTexCoord2f32(1.0f, vWire);
+	GXPosition3f32(x1, bellY, z1);
+	GXTexCoord2f32(1.0f, vBell);
+	GXPosition3f32(x1, wireY, z0);
+	GXTexCoord2f32(0.0f, vWire);
+	GXPosition3f32(x1, bellY, z0);
+	GXTexCoord2f32(0.0f, vBell);
+	GXPosition3f32(x0, wireY, z1);
+	GXTexCoord2f32(1.0f, vWire);
+	GXPosition3f32(x0, bellY, z1);
+	GXTexCoord2f32(1.0f, vBell);
+}
+
+void TWireBell::control()
+{
+	gpMapWireManager->getPointPosInNthWire(mWireNo, mPosition, &mWirePos);
+
+	mPosition.x = mWirePos.x;
+	mPosition.y = mWirePos.y - mHangLength;
+	mPosition.z = mWirePos.z;
+
+	Mtx mtx;
+	MsMtxSetTRS(mtx, mPosition.x, mPosition.y, mPosition.z, mRotation.x,
+	            mRotation.y, mRotation.z, mScaling.x, mScaling.y, mScaling.z);
+	J3DModel* model = getModel();
+	MTXCopy(mtx, model->getAnmMtx(0));
+}
+
+void TWireBell::loadAfter()
+{
+	TMapObjBase::loadAfter();
+	mWireNo = gpMapWireManager->getWireNo(mPosition);
+}
+
+TWireBell::TWireBell(const char* name)
+    : TMapObjBase(name)
+    , mWireNo(-1)
+    , mHangLength(200.0f)
+    , mRopeWidthX(10.0f)
+    , mRopeWidthZ(5.0f)
+    , mTexPosRate(0.01f)
+{
+	mWirePos.x = mWirePos.y = mWirePos.z = 0.0f;
+}
+
+// TODO: retail's named block sits 4 bytes higher (dir at 0x54, not 0x50).
+// Worse: raw gpMarioPos / SMS_GetMarioPos() for dest, getPosition() at the
+// emit and sound sites, a named scaled copy of dir.
+// Inert: retail has a 4-byte low slot at 0x2c between the `dir * 100.0f`
+// temporary and the += copy; copy-init dest, dest.add(), scale(2.0f) move nothing.
+void TMapObjPuncher::touchPlayer(THitActor* player)
+{
+	awake();
+	startAnim(1);
+
+	JGeometry::TVec3<f32> dir;
+	makeVecToLocalZ(1.0f, &dir);
+
+	JGeometry::TVec3<f32> dest(SMS_GetMarioPos());
+	dest += dir * 100.0f;
+	SMS_MarioMoveRequest(dest);
+	SMS_SendMessageToMario(this, HIT_MESSAGE_THROWN);
+	SMS_ThrowMario(dir, mThrowSpeed);
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+
+	JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+	emitAndScale(PARTICLE_MS_ENM_DISAP_A_W, 0, &mPosition, scale);
+	emitAndScale(PARTICLE_MS_ENM_DISAP_B, 0, &mPosition, scale);
+	gpMSound->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition);
+
+	mState = 2;
+}
+
+void TMapObjPuncher::control()
+{
+	TMapObjBase::control();
+
+	switch (mState) {
+	case 1:
+		break;
+
+	case 2:
+		soundBas(MSD_SE_OBJ_PUNCHER_RETURN, 101.0f,
+		         MapObjMareGetBckCtrl(this)->getRate());
+		if (animIsFinished()) {
+			JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+			emitAndScale(PARTICLE_MS_ENM_DISAP_A_W, 0, &mPosition, scale);
+			emitAndScale(PARTICLE_MS_ENM_DISAP_B, 0, &mPosition, scale);
+			gpMSound->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition, 0,
+			                          nullptr, 0, 4);
+			kill();
+		}
+		break;
+	}
+}
+
+void TMapObjPuncher::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+
+	int speed;
+	stream.read(&speed, 4);
+	mThrowSpeed = speed;
+
+	sleep();
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
+// TODO: retail keeps dir.x/dir.z in f31/f30 and push in f29 (ours push first);
+// named dir components, heading/dot helpers and push placement were inert.
+// The named emitWater test gives retail's 0x80 frame and every slot.
+void TMuddyBoat::moveByWater()
+{
+	int emitWater = SMS_GetMarioWaterGun()->isEmitWater();
+	if (emitWater == 0)
+		return;
+
+	MtxPtr emitMtx = SMS_GetMarioWaterGun()->getEmitMtx(0);
+	JGeometry::TVec3<f32> spray(-emitMtx[0][0], 0.0f, -emitMtx[2][0]);
+	MsVECNormalize(&spray, &spray);
+
+	// The boat's heading, flat in XZ. Keeping the y as a literal 0.0f inside a
+	// real vector is what leaves the ROM's trivial `y * 0.0f` products in both
+	// dot products; spelling the dots out folds them away.
+	MtxPtr mtx = getModel()->getAnmMtx(0);
+	JGeometry::TVec3<f32> dir(mtx[0][2], 0.0f, mtx[2][2]);
+	f32 push = spray.dot(dir);
+
+	JGeometry::TVec3<f32> toMario;
+	getNormalVecFromTargetXZ(gpMarioPos->x, gpMarioPos->z, &toMario);
+	if (toMario.x != 0.0f || toMario.z != 0.0f)
+		MsVECNormalize(&toMario, &toMario);
+
+	// Which side of the boat the spray landed on decides the turn direction.
+	f32 side = dir.z * (spray.x - dir.x) - dir.x * (spray.z - dir.z);
+	if (side * dir.dot(toMario) > 0.0f)
+		mTurnSpeed += mTurnAccel * (1.0f - fabsf(push));
+	else
+		mTurnSpeed -= mTurnAccel * (1.0f - fabsf(push));
+
+	if (push > 0.0f)
+		mSpeed += push * mAccelForward;
+	else
+		mSpeed += push * mAccelBackward;
+
+	offLiveFlag(LIVE_FLAG_UNK10);
+}
+
+void TMuddyBoat::calcRootMatrix() { }
+
+void TMuddyBoat::kill()
+{
+	mSpeed     = 0.0f;
+	mTurnSpeed = 0.0f;
+
+	SMS_EasyEmitParticle(PARTICLE_MS_M_AMIATTACK, &mEffectPos, nullptr,
+	                     JGeometry::TVec3<f32>(1.0f, 1.0f, 1.0f));
+	SMSGetMSound()->startSoundActor(MSD_SE_OBJ_DORO_BROKEN, &mPosition);
+
+	MTXCopy(MapObjMareGetModel(this)->getAnmMtx(0), getModel()->getBaseTRMtx());
+
+	offMapObjFlag(MAP_OBJ_FLAG_UNK100);
+	onLiveFlag(LIVE_FLAG_UNK10);
+	startAnim(1);
+	startAnim(2);
+	mState = 2;
+}
+
+/**
+ * @brief One inline level over TMapObjBase::getObjCollisionHeightOffset().
+ *
+ * @details Retail `bl`s the accessor from bind()'s three touchWall()
+ * expansions and emits it weak into this object, so the call sits at inline
+ * depth 5: bind -> bindToWall -> touchWall -> the argument of mEffectPos.set()
+ * -> here -> the accessor, which a one-statement in-class body no longer
+ * survives. Without this level the accessor expands to a plain `lfs`.
+ */
+static inline f32 MapObjMareGetHeightOffset(const TMapObjBase* object)
+{
+	return object->getObjCollisionHeightOffset();
+}
+
+/**
+ * @brief Break the boat against the walls a sweep just hit.
+ *
+ * @details UNUSED in the map (0xa8); inlined into bind() three times, once per
+ * probe.
+ */
+void TMuddyBoat::touchWall(JGeometry::TVec3<f32>* pos,
+                           const TBGWallCheckRecord& record)
+{
+	const TBGCheckData* wall = record.mResultWalls[0];
+	mEffectPos.set(-(wall->mNormal.x * (50.0f + record.mRadius)
+	                 - record.mCenter.x),
+	    100.0f + (mPosition.y - MapObjMareGetHeightOffset(this)),
+	    -(wall->mNormal.z * (50.0f + record.mRadius) - record.mCenter.z));
+
+	*pos = mPosition;
+	kill();
+	mLinearVelocity.zero();
+}
+
+/**
+ * @brief Sweep a wall probe and, if it hits, break the boat.
+ *
+ * @details UNUSED in the map (0x104); inlined into bind() three times.
+ */
+bool TMuddyBoat::bindToWall(const JGeometry::TVec3<f32>& probe, f32 radius,
+                            JGeometry::TVec3<f32>* pos)
+{
+	TBGWallCheckRecord record(probe, radius, 4,
+	                          TBGWallCheckRecord::DONT_MOVE_XZ);
+	if (gpMap->isTouchedWallsAndMoveXZ(&record)) {
+		touchWall(pos, record);
+		return true;
+	}
+	return false;
+}
+
+// TODO: retail's frame is 0x110 larger: each inlined bindToWall() record sits
+// 0x38 apart (0x2c here), the TVec3::sub temporary sits below the records, and
+// the probe reuses one mFrontOffset/mBackOffset load for both components.
+// touchWall()'s `100.0f +` for the effect height schedules after the x store
+// in retail and before it here.
+// Retail keeps one named probe (0x1d8); each record block is 0xc larger.
+// Inert or worse: per-site probe temporaries or named probes (+0x38 only),
+// `+ 100.0f` last, a named height, an f32-parameter set helper.
+void TMuddyBoat::bind()
+{
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
+		return;
+
+	JGeometry::TVec3<f32> next(mPosition);
+	MtxPtr mtx = getModel()->getAnmMtx(0);
+	next.x += mtx[0][2] * mSpeed;
+	next.z += mtx[2][2] * mSpeed;
+
+	// The Noki Bay stream cubes carry a flow direction and strength; the boat
+	// picks up whatever component of it points along its own heading.
+	int cubeNo = gpCubeStream->getInCubeNo(SMS_GetMarioPos());
+	if (cubeNo != -1) {
+		TCubeStreamInfo* info
+		    = (TCubeStreamInfo*)gpCubeStream->unk14->getChildren()[cubeNo];
+		Mtx flow;
+		MsMtxSetXYZRPH(flow, 0.0f, 0.0f, 0.0f, info->unk18.x, info->unk18.y,
+		               info->unk18.z);
+		f32 alongHeading = 0.0f;
+		alongHeading += mtx[0][2] * flow[0][2];
+		alongHeading += mtx[2][2] * flow[2][2];
+		mSpeed += 0.0001f * (alongHeading * info->unk40);
+	}
+
+	const TBGCheckData* ground;
+	f32 groundY = gpMap->checkGroundIgnoreWaterSurface(next, &ground);
+	f32 waterY  = mPosition.y - mYOffset;
+	if (groundY > waterY - 100.0f || ground->isIllegalData()) {
+		next = mPosition;
+		kill();
+		mLinearVelocity.zero();
+		return;
+	}
+
+	JGeometry::TVec3<f32> probe;
+	probe.x = mtx[0][2] * mFrontOffset + next.x;
+	probe.y = waterY;
+	probe.z = mtx[2][2] * mFrontOffset + next.z;
+	if (bindToWall(probe, mWallRadiusFront, &next))
+		return;
+
+	probe.x = -(mtx[0][2] * mBackOffset - next.x);
+	probe.y = mPosition.y - mYOffset;
+	probe.z = -(mtx[2][2] * mBackOffset - next.z);
+	if (bindToWall(probe, mWallRadiusBack, &next))
+		return;
+
+	probe.x = next.x;
+	probe.y = mPosition.y - mYOffset;
+	probe.z = next.z;
+	if (bindToWall(probe, mWallRadiusCenter, &next))
+		return;
+
+	// `a = b - c` reaches the map's out-of-line TVec3::sub: operator= is one
+	// inline level and the difference nested in its argument two more.
+	mLinearVelocity = next - mPosition;
+}
+
+void TMuddyBoat::control()
+{
+	TMapObjBase::control();
+
+	if (marioIsOn())
+		moveByWater();
+
+	switch (mState) {
+	case 1:
+		mSpeed *= mSpeedDecay;
+		SMSGetMSound()->startSoundActorWithInfo(
+		    MSD_SE_OBJ_DORO_FLOAT, &mPosition, nullptr, fabsf(mSpeed), 0, 0,
+		    nullptr, 0, 4);
+		if (mTurnSpeed != 0.0f) {
+			mRotation.y += mTurnSpeed;
+			mRotation.y = MsWrap(getRotation().y, 0.0f, 360.0f);
+			mTurnSpeed *= mTurnDecay;
+			if (fabsf(mTurnSpeed) < 0.0001f)
+				mTurnSpeed = 0.0f;
+		}
+		break;
+
+	case 2:
+		if (animIsFinished()) {
+			mStateTimer = mRespawnTime;
+			onMapObjFlag(MAP_OBJ_FLAG_UNK100);
+			sleep();
+			mState = 3;
+		}
+		break;
+
+	case 3:
+		if (!isStateTimerEngaged()) {
+			awake();
+			makeObjDead();
+			makeObjDefault();
+			makeObjAppeared();
+
+			JGeometry::TVec3<f32> scale(2.0f * getScaling().x,
+			                            2.0f * getScaling().y,
+			                            3.0f * getScaling().z);
+			mEffectPos.set(mPosition.x, mPosition.y - mYOffset, mPosition.z);
+			emitAndSRT(PARTICLE_MS_ENM_DISAP_A, 0, &mEffectPos, mRotation,
+			           scale);
+			emitAndSRT(PARTICLE_MS_ENM_DISAP_B, 0, &mEffectPos, mRotation,
+			           scale);
+			SMSGetMSound()->startSoundActor(MSD_SE_SMOKE_EFFECT, &mPosition);
+			mState = 1;
+		}
+		break;
+	}
+}
+
+static inline MtxPtr MapObjMareGetAnmMtx0(const TMapObjBase* object)
+{
+	J3DModel* model = object->getModel();
+	MtxPtr mtx      = model->getAnmMtx(0);
+	return mtx;
+}
+
+// TODO: 99.8%, instructions exact; the C-style declaration order lands the
+// saved FPRs. Retail's `scale` sits 8 bytes lower (0x64) at equal frame.
+// Inert or frame-changing: raw getModel() at any binder site, raw mScaling in
+// the wake scale, wakeScale/scale declared at the top.
+// (c-d7) Each binder site costs 0x10 of low region (MapObjMareGetModel(this)
+// ->getAnmMtx(0) 0xc, raw 0). A top-declared `MtxPtr mtx;` assigned from
+// MapObjMareGetModel(this)->getAnmMtx(0) at the first site lands every slot
+// but leaves the frame 8 short (0xc8): retail has one more dead named word
+// above `scale`. Named offset/waveHeight/effectY/speed get registers.
+void TMuddyBoat::calc()
+{
+	f32 x, waveY, yaw, y, z;
+	z     = mPosition.z;
+	y     = mPosition.y - getObjCollisionHeightOffset();
+	waveY = y + gpMapObjWave->getWaveHeight(mPosition.x, z);
+	yaw   = mRotation.y;
+	x     = mPosition.x;
+	MsMtxSetXYZRPH(MapObjMareGetAnmMtx0(this), x, waveY, z, 0,
+	               (s16)(182.04445f * yaw), 0);
+
+	// Column-wise `a = b = c = v` chains, retail's store order
+	// (MapObjBianco ladder 337). MTXScale overwrites all twelve afterwards.
+	Mtx scale;
+	scale[0][3] = scale[1][3] = scale[2][3] = 0.0f;
+	scale[0][2] = scale[1][2] = 0.0f;
+	scale[0][1] = scale[2][1] = 0.0f;
+	scale[1][0] = scale[2][0] = 0.0f;
+	scale[0][0] = scale[1][1] = scale[2][2] = 1.0f;
+	MTXScale(scale, mInitialScaling.x, mInitialScaling.y, mInitialScaling.z);
+	MTXConcat(MapObjMareGetAnmMtx0(this), scale, MapObjMareGetAnmMtx0(this));
+
+	if (mSpeed != 0.0f) {
+		mEffectPos.set(mPosition.x, mPosition.y - mYOffset, mPosition.z);
+		JGeometry::TVec3<f32> wakeScale(3.0f * getScaling().x,
+		                                2.0f * getScaling().y,
+		                                3.0f * getScaling().z);
+		emitAndBindScale(PARTICLE_MS_M_HAMON_B, 3, &mEffectPos, wakeScale);
+		emitAndBindScale(PARTICLE_MS_M_HAMON_A, 1, &mEffectPos, wakeScale);
+		unk16C = 0;
+	}
+}
+
+u32 TMuddyBoat::getSDLModelFlag() const { return 0; }
+
+// Binding level worth +8 of low region, landing TMuddyBoat::initMapObj's
+// frame at 0x28 (batch 124).
+static inline u8 MapObjMareGetCurrentMapL0(TMarDirector* p)
+{
+	u8 currentMap = p->getCurrentMap();
+	return currentMap;
+}
+
+static inline u8 MapObjMareGetCurrentMap(TMarDirector* p)
+{
+	u8 currentMap = MapObjMareGetCurrentMapL0(p);
+	return currentMap;
+}
+
+void TMuddyBoat::initMapObj()
+{
+	TMapObjBase::initMapObj();
+
+	mAccelForward  = 0.04f;
+	mSpeedDecay    = 0.998f;
+	mTurnAccel     = 0.002f;
+	mTurnDecay     = 0.997f;
+	mAccelBackward = 0.01f;
+	mRespawnTime   = 600;
+
+	if (MapObjMareGetCurrentMap(gpMarDirector) == 52) {
+		mWallRadiusFront  = 126.0f;
+		mWallRadiusCenter = 185.0f;
+		mWallRadiusBack   = 150.0f;
+		mFrontOffset      = 170.0f;
+		mBackOffset       = 185.0f;
+	} else {
+		mWallRadiusFront  = 100.0f;
+		mWallRadiusCenter = 170.0f;
+		mWallRadiusBack   = 150.0f;
+		mFrontOffset      = 180.0f;
+		mBackOffset       = 100.0f;
+	}
+
+	unk17C = 3.0f;
+	unk180 = 2.0f;
+	unk184 = 5.0f;
+}
+
+TMuddyBoat::TMuddyBoat(const char* name)
+    : TMapObjBase(name)
+    , mAccelForward(0.0f)
+    , mAccelBackward(0.0f)
+    , mSpeed(0.0f)
+    , mSpeedDecay(0.0f)
+    , mTurnAccel(0.0f)
+    , mTurnSpeed(0.0f)
+    , mTurnDecay(0.0f)
+    , mWallRadiusCenter(0.0f)
+    , mWallRadiusFront(0.0f)
+    , mWallRadiusBack(0.0f)
+    , mFrontOffset(0.0f)
+    , mBackOffset(0.0f)
+    , mRespawnTime(0)
+    , unk16C(0)
+{
+	mEffectPos.zero();
+	unk184 = 0.0f;
+	unk180 = 0.0f;
+	unk17C = 0.0f;
+}
+
+void TMareFall::calc()
+{
+	gpMSound->startSoundActor(MSD_SE_GE_FALL, &mPosition);
+	gpMSound->startSoundActor(MSD_SE_GE_FALL_UPPER, &fall_upper_pos);
+
+	// TODO: Particles.hpp has no names for these two; they are
+	gpMarioParticleManager->emit(MAPOBJ_MAREFALLSPLASH, &mPosition, 1, this);
+	gpMarioParticleManager->emit(MAPOBJ_MAREFALLSMOKE, &mPosition, 1, this);
+}
+
+void TMareFall::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+
+	SMS_LoadParticle("/scene/mapObj/mareFallSplash.jpa",
+	                 MAPOBJ_MAREFALLSPLASH);
+	SMS_LoadParticle("/scene/mapObj/mareFallSmoke.jpa",
+	                 MAPOBJ_MAREFALLSMOKE);
+}
+
+void TMareCork::loadAfter()
+{
+	mCannon = JDrama::TNameRefGen::search<TCannon>("砲台");
+	if (mCannon->receiveMessage(this, HIT_MESSAGE_TAKE))
+		mHeldObject = mCannon;
+
+	SMS_LoadParticle("/scene/map/map/ms_mare_gunwat_a.jpa",
+	                 MAP_MAP_MS_MARE_GUNWAT_A);
+	SMS_LoadParticle("/scene/map/map/ms_mare_gunwat_b.jpa",
+	                 MAP_MAP_MS_MARE_GUNWAT_B);
+	SMS_LoadParticle("/scene/map/map/ms_mare_gunwat_c.jpa",
+	                 MAP_MAP_MS_MARE_GUNWAT_C);
+
+	TMapObjBase::loadAfter();
+
+	mEffectPos.set(0.0f, 0.0f, 0.0f);
+	initAnmSound();
+}
+
+void TMareCork::moveObject()
+{
+	if (mCannon->isObject() && !mIsBlownOut) {
+		getMActor()->setBck("marecork");
+		setAnmSound("/scene/mapObj/marecork.bas");
+		removeMapCollision();
+		mIsBlownOut = true;
+	}
+}
+
+void TMareCork::calcRootMatrix()
+{
+	if (mIsBlownOut) {
+		getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(350.0f);
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(250.0f)) {
+			mCannon->startChorobeiShout();
+			gpItemManager->makeShineAppearWithDemo(
+			    "シャイン（ボス用）", "ボスシャインカメラ", mPosition.x,
+			    mPosition.y, mPosition.z);
+
+			mSoundPos.set(2773.0f, 8618.0f, 7006.0f);
+			JPABaseEmitter* emitter = gpMarioParticleManager->emitWithRotate(
+			    PARTICLE_MS_M_SPHIPD_HIT_B, &mSoundPos, 0x4000, 0xD82, 0, 0,
+			    nullptr);
+			if (emitter != nullptr) {
+				emitter->setGlobalScale(
+				    JGeometry::TVec3<f32>(2.5f, 2.5f, 2.5f));
+			}
+		}
+	}
+
+	TMapObjBase::calcRootMatrix();
+}
+
+MtxPtr TMareCork::getTakingMtx()
+{
+	return getMActor()->getModel()->getAnmMtx(2);
+}
+
+void TMareCork::drawObject(JDrama::TGraphics* graphics)
+{
+	TLiveActor::drawObject(graphics);
+
+	if (mIsBlownOut
+	    && getMActor()->getFrameCtrl(ANM_TYPE_BCK)->getFrame() > 250.0f) {
+		mSoundPos.set(2773.0f, 8618.0f, 7006.0f);
+		gpMSound->startSoundActor(MSD_SE_ENV_FALL_JET_LEVEL, &mSoundPos);
+
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    MAP_MAP_MS_MARE_GUNWAT_A, &mEffectPos, 1, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    MAP_MAP_MS_MARE_GUNWAT_B, &mEffectPos, 1, this);
+		gpMarioParticleManager->emitAndBindToPosPtr(
+		    MAP_MAP_MS_MARE_GUNWAT_C, &mEffectPos, 1, this);
+	}
+}
+
+BOOL TMareEventPoint::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
+		// Only clean water counts, and only once the spray has slowed down
+		// enough to be a deliberate hose rather than a passing jet.
+		if (!SMSGetModelWaterManagerBound()->checkFlagBottom4Bits(
+		        TMapObjBase::getWaterID(sender), 1)) {
+			if (TMapObjBase::getWaterPlane(sender) != nullptr
+			    && TMapObjBase::getWaterPlane(sender)->mNormal.y < 0.1f) {
+				if (mDepressWall->startEvent()) {
+					gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT,
+					                             &sender->mPosition, 0,
+					                             nullptr);
+					gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK,
+					                        &mPosition, 0, 0.0f, 0, 0, 4);
+				}
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void TMareEventPoint::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TActor::load(stream);
+	initHitActor(0x40000236, 0, 0, 0.0f, 0.0f, 300.0f, 600.0f);
+}

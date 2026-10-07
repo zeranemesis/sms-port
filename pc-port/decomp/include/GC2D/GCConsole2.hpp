@@ -1,0 +1,349 @@
+#ifndef GCCONSOLE2_HPP
+#define GCCONSOLE2_HPP
+
+#include <dolphin/types.h>
+#include <JSystem/JDrama/JDRViewObj.hpp>
+#include <JSystem/JUtility/JUTColor.hpp>
+#include <JSystem/JUtility/JUTPoint.hpp>
+
+class THelpActor;
+class TBlendPane;
+class J2DOrthoGraph;
+class J2DSetScreen;
+class J2DScreen;
+class TBoundPane;
+class JUTTexture;
+class TExPane;
+class JPABaseEmitter;
+class J2DPicture;
+class J2DPane;
+class J2DWindow;
+class J2DTextBox;
+class TMessageLoader;
+class TBathtub;
+class TBossEel;
+class TConsoleStr;
+
+// Balloon message ids passed to TGCConsole2::startAppearBalloon(). The ids
+// below 0x40 index the shared balloon table; the 0xE#### ones are a separate
+// group. Only the ids a caller's context pins down are named.
+// fabricated: the names come from the functions that raise each message in
+// tinkoopa.cpp, not from anything in the binary.
+enum EnumBalloonMessage {
+	BALLOON_MSG_TINKOOPA_KILLER_APPROACHING = 0x9,
+	BALLOON_MSG_TINKOOPA_LAP                = 0xA,
+	BALLOON_MSG_TINKOOPA_FIRST_FLAME        = 0xB,
+	BALLOON_MSG_TINKOOPA_PARTS_HIT          = 0x24,
+};
+
+class TGCConsole2 : public JDrama::TViewObj {
+public:
+	TGCConsole2(const char* name = "<TGCConsole2>");
+	void load(JSUMemoryInputStream&);
+	void loadAfter();
+	void entryHelpActor(THelpActor*);
+	void startCameraDemo();
+	void resetMoveTank();
+	void endCameraDemo();
+	void startAppearTank();
+	void startDisappearTank();
+	void startAppearCoin();
+	void startDisappearCoin();
+	void startInsertLife(int);
+	void resetLife(int);
+	bool startAppearLife(int);
+	bool startDisappearLife(int);
+	void startDownLeftBot();
+	void startUpLeftBot();
+	void startAppearTelop(bool);
+	void startDisappearTelop();
+	void startDisappearTimer();
+	void startAppearTimer(int, s32);
+	void startInsertTimer();
+	void startAppearJetBalloon(int, int);
+	void startInsertJetBalloon();
+	void startAppearRedCoin();
+	void pauseIn();
+	void pauseOut();
+	bool startDisappearBalloon(u32, bool);
+	bool startAppearBalloon(u32, bool);
+	void startDisappearStar();
+	void startAppearStar();
+	void drawWaterBack();
+	void startDisappearMario();
+	void startAppearMario(bool);
+	void processMoveNozzle();
+	u32* checkDolpic8();
+	void countShine();
+	void countBlueCoin();
+	void changeNum(TBlendPane*, int, int);
+	void setTimer(s32);
+	void startMoveTimer(int);
+	void stopMoveTimer();
+	int getFinishedTime();
+
+	void perform(u32 cue, JDrama::TGraphics* graphics);
+
+	inline bool processAppearLife(int);
+	inline bool processInsertLife(int);
+	inline bool processAppearStar(int);
+	inline bool processDownCoin(int);
+	inline bool processAppearTank(int);
+	inline bool processAppearCoin(int);
+	inline bool processAppearMario(int);
+	inline bool processDrawTelop(u32);
+	inline void checkChangeTelopArray();
+	inline bool processAppearJet(int);
+	inline bool processAppearRed(int);
+	inline bool processAppearTimer(int);
+	inline bool processAppearBalloon();
+	inline bool processDisappearBalloon();
+	inline void drawJuice(J2DOrthoGraph&, u32);
+	inline void drawWater(J2DOrthoGraph&);
+
+	static JUTPoint cDownTopPoint;
+	static JUTPoint cDownMidPoint;
+	static JUTPoint cDownBotPoint;
+	static JUTPoint cUpTopPoint;
+	static JUTPoint cUpMidPoint;
+	static JUTPoint cUpBotPoint;
+	static JUTPoint cCoinTopPoint;
+	static JUTPoint cCoinMidPoint;
+	static JUTPoint cCoinBotPoint;
+
+public:
+	// fabricated: header round 20 accessor candidates
+	TExPane* getUnk140() { return unk140; }
+	TExPane* getUnk160() { return unk160; }
+	s16 getUnk26A() const { return unk26A; }
+	s16 getUnk3CC() const { return unk3CC; }
+
+	/* 0x10 */ int unk10;
+	/* 0x14 */ u32 unk14;
+	/* 0x18 */ int unk18;
+	/* 0x1C */ s16 unk1C;
+	/* 0x20 */ s32 unk20;
+	/* 0x24 */ s32 unk24;
+	/* 0x28 */ s32 unk28;
+	/* 0x2C */ s32 unk2C;
+	/* 0x30 */ s32 unk30;
+	/* 0x34 */ u8 unk34;
+	/* 0x35 */ u8 unk35;
+	/* 0x36 */ u8 unk36;
+	/* 0x37 */ u8 unk37;
+	/* 0x38 */ u8 unk38;
+	/* 0x39 */ u8 unk39;
+	/* 0x3A */ u8 unk3A;
+	/* 0x3B */ u8 unk3B;
+	/* 0x3C */ u8 unk3C;
+	/* 0x3D */ u8 unk3D;
+	/* 0x3E */ u8 unk3E;
+	/* 0x3F */ u8 unk3F;
+	/* 0x40 */ u8 unk40;
+	/* 0x41 */ u8 unk41;
+	/* 0x42 */ u8 unk42;
+	/* 0x43 */ u8 unk43;
+	/* 0x44 */ u8 unk44;
+	/* 0x45 */ u8 unk45;
+	/* 0x46 */ u8 unk46;
+	/* 0x47 */ u8 unk47;
+	/* 0x48 */ u8 unk48;
+	/* 0x49 */ u8 unk49;
+	/* 0x4A */ u8 unk4A;
+	/* 0x4B */ u8 unk4B;
+	/* 0x4C */ u8 unk4C;
+	/* 0x4D */ u8 unk4D;
+	/* 0x4E */ u8 unk4E;
+	/* 0x4F */ u8 unk4F;
+	/* 0x50 */ u8 unk50;
+	/* 0x51 */ u8 unk51;
+	/* 0x54 */ u32 unk54;
+	/* 0x58 */ u8 unk58;
+	/* 0x59 */ u8 unk59;
+	/* 0x5A */ u8 unk5A;
+	/* 0x5C */ u32 unk5C;
+	/* 0x60 */ s8 unk60;
+	/* 0x64 */ u32 unk64;
+	/* 0x68 */ s8 unk68;
+	/* 0x6C */ s32 unk6C;
+	/* 0x70 */ u16 unk70;
+	/* 0x72 */ s8 unk72;
+	/* 0x73 */ u8 unk73;
+	/* 0x74 */ u16 unk74;
+	/* 0x76 */ s8 unk76;
+	/* 0x77 */ u8 unk77;
+	/* 0x78 */ u16 unk78;
+	/* 0x7A */ char unk7A[2];
+	/* 0x7C */ s16 unk7C;
+	/* 0x80 */ u32 unk80;
+	/* 0x84 */ u16 unk84;
+	/* 0x86 */ u16 unk86;
+	/* 0x88 */ s8 unk88;
+	/* 0x8A */ u16 unk8A;
+	/* 0x8C */ int unk8C;
+	/* 0x90 */ THelpActor** unk90;
+	/* 0x94 */ TConsoleStr* unk94;
+	/* 0x98 */ s16 unk98;
+	/* 0x9A */ JUtility::TColor unk9A;
+	/* 0x9E */ JUtility::TColor unk9E;
+	/* 0xA2 */ JUtility::TColor unkA2;
+	/* 0xA6 */ JUtility::TColor unkA6;
+	/* 0xAA */ JUtility::TColor unkAA;
+	/* 0xB0 */ J2DSetScreen* unkB0;
+	/* 0xB4 */ u8 unkB4;
+	/* 0xB6 */ s16 unkB6;
+	/* 0xB8 */ u32 unkB8;
+	/* 0xBC */ TBathtub* unkBC;
+	/* 0xC0 */ TBossEel* unkC0;
+	/* 0xC4 */ void* unkC4;
+	/* 0xC8 */ TBoundPane* unkC8;
+	/* 0xCC */ TBoundPane* unkCC;
+	/* 0xD0 */ TBoundPane* unkD0;
+	/* 0xD4 */ TBlendPane* unkD4[3];
+	/* 0xE0 */ JUTTexture* unkE0[10];
+	/* 0x108 */ TExPane* unk108;
+	/* 0x10C */ char unk10C[0x124 - 0x10C];
+	/* 0x124 */ JPABaseEmitter* unk124;
+	/* 0x128 */ TBoundPane* unk128;
+	/* 0x12C */ TBoundPane* unk12C;
+	/* 0x130 */ TBoundPane* unk130;
+	/* 0x134 */ TBlendPane* unk134[3];
+	/* 0x140 */ TExPane* unk140;
+	/* 0x144 */ JPABaseEmitter* unk144;
+	/* 0x148 */ TBoundPane* unk148;
+	/* 0x14C */ TBoundPane* unk14C;
+	/* 0x150 */ TBoundPane* unk150;
+	/* 0x154 */ TBoundPane* unk154[3];
+	/* 0x160 */ TExPane* unk160;
+	/* 0x164 */ JPABaseEmitter* unk164;
+	/* 0x168 */ u32 unk168;
+	/* 0x16C */ u16 unk16C;
+	/* 0x16E */ char unk16E[2];
+	/* 0x170 */ s32 unk170;
+	/* 0x174 */ TBoundPane* unk174;
+	/* 0x178 */ TBoundPane* unk178;
+	/* 0x17C */ J2DPane* unk17C[18];
+	/* 0x1C4 */ TBoundPane* unk1C4;
+	/* 0x1C8 */ s16 unk1C8;
+	/* 0x1CA */ s16 unk1CA;
+	/* 0x1CC */ u8 unk1CC[4];
+	/* 0x1D0 */ JUTRect unk1D0[9];
+	/* 0x260 */ TBoundPane* unk260;
+	/* 0x264 */ u16 unk264;
+	/* 0x266 */ u8 unk266;
+	/* 0x268 */ u16 unk268;
+	/* 0x26A */ s16 unk26A;
+	/* 0x26C */ TBoundPane* unk26C;
+	/* 0x270 */ TBoundPane* unk270;
+	/* 0x274 */ TBoundPane* unk274;
+	/* 0x278 */ TBoundPane* unk278[4];
+	/* 0x288 */ J2DPane* unk288;
+	/* 0x28C */ J2DPane* unk28C[4];
+	/* 0x29C */ TBoundPane* unk29C;
+	/* 0x2A0 */ J2DPicture* unk2A0[3];
+	/* 0x2AC */ J2DPicture* unk2AC[3];
+	/* 0x2B8 */ f32 unk2B8;
+	/* 0x2BC */ JUTRect unk2BC[3];
+	/* 0x2EC */ JUtility::TColor unk2EC[3];
+	/* 0x2F8 */ TExPane* unk2F8;
+	/* 0x2FC */ JUTRect unk2FC;
+	/* 0x30C */ u8 unk30C;
+	/* 0x310 */ int unk310;
+	/* 0x314 */ J2DPane* unk314[4];
+	/* 0x324 */ J2DPane* unk324;
+	/* 0x328 */ J2DPicture* unk328;
+	/* 0x32C */ J2DPicture* unk32C;
+	/* 0x330 */ u8 unk330;
+	/* 0x334 */ J2DPane* unk334[22];
+	/* 0x38C */ TBoundPane* unk38C;
+	/* 0x390 */ TBoundPane* unk390;
+	/* 0x394 */ TBoundPane* unk394;
+	/* 0x398 */ TBoundPane* unk398;
+	/* 0x39C */ TBoundPane* unk39C[3];
+	/* 0x3A8 */ TExPane* unk3A8;
+	/* 0x3AC */ u8 unk3AC;
+#if defined(VERSION_GMSE01)
+	// The US build inserts a halfword and a byte here, which pushes the
+	// "appear animation belongs to the camera demo" flag from 0x3AD to 0x3B0
+	// and every later member by four bytes.
+	// TODO: recover what the US halfword at 0x3AE and byte at 0x3AD hold.
+	/* 0x3AD */ u8 unk3AD_US;
+	/* 0x3AE */ u16 unk3AE_US;
+	/* 0x3B0 */ u8 mAppearFromDemo;
+	// Following names/offset comments retain the Japanese layout; US is +4.
+#else
+	/* 0x3AD */ u8 mAppearFromDemo;
+	/* 0x3AE */ u8 unk3AE[2];
+#endif
+	/* 0x3B0 */ J2DWindow* unk3B0;
+	/* 0x3B4 */ J2DTextBox* unk3B4;
+	/* 0x3B8 */ J2DTextBox* unk3B8;
+	/* 0x3BC */ JUTRect unk3BC;
+	/* 0x3CC */ s16 unk3CC;
+	/* 0x3D0 */ TMessageLoader* unk3D0;
+	/* 0x3D4 */ JSUInputStream* unk3D4;
+	/* 0x3D8 */ JSUOutputStream* unk3D8;
+	/* 0x3DC */ JSUOutputStream* unk3DC;
+	/* 0x3E0 */ u32 unk3E0;
+	/* 0x3E4 */ int unk3E4;
+	/* 0x3E8 */ s16 unk3E8;
+	/* 0x3EC */ f32 unk3EC;
+	/* 0x3F0 */ s16 unk3F0;
+	/* 0x3F4 */ u32 unk3F4;
+	/* 0x3F8 */ u8 unk3F8;
+	/* 0x3F9 */ char unk3F9[0x3];
+	/* 0x3FC */ TExPane* unk3FC;
+	/* 0x400 */ TBoundPane* unk400;
+	/* 0x404 */ TBoundPane* unk404;
+	/* 0x408 */ TBoundPane* unk408;
+	/* 0x40C */ TBoundPane* unk40C;
+	/* 0x410 */ TBoundPane* unk410;
+	/* 0x414 */ TBlendPane* unk414[4];
+	/* 0x424 */ u8 unk424[2];
+	/* 0x426 */ u8 unk426;
+	/* 0x428 */ TExPane* unk428;
+	/* 0x42C */ TBoundPane* unk42C;
+	/* 0x430 */ TBoundPane* unk430;
+	/* 0x434 */ TBoundPane* unk434;
+	/* 0x438 */ TBoundPane* unk438;
+	/* 0x43C */ TBoundPane* unk43C[2];
+	/* 0x444 */ u32 unk444;
+	/* 0x448 */ u8 unk448;
+	/* 0x44C */ TExPane* unk44C;
+	/* 0x450 */ TBoundPane* unk450;
+	/* 0x454 */ TBoundPane* unk454;
+	/* 0x458 */ TBoundPane* unk458[10];
+	/* 0x480 */ TBoundPane* unk480[3];
+	/* 0x48C */ JUTRect unk48C;
+	/* 0x49C */ JUTRect unk49C;
+	/* 0x4AC */ JUTRect unk4AC;
+	/* 0x4BC */ JUTPoint unk4BC[6];
+	/* 0x4EC */ JUTPoint unk4EC[2];
+	/* 0x4FC */ int unk4FC;
+	/* 0x500 */ J2DPane* unk500[2];
+	/* 0x508 */ int unk508;
+	/* 0x50C */ int unk50C;
+	/* 0x510 */ bool unk510;
+	/* 0x514 */ s32 unk514;
+	/* 0x518 */ int unk518;
+	/* 0x51C */ u8 unk51C;
+	/* 0x520 */ TExPane* unk520;
+	/* 0x524 */ TExPane* unk524;
+	/* 0x528 */ J2DTextBox* unk528;
+	/* 0x52C */ J2DTextBox* unk52C;
+	/* 0x530 */ TMessageLoader* unk530;
+	/* 0x534 */ JUTRect unk534;
+	/* 0x544 */ JUTRect unk544;
+	/* 0x554 */ s32 mTelopTextWidth;
+	/* 0x558 */ u8 unk558;
+	/* 0x55C */ u32 unk55C;
+	/* 0x560 */ s16 unk560;
+	/* 0x562 */ s16 unk562;
+	/* 0x564 */ f32 unk564;
+	/* 0x568 */ f32 unk568;
+	/* 0x56C */ u8 unk56C;
+	/* 0x56D */ u8 unk56D;
+	/* 0x570 */ u32* unk570; // Some sort of Dolphic News struct?
+};
+
+#endif

@@ -1,0 +1,33 @@
+# SMS port key bindings for controller 1.
+# Format: CONTROL = KEY [KEY ...]   (a line replaces that control's defaults)
+# Controls: A B X Y Z L R START DPAD_UP DPAD_DOWN DPAD_LEFT DPAD_RIGHT
+#           STICK_UP STICK_DOWN STICK_LEFT STICK_RIGHT
+#           CSTICK_UP CSTICK_DOWN CSTICK_LEFT CSTICK_RIGHT HALF_TILT QUIT
+# Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
+#       LSHIFT RSHIFT LCTRL RCTRL LALT RALT KP_0..KP_9 KP_ENTER F1..F4
+#       COMMA PERIOD SLASH SEMICOLON ... or #<SDL scancode>
+# Loaded from ./bindings.txt (run.sh starts the game in this folder; or
+# ../../bindings.txt when started from build/<os>-<arch>/),
+# or from the path in SMS_BINDINGS. These are the built-in defaults:
+A = SPACE X
+B = LSHIFT RSHIFT C
+X = V
+Y = F
+Z = Z
+L = Q
+R = E
+START = ENTER
+DPAD_UP = 1 KP_8
+DPAD_DOWN = 2 KP_2
+DPAD_LEFT = 3 KP_4
+DPAD_RIGHT = 4 KP_6
+STICK_UP = UP W
+STICK_DOWN = DOWN S
+STICK_LEFT = LEFT A
+STICK_RIGHT = RIGHT D
+CSTICK_UP = I
+CSTICK_DOWN = K
+CSTICK_LEFT = J
+CSTICK_RIGHT = L
+HALF_TILT = LCTRL
+QUIT = ESCAPE

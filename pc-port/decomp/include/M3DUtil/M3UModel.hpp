@@ -1,0 +1,103 @@
+#ifndef M3DUTIL_M3U_MODEL_HPP
+#define M3DUTIL_M3U_MODEL_HPP
+
+#include <JSystem/JDrama/JDRGraphics.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+
+struct M3UMtxCalcSetInfo;
+class J3DModel;
+class J3DTexNoAnm;
+class J3DMtxCalc;
+class J3DMtxCalcBasicAnm;
+class J3DMtxCalcSoftimageAnm;
+
+class M3UModelCommon {
+public:
+	M3UModelCommon()
+	    : unk4(nullptr)
+	    , unk8(nullptr)
+	    , unk10(nullptr)
+	    , unk14(nullptr)
+	{
+	}
+	virtual J3DMtxCalc* getMtxCalc(const M3UMtxCalcSetInfo&);
+
+	// Fabricated
+	J3DTexNoAnm* getTexNoAnm(u8 idx) { return unkC[idx]; }
+
+	// Fabricated; getMtxCalc() above returns the address of one of these two.
+	J3DMtxCalcBasicAnm& getMtxCalcBasicAnm(u8 idx) { return unk10[idx]; }
+	// Fabricated
+	J3DMtxCalcSoftimageAnm& getMtxCalcSIAnm(u8 idx) { return unk14[idx]; }
+
+public:
+	/* 0x4 */ J3DAnmTransform** unk4;
+	/* 0x8 */ J3DAnmTexPattern** unk8;
+	/* 0xC */ J3DTexNoAnm** unkC;
+	/* 0x10 */ J3DMtxCalcBasicAnm* unk10;
+	/* 0x14 */ J3DMtxCalcSoftimageAnm* unk14;
+};
+
+class M3UMtxCalcSetInfo {
+public:
+	/* 0x0 */ u16 mJntIdx;
+	/* 0x2 */ u8 mAnmType;
+	/* 0x3 */ u8 mMtxCalcIdx;
+	/* 0x4 */ u8 mAnmTransformIdx;
+	/* 0x5 */ u8 mFrameCalcIdx;
+};
+
+class M3UModel {
+public:
+	M3UModel()
+	    : unk4(nullptr)
+	    , unk8(nullptr)
+	    , unkC(nullptr)
+	    , unk10(0)
+	    , unk14(nullptr)
+	    , unk1C(nullptr)
+	{
+	}
+	virtual void changeMtxCalcAnmTransform(int, u8);
+	virtual void changeAnmTexPattern(int, u8);
+	virtual void setMtxCalc(const M3UMtxCalcSetInfo&) { }
+	virtual void updateIn();
+	virtual void updateOut();
+	virtual void entryIn();
+	virtual void entryOut();
+
+	void perform(u32 cue, JDrama::TGraphics* graphics);
+	void entryOutTexPatternAnm();
+	void entryInTexPatternAnm();
+	void updateInTexPatternAnm();
+	void updateInMotion();
+
+	// Fabricated
+	J3DFrameCtrl& getFrameCtrl(int idx) { return unkC[idx]; }
+
+	// Fabricated
+	J3DModel* getModel() { return unk8; }
+
+	// Fabricated
+	BOOL someAnimationCompleted() const
+	{
+		return unkC[1].checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE
+		                          | J3DFrameCtrl::STATE_LOOPED_ONCE);
+	}
+
+public:
+	/* 0x4 */ M3UModelCommon* unk4;
+	/* 0x8 */ J3DModel* unk8;
+	/* 0xC */ J3DFrameCtrl* unkC; // Array of size 3
+	/* 0x10 */ u16 unk10;
+	/* 0x14 */ M3UMtxCalcSetInfo* unk14; // Size matches unk1C
+	/* 0x18 */ u32 unk18;
+	struct Unk1CStruct {
+		u8 unk0;
+		u8 unk1;
+	};
+	/* 0x1C */ Unk1CStruct* unk1C;
+};
+
+#endif

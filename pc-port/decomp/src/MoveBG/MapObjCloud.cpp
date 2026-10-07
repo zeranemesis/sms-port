@@ -1,0 +1,265 @@
+#include <MoveBG/MapObjCloud.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Map/MapCollisionManager.hpp>
+#include <Enemy/Graph.hpp>
+#include <Player/MarioAccess.hpp>
+#include <MarioUtil/PacketUtil.hpp>
+#include <MarioUtil/ShadowUtil.hpp>
+#include <JSystem/JMath.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+f32 TRideCloud::mMoveSpeedDefault = 2.0f;
+f32 TRideCloud::mCushionLen       = 80.0f;
+f32 TRideCloud::mCushionSpeed     = 0.015f;
+f32 TRideCloud::mScaleSpeed       = 0.005f;
+
+TRideCloud::TRideCloud(const char* name)
+    : TRailMapObj(name)
+    , unk150(0.0f)
+    , unk154(0.0f)
+    , unk158(0)
+    , unk15C(0.0f)
+    , unk16C(0)
+{
+	unk15C = mMoveSpeedDefault;
+	unk160 = 1.0f;
+	unk164 = 1.0f;
+	unk168 = 1.0f;
+
+	unk16E.r = 0;
+	unk16E.g = 0;
+	unk16E.b = 0;
+	unk16E.a = 0;
+}
+
+u32 TRideCloud::touchWater(THitActor*)
+{
+	unk158 += 10;
+	if (unk158 > 600)
+		unk158 = 600;
+	return 1;
+}
+
+// The exact sibling `TRailMapObj::setGroundCollision` puts the scratch matrix
+// at 0x18 in the same 0x50 frame and differs only by a guard; the four bytes
+// of low region that guard's inlined reads make are supplied here by reading
+// `mMapCollisionManager` through one level that binds its result. This stands
+// in for a `TMapObjBase::getMapCollisionManager()` accessor of that shape, but
+// `MoveBG/MapObjBase.hpp` is shared with source-linked TUs, so it is parked
+// here and reported.
+// Measured, all at frame 0x50 unless noted: a binding level on the collision
+// pointer itself or on `getAnmMtx(0)` is +8 (matrix at 0x20, frame 0x58), a
+// non-binding `RideCloudSetMtx(mtx, src)` wrapper is -8, and `getUnk8()` on
+// the inner pointer is +8. Worth zero: `TPosition3f` instead of `TMtx34f`, a
+// named `MtxPtr` or `J3DModel*`, function-scope instead of block-scope for the
+// matrix, an early return, and `mMapCollisionManager->unk8->moveMtx(mtx)` in
+// place of the binding `if`. `mtx.set(*(const TMtx34f*)...)` also lands it (it
+// routes through the `set(const SMatrix34C&)` overload, whose extra conversion
+// binding is the same +4) but needs a reinterpret cast.
+// Stays parked: a binding override of `getMapCollisionManager()` on
+// TMapObjBase costs three other MoveBG functions (trial table at its
+// declaration in MoveBG/MapObjBase.hpp).
+static inline TMapCollisionManager* RideCloudCollisionManager(TRideCloud* cloud)
+{
+	TMapCollisionManager* manager = cloud->mMapCollisionManager;
+	return manager;
+}
+
+void TRideCloud::setGroundCollision()
+{
+	if (RideCloudCollisionManager(this)) {
+		// TODO: this is used in MapObjRailBlock too, inline global?
+		TMtx34f mtx;
+		mtx.set(getModel()->getAnmMtx(0));
+		if (TMapCollisionBase* col = mMapCollisionManager->unk8)
+			col->moveMtx(mtx);
+	}
+}
+
+void TRideCloud::calcRootMatrix()
+{
+	f32 fVar2 = JMAHermiteInterpolation(unk150, 0.0f, 0.0f, 0.0f, 1.0f,
+	                                    -mCushionLen, 0.0f);
+
+	MsMtxSetTRS(getModel()->getBaseTRMtx(), mPosition.x, mPosition.y + fVar2,
+	            mPosition.z, mRotation.x, mRotation.y, mRotation.z,
+	            mScaling.x * unk160, mScaling.y * unk164, mScaling.z * unk168);
+}
+
+void TRideCloud::initMapObj()
+{
+	TRailMapObj::initMapObj();
+	unk154 = mScaledBodyRadius;
+}
+
+void TRideCloud::load(JSUMemoryInputStream& stream)
+{
+	TRailMapObj::load(stream);
+	u32 r, g, b, a;
+	stream >> r >> g >> b >> a;
+	unk16E.r = r & 0xff;
+	unk16E.g = g & 0xff;
+	unk16E.b = b & 0xff;
+	unk16E.a = 0xff;
+	stream >> r >> g >> b >> a;
+	unk176.r = r & 0xff;
+	unk176.g = g & 0xff;
+	unk176.b = b & 0xff;
+	unk176.a = 0xff;
+	SMS_InitPacket_TwoTevColor(getModel(), 0, GX_TEVREG0, &unk16E, GX_TEVREG1,
+	                           &unk176);
+	offLiveFlag(LIVE_FLAG_UNK400);
+	onLiveFlag(LIVE_FLAG_UNK8);
+}
+
+u32 TRideCloud::getShadowType() { return SHADOW_TYPE_CIRCLE; }
+
+// TODO: 189 of 193 instructions and the frame are exact; what is left is a
+// three-register FPR permutation in `mDamageRadius`' two multiplies, where
+// retail parks the 300.0f literal in f2 (the register `fVar8` has just freed)
+// and unk160 in f1, and we get f1/f2. `getScaling()` fixed the `mScaling.x`
+// half of it (that read really does go through the accessor: it puts the load
+// in retail's f0); the literal's register resists all eight groupings and
+// operand orders of the product, a named intermediate, `*=`, and a binding
+// level on unk160.
+//
+// Closure batch 129 split the permutation in two and solved half of it on
+// paper. **Naming the product** -- `f32 baseRadius = 300.0f;
+// baseRadius = baseRadius * getScaling().x; mDamageRadius = baseRadius *
+// unk160;` -- puts the literal in retail's f2 and both `fmuls` destinations on
+// target, leaving only the two member loads swapped (retail `lfs f0, 0x24` /
+// `lfs f1, 0x160`, ours f1/f0). Every remaining spelling leaves exactly that
+// swap: `*=` for the second multiply (it moves the destination to f2 instead),
+// `unk160 * baseRadius`, a named `f32 radiusScale = unk160` (+8 of frame, or
+// frame-exact paired with `node.checkFlag(0x1000)`'s -8), a named
+// `f32 scale = getScaling().x` (+8), raw `mScaling.x` (-8), and
+// `300.0f * (getScaling().x * unk160)` (which reorders the loads themselves).
+// So the two adjacent member loads are allocated in the opposite order to
+// retail's and no source order reaches it; the natural single-expression
+// spelling is kept below because the named-product form is no closer by
+// marker count and reads worse.
+// Research batch 171 re-swept this with fifteen more spellings (every grouping
+// and operand order, reusing `fVar8` as the literal's home, naming one or both
+// member reads in both orders, raw `mScaling.x`, and `mDamageHeight` first):
+// all are four markers or worse, so the site is exhausted.
+// Batch cc24 (inline-argument lever) re-swept it again: passing unk160 as a
+// void helper's argument puts both loads in retail's registers (300.0f in f2,
+// unk160 in f1) but only in the groupings that multiply unk160 by the scale
+// first (`s * getScaling().x * 300.0f`, `300.0f * (x * s)`: two markers, the
+// two `fmuls`); every spelling that multiplies 300 by the scale first (all 12
+// orders and groupings, the scale or the literal as a parameter too,
+// setDamageParams, a returning level, fVar8 scoped or as a clamp helper's
+// argument) is back at four. Retail's product-first order with those loads
+// has not been reached.
+//
+// The 56 bytes of dead low region this body was missing are five inline
+// expansions, each a member read through one level that binds its result.
+// Measured from the 0x90 base: `mMapCollisionManager` +8, `checkRailFlag`
+// (both sites) +8, `unk138->getGraph()` +8, `unk138->getCurrent()` +0x10,
+// `getScaling().x` +8 = retail's 0xc8 exactly; also +8 each and
+// interchangeable with the last one: `getCurGraphIndex()`, any single
+// `node.getRailNode()` site (all three are +0x20). Worth zero:
+// `SMS_GetMarioSpeedY()` alone (+8 paired with the collision-manager level).
+// Worse: a binding level on `MsClamp<f32>` (+2 instructions),
+// `node.checkFlag()` over `getRailNode()->mFlags` (-8).
+// Header round 20 promoted the two graph levels to `TRailMapObj::getGraph()`
+// and `getCurrentNode()` in `MoveBG/MapObjRailBlock.hpp` (codegen-identical to
+// the parked helpers they replaced, whole-tree). The rail-flag level has to
+// stay parked: the trial tables at `TRailMapObj::checkRailFlag` and
+// `TMapObjBase::getUnkF4` record why binding inside those bodies is not the
+// same as a level above them.
+static inline bool RideCloudRailFlag(TRideCloud* cloud, u32 flag)
+{
+	bool set = cloud->checkRailFlag(flag);
+	return set;
+}
+
+void TRideCloud::control()
+{
+	TMapObjBase::control();
+	TMapCollisionBase* col = RideCloudCollisionManager(this)->unk8;
+	if (*gpMarioSpeedY > 0.0f)
+		col->setAllBGType(0x400);
+	else
+		col->setAllBGType(0);
+
+	checkMarioRiding();
+	if (!RideCloudRailFlag(this, 0x1)) {
+		unk150 = MsClamp<f32>(unk150 - mCushionSpeed, 0.0f, 1.0f);
+	} else {
+		unk150 = MsClamp<f32>(unk150 + mCushionSpeed, 0.0f, 1.0f);
+	}
+
+	f32 fVar8;
+	if (unk158 > 0) {
+		fVar8 = mScaleSpeed;
+		--unk158;
+	} else {
+		fVar8 = -mScaleSpeed;
+	}
+
+	unk160        = MsClamp<f32>(unk160 + fVar8, 1.0f, 3.0f);
+	unk168        = MsClamp<f32>(unk168 + fVar8, 1.0f, 3.0f);
+	// TODO: retail's `prod * unk160` order needs both operands leaves (the
+	// literal-first product in a chain puts the leaf unk160 left). Left: an
+	// f0/f1 swap of scaling.x and unk160 (regalloc: x needs a higher vreg,
+	// i.e. unk160 generated first); inert: a named unk160 before or after.
+	// Also inert (c-m24): raw mScaling.x (+18), a two-argument product inline
+	// taking (300 * x, unk160), `radius *= unk160`, `unk160 * radius`.
+	// c-k1 (regalloc.py on a dbg.sh dump): the only differing webs are the
+	// two loads (x = f59, unk160 = f60); moving x's web to colouring
+	// position 0 fixes both, i.e. retail numbered unk160's load below x's
+	// (generated first, then scheduled after it). Inert: reusing the
+	// two-definition `fVar8` for unk160 before or after `radius`.
+	f32 radius = 300.0f;
+	radius *= getScaling().x;
+	mDamageRadius = radius * unk160;
+	mDamageHeight = 50.0f;
+	calcEntryRadius();
+	if (!calcRecycle() && !RideCloudRailFlag(this, 0x2)) {
+		if (unk16C != 0) {
+			--unk16C;
+		} else {
+			// The graph has to be named: retail keeps it in r28-r31
+			// across moveToNextNode/moveTo and reads the node array
+			// back out of it for node2, where re-reading unk138->unk0
+			// costs an extra load and one callee-saved register.
+			TGraphWeb* graph = getGraph();
+			if (!graph || graph->isDummy())
+				return;
+
+			if (moveToNextNode(unk15C)) {
+				TGraphNode& node = getCurrentNode();
+
+				if ((node.getRailNode()->mFlags & 0x1000)) {
+					unk14A = 180;
+					unk148 = 2;
+				}
+
+				unk138->moveToShortestNext();
+
+				if (node.getRailNode()->mFlags & 0x800)
+					unk16C = node.getRailNode()->mPitch;
+
+				TRailNode* node2
+				    = graph->getGraphNode(unk138->getCurGraphIndex())
+				          .getRailNode();
+				if (node2->mYaw != 0xffff)
+					unk15C = node2->mYaw * 0.01f;
+
+				resetStep(unk15C);
+			}
+		}
+	}
+}
+
+void TRideCloud::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_CALC_VIEW)
+		mScaledBodyRadius = unk154 * mScaling.x;
+	TRailMapObj::perform(cue, graphics);
+}

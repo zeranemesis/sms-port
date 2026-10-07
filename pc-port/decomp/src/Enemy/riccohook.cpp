@@ -1,0 +1,219 @@
+#include <Enemy/RiccoHook.hpp>
+#include <Strategic/Spine.hpp>
+#include <Enemy/Graph.hpp>
+#include <JSystem/JMath.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+// Binding level over the group's child list: the pointer-then-reference
+// pair keeps two binding temporaries' homes inside the JGadget push chain,
+// which is where retail's between-group words sit (research batch cc39; with
+// one named reference the second pool group lands exact but the first is 4
+// high).
+static inline JGadget::TList_pointer<THitActor*>&
+RiccohookChildren(TIdxGroupObj* group)
+{
+	JGadget::TList_pointer<THitActor*>* list = &group->getChildren();
+	JGadget::TList_pointer<THitActor*>& children = *list;
+	return children;
+}
+
+THookTake::THookTake(TRiccoHook* owner, const char* name)
+    : TTakeActor(name)
+    , mOwner(owner)
+{
+	initHitActor(0x400000BB, 1, -0x80000000,
+	             mOwner->getSaveLoadParam()->mSLHitRadius.get(),
+	             mOwner->getSaveLoadParam()->mSLHitHeight.get(),
+	             mOwner->getSaveLoadParam()->mSLHitRadius.get(),
+	             mOwner->getSaveLoadParam()->mSLHitHeight.get());
+
+	RiccohookChildren(
+	    JDrama::TNameRefGen::search<TIdxGroupObj>("オブジェクトグループ"))
+	    .push_back(this);
+}
+
+MtxPtr THookTake::getTakingMtx() { return nullptr; }
+
+f32 THookTake::getRadiusAtY(f32 y) const
+{
+	return mOwner->getSaveLoadParam()->mSLHangRadius.get();
+}
+
+BOOL THookTake::receiveMessage(THitActor* sender, u32 message)
+{
+	if (sender->mActorType == 0x80000001) {
+		if (message == HIT_MESSAGE_UNK5) {
+			mHeldObject = (TTakeActor*)sender;
+			return TRUE;
+		}
+
+		if (message == HIT_MESSAGE_THROWN || message == HIT_MESSAGE_UNK8) {
+			mHeldObject = nullptr;
+			return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+void THookTake::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if ((cue & CUE_MOVE) != 0) {
+		mPosition = mOwner->getPosition();
+		mPosition.y -= 900.0f;
+	}
+
+	THitActor::perform(cue, graphics);
+
+	if ((cue & CUE_MOVE) != 0 && mHeldObject != nullptr) {
+		moveHeldObject();
+	}
+}
+
+THookParams::THookParams(const char* path)
+    : TSpineEnemyParams(path)
+    , PARAM_INIT(mSLHitHeight, 900.0f)
+    , PARAM_INIT(mSLHitRadius, 120.0f)
+    , PARAM_INIT(mSLHangRadius, 30.0f)
+    , PARAM_INIT(mSLMoveSpeed, 4.0f)
+{
+	TParams::load(mPrmPath);
+}
+
+TRiccoHook::TRiccoHook(const char* name)
+    : TSpineEnemy(name)
+    , mHookTake(nullptr)
+    , mTimer(0)
+{
+}
+
+void TRiccoHook::init(TLiveManager* manager)
+{
+	TSpineEnemy::init(manager);
+	mSpine->initWith(&TNerveRHGraphWander::theNerve());
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	mHookTake = new THookTake(this);
+	unk124->reset();
+	goToShortestNextGraphNode();
+	THookParams* params = getSaveLoadParam();
+	mMarchSpeed         = params->mSLMoveSpeed.get();
+	mTurnSpeed  = 10.0f;
+	onLiveFlag(LIVE_FLAG_UNK10);
+}
+
+void TRiccoHook::kill() { }
+
+BOOL TRiccoHook::receiveMessage(THitActor* sender, u32 message)
+{
+	return FALSE;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TRiccoHook::perform (batch 127).
+static inline TTakeActor* RiccohookHookTake(const TRiccoHook* p)
+{
+	TTakeActor* hookTake = p->mHookTake;
+	return hookTake;
+}
+
+void TRiccoHook::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TSpineEnemy::perform(cue, graphics);
+	RiccohookHookTake(this)->perform(cue, graphics);
+	if (cue & CUE_MOVE) {
+		if (mTimer > 0) {
+			mTimer--;
+		} else if (mInstanceIndex & 1) {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE1,
+			                                &mPosition, 0, nullptr, 0, 4);
+		} else {
+			SMSGetMSound()->startSoundActor(MSD_SE_OBJ_CRANE_SIDEMOVE2,
+			                                &mPosition, 0, nullptr, 0, 4);
+		}
+	}
+}
+
+TRiccoHookManager::TRiccoHookManager(const char* name)
+    : TEnemyManager(name)
+{
+}
+
+void TRiccoHookManager::createModelData()
+{
+	static const TModelDataLoadEntry entry[2]
+	    = { { "riccohook.bmd", 0x10000000, 0 }, { 0 } };
+	createModelDataArray(entry);
+}
+
+void TRiccoHookManager::load(JSUMemoryInputStream& stream)
+{
+	unk38 = new THookParams("/enemy/riccohook.prm");
+	TEnemyManager::load(stream);
+}
+
+TSpineEnemy* TRiccoHookManager::createEnemyInstance() { return nullptr; }
+
+// Same "fake" inline as seen in walkerEnemy.cpp's moveObject func
+// Can't find any other way to get the * 1.0f's to emit
+static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
+{
+	f32 c = radius * JMACos(theta);
+	f32 s = radius * JMASin(theta);
+	return JGeometry::TVec3<f32>(s, 0.0f, c);
+}
+
+
+DEFINE_NERVE(TNerveRHGraphWander, TLiveActor)
+{
+	TRiccoHook* self = (TRiccoHook*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		f32 y                              = self->getRotation().y;
+		const JGeometry::TVec3<f32>& polar = polarXZ(y, 1.0f);
+
+		self->goToDirectedNextGraphNode(polar);
+	}
+
+	if (MsDistance(self->unk104.getPoint(), self->getPosition())
+	    < 10.0f) {
+		TGraphNode& node = self->unk124->getCurrent();
+
+		if (node.checkFlag(0x800)) {
+			self->mTimer = node.getRailNode()->mPitch;
+		}
+
+		spine->pushAfterCurrent(&TNerveRHGraphWander::theNerve());
+		return true;
+	} else {
+		if (self->unk124->unk0 == nullptr || self->unk124->unk0->isDummy()) {
+			return false;
+		}
+
+		if (self->mTimer > 0) {
+			return false;
+		}
+
+		// TODO (closure batch 212): exactly one of this function's three
+		// accessor reads is a raw member read in retail -- the dead
+		// 4-byte temporary it drops is the last word of low region
+		// (pool base 0x9c, not 0xa0). `self->mRotation.y`,
+		// `MsDistance(..., self->mPosition)` and this `sub`
+		// argument each land the function byte-exact on their own and
+		// nothing distinguishes them; this one is chosen because the
+		// same block writes `self->mPosition.add(dPos)` raw two lines
+		// below.
+		JGeometry::TVec3<f32> dPos = self->getUnkF4().getPoint();
+		dPos.sub(self->mPosition);
+		PSVECNormalize(&dPos, &dPos);
+		dPos.scale(self->getMarchSpeed());
+		self->mPosition.add(dPos);
+		return false;
+	}
+}

@@ -1,0 +1,1582 @@
+#include <MoveBG/Item.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <Map/MapMirror.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <System/Application.hpp>
+#include <System/StageUtil.hpp>
+#include <System/FlagManager.hpp>
+#include <System/MarDirector.hpp>
+#include <System/EmitterViewObj.hpp>
+#include <System/Particles.hpp>
+#include <Strategic/MirrorActor.hpp>
+#include <Strategic/question.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Player/WaterGun.hpp>
+#include <Player/Yoshi.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/MActorUtil.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Camera/Camera.hpp>
+#include <Camera/CameraMapTool.hpp>
+#include <MarioUtil/LightUtil.hpp>
+#include <MarioUtil/PacketUtil.hpp>
+#include <GC2D/GCConsole2.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <JSystem/JParticle/JPAResourceManager.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoaderFlags.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+
+f32 TItem::mAppearedScaleSpeed = 0.01f;
+
+void TItem::appeared()
+{
+	if (checkMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING) && !isStateTimerEngaged()) {
+		if (mContainer != nullptr)
+			mContainer->receiveMessage(this, HIT_MESSAGE_UNK5);
+
+		if (isActorType(0x2000000f) || isActorType(0x20000010)) {
+			SMSGetMSound()->startSoundActor(MSD_SE_SY_COIN_DISAPPEAR, &mPosition);
+		}
+	}
+
+	TMapObjGeneral::appeared();
+}
+
+void TItem::taken(THitActor* param_1)
+{
+	param_1->receiveMessage(this, HIT_MESSAGE_ATTACK);
+	kill();
+	if (checkMapObjFlag(MAP_OBJ_FLAG_RESPAWNING)) {
+		makeObjDefault();
+		appear();
+	}
+}
+
+void TItem::touchPlayer(THitActor* param_1)
+{
+	if ((param_1->isActorType(0x80000001) || param_1->isActorType(0x8000083))
+	    && !checkHitFlag(HIT_FLAG_NO_COLLISION))
+		taken(param_1);
+}
+
+BOOL TItem::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_SPRAYED_BY_WATER)
+		return false;
+
+	if (message == HIT_MESSAGE_UNKB) {
+		taken(sender);
+		return true;
+	}
+
+	return TMapObjGeneral::receiveMessage(sender, message);
+}
+
+void TItem::calcRootMatrix()
+{
+	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK8000000))
+		TMapObjGeneral::calcRootMatrix();
+}
+
+static inline J3DModel* ItemCalcModel(const TItem* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+void TItem::calc()
+{
+	if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK4000000) && !isState(STATE_HOLDING)) {
+		MtxPtr src = gpItemManager->unk40;
+
+		MtxPtr mtx;
+		if (checkMapObjFlag(MAP_OBJ_FLAG_UNK100))
+			mtx = ItemCalcModel(this)->getAnmMtx(0);
+		else
+			mtx = ItemCalcModel(this)->getBaseTRMtx();
+
+		mtx[0][0] = src[0][0];
+		mtx[0][1] = src[0][1];
+		mtx[0][2] = src[0][2];
+		mtx[0][3] = getPosition().x;
+
+		mtx[1][0] = src[1][0];
+		mtx[1][1] = src[1][1];
+		mtx[1][2] = src[1][2];
+		mtx[1][3] = mPosition.y;
+
+		mtx[2][0] = src[2][0];
+		mtx[2][1] = src[2][1];
+		mtx[2][2] = src[2][2];
+		mtx[2][3] = mPosition.z;
+	}
+
+	if (isState(STATE_HOLDING) && checkMapObjFlag(MAP_OBJ_FLAG_UNK100)) {
+		// The two nozzle items place themselves on Mario's back, so they
+		// get their own calcRootMatrix() through the vtable; everything
+		// else takes the base implementation directly.
+		if (isActorType(0x20000022) || isActorType(0x2000002A))
+			calcRootMatrix();
+		else
+			TMapObjGeneral::calcRootMatrix();
+	}
+}
+
+void TItem::appearing()
+{
+	if (checkMapObjFlag(MAP_OBJ_FLAG_UNK2000000)) {
+		if (mScaling.x < 2.0f) {
+			mScaling.add((Vec) { mAppearedScaleSpeed * 2.0f,
+			                     mAppearedScaleSpeed * 2.0f,
+			                     mAppearedScaleSpeed * 2.0f });
+		} else {
+			makeObjAppeared();
+			onHitFlag(HIT_FLAG_NO_COLLISION);
+			offMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+		}
+	} else {
+		TMapObjGeneral::appearing();
+	}
+}
+
+void TItem::killByTimer(int param_1)
+{
+	unk14C      = param_1;
+	mStateTimer = unk150;
+
+	offMapObjFlag(MAP_OBJ_FLAG_UNK10000000);
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	offMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+}
+
+void TItem::appear()
+{
+	TMapObjGeneral::appear();
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	mStateTimer = unk150;
+	offMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+}
+
+void TItem::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+
+	if ((cue & CUE_MOVE) && checkHitFlag(HIT_FLAG_NO_COLLISION)
+	    && !isStateTimerEngaged()) {
+		offHitFlag(HIT_FLAG_NO_COLLISION);
+		if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK10000000)) {
+			onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+			mStateTimer = unk14C;
+		}
+	}
+
+	TMapObjGeneral::perform(cue, graphics);
+}
+
+void TItem::initMapObj()
+{
+	TMapObjGeneral::initMapObj();
+	unk14C = 480;
+	unk150 = 120;
+}
+
+void TItem::load(JSUMemoryInputStream& stream)
+{
+	TMapObjGeneral::load(stream);
+	onMapObjFlag(MAP_OBJ_FLAG_UNK10000000);
+}
+
+TItem::TItem(const char* name)
+    : TMapObjGeneral(name)
+    , mContainer(nullptr)
+    , unk14C(0)
+    , unk150(0)
+{
+}
+
+void TCoin::taken(THitActor* param_1)
+{
+	u8 thing = SMSGetApplication()->mCurrArea.getStage();
+	TFlagManager::getInstance()->incGoldCoinFlag(SMS_getShineStage(thing), 1);
+
+	SMSGetMSound()->startSoundActor(MSD_SE_SY_COIN, &mPosition, 0, nullptr, 0,
+	                                4);
+
+	if (mContainer)
+		mContainer->receiveMessage(this, HIT_MESSAGE_UNK8);
+
+	if (TFlagManager::smInstance->getFlag(0x40002) == 100) {
+		TShine* shine = JDrama::TNameRefGen::search<TShine>(
+		    "シャイン（１００枚コイン用）");
+
+		gpItemManager->makeShineAppearWithDemo(
+		    "シャイン（１００枚コイン用）",
+		    "シャイン（１００枚コイン用）カメラ", mPosition.x, mPosition.y,
+		    mPosition.z);
+	}
+
+	TItem::taken(param_1);
+}
+
+void TCoin::makeObjDead()
+{
+	TItem::makeObjDead();
+	if (unk154)
+		unk154->unk1A |= 1;
+}
+
+// Two binding levels over the animation matrix, worth +0x10 of low region in
+// TCoin::appearWithoutSound.
+static inline MtxPtr ItemAnmMtx(const TItem* p)
+{
+	J3DModel* model = p->getModel();
+	MtxPtr mtx      = model->getAnmMtx(0);
+	return mtx;
+}
+
+void TCoin::appearWithoutSound()
+{
+	TItem::appear();
+	gpMarioParticleManager->emitAndBindToMtxPtr(MAPOBJ_MS_WATCOIN_KIRA,
+	                                            ItemAnmMtx(this), 0, this);
+	if (isActorType(0x2000000e))
+		offMapObjFlag(MAP_OBJ_FLAG_UNK10000000);
+}
+
+static inline MSound* TCoinAppearGetMSound(TCoin* p)
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+void TCoin::appear()
+{
+	if (isActorType(0x20000010)) {
+		if (!TFlagManager::smInstance->getBlueCoinFlag(
+		        gpMarDirector->getCurrentMap(), mEventId))
+			SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_TIMECOIN_APPEAR, 0,
+			                                   nullptr, 0);
+	} else {
+		TCoinAppearGetMSound(this)->startSoundSystemSE(MSD_SE_SY_COIN_APPEAR,
+		                                               0, nullptr, 0);
+	}
+
+	appearWithoutSound();
+}
+
+void TCoin::makeObjAppeared()
+{
+	TItem::makeObjAppeared();
+	if (unk154)
+		unk154->unk1A &= ~1;
+}
+
+// Binding level worth +16 of low region, landing TCoin::perform's frame at
+// 0x50 (batch 121).
+static inline u16 ItemGetColNum(TCoin* p)
+{
+	u16 colNum = p->getColNum();
+	return colNum;
+}
+
+// Binding level worth +16 of low region, landing TCoin::perform's frame at
+// 0x50 (batch 121).
+static inline MActor* ItemGetMActor(const TCoin* p)
+{
+	MActor* mActor = p->getMActor();
+	return mActor;
+}
+
+void TCoin::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (checkLiveFlag(LIVE_FLAG_DEAD))
+		return;
+
+	if ((cue & CUE_MOVE) && checkLiveFlag(LIVE_FLAG_UNK10)) {
+
+		if (gpMarDirector->isTalkModeNow() && !gpMarDirector->isDemoModeNow())
+			return;
+
+		if (isStateTimerEngaged()) {
+			--mStateTimer;
+		} else {
+			if (checkHitFlag(HIT_FLAG_NO_COLLISION)) {
+				offHitFlag(HIT_FLAG_NO_COLLISION);
+				if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK10000000)) {
+					onMapObjFlag(MAP_OBJ_FLAG_DISAPPEARING);
+					mStateTimer = unk14C;
+				}
+			} else {
+				if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK10000000)) {
+					if (mContainer != nullptr)
+						mContainer->receiveMessage(this, HIT_MESSAGE_UNK5);
+					makeObjDead();
+				}
+			}
+		}
+
+		if (ItemGetColNum(this))
+			for (int i = 0; i < ItemGetColNum(this); ++i)
+				touchActor(mCollisions[i]);
+
+	} else {
+		if ((cue & CUE_CALC_VIEW) && ItemGetMActor(this) == nullptr) {
+			gpQuestionManager->request(mPosition, 60.0f);
+		}
+
+		TItem::perform(cue, graphics);
+	}
+}
+
+void TCoin::loadAfter()
+{
+	TItem::loadAfter();
+	if (!gpMirrorModelManager->isInMirror(mPosition))
+		return;
+
+	if (SMSGetMarDirector()->getCurrentMap() == 2) {
+		const TBGCheckData* check;
+		gpMap->checkGround(mPosition, &check);
+		if (!check->isWaterSurface())
+			return;
+	}
+
+	TMirrorActor* actor = new TMirrorActor("コインin鏡");
+	unk154              = actor;
+	unk154->init(getModel(), 0x18);
+}
+
+void TCoin::initMapObj()
+{
+	TItem::initMapObj();
+	SMS_LoadParticle("/scene/mapObj/ms_watcoin_kira.jpa", 0x58);
+}
+
+TCoin::TCoin(const char* name)
+    : TItem(name)
+    , unk154(0)
+{
+}
+
+void TFlowerCoin::load(JSUMemoryInputStream& stream)
+{
+	TCoin::load(stream);
+	stream >> unk158;
+}
+
+void TCoinEmpty::warning() { }
+
+void TCoinEmpty::appear() { }
+
+void TCoinEmpty::makeObjAppeared() { }
+
+void TCoinEmpty::kill() { }
+
+TCoinEmpty::TCoinEmpty(const char* name)
+    : TCoin(name)
+{
+}
+
+void TCoinRed::taken(THitActor* param_1)
+{
+	TFlagManager::getInstance()->incFlag(0x60000, 1);
+
+	SMSGetMSound()->startSoundActor(MSD_SE_SY_RED_COIN_GET, &mPosition, 0,
+	                                nullptr, 0, 4);
+
+	if (mContainer)
+		mContainer->receiveMessage(this, HIT_MESSAGE_UNK8);
+
+	TItem::taken(param_1);
+}
+
+TCoinRed::TCoinRed(const char* name)
+    : TCoin(name)
+{
+	unk158.x = unk158.y = unk158.z = 0.0f;
+}
+
+// Binding level worth +8 of low region, landing TCoinBlue::makeObjAppeared's
+// frame at 0x28 (batch 121).
+static inline u32 ItemGetEventId(TCoinBlue* p)
+{
+	u32 eventId = p->getEventId();
+	return eventId;
+}
+
+void TCoinBlue::makeObjAppeared()
+{
+	if (TFlagManager::getInstance()->getBlueCoinFlag(
+	        gpMarDirector->getCurrentMap(), ItemGetEventId(this)))
+		return;
+
+	TCoin::makeObjAppeared();
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TCoinBlue::taken (batch 127).
+static inline THitActor* ItemContainer(const TCoinBlue* p)
+{
+	THitActor* container = p->mContainer;
+	return container;
+}
+
+void TCoinBlue::taken(THitActor* param_1)
+{
+	SMSGetMarDirector()->fireGetBlueCoin(this);
+
+	if (ItemContainer(this))
+		mContainer->receiveMessage(this, HIT_MESSAGE_UNK8);
+
+	TItem::taken(param_1);
+}
+
+void TCoinBlue::loadBeforeInit(JSUMemoryInputStream& stream)
+{
+	s32 eventId;
+	stream >> eventId;
+	if (eventId == -1)
+		eventId = 0;
+	setEventId(eventId);
+}
+
+void TCoinBlue::load(JSUMemoryInputStream& stream)
+{
+	TCoin::load(stream);
+	if (TFlagManager::getInstance()->getBlueCoinFlag(
+	        SMSGetMarDirector()->getCurrentMap(), getEventId()))
+		makeObjDead();
+}
+
+TCoinBlue::TCoinBlue(const char* name)
+    : TCoin(name)
+{
+}
+
+int TShine::mPromiLife[4]  = { 30, 15, 0, 0 };
+f32 TShine::mSenkoRate[4]  = { 0.15f, 0.1f, 0.05f, 0.025f };
+f32 TShine::mKiraRate[4]   = { 1.0f, 0.6f, 0.3f, 0.1f };
+f32 TShine::mBowRate[4]    = { 1.0f, 1.0f, 0.0f, 0.0f };
+f32 TShine::mCircleRateY   = 0.5f;
+f32 TShine::mUpSpeed       = 1.0f;
+f32 TShine::mSpeedDownRate = 0.99f;
+
+static inline MActor* TShineCalcMActor(const TShine* p)
+{
+	MActor* actor = p->getMActor();
+	return actor;
+}
+
+static inline J3DModel* TShineCalcModel(const TShine* p)
+{
+	J3DModel* model = TShineCalcMActor(p)->getModel();
+	return model;
+}
+
+void TShine::calc()
+{
+	MtxPtr mtxPos = TShineCalcModel(this)->getAnmMtx(2);
+
+	if (checkLiveFlag(LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT
+	                  | LIVE_FLAG_DEAD))
+		return;
+
+	unk198 = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(
+	    PARTICLE_MS_SHINE_SENKO, mtxPos, 1, this);
+	unk19C = SMSGetParticleManagerBound()->emitAndBindToMtxPtr(PARTICLE_MS_SHINE_KIRA,
+	                                                    mtxPos, 1, this);
+	if (unk1B4 == 0) {
+		unk194 = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    PARTICLE_MS_SHINE_PROMI, mtxPos, 1, this);
+		unk1A0 = gpMarioParticleManager->emitAndBindToMtxPtr(
+		    PARTICLE_MS_SHINE_BOW, mtxPos, 1, this);
+	}
+
+	f32 dist2 = SMSGetCameraBound()->unk124.squared(getPosition());
+	f32 dist  = JGeometry::TUtil<f32>::sqrt(dist2);
+
+	s16 promiLife;
+	f32 senkoRate, kiraRate, bowRate;
+	if (dist < 2000.0f) {
+		promiLife = mPromiLife[0];
+		kiraRate  = mKiraRate[0];
+		bowRate   = mBowRate[0];
+		senkoRate = mSenkoRate[0];
+	} else if (dist < 4000.0f) {
+		promiLife = mPromiLife[1];
+		kiraRate  = mKiraRate[1];
+		bowRate   = mBowRate[1];
+		senkoRate = mSenkoRate[1];
+	} else if (dist < 6000.0f) {
+		promiLife = mPromiLife[2];
+		kiraRate  = mKiraRate[2];
+		bowRate   = mBowRate[2];
+		senkoRate = mSenkoRate[2];
+	} else {
+		promiLife = mPromiLife[3];
+		kiraRate  = mKiraRate[3];
+		bowRate   = mBowRate[3];
+		senkoRate = mSenkoRate[3];
+	}
+
+	if (unk194) {
+		unk194->setLifeTime(promiLife);
+		unk194->setGlobalScale(unk1A8);
+	}
+	if (unk198) {
+		unk198->setRate(senkoRate);
+		unk198->setGlobalScale(unk1A8);
+	}
+	if (unk19C) {
+		unk19C->setRate(kiraRate);
+		unk19C->setGlobalScale(unk1A8);
+	}
+	if (unk1A0) {
+		unk1A0->setRate(bowRate);
+		unk1A0->setGlobalScale(unk1A8);
+	}
+	unk1A4 = 1;
+}
+
+static inline int TShineCircleTime(const TShine* p)
+{
+	int time = p->unk168;
+	return time;
+}
+
+void TShine::movingCircle()
+{
+	// TODO: hack, remove
+	(void)0;
+	(void)0;
+
+	f32 prevY = mPosition.y;
+	unk158 += 180.0f / (f32)unk168;
+
+	f32 tmp = (f32)(TShineCircleTime(this) - mStateTimer)
+	          / (f32)TShineCircleTime(this);
+
+	mPosition.x += unk17C.x;
+
+	mPosition.y = unk160 * JMASin(unk158)
+	              + (tmp * (mInitialPosition.y - unk164) + unk164);
+	unk188 = mPosition.y - prevY;
+
+	mPosition.z += unk17C.z;
+	mRotation.y += 7.0f;
+	MsWrap(mRotation.y, 0.0f, 360.0f);
+
+	if (!isStateTimerEngaged()) {
+		unk16C      = 7.0f;
+		mStateTimer = unk178;
+		mState      = STATE_UNKF;
+	}
+}
+
+void TShine::movingUp()
+{
+	mPosition.y += mUpSpeed;
+	if (unk154 == 3) {
+		mRotation.y += 7.0f;
+		// Huh? Result discarded?
+		MsWrap(mRotation.y, 0.0f, 360.0f);
+	}
+	if (isStateTimerEngaged())
+		return;
+
+	if (unk154 == 3) {
+		mStateTimer = unk170;
+		mState      = STATE_MOVING_DOWN;
+	} else {
+		unk164      = mPosition.y;
+		mStateTimer = unk168;
+		mState      = STATE_MOVING_CIRCLE;
+	}
+}
+
+void TShine::movingDown()
+{
+	mPosition.y -= mUpSpeed;
+	mRotation.y += 7.0f;
+	// Huh? Result discarded?
+	MsWrap(mRotation.y, 0.0f, 360.0f);
+	if (isStateTimerEngaged())
+		return;
+	unk16C      = 7.0f;
+	mStateTimer = unk178;
+	mState      = STATE_UNKF;
+}
+
+// The light block of the idle state is one inline level (c-k23): as its own
+// body the model, matrix, colour and translation become inline objects, which
+// puts the GXColor temporary with retail's six words above it.
+static inline void ShineSetEffectLight(TShine* shine)
+{
+	J3DModel* model      = shine->getMActor()->getModel();
+	MtxPtr mtx           = model->getAnmMtx(2);
+	const GXColor& color = (GXColor) { 0xff, 0xff, 0xff, 0xff };
+	JGeometry::TVec3<f32> trans;
+	trans.x = mtx[0][3];
+	trans.y = mtx[1][3];
+	trans.z = mtx[2][3];
+	gpLightManager->setEffectLightColor(color);
+	gpLightManager->setEffectLightPos(trans);
+}
+
+// TODO: every instruction matches; frame 0xe8 against 0xf8 (was 0xa8 before
+// c-k23's light level, the six short sounds and getInitialPosition()). The
+// debugger puts retail's GXColor temporary at 0xdc and appearWithDemo's TFlagT
+// at 0xa0; ours are 0xcc and 0x9c, so 3 words are missing between them and 1
+// below the flag. Inert or worse on top: SMSGetCamera() at the demo test
+// (slots move, frame kept), `mPosition = SMS_GetMarioPos()`, raw
+// `mState == 0x10`, raw `mStateTimer > 0`, getModel() in the light level.
+void TShine::control()
+{
+	if (!isState(0x10))
+		TMapObjGeneral::control();
+
+	if (isState(0x10)) {
+		mPosition.set(SMS_GetMarioPos());
+		return;
+	}
+
+	switch (mState) {
+	case STATE_NORMAL: {
+		mRotation.y += unk16C;
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+
+		ShineSetEffectLight(this);
+	} break;
+
+	case STATE_UNKB:
+		if (isStateTimerEngaged())
+			break;
+		unkF8 &= 0xF7FFFEFF;
+		mStateTimer = unk170;
+		mState      = STATE_MOVING_UP;
+		break;
+
+	case STATE_MOVING_UP:
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		movingUp();
+		break;
+
+	case STATE_MOVING_DOWN:
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		movingDown();
+		break;
+
+	case STATE_MOVING_CIRCLE:
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		movingCircle();
+		break;
+
+	case STATE_UNKF: {
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		if (mPosition.y > getInitialPosition().y) {
+			mPosition.y += unk188;
+			unk188 *= mSpeedDownRate;
+		} else {
+			mPosition.y = getInitialPosition().y;
+		}
+		if (unk16C > 2.0f)
+			unk16C -= 0.1f;
+		else
+			unk16C = 2.0f;
+		mRotation.y += unk16C;
+		// Huh? Result discarded?
+		MsWrap(mRotation.y, 0.0f, 360.0f);
+
+		if (isStateTimerEngaged())
+			break;
+		if (unkF8 & 0x20000000)
+			MSBgm::setTrackVolume(0, 1.0f, 10, 0);
+		offHitFlag(HIT_FLAG_NO_COLLISION);
+		mState = STATE_UNK11;
+	} break;
+
+	case STATE_UNK11:
+		mRotation.y += unk16C;
+		// Huh? Result discarded?
+		MsWrap(mRotation.y, 0.0f, 360.0f);
+		SMSGetMSound()->startSoundActor(MSD_SE_SHINE_EXIST, &mPosition);
+		break;
+
+	case STATE_UNK12: {
+		if (gpCamera->isDemoCamera())
+			break;
+		if (isStateTimerEngaged())
+			break;
+		appearWithDemo("シャイン（いきなり出現）カメラ");
+		mState = STATE_UNK11;
+	} break;
+	}
+}
+
+void TShine::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if ((cue & CUE_CALC_ANIM) && !checkLiveFlag(LIVE_FLAG_DEAD)) {
+		if (!isState(STATE_NORMAL))
+			offLiveFlag(LIVE_FLAG_UNK200);
+	}
+	TMapObjGeneral::perform(cue, graphics);
+}
+
+BOOL TShine::receiveMessage(THitActor* sender, u32 message)
+{
+	unkF8 &= 0xF7FFFFFF;
+	mPosition.set(SMS_GetMarioPos());
+	mRotation.y = 180.0f * (f32)*gpMarioAngleY / 32768.0f;
+
+	MsMtxSetXYZRPH(getModel()->getBaseTRMtx(), mPosition.x,
+	               mPosition.y - mYOffset, mPosition.z, getRotation().x,
+	               getRotation().y, mRotation.z);
+
+	if (SMS_IsMarioOnYoshi()) {
+		if (unk1B4)
+			getMActor()->setBck("shine_empty_demo_shine_get_yo");
+		else
+			getMActor()->setBck("shine_demo_shine_get_yo");
+	} else {
+		if (unk1B4)
+			getMActor()->setBck("shine_empty_demo_shine_get");
+		else
+			getMActor()->setBck("shine_demo_shine_get");
+	}
+
+	unk1A8.set(0.5f, 0.5f, 0.5f);
+	mState = STATE_UNK10;
+	return TRUE;
+}
+
+void TShine::touchPlayer(THitActor* actor)
+{
+	actor->receiveMessage(this, HIT_MESSAGE_ATTACK);
+	gpLightManager->setEffectLightPos2(200000.0f, 500000.0f, 200000.0f);
+	SMSGetMSound()->startSoundActor(MSD_SE_SY_GET_SHINE, &mPosition, 0, nullptr,
+	                                0, 4);
+	getMActor()->setBck("shine_float");
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
+static inline TFlagManager* TShineAppearSimpleGetFlagManager(TShine* p)
+{
+	TFlagManager* flagManager = TFlagManager::smInstance;
+	return flagManager;
+}
+
+static inline MSound* TShineAppearSimpleGetMSound(TShine* p)
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+void TShine::appearWithTime(int param_1, int param_2, int param_3, int param_4)
+{
+	TItem::appear();
+	TShineAppearSimpleGetFlagManager(this)->setBool(true, 0x50000);
+
+	if (param_2 >= 0)
+		unk174 = param_2;
+	if (param_3 >= 0)
+		unk170 = param_3;
+	if (param_4 >= 0)
+		unk178 = param_4;
+
+	unk168 = param_1 - (unk174 + unk170 + unk178);
+	unk158 = 0.0f;
+
+	f32 yDelta = mInitialPosition.y - (mUpSpeed * (f32)unk170 + getPosition().y);
+
+	unk17C.x = (mInitialPosition.x - getPosition().x) / (f32)unk168;
+	unk17C.y = yDelta / (f32)unk168;
+	unk17C.z = (mInitialPosition.z - getPosition().z) / (f32)unk168;
+
+	unk15C = getDistanceXZ(getInitialPosition());
+	if (unk15C == 0.0f)
+		unk15C = 1000.0f;
+	if (yDelta > 0.0f)
+		unk15C += fabsf(yDelta);
+	unk160 = unk15C * mCircleRateY;
+
+	TShineAppearSimpleGetMSound(this)->startSoundActor(
+	    MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr, 0, 4);
+	MSBgm::startBGM(MSD_BGM_SHINE_APPEAR);
+
+	mStateTimer = unk174;
+	mState      = STATE_UNKB;
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
+s32 TShine::appearWithTimeCallback(uintptr_t param_1, u32 param_2)
+{
+	TShine* shine = (TShine*)param_1;
+	if (param_2 == 0) {
+		shine->appearWithTime(shine->unk18C, -1, -1, -1);
+		gpMarDirector->unk4E |= 1;
+	} else if (param_2 == 1) {
+		gpMarDirector->unk4E &= ~1;
+	}
+	return 0;
+}
+
+void TShine::appearSimple(int param_1)
+{
+	TItem::appear();
+	TShineAppearSimpleGetFlagManager(this)->setBool(true, 0x50000);
+
+	unk174   = 60;
+	unk170   = param_1;
+	unk178   = 60;
+	unk154   = 3;
+	unk158   = 0.0f;
+	unk15C   = 0.0f;
+	unk160   = 0.0f;
+	mUpSpeed = 2.0f;
+
+	mInitialPosition = mPosition;
+
+	TShineAppearSimpleGetMSound(this)->startSoundActor(
+	    MSD_SE_SHINE_APPEAR, &mPosition, 0, nullptr, 0, 4);
+	MSBgm::startBGM(MSD_BGM_SHINE_APPEAR);
+
+	mStateTimer = unk174;
+	mState      = STATE_UNKB;
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
+void TShine::appearWithDemo(const char* param_1)
+{
+	TCameraMapTool* tool
+	    = JDrama::TNameRefGen::instance->search<TCameraMapTool>(param_1);
+	unk18C = tool->getDemoLengthFrames();
+	SMSGetMarDirector()->fireStartDemoCamera(
+	    param_1, &mPosition, -1, 0.0f, true, appearWithTimeCallback,
+	    (uintptr_t)this, nullptr, JDrama::TFlagT<u16>());
+}
+
+void TShine::kill()
+{
+	TMapObjGeneral::kill();
+	unk154 = 1;
+}
+
+// Binding level worth +8 of low region, landing TShine::makeMActors's frame
+// at 0x28 (batch 121).
+static inline const char* ItemGetName(const TShine* p)
+{
+	const char* name = p->getName();
+	return name;
+}
+
+void TShine::makeMActors()
+{
+	mMActorKeeper                    = new TMActorKeeper(mManager, 1);
+	mMActorKeeper->mModelLoaderFlags = J3DMLF_MaterialPEFull
+	                                   | J3DMLF_UseUniqueMaterials
+	                                   | (2 << J3DMLF_TevStageNumShift);
+	MActor* result;
+	if (TFlagManager::smInstance->getShineFlag(mEventId)
+	    && strcmp("シャイン（マニ屋用）", ItemGetName(this)) != 0) {
+		result = initMActor("shine_empty.bmd", nullptr, getSDLModelFlag());
+		unk1B4 = 1;
+	} else {
+		result = initMActor("shine.bmd", nullptr, getSDLModelFlag());
+	}
+	mMActor = result;
+}
+
+void TShine::initMapObj()
+{
+	TItem::initMapObj();
+	unk1A4 = 0;
+	unk1A8.set(1.0f, 1.0f, 1.0f);
+	unk170 = 240;
+	unk174 = 0;
+	unk178 = 240;
+}
+
+void TShine::loadAfter()
+{
+	TMapObjGeneral::loadAfter();
+	if (unk154 == 2) {
+		mStateTimer = 240;
+		mState      = STATE_UNK12;
+	} else if (unk154 == 1) {
+		makeObjDead();
+	}
+}
+
+static inline u8 ShineLoadNo(s32 v) { return v + 1; }
+
+// The by-value u8 level ShineLoadNo is +8 of frame. The named u32 id handed to
+// setEventId is retail's dead word between `eventId` and `v`: it replaces the
+// setter's long->u32 argument binding, which sat below `v`.
+void TShine::loadBeforeInit(JSUMemoryInputStream& stream)
+{
+	char name[0x20];
+	stream.readString(name, sizeof(name));
+	if (strcmp("normal", name) == 0)
+		unk154 = 0;
+	else if (strcmp("quickly", name) == 0)
+		unk154 = 2;
+	else
+		unk154 = 1;
+
+	s32 eventId;
+	stream >> eventId;
+	if (eventId == -1)
+		eventId = 120;
+	u32 id = eventId;
+	setEventId(id);
+
+	s32 v;
+	stream >> v;
+	eventId = v;
+	if (v + 1 >= 2)
+		eventId = -1;
+	unk190 = ShineLoadNo(eventId);
+}
+
+TShine::TShine(const char* name)
+    : TItem(name)
+    , unk154(0)
+    , unk158(0.0f)
+    , unk15C(0.0f)
+    , unk160(0.0f)
+    , unk164(0.0f)
+    , unk168(0)
+    , unk16C(2.0f)
+    , unk188(0.0f)
+    , unk18C(0)
+    , unk190(0)
+    , unk194(0)
+    , unk198(0)
+    , unk19C(0)
+    , unk1A0(0)
+    , unk1B4(0)
+{
+	unk17C.zero();
+	unk1A8.zero();
+}
+
+static inline const char* EggYoshiName(TEggYoshi* egg)
+{
+	const char* name = egg->getName();
+	return name;
+}
+
+// The director and map/stage accessors at each test (+8 per site, the map
+// load is still shared) bring the low pool; the name read through the
+// EggYoshiName binder is the last 0x10 of retail's 0x68 frame.
+void TEggYoshi::decideRandomLoveFruit()
+{
+	if (SMSGetMarDirector()->getCurrentMap() == 7 && SMSGetMarDirector()->getCurrentStage() == 1) {
+		unk14C = 0x40000392;
+		return;
+	}
+
+	if (SMSGetMarDirector()->getCurrentMap() == 3) {
+		unk14C = 0x40000393;
+		return;
+	}
+
+	if (SMSGetMarDirector()->getCurrentMap() == 1 && strcmp(EggYoshiName(this), "ヨッシーの卵（影マリオ用）") == 0) {
+		unk14C = 0x40000394;
+		return;
+	}
+
+	int r = 4 * MsRandF();
+	switch (r) {
+	case 0:
+		unk14C = 0x40000394;
+		break;
+	case 1:
+		unk14C = 0x40000391;
+		break;
+	case 2:
+		unk14C = 0x40000392;
+		break;
+	default:
+		unk14C = 0x40000390;
+		break;
+	}
+}
+
+void TEggYoshi::startBalloonAnim()
+{
+	switch (unk14C) {
+	case 0x40000394:
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(1.0f);
+		break;
+	case 0x40000393:
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(3.0f);
+		break;
+	case 0x40000391:
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(5.0f);
+		break;
+	case 0x40000392:
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(7.0f);
+		break;
+	case 0x40000390:
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(9.0f);
+		break;
+	}
+}
+
+static inline MSound* EggYoshiTouchSound()
+{
+	MSound* sound = SMSGetMSound();
+	return sound;
+}
+
+void TEggYoshi::touchFruit(THitActor* fruit)
+{
+	if (isState(0xE) || isState(STATE_HOLDING))
+		return;
+
+	if (unk14C == (u32)fruit->mActorType) {
+		startAnim(1);
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(11.0f);
+		f32 dx = fruit->getPosition().x - getPosition().x;
+		f32 dz = fruit->getPosition().z - getPosition().z;
+		s16 ang = matan(dz, dx);
+		mRotation.y = (360.0f / 65536.0f) * ang;
+		mState = 0xB;
+		unk150 = fruit;
+		EggYoshiTouchSound()->startSoundSystemSE(MSD_SE_SY_COLLECT_YOSHI, 0,
+		                                         nullptr, 0);
+	} else if (animIsFinished()) {
+		startAnim(2);
+		unk148->getFrameCtrl(ANM_TYPE_BTP)->setFrame(12.0f);
+		SMSGetMSound()->startSoundSystemSE(MSD_SE_SY_NOT_COLLECT_YOSHI, 0,
+		                                   nullptr, 0);
+		mState = 0xD;
+	}
+}
+
+// Binding level worth +8 of low region, landing TEggYoshi::touchActor's
+// frame at 0x20 (batch 121).
+static inline TTakeActor* ItemGetHeldObject(TTakeActor* p)
+{
+	TTakeActor* heldObject = p->getHeldObject();
+	return heldObject;
+}
+
+void TEggYoshi::touchActor(THitActor* other)
+{
+	if (!isState(STATE_NORMAL) && !isState(0xD))
+		return;
+
+	if (other->isActorType(0x80000001)) {
+		TTakeActor* casted = static_cast<TTakeActor*>(other);
+		if (ItemGetHeldObject(casted)
+		    && TMapObjBase::isFruit(casted->getHeldObject()))
+			touchFruit(casted->getHeldObject());
+	}
+
+	if (TMapObjBase::isFruit(other))
+		touchFruit(other);
+}
+
+static inline int EggYoshiGetState(const TEggYoshi* p)
+{
+	int state = p->mState;
+	return state;
+}
+
+void TEggYoshi::control()
+{
+	TMapObjBase::control();
+
+	switch (EggYoshiGetState(this)) {
+	case 0xD:
+		if (animIsFinished()) {
+			startAnim(0);
+			startBalloonAnim();
+			mState = STATE_NORMAL;
+		}
+		break;
+	case 0xB:
+		if (animIsFinished()) {
+			startAnim(3);
+			TYoshi* yoshi = SMS_GetYoshi();
+			if (!yoshi->isHatched()) {
+				JGeometry::TVec3<f32> pos = getPosition();
+				yoshi->appearFromEgg(pos, mRotation.y, this);
+				yoshi->setEggYoshiPtr(this);
+			}
+			mState = 0xC;
+		}
+		break;
+	case 0xC:
+		if (animIsFinished()) {
+			makeObjDead();
+			mState = STATE_DEAD;
+		}
+		break;
+	case 0xF: {
+		JGeometry::TVec3<f32> v = mVelocity;
+		if (v.y == 0.0f)
+			mState = 0x10;
+		break;
+	}
+	case 0x0:
+	case 0x1:
+	case 0x2:
+	case 0x3:
+	case 0x4:
+	case 0x5:
+	case 0x6:
+	case 0x7:
+	case 0x8:
+	case 0x9:
+	case 0xA:
+	case 0xE:
+	case 0x10:
+		break;
+	}
+}
+
+static inline MActor* EggYoshiGetFukidashi(const TEggYoshi* p)
+{
+	MActor* actor = p->unk148;
+	return actor;
+}
+
+void TEggYoshi::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TMapObjGeneral::perform(cue, graphics);
+
+	if (!isState(0xC) && !isState(STATE_DEAD) && !isState(STATE_HOLDING)
+	    && !isState(STATE_APPEARING) && !isState(0xE) && !isState(0xF)
+	    && !isState(0x10)) {
+		if (cue & CUE_CALC_ANIM)
+			EggYoshiGetFukidashi(this)->getModel()->setBaseTRMtx(
+			    getModel()->getAnmMtx(0));
+
+		EggYoshiGetFukidashi(this)->perform(cue, graphics);
+	}
+}
+
+// Binding level worth +8 of low region, landing TEggYoshi::startFruit's
+// frame at 0x20 (batch 124).
+static inline bool ItemIsStateL0(TEggYoshi* p, u32 i)
+{
+	bool state = p->isState(i);
+	return state;
+}
+
+static inline bool ItemIsState(TEggYoshi* p, u32 i)
+{
+	bool state = ItemIsStateL0(p, i);
+	return state;
+}
+
+void TEggYoshi::startFruit()
+{
+	receiveMessage(nullptr, HIT_MESSAGE_UNK10);
+	if (ItemIsState(this, 0) || isState(0xE) || isState(0xF) || isState(0x10))
+		receiveMessage(nullptr, HIT_MESSAGE_UNK10);
+}
+
+BOOL TEggYoshi::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_TAKE) {
+		hold((TTakeActor*)sender);
+		return TRUE;
+	}
+
+	if (message == HIT_MESSAGE_THROWN || message == HIT_MESSAGE_UNK8) {
+		mVelocity.y = 10.0f;
+		offLiveFlag(LIVE_FLAG_UNK10);
+		mState = 0xF;
+		return TRUE;
+	}
+
+	if (message == HIT_MESSAGE_UNK10) {
+		// Named scalar before the TVec3 so it ranks above the copy.
+		f32 y;
+		JGeometry::TVec3<f32> v = getVelocity();
+		makeObjAppeared();
+		y           = v.y;
+		mVelocity.y = y;
+		offLiveFlag(LIVE_FLAG_UNK10);
+		decideRandomLoveFruit();
+		startBalloonAnim();
+		mState = STATE_NORMAL;
+		return TRUE;
+	}
+
+	if (message == HIT_MESSAGE_PUT) {
+		makeObjAppeared();
+		decideRandomLoveFruit();
+		startBalloonAnim();
+	}
+
+	return FALSE;
+}
+
+static inline J3DModel* EggYoshiLoadModel(const TEggYoshi* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+static inline TFlagManager* EggYoshiLoadFlags()
+{
+	TFlagManager* flagManager = TFlagManager::getInstance();
+	return flagManager;
+}
+
+void TEggYoshi::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+
+	if (strcmp(unkF4, "eggYoshiEvent") == 0) {
+		if (EggYoshiLoadFlags()->getFlag(0x60003) == 1) {
+			mState = 0xE;
+		} else {
+			makeObjDead();
+			return;
+		}
+	} else if (gpMarDirector->mMap == 1) {
+		if (!TFlagManager::getInstance()->getBool(0x1038F)) {
+			makeObjDead();
+			return;
+		}
+	} else if (!TFlagManager::getInstance()->getShineFlag(0x21)) {
+		makeObjDead();
+		return;
+	}
+
+	unk148 = SMS_MakeMActorWithAnmData(
+	    "/scene/mapObj/eggYoshi_fukidashi.bmd", mManager->getMActorAnmData(), 3,
+	    J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+	        | (1 << J3DMLF_TevStageNumShift));
+	MtxPtr src = EggYoshiLoadModel(this)->getAnmMtx(0);
+	PSMTXCopy(src, unk148->getModel()->getBaseTRMtx());
+	unk148->setBck("eggyoshi_fukidashi_wait");
+	unk148->setBtp("eggyoshi_fukidashi");
+	unk148->getFrameCtrl(ANM_TYPE_BTP)->setRate(0.0f);
+
+	decideRandomLoveFruit();
+
+	if (!isState(0xE))
+		startBalloonAnim();
+}
+
+TEggYoshi::TEggYoshi(const char* name)
+    : TMapObjGeneral(name)
+    , unk148(nullptr)
+    , unk14C(0)
+    , unk150(nullptr)
+{
+}
+
+void TItemNozzle::touchPlayer(THitActor* param_1)
+{
+	if (isState(STATE_HOLDING))
+		return;
+
+	if (SMS_IsMarioOnYoshi())
+		return;
+
+	if ((param_1->isActorType(0x80000001) || param_1->isActorType(0x8000083))
+	    && !checkHitFlag(HIT_FLAG_NO_COLLISION))
+		taken(param_1);
+
+	int boxKind;
+	if (isActorType(0x2000001F))
+		boxKind = 4;
+	else if (isActorType(0x20000022))
+		boxKind = 1;
+	else if (isActorType(0x2000002A))
+		boxKind = 5;
+	else
+		boxKind = 4;
+
+	SMSGetMSound()->startSoundActor(MSD_SE_SY_GET_NOZZLE, &mPosition);
+	gpItemManager->resetNozzleBoxesModel(boxKind);
+	gpMarDirector->fireGetNozzle(this);
+}
+
+void TItemNozzle::put()
+{
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+	mState = STATE_NORMAL;
+}
+
+BOOL TItemNozzle::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_TAKE) {
+		hold((TTakeActor*)sender);
+		return TRUE;
+	}
+
+	if (message == HIT_MESSAGE_THROWN) {
+		mVelocity.set(0.0f, 20.0f, 0.0f);
+		offLiveFlag(LIVE_FLAG_UNK10);
+		onHitFlag(HIT_FLAG_NO_COLLISION);
+		mState = 0xB;
+		return TRUE;
+	}
+
+	return TItem::receiveMessage(sender, message);
+}
+
+void TItemNozzle::appearing()
+{
+	if (!checkLiveFlag(LIVE_FLAG_UNK10))
+		return;
+
+	mState = STATE_NORMAL;
+	offHitFlag(HIT_FLAG_NO_COLLISION);
+}
+
+void TItemNozzle::control() { TMapObjGeneral::control(); }
+
+// Binding level over a raw member read, worth +16 of low region in
+// TItemNozzle::calcRootMatrix (batch 127).
+static inline TTakeActor* ItemHolder(const TItemNozzle* p)
+{
+	TTakeActor* holder = p->mHolder;
+	return holder;
+}
+
+// TODO: all 66 instructions match; the frame is 0x28 against the map's 0x38,
+// so retail reached the holder matrix or the position store through 16 more
+// bytes of named/temporary slots than this spelling uses.
+void TItemNozzle::calcRootMatrix()
+{
+	// TODO: every instruction matches; the frame is 0x28 against the ROM's
+	// 0x38 with no referenced local slot at all, so the residue is 16 bytes
+	// of dead low region. Measured in place: a dead 48-byte `Mtx` is +48, a
+	// dead 12-byte `TVec3` +8 and a dead 16-byte object exactly +16 (a
+	// `TQuat4<f32>` reaches 100%), so the ROM declared one 16-byte local
+	// here. Nothing in the body wants a quaternion and the byte count is the
+	// only evidence, so it stays unnamed. Inert here (all +0): `getHolder()`
+	// at either or both reads, a TU-local `static MtxPtr` helper binding the
+	// holder matrix or the anim matrix (named pointer locals are worth
+	// nothing), and `getMActor()->getModel()` (which also changes the call).
+	if (isState(6) && ItemHolder(this) != nullptr) {
+		MtxPtr holderMtx = ItemHolder(this)->getTakingMtx();
+		MtxPtr mtx       = getModel()->getAnmMtx(0);
+		MTXCopy(holderMtx, mtx);
+
+		// The rocket nozzle sits higher on Mario's back than the others.
+		if (isActorType(0x20000022))
+			mtx[1][3] += 50.0f;
+		else
+			mtx[1][3] += 30.0f;
+
+		mPosition.set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	} else if (!checkMapObjFlag(MAP_OBJ_FLAG_UNK8000000)) {
+		TMapObjGeneral::calcRootMatrix();
+	}
+}
+
+void TItemNozzle::initMapObj()
+{
+	TItem::initMapObj();
+	unk14C = 7200;
+}
+
+void TItemNozzle::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+	onMapObjFlag(MAP_OBJ_FLAG_UNK10000000);
+	if (strcmp(unkF4, "rocket_nozzle_item") == 0) {
+		if (TFlagManager::smInstance->getFlag(0x60003) != 3)
+			makeObjDead();
+	} else if (strcmp(unkF4, "back_nozzle_item") == 0) {
+		if (TFlagManager::smInstance->getFlag(0x60003) != 2)
+			makeObjDead();
+	}
+}
+
+void TNozzleBox::makeModelValid()
+{
+	if (!mContainedNozzleItem->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		mContainedNozzleItem->kill();
+		appear();
+	}
+	makeObjAppeared();
+	offHitFlag(HIT_FLAG_CANNOT_GET_HIT);
+	SMS_ShowAllShapePacket(getModel());
+	unk15C = true;
+}
+
+void TNozzleBox::makeModelInvalid()
+{
+	if (!mContainedNozzleItem->checkLiveFlag(LIVE_FLAG_DEAD)) {
+		mContainedNozzleItem->kill();
+		appear();
+	}
+	onHitFlag(HIT_FLAG_CANNOT_GET_HIT);
+	startAnim(3);
+	unk15C = false;
+}
+
+void TNozzleBox::breaking()
+{
+	if (animIsFinished())
+		makeObjDead();
+}
+
+BOOL TNozzleBox::receiveMessage(THitActor* sender, u32 message)
+{
+	if (unk15C && sender->isActorType(0x80000001)
+	    && message == HIT_MESSAGE_TRAMPLE && !SMS_IsMarioHeadSlideAttack()) {
+		sender->receiveMessage(this, HIT_MESSAGE_ATTACK);
+		throwObjToFront(mContainedNozzleItem, 50.0f, unk150, unk154);
+		SMSGetMSound()->startSoundSystemSE(0x3801, 0, nullptr, 0);
+		kill();
+		return TRUE;
+	}
+
+	if (message == HIT_MESSAGE_UNK5)
+		makeModelValid();
+
+	return FALSE;
+}
+
+static inline TGCConsole2* TNozzleBoxGetConsole()
+{
+	TMarDirector* director = gpMarDirector;
+	TGCConsole2* console   = director->getConsole();
+	return console;
+}
+
+void TNozzleBox::touchPlayer(THitActor*)
+{
+	if (mContainedNozzleType == TWaterGun::Hover
+	    && !TFlagManager::smInstance->getNozzleRight(
+	        gpMarDirector->getCurrentMap(), 0)
+	    && !TFlagManager::smInstance->getNozzleRight(
+	        gpMarDirector->getCurrentMap(), 1)
+	    && !unk166) {
+		TNozzleBoxGetConsole()->startAppearBalloon(0x5A, true);
+		unk166 = true;
+	}
+	if (!unk15C && !unk166) {
+		TNozzleBoxGetConsole()->startAppearBalloon(0x59, true);
+		unk166 = true;
+	}
+}
+
+void TNozzleBox::control()
+{
+	TMapObjGeneral::control();
+	if (mContainedNozzleType != TWaterGun::Hover && unk166 && mColCount == 0)
+		unk166 = false;
+}
+
+void TNozzleBox::loadAfter()
+{
+	TMapObjGeneral::loadAfter();
+	mContainedNozzleItem = (TItemNozzle*)TMapObjBaseManager::newAndRegisterObj(
+	    mContainedNozzleName);
+	mContainedNozzleItem->setContainer(this);
+	switch (mContainedNozzleType) {
+	case TWaterGun::Hover:
+		makeModelValid();
+		break;
+	case TWaterGun::Rocket:
+	case TWaterGun::Turbo:
+		if (unk15C) {
+			makeModelValid();
+		} else {
+			makeModelInvalid();
+		}
+		break;
+	}
+}
+
+static inline J3DModel* NozzleBoxLoadModel(const TNozzleBox* p)
+{
+	J3DModel* model = p->getModel();
+	return model;
+}
+
+// By-value scalar fork over unk154: +4 of low pool, lands strBuf at retail's
+// 0x30.
+static inline f32 NozzleBoxLoadSpeed(const TNozzleBox* p) { return p->unk154; }
+
+void TNozzleBox::load(JSUMemoryInputStream& stream)
+{
+	TMapObjBase::load(stream);
+	char strBuf[0x20];
+	mContainedNozzleName = stream.readString();
+	stream.readString(strBuf, 0x20);
+	if (strcmp(strBuf, "valid") == 0)
+		unk15C = true;
+	else
+		unk15C = false;
+
+	if (strcmp(mContainedNozzleName, "normal_nozzle_item") == 0) {
+		mContainedNozzleType = TWaterGun::Hover;
+		unk15E.r             = 0;
+		unk15E.g             = 0;
+		unk15E.b             = 0xFF;
+	} else if (strcmp(mContainedNozzleName, "rocket_nozzle_item") == 0) {
+		mContainedNozzleType = TWaterGun::Rocket;
+		unk15E.r             = 0xFF;
+		unk15E.g             = 0;
+		unk15E.b             = 0;
+		if (SMSGetFlagManagerBound()->getNozzleRight(gpMarDirector->mMap, 0)) {
+			unk15C = true;
+			unk166 = true;
+		}
+	} else if (strcmp(mContainedNozzleName, "back_nozzle_item") == 0) {
+		mContainedNozzleType = TWaterGun::Turbo;
+		unk15E.r             = 0x5A;
+		unk15E.g             = 0x5A;
+		unk15E.b             = 0x78;
+		if (SMSGetFlagManagerBound()->getNozzleRight(gpMarDirector->mMap, 1)) {
+			unk15C = true;
+			unk166 = true;
+		}
+	}
+
+	stream >> unk150;
+	unk150 *= 0.02f;
+	stream >> unk154;
+	if (NozzleBoxLoadSpeed(this) < 0.0f)
+		unk154 = 20.0f;
+
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
+	startAnim(3);
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
+	startAnim(2);
+	initPacketMatColor(NozzleBoxLoadModel(this), GX_TEVREG1, &unk15E);
+	startAnim(0);
+}
+
+TNozzleBox::TNozzleBox(const char* name)
+    : TMapObjGeneral(name)
+    , mContainedNozzleType(0)
+    , mContainedNozzleItem(nullptr)
+    , unk150(0.0f)
+    , unk154(0.0f)
+    , mContainedNozzleName(nullptr)
+    , unk15C(true)
+    , unk166(false)
+{
+	unk15E.r = 0xFF;
+	unk15E.g = 0xFF;
+	unk15E.b = 0xFF;
+	unk15E.a = 0x64;
+}

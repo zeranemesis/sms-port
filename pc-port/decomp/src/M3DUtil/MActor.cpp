@@ -1,0 +1,747 @@
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/MActorAnm.hpp>
+#include <MarioUtil/LightUtil.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTransform.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <MarioUtil/DrawUtil.hpp>
+#include <Camera/CubeManagerBase.hpp>
+#include <Map/MapData.hpp>
+
+// As in setModel, the sub-animation iterators are declared at function scope
+// (their block-scope initialisation adds copy temporaries below the loop's
+// comparison pair). The four animations that need a key-pointer setup call
+// name their `new` result, each worth 4 bytes of named block below the pair.
+MActor::MActor(MActorAnmData* anm_data)
+{
+	JGadget::TList<MActorSubAnmInfo>::iterator it;
+	JGadget::TList<MActorSubAnmInfo>::iterator e;
+
+	mAnmData   = nullptr;
+	mModel     = nullptr;
+	unk8       = nullptr;
+	mAnmBck    = nullptr;
+	unk10      = nullptr;
+	mAnmBpk    = nullptr;
+	mAnmBtp    = nullptr;
+	mAnmBtk    = nullptr;
+	mAnmBrk    = nullptr;
+	mAnmBlk    = nullptr;
+	mAnmByType = nullptr;
+	unk2C      = nullptr;
+	unk30      = nullptr;
+
+	mMaterialNum = 0;
+	mMakeDl      = false;
+	unk39        = true;
+	mLightId     = 0xffff;
+	unk40        = true;
+	unk44        = 1;
+
+	mAnmData      = anm_data;
+	mAnmByType    = new MActorAnmBase*[6];
+	mAnmByType[0] = nullptr;
+	mAnmByType[1] = nullptr;
+	mAnmByType[2] = nullptr;
+	mAnmByType[3] = nullptr;
+	mAnmByType[4] = nullptr;
+	mAnmByType[5] = nullptr;
+
+	if (anm_data->getUnk2C()) {
+		mAnmBck = new MActorAnmBck;
+		getAnmBck()->setUnk1C(anm_data->getUnk2C());
+		mAnmByType[ANM_TYPE_BCK] = getAnmBck();
+	}
+
+	if (anm_data->getUnk30()) {
+		MActorAnmBpk* bpk = new MActorAnmBpk;
+		mAnmBpk = bpk;
+		mAnmBpk->setUnk1C(anm_data->getUnk30());
+		mAnmBpk->setMatColorAnmKeyPtr();
+		mAnmByType[ANM_TYPE_BPK] = mAnmBpk;
+	}
+
+	if (anm_data->getUnk34()) {
+		MActorAnmBtp* btp = new MActorAnmBtp;
+		mAnmBtp = btp;
+		mAnmBtp->setUnk1C(anm_data->getUnk34());
+		mAnmBtp->setTexNoAnmFullPtr();
+		mAnmByType[ANM_TYPE_BTP] = mAnmBtp;
+	}
+
+	if (anm_data->getUnk38()) {
+		MActorAnmBtk* btk = new MActorAnmBtk;
+		mAnmBtk = btk;
+		mAnmBtk->setUnk1C(anm_data->getUnk38());
+		mAnmBtk->setTexMtxAnmKeyPtr();
+		mAnmByType[ANM_TYPE_BTK] = mAnmBtk;
+	}
+
+	if (anm_data->getUnk3C()) {
+		MActorAnmBrk* brk = new MActorAnmBrk;
+		mAnmBrk = brk;
+		mAnmBrk->setUnk1C(anm_data->getUnk3C());
+		mAnmBrk->setTevColorAnmKeyPtr();
+		mAnmBrk->setTevKColorAnmKeyPtr();
+		mAnmByType[ANM_TYPE_BRK] = mAnmBrk;
+	}
+
+	if (anm_data->getUnk40()) {
+		mAnmBlk = new MActorAnmBlk;
+		mAnmBlk->setUnk1C(anm_data->getUnk40());
+		mAnmByType[ANM_TYPE_BLK] = mAnmBlk;
+	}
+
+	if (anm_data->unk0 > 0) {
+		unk10 = new MActorAnmBck*[anm_data->unk0];
+
+		it = mAnmData->unk1C.begin();
+		e  = mAnmData->unk1C.end();
+
+		for (int i = 0; it != e; ++it, ++i) {
+			unk10[i] = new MActorAnmBck;
+			unk10[i]->setUnk1C(anm_data->getUnk2C());
+			unk10[i]->unk28 = it->unk0;
+		}
+	}
+}
+
+void MActor::setMActorAnmData(MActorAnmData* anm_data) { mAnmData = anm_data; }
+
+// TODO: MActor::mAnmData wants an accessor in MActor.hpp; parked here as a
+// TU-local until a header batch adds it.
+static inline MActorAnmData* MActorGetAnmData(const MActor* p)
+{
+	return p->mAnmData;
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// MActor::calc (frame ladder 271); MActor::setModel binds it at two sites.
+static inline J3DModel* MActorModelL0(const MActor* p)
+{
+	J3DModel* model = p->mModel;
+	return model;
+}
+
+// The sub-animation iterators are declared at function scope and assigned
+// later: initialising them at their block drops two copy temporaries into the
+// pool and leaves the pair 8 bytes low. The two `MActorModelL0` binders then
+// restore the pool below the loop's comparison temporaries.
+void MActor::setModel(J3DModel* param_1, u32 param_2)
+{
+	JGadget::TList<MActorSubAnmInfo>::iterator it;
+	JGadget::TList<MActorSubAnmInfo>::iterator e;
+	mModel       = param_1;
+	mMaterialNum = param_1->getModelData()->getMaterialNum();
+	unk2C        = new u16[mMaterialNum];
+	unk30        = new u16[mMaterialNum];
+	if ((~param_2 & 0x10000) != 0)
+		onMakeDL();
+
+	unk8 = MActorModelL0(this)->getModelData()->getJointNodePointer(0)->getMtxCalc();
+	for (u16 i = 0; i < mMaterialNum; ++i) {
+		J3DMaterial* mat = getModel()->getModelData()->getMaterialNodePointer(i);
+		unk30[i]         = 0x32;
+		unk2C[i]         = 0x32;
+		for (u8 j = 0; j < mat->getTexGenBlock()->getTexGenNum(); ++j) {
+			if (mat->getTexGenBlock()->getTexMtx(j)
+			    && mat->getTexGenBlock()->getTexMtx(j)->getInfo()) {
+				unk30[i] = i;
+			}
+		}
+	}
+
+	for (int i = 0; i < 6; ++i) {
+		if (mAnmByType[i]) {
+			mAnmByType[i]->setModel(MActorModelL0(this));
+			mAnmByType[i]->checkUseMaterialIDInit(unk2C);
+		}
+	}
+
+	if (MActorGetAnmData(this)->getUnk0() > 0) {
+		it = MActorGetAnmData(this)->unk1C.begin();
+		e = MActorGetAnmData(this)->unk1C.end();
+		for (int i = 0; it != e; ++it, ++i) {
+			unk10[i]->setModel(getModel());
+		}
+	}
+
+	for (u16 i = 0; i < mMaterialNum; ++i) {
+		J3DMaterial* mat    = getModel()->getModelData()->getMaterialNodePointer(i);
+		J3DMaterialAnm* anm = mat->getMaterialAnm();
+
+		if (anm == nullptr && (unk2C[i] != 0x32 || unk30[i] != 0x32)) {
+			anm = new J3DMaterialAnm;
+			mat->change();
+			mat->setMaterialAnm(anm);
+		}
+		unk2C[i] = 0x32;
+	}
+
+	initDL();
+
+	if (!MActorGetAnmData(this)->getUnk48())
+		MActorGetAnmData(this)->createSampleModelData(getModel()->getModelData());
+}
+
+// Binding level worth +8 of low region, landing MActor::isCurAnmAlreadyEnd's
+// frame at 0x38 (batch 121).
+static inline s16 MActorGetEnd(const J3DFrameCtrl* p)
+{
+	s16 end = p->getEnd();
+	return end;
+}
+
+bool MActor::isCurAnmAlreadyEnd(int type)
+{
+	bool result = true;
+
+	J3DFrameCtrl* ctrl = getFrameCtrl(type);
+	if (ctrl) {
+		result = ctrl->checkState(J3DFrameCtrl::STATE_COMPLETED_ONCE)
+		         || ctrl->checkState(J3DFrameCtrl::STATE_LOOPED_ONCE)
+		         || ctrl->getFrame() + 0.1f >= MActorGetEnd(ctrl);
+	}
+
+	return result;
+}
+
+BOOL MActor::curAnmEndsNext(int type, char* part_name)
+{
+	if (!mAnmByType[type])
+		return true;
+
+	if (type == 0) {
+		if (!part_name)
+			return mAnmByType[type]->endsNext();
+
+		if (!unk10)
+			return true;
+
+		int idx = mAnmData->partsNameToIdx(part_name);
+		return unk10[idx]->endsNext();
+	}
+
+	return mAnmByType[type]->endsNext();
+}
+
+BOOL MActor::curSubAnmEndsNext(int idx)
+{
+	if (!unk10)
+		return true;
+
+	return unk10[idx]->endsNext();
+}
+
+void MActor::setAnimation(const char* name, int type)
+{
+	if (!mAnmByType[type])
+		return;
+
+	mAnmByType[type]->setAnm(name, unk2C);
+
+	if (mMakeDl && type != 0)
+		resetDL();
+}
+
+void MActor::initDL()
+{
+	if (!mMakeDl)
+		return;
+
+	j3dSys.setModel(mModel);
+	j3dSys.setTexture(mModel->getModelData()->getTexture());
+	for (u16 i = 0; i < mMaterialNum; ++i) {
+		mModel->getMatPacket(i)->unlock();
+
+		if (unk30[i] == 0x32 && unk2C[i] == 0x32) {
+			mModel->getModelData()->getMaterialNodePointer(i)->calc(
+			    (MtxPtr)&j3dDefaultMtx);
+			mModel->getModelData()->getMaterialNodePointer(i)->setCurrentMtx();
+			j3dSys.setMatPacket(mModel->getMatPacket(i));
+			mModel->getModelData()
+			    ->getMaterialNodePointer(i)
+			    ->makeDisplayList();
+			mModel->getMatPacket(i)->lock();
+		}
+	}
+}
+
+void MActor::resetDL()
+{
+	if (!mMakeDl)
+		return;
+
+	j3dSys.setModel(mModel);
+	j3dSys.setTexture(mModel->getModelData()->getTexture());
+	for (u16 i = 0; i < mMaterialNum; ++i) {
+		if (unk30[i] != 0x32 || unk2C[i] != 0x32) {
+			mModel->getMatPacket(i)->unlock();
+		} else {
+			if (!mModel->getMatPacket(i)->isLocked()) {
+				mModel->getModelData()->getMaterialNodePointer(i)->calc(
+				    (MtxPtr)&j3dDefaultMtx);
+				j3dSys.setMatPacket(mModel->getMatPacket(i));
+				mModel->getModelData()
+				    ->getMaterialNodePointer(i)
+				    ->makeDisplayList();
+				mModel->getMatPacket(i)->lock();
+			}
+		}
+	}
+}
+
+void MActor::initDLByIndex(u16) { }
+
+void MActor::unlockDLIfNeed()
+{
+	if (!mMakeDl)
+		return;
+
+	for (u16 i = 0; i < mMaterialNum; ++i)
+		if (unk30[i] != 0x32 || unk2C[i] != 0x32)
+			mModel->getMatPacket(i)->unlock();
+}
+
+void MActor::onMakeDL() { mMakeDl = true; }
+
+void MActor::offMakeDL()
+{
+	mMakeDl = false;
+	for (u16 i = 0; i < mMaterialNum; ++i)
+		mModel->getMatPacket(i)->unlock();
+}
+
+const char* MActor::getCurAnmName(int) const { }
+
+void MActor::setJointCallback(int param_1, J3DNodeCallBack param_2)
+{
+	mModel->getModelData()->getJointNodePointer(param_1)->setCallBack(param_2);
+}
+
+void MActor::updateInSubBck()
+{
+	if (!unk10)
+		return;
+
+	for (int i = 0; i < mAnmData->getUnk0(); ++i)
+		if (unk10[i]->getCurIdx() >= 0)
+			unk10[i]->updateIn();
+}
+
+void MActor::updateOutSubBck()
+{
+	if (!unk10)
+		return;
+
+	for (int i = 0; i < mAnmData->getUnk0(); ++i)
+		if (unk10[i]->getCurIdx() >= 0)
+			unk10[i]->updateOut();
+}
+
+void MActor::calcAnm()
+{
+	frameUpdate();
+
+	updateIn();
+	J3DModel* model = getModel();
+	model->calc();
+	updateOut();
+}
+
+void MActor::calc()
+{
+	if (!unk39)
+		return;
+
+	updateIn();
+	MActorModelL0(this)->calc();
+	updateOut();
+}
+
+void MActor::viewCalc()
+{
+	if (unk39)
+		mModel->viewCalc();
+}
+
+void MActor::loadSetDeformData(const char*) { }
+
+void MActor::setLightID(s16 light_id)
+{
+	mLightId = 0;
+	mLightId = light_id;
+}
+
+// Binding level over TBGCheckData::getNormal() at the three component
+// reads, landing MActor::setLightData's frame at 0x68.
+static inline const JGeometry::TVec3<f32>&
+MActorGetNormal(const TBGCheckData* p)
+{
+	const JGeometry::TVec3<f32>& n = p->getNormal();
+	return n;
+}
+
+void MActor::setLightData(const TBGCheckData* param_1,
+                          const JGeometry::TVec3<f32>& param_2)
+{
+	if (!unk40)
+		return;
+
+	if (gpCubeShadow != nullptr && gpCubeShadow->getInCubeNo(param_2) != -1) {
+		mLightId = 1;
+		return;
+	}
+
+	if (param_1 == nullptr)
+		return;
+
+	mLightId = 0;
+#ifdef VERSION_GMSP01
+	if (param_1->isShadow()) {
+		f32 tmp = param_2.x * param_1->mNormal.x
+		          + param_2.z * param_1->mNormal.z + param_1->mPlaneDistance;
+		f32 groundY = -tmp / param_1->mNormal.y;
+		if (groundY + 200.0f > param_2.y)
+			setLightID(param_1->getData());
+	}
+#else
+	if (param_1->isShadow()) {
+		f32 dist = param_2.x * MActorGetNormal(param_1).x
+		    + param_2.z * MActorGetNormal(param_1).z
+		    + param_1->getPlaneDistance();
+		f32 planeY = -dist / MActorGetNormal(param_1).y;
+
+		if (200.0f + planeY > param_2.y)
+			setLightID(param_1->getData());
+	}
+#endif
+}
+
+void MActor::setLightType(int light_type)
+{
+	unk44 = light_type;
+	gpLightManager->getLightSet(light_type)->enable();
+}
+
+void MActor::update() { }
+
+// Binding level worth +8 of low region, landing MActor::entry's frame at
+// 0x50 (batch 124).
+static inline TLightWithDBSet*
+MActorGetLightSet(TLightWithDBSetManager* p, int i)
+{
+	TLightWithDBSet* lightSet = p->getLightSet(i);
+	return lightSet;
+}
+
+void MActor::entry()
+{
+	if (!unk39)
+		return;
+
+	bool shouldResetLightDrawBuf = false;
+	if (mLightId != 0xffff) {
+		if (mLightId < 0)
+			mLightId = 0;
+
+		MActorGetLightSet(gpLightManager, unk44)
+		    ->changeLightDrawBuffer(mLightId);
+
+		shouldResetLightDrawBuf = true;
+	}
+
+	entryIn();
+	mModel->entry();
+	entryOut();
+
+	if (shouldResetLightDrawBuf)
+		gpLightManager->getLightSet(unk44)->resetLightDrawBuffer();
+}
+
+// Binding level worth +8 of low region, landing MActor::frameUpdate's frame
+// at 0x50 (batch 121).
+static inline s32 MActorGetUnk0(MActorAnmData* p)
+{
+	s32 unk0 = p->getUnk0();
+	return unk0;
+}
+
+void MActor::frameUpdate()
+{
+	for (int i = ANM_TYPE_FIRST; i < ANM_TYPE_COUNT; ++i)
+		if (mAnmByType[i] && mAnmByType[i]->getCurIdx() >= 0)
+			mAnmByType[i]->getFrameCtrl()->update();
+
+	if (unk10)
+		for (int i = 0; i < MActorGetUnk0(mAnmData); ++i)
+			if (unk10[i]->getCurIdx() >= 0)
+				unk10[i]->getFrameCtrl()->update();
+}
+
+void MActor::matAnmFrameUpdate()
+{
+	for (int i = ANM_TYPE_BPK; i < ANM_TYPE_COUNT; ++i)
+		if (mAnmByType[i] && mAnmByType[i]->getCurIdx() >= 0)
+			mAnmByType[i]->getFrameCtrl()->update();
+}
+
+void MActor::perform(u32 cue, JDrama::TGraphics*)
+{
+	if (cue & CUE_CALC_ANIM)
+		calcAnm();
+
+	if (cue & CUE_CALC_VIEW)
+		viewCalc();
+
+	if (cue & CUE_ENTRY)
+		entry();
+}
+
+BOOL MActor::checkCurAnm(const char* name, int type)
+{
+	if (!mAnmByType[type])
+		return false;
+
+	if (mAnmByType[type]->findName2(name) == mAnmByType[type]->getCurIdx())
+		return true;
+
+	return false;
+}
+
+BOOL MActor::checkCurAnmFromIndex(int index, int type)
+{
+	if (!mAnmByType[type])
+		return false;
+
+	if (index == mAnmByType[type]->getCurIdx())
+		return true;
+
+	return false;
+}
+
+bool MActor::checkAnmFileExist(const char* name, int type)
+{
+	if (mAnmByType[type] && mAnmByType[type]->findName2(name) >= 0)
+		return true;
+
+	return false;
+}
+
+J3DFrameCtrl* MActor::getFrameCtrl(int type)
+{
+	if (!mAnmByType[type])
+		return nullptr;
+	return mAnmByType[type]->getFrameCtrl();
+}
+
+BOOL MActor::checkBckPass(f32 pass_frame)
+{
+	if (!mAnmByType[0])
+		return false;
+
+	J3DFrameCtrl* ctrl = mAnmByType[0]->getFrameCtrl();
+
+	if (!ctrl)
+		return false;
+
+	return ctrl->checkPass(pass_frame);
+}
+
+int MActor::getCurAnmIdx(int type) const
+{
+	if (!mAnmByType[type])
+		return -1;
+	return mAnmByType[type]->unk0;
+}
+
+void MActor::setFrameRate(f32 rate, int type)
+{
+	if (!mAnmByType[type])
+		return;
+
+	mAnmByType[type]->unk4.setRate(rate);
+}
+
+void MActor::setBck(const char* name)
+{
+	if (!mAnmBck)
+		return;
+	mAnmBck->setAnm(name, 0);
+}
+
+void MActor::setBckFromIndex(int index)
+{
+	if (!mAnmBck)
+		return;
+	mAnmBck->setAnmFromIndex(index, 0);
+}
+
+void MActor::setSubBckFromIndex(int index, int part_idx)
+{
+	if (!unk10)
+		return;
+	unk10[part_idx]->setAnmFromIndex(index, 0);
+}
+
+BOOL MActor::checkCurBckFromIndex(int index)
+{
+	if (!mAnmBck)
+		return false;
+	if (index == mAnmBck->unk0)
+		return true;
+	return false;
+}
+
+void MActor::setSubBck(const char* part_name, const char* anm_name)
+{
+	if (!mAnmBck)
+		return;
+
+	if (!unk10)
+		return;
+
+	int idx = mAnmData->partsNameToIdx(part_name);
+	unk10[idx]->setAnm(anm_name, 0);
+}
+
+void MActor::setBpk(const char* name)
+{
+	if (!mAnmBpk)
+		return;
+	mAnmBpk->setAnm(name, unk2C);
+	resetDL();
+}
+
+void MActor::setBpkFromIndex(int index)
+{
+	if (!mAnmBpk)
+		return;
+	mAnmBpk->setAnmFromIndex(index, unk2C);
+	resetDL();
+}
+
+void MActor::setBtp(const char* name)
+{
+	if (!mAnmBtp)
+		return;
+	mAnmBtp->setAnm(name, unk2C);
+	resetDL();
+}
+
+void MActor::setBtpFromIndex(int index)
+{
+	if (mAnmBtp == nullptr && index >= 0)
+		return;
+	if (index < 0)
+		return;
+	mAnmBtp->setAnmFromIndex(index, unk2C);
+	resetDL();
+}
+
+void MActor::setBtk(const char* name)
+{
+	if (!mAnmBtk)
+		return;
+	mAnmBtk->setAnm(name, unk2C);
+	resetDL();
+}
+
+void MActor::setBtkFromIndex(int index)
+{
+	if (!mAnmBtk)
+		return;
+	mAnmBtk->setAnmFromIndex(index, unk2C);
+	resetDL();
+}
+
+void MActor::setBlk(const char* name)
+{
+	if (!mAnmBlk)
+		return;
+	mAnmBlk->setAnm(name, unk2C);
+	resetDL();
+}
+
+void MActor::setBlkFromIndex(int index)
+{
+	if (!mAnmBlk)
+		return;
+	mAnmBlk->setAnmFromIndex(index, unk2C);
+	resetDL();
+}
+
+void MActor::setBrk(const char* name)
+{
+	if (!mAnmBrk)
+		return;
+	mAnmBrk->setAnm(name, unk2C);
+	resetDL();
+}
+
+void MActor::setBrkFromIndex(int index)
+{
+	if (!mAnmBrk)
+		return;
+	mAnmBrk->setAnmFromIndex(index, unk2C);
+	resetDL();
+}
+
+// Binding level over the animation-table element, worth +8 of low region in
+// MActor::updateIn, updateOut and perform (frame ladder 271).
+static inline MActorAnmBase* MActorAnmAt(const MActor* p, int type)
+{
+	MActorAnmBase* anm = p->mAnmByType[type];
+	return anm;
+}
+
+void MActor::updateIn()
+{
+	if (MActorAnmAt(this, ANM_TYPE_BCK)
+	    && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
+		mAnmByType[ANM_TYPE_BCK]->updateIn();
+
+	updateInSubBck();
+
+	if (mAnmByType[ANM_TYPE_BLK] && mAnmByType[ANM_TYPE_BLK]->getCurIdx() >= 0)
+		mAnmByType[ANM_TYPE_BLK]->updateIn();
+}
+
+void MActor::updateOut()
+{
+	if (MActorAnmAt(this, ANM_TYPE_BCK)
+	    && mAnmByType[ANM_TYPE_BCK]->getCurIdx() >= 0)
+		mAnmByType[ANM_TYPE_BCK]->updateOut();
+
+	updateOutSubBck();
+
+	if (mAnmByType[ANM_TYPE_BLK] && mAnmByType[ANM_TYPE_BLK]->getCurIdx() >= 0)
+		mAnmByType[ANM_TYPE_BLK]->updateOut();
+}
+
+void MActor::entryIn()
+{
+	for (int i = ANM_TYPE_BPK; i < ANM_TYPE_COUNT; ++i)
+		if (mAnmByType[i] && mAnmByType[i]->getCurIdx() >= 0)
+			mAnmByType[i]->updateIn();
+}
+
+void MActor::entryOut()
+{
+	for (int i = ANM_TYPE_BPK; i < ANM_TYPE_COUNT; ++i)
+		if (mAnmByType[i] && mAnmByType[i]->getCurIdx() >= 0)
+			mAnmByType[i]->updateOut();
+}
+
+void MActor::updateMatAnm()
+{
+	j3dSys.setTexture(getModel()->getModelData()->getTexture());
+	for (u16 i = 0; i < mMaterialNum; ++i)
+		if (unk30[i] != 0x32 || unk2C[i] != 0x32)
+			SMS_CalcMatAnmAndMakeDL(getModel(), i);
+}
+
+void MActor::dumpReport() { }

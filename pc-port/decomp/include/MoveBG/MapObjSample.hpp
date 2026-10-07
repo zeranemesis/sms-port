@@ -1,0 +1,15 @@
+#ifndef MOVE_BG_MAP_OBJ_SAMPLE_HPP
+#define MOVE_BG_MAP_OBJ_SAMPLE_HPP
+
+#include <JSystem/JDrama/JDRViewObj.hpp>
+
+class TGateShadow : public JDrama::TViewObj {
+public:
+	TGateShadow(const char* name = "シャドウ球")
+	    : JDrama::TViewObj(name)
+	{
+	}
+	void perform(u32 cue, JDrama::TGraphics* graphics);
+};
+
+#endif

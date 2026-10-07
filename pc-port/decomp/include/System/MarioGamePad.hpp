@@ -1,0 +1,252 @@
+#ifndef SYSTEM_MARIO_GAME_PAD_HPP
+#define SYSTEM_MARIO_GAME_PAD_HPP
+
+#include <dolphin/types.h>
+#include <JSystem/JUtility/JUTGamePad.hpp>
+#include <Camera/cameralib.hpp>
+#include <Camera/Camera.hpp>
+
+#define VARIANTS 5
+
+struct TMarioControllerWork {
+	enum Buttons {
+		UNK10 = 0x10,
+		R     = 0x20,
+		A     = 0x100,
+		B     = 0x200,
+		L     = 0x4000,
+	};
+
+	/* 0x00 */ s16 mStickHS16;
+	/* 0x02 */ s16 mStickVS16;
+	/* 0x04 */ u32 mInput;
+	/* 0x08 */ u32 mFrameInput;
+	/* 0x0C */ u8 mAnalogRU8;
+	/* 0x0D */ u8 mAnalogLU8;
+	/* 0x10 */ f32 mStickH;
+	/* 0x14 */ f32 mStickV;
+	/* 0x18 */ f32 mStickDist;
+	/* 0x1C */ f32 mAnalogR;
+	/* 0x20 */ f32 mAnalogL;
+
+	bool isAHit() const
+	{
+		if (mFrameInput & A) {
+			return true;
+		}
+		return false;
+	}
+	bool isBHit() const
+	{
+		if (mFrameInput & B) {
+			return true;
+		}
+		return false;
+	}
+	bool isAPressed() const
+	{
+		if (mInput & A) {
+			return true;
+		}
+		return false;
+	}
+	bool isBPressed() const
+	{
+		if (mInput & B) {
+			return true;
+		}
+		return false;
+	}
+};
+
+class TMarioGamePad : public JUTGamePad {
+public:
+	TMarioGamePad(EPadPort port)
+	    : JUTGamePad(port)
+	    , mMeaning(0)
+	    , mEnabledFrameMeaning(0)
+	    , mDisabledFrameMeaning(0)
+	    , _DC(0)
+	    , _DE(0)
+	    , _E0(0)
+	    , mFlags(0)
+	{
+		reset();
+	}
+	// Weak in the map (0x64, emitted in Application.cpp) together with
+	// __vt__13TMarioGamePad (0xc), so the body is a header inline; with it
+	// declared only, Application.o referenced the vtable as an external.
+	virtual ~TMarioGamePad() { }
+
+	enum PadMeanings {
+		MEANING_0x1      = 0x1,
+		MEANING_0x2      = 0x2,
+		MEANING_0x4      = 0x4,
+		MEANING_0x8      = 0x8,
+		MEANING_0x10     = 0x10,
+		MEANING_0x20     = 0x20,
+		MEANING_0x40     = 0x40,
+		MEANING_0x80     = 0x80,
+		MEANING_0x100    = 0x100,
+		MEANING_0x200    = 0x200, // Unused?
+		MEANING_0x400    = 0x400,
+		MEANING_0x800    = 0x800,
+		MEANING_0x1000   = 0x1000,
+		MEANING_0x2000   = 0x2000,
+		MEANING_0x4000   = 0x4000,
+		MEANING_0x8000   = 0x8000,
+		MEANING_0x10000  = 0x10000,
+		MEANING_0x20000  = 0x20000,
+		MEANING_0x40000  = 0x40000,
+		MEANING_0x80000  = 0x80000,
+		MEANING_0x100000 = 0x100000,
+		MEANING_0x200000 = 0x200000,
+	};
+	enum PadFlags {
+		PAD_FLAG_0x1  = 0x1,
+		PAD_FLAG_0x2  = 0x2,
+		PAD_FLAG_0x4  = 0x4,
+		PAD_FLAG_0x8  = 0x8,
+		PAD_FLAG_0x10 = 0x10,
+		PAD_FLAG_0x20 = 0x20,
+		PAD_FLAG_0x40 = 0x40,
+		PAD_FLAG_0x80 = 0x80,
+	};
+
+	// Fabricated
+	static inline bool checkReset(s32* resetPort)
+	{
+		if (resetPort != 0) {
+			*resetPort = JUTGamePad::C3ButtonReset::sResetOccurredPort;
+		}
+		return JUTGamePad::C3ButtonReset::sResetOccurred;
+	}
+
+	// Fabricated
+	static inline void handleReset(s32 resetPort)
+	{
+		if (resetPort == JUTGamePad::EPortInvalid) {
+			mResetFlag.on(0xf);
+		} else {
+			mResetFlag.on(1 << resetPort);
+		}
+		JUTGamePad::C3ButtonReset::sResetOccurred = false;
+	}
+
+	// Fabricated
+	inline void updateMeaning(EButtons button, PadMeanings padButton,
+	                          u32 prevMeaning)
+	{
+		if ((mButton.mTrigger & button) != 0
+		    || ((mButton.mButton & button) != 0
+		        && ((prevMeaning & padButton) != 0))) {
+			mMeaning |= padButton;
+		}
+	}
+
+	// Fabricated
+	inline u32 resetMeaning()
+	{
+		// `i` has to be declared ahead of `dc`: the clearing loop below is
+		// unrolled by eight with a two-trip `ctr` tail, and retail keeps its
+		// counter in r5 with `dc` in r4. Declaring the counter in the `for`
+		// init reverses the pair (TMarioGamePad::updateMeaning 99.9 -> 100).
+		int i;
+		u16 dc = _DC;
+		_DC    = 0;
+
+		if (mButton.mButton & (DPAD_UP | DPAD_DOWN | DPAD_LEFT | DPAD_RIGHT)) {
+			_DC |= 1;
+		}
+
+		if ((dc & 1) != 0) {
+			if (mButton.mAnalogRf > 0.25f) {
+				_DC |= 1;
+			}
+		} else if (mButton.mAnalogRf > 0.5f) {
+			_DC |= 1;
+		}
+
+		_DE = _DC & ~dc;
+		_E0 = dc & ~_DC;
+
+		for (i = 0; i < 10; i++)
+			mCompSPos[i] = 0.0f;
+
+		u32 prevMeaning = mMeaning;
+		mMeaning        = 0;
+		return prevMeaning;
+	}
+
+	// Fabricated enumerator: the map only gives the type's name, through the
+	// mangled parameter of keepRumble/rumble (Q213TMarioGamePad5TType).
+	enum TType { TYPE_UNK0 = 0 };
+
+	void keepRumble(TType type);
+	void rumble(TType type, u32 param_2);
+	void considerMarioStick(f32* stick);
+
+	// Fabricated
+	void resetButtons()
+	{
+		mButton.mTrigger = 0;
+		mButton.mRelease = 0;
+	}
+
+	// Fabricated
+	inline bool checkFlag(u32 flag) { return (mFlags & flag) != 0; }
+	void onFlag(u32 flag) { mFlags |= flag; }
+	void offFlag(u32 flag) { mFlags &= ~flag; }
+	// fabricated name; the directors' setups assign the whole flag word
+	// through it (its receiver binding is a dead word there, c-r28).
+	void setFlag(u16 flag) { mFlags = flag; }
+
+	// fabricated. BOOL, not bool: the converted result is one dead forced
+	// load per value-context use, which the director tests carry in retail
+	// (TMovieDirector::direct exact, every other user frame closer, research
+	// c-r29).
+	BOOL isSomethingPushed() const { return mResetFlag.check(1 << mPortNum); }
+
+	static void read();
+	void onNeutralMarioKey();
+	void reset();
+	void updateMeaning();
+
+	// fabricated
+	bool checkMeaning(u32 meaning) const { return mMeaning & meaning; }
+
+	// fabricated
+	bool checkFrameMeaning(u32 meaning) const
+	{
+		return mEnabledFrameMeaning & meaning;
+	}
+
+	// fabricated
+	f32 getMainStickInDir(f32 x, f32 y) const
+	{
+		return mMainStick.mPosX * x + mMainStick.mPosY * y;
+	}
+
+	void invalidate(s32 frames) { mDisabledFrames = frames; }
+
+public:
+	// NOTE: suprisingly, only flat array matches
+	/* 0xA8 */ f32 mCompSPos[2 * VARIANTS];
+	/* 0xD0 */ u32 mMeaning;
+	/* 0xD4 */ u32 mEnabledFrameMeaning;
+	/* 0xD8 */ u32 mDisabledFrameMeaning;
+	/* 0xDC */ u16 _DC;
+	/* 0xDE */ u16 _DE;
+	/* 0xE0 */ u16 _E0;
+
+	/* 0xE2 */ u16 mFlags;
+
+	/* 0xE4 */ s16 _E4;
+	/* 0xE6 */ u16 _E6; // padding?
+	/* 0xE8 */ s32 mDisabledFrames;
+	/* 0xEC */ u32 _EC; // padding?
+
+	static JDrama::TFlagT<u16> mResetFlag;
+};
+
+#endif

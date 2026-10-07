@@ -1,0 +1,291 @@
+# Developer guide
+
+How the port is put together and where changes go. To build and play, see the [README](../README.md) and [BUILD.md](../BUILD.md).
+
+## Where a fix goes
+
+- **Decompilation bugs go in the decomp** (`sms-english`, the `decomp/` submodule): source that does not do what retail does (a wrong member, a swapped argument, a wrong constant) is fixed there, verified with `ninja changes_all` and the DOL hash, and picked up here by bumping the submodule.
+  A decomp bug can show up only on PC (MWCC and g++ read the same wrong source differently), and it is still a decomp bug.
+- **Never patch around incomplete decompilation.**
+  A bug that comes from the decomp not doing what retail does (a non-matching function, a missing branch, a wrong reconstruction) is fixed only in the decomp, never in `decomp-patches/` or `platform/`, even as a stopgap.
+- **Decomp matching progress comes first.**
+  A decomp fix lands in `sms-english` only when it keeps every function's match (no regression in `ninja changes_all`, and the DOL hash unchanged).
+  When the only correct form found so far costs match percentage, the decomp keeps its matching form with a `TODO` naming the behaviour difference, and the port lives with that difference until a matching form is found.
+  Example: `TConductor::isBossDefeated` (98.8%) lacks retail's `default:` arm, so maps other than 2 and 3 fall off the end; g++ then runs the Gesso check for them where retail runs the Hinokuri one.
+- **Pointer-size neutral spellings go in the decomp** (the one kind of PC-motivated change the decomp takes): where the game keeps pointers in 4-byte slots, the decomp spells that so MWCC's output is unchanged and a 64-bit host keeps the layout: `PTR32(T)` (exactly `T*` in the decomp's `dolphin/types.h`) for pointer fields of structs laid over file data, `sizeof` instead of byte counts, and `u32` instead of signed ints in int-to-pointer casts.
+  Each such commit keeps the DOL hash and every function's match; one-off 64-bit adaptations that cannot be spelled neutrally are `ptr64-*` patches here (see [64-BIT.md](64-BIT.md)).
+- **PC-specific fixes go in `decomp-patches/`**: byte order (`endian-*`), host compiler leniency (`0001`–`0010`, `0015`, `0018`, `ret-02..03`), host services (`thp-*`, `audio-*`), port-only features (`port-*`, `SMS_*` switches). Each patch starts with a `Reason:` line saying why it cannot live in the decomp.
+  A patch never corrects the decomp's behaviour; it only adapts retail's behaviour to the PC.
+- **Emulation of the hardware goes in `platform/`** (GX, DVD, OS, audio), never in game source.
+- Example: the sun-glass tint that stopped part-way down the screen was a decomp bug (`TOrthoProj`'s reconstructed constructor stored its last two edges swapped), so it was fixed in `sms-english` and verified against retail, not patched here.
+
+## How the build works
+
+`build.sh` configures `build/<os>-<arch>/` with CMake ([BUILD.md](../BUILD.md#manual-cmake-build) has the options); everything it generates stays in that folder.
+
+- `-DSMS_ARCH=32` compiles with `-m32` (Linux: `gcc-multilib g++-multilib`; Windows: MINGW32).
+  `-DSMS_ARCH=64` is a native 64-bit build that keeps game memory, static data and thread stacks below 4 GiB ([64-BIT.md](64-BIT.md)); it is what macOS builds.
+- Default build type `RelWithDebInfo` = `-O2 -g` for all targets (the fall-off-the-end functions got explicit returns, `ret-*` patches).
+- The 32-bit Linux build compiles against the amd64 SDL2/EGL headers and links the i386 runtime libraries (`/usr/lib/i386-linux-gnu/libSDL2-2.0.so.0`, `libEGL.so.1`) directly, so no `:i386` `-dev` packages are needed.
+- The decomp keeps the game in `src/` and `include/`, and each library in `libs/<name>/src` and `libs/<name>/include` (`dolphin`, `JSystem`, `THPPlayer`, `PowerPC_EABI_Support`, `TRK_MINNOW_DOLPHIN`, `OdemuExi2`), as upstream `doldecomp/sms` does.
+  The game sees the headers through the same roots in `configure.py`'s order (`include`, then each `libs/<name>/include`), except MSL's C and C++ headers: the port uses the host's.
+- Game units: every `.c`/`.cpp` in `decomp/src`, `decomp/libs/JSystem/src` and `decomp/libs/THPPlayer/src` (588 units, listed by `tools/gen_sources.py`, which reads `configure.py` for the ones that get `SMS.pch`), plus the SDK's pad clamp and the decomp's THP decoder (`platform/thp/thp.cmake`); the rest of the SDK, MSL, the runtime, MetroTRK and OdemuExi2 are left out.
+- `decomp-patches/` are applied in name order to copies under `build/<os>-<arch>/patched/`, at the same paths as in the decomp (`patched/src/...`, `patched/libs/JSystem/include/...`); `decomp/` itself is never modified.
+- Flags: `-std=gnu++03 -fno-gnu-keywords -fpermissive -fno-strict-aliasing -fwrapv -finput-charset=UTF-8 -fexec-charset=CP932 -DGEKKO -DTARGET_PC -DVERSION_GMSE01 -DBUILD_VERSION=2 -DNDEBUG=1`, host libc/libstdc++ instead of MSL, `-include src/port_compat.h`.
+  String literals are Shift-JIS, as in the MWCC build (archive object names are matched against them); clang has no CP932 execution charset, so on macOS the sources are mirrored as CP932 first (`tools/darwin_cp932_mirror.py`).
+- The game's global `operator new/delete` (JKRHeap) are renamed in `libsms_game.a` with `objcopy --redefine-syms` (`llvm-objcopy` on macOS), so only game code allocates from JKR heaps; libstdc++ and `platform/` use the host allocator.
+- `rand()` is MSL's (RAND_MAX 32767, same LCG) via `port_compat.h`; glibc's 2^31 range overflows the game's `1.f / (RAND_MAX + 1)`.
+- The game's MSL maths is the console's (`sinf`, `cosf`, `tanf`, `atanf`, `atan2f`, `acosf`, `expf`, `powf`, fdlibm's `atan2`, and the header inlines `std::fmodf` and `sqrtf`) via `port_compat.h` and `platform/misc/msl_math.c`, which follows the DOL's matched objects instruction for instruction; `tools/mslmath/check.sh` compares it with those objects under `qemu-ppc` and between the 32 and 64-bit builds ([64-BIT.md](64-BIT.md), items 10 and 15).
+- The SDK's matrix library (`PSMTX*`, `PSVEC*`, `C_MTX*`) is `platform/mtx`, which follows the DOL's paired-single and C routines instruction for instruction, with single-rounding fused multiply-adds; `tools/mtxmath/check.sh` compares it with the DOL's objects under `qemu-ppc` and between the 32 and 64-bit builds ([64-BIT.md](64-BIT.md), item 11).
+- The float arithmetic of the SDK's GX functions the DOL links (`GXInitLightDistAttn`, `GXInitSpecularDir`, `GXProject`, `GXDrawSphere` with MSL's `sinf` and `cosf`) is `platform/gx/src/gx_sdk_math.h`, in the DOL's order; `sms_gx` is built without contraction on every host, and `tools/gxmath/check.sh` compares it with the DOL's objects under `qemu-ppc` ([64-BIT.md](64-BIT.md), item 18).
+- The Gekko's quantised integer store (`psq_st` through a GQR, the audio code's `OSf32tos8`) is `port_gekko_quantize` in `port_fpu.h` (`fpu-07`); `tools/quantize/check.sh` checks it ([64-BIT.md](64-BIT.md), item 18).
+
+## Tools
+
+| Tool | Use |
+| --- | --- |
+| `tools/common.sh` | shared by `build.sh`, `run.sh` and `clean.sh`: host detection, `SMS_ARCH`, build folder, `rom/` lookup, moving files out of older layouts |
+| `tools/bundle_disc.py` | packs the disc's files into `sms-standalone` (or `SMS.app`'s `disc.gcm`) |
+| `tools/make_mac_app.sh`, `tools/extract_icon.py` | assemble and sign `SMS.app`; the app / `.exe` icon from the disc's memory-card icon |
+| `tools/regress/regress.py [--record] CHECK...` | the regression checks (below): scripted headless runs hashed against `tools/regress/baseline.txt` and between the 32 and 64-bit builds |
+| `tools/run_capture.sh SECS FIELDS` | headless run + captures + retail comparison |
+| `tools/shots.py`, `tools/contact.py OUT.png FIELDS...` | convert captures to PNG in `build/shots/` and compare with retail; contact sheet of captures |
+| `tools/gdbrun.sh` | backtrace at the first fatal signal |
+| `tools/hangdump.sh N` | every thread's stack after N seconds |
+| `tools/trace_resolve.py`, `tools/trace_compare.py` | lockstep tracing against retail (`platform/trace/README.md`) |
+| `tools/mkpatch.sh` | write a `decomp-patches/` patch from edited copies |
+| `tools/warn_scan.py`, `tools/syntax_check.py` | one g++ warning class over all units; `-fsyntax-only` over all units |
+| `tools/gen_sources.py`, `tools/gen_stubs.py` | regenerate `cmake/decomp_sources.cmake` and `platform/sdk_stubs.cpp` |
+| `tools/fpprobe/` | PowerPC FPU behaviour probe (a DOL run in Dolphin) |
+| `tools/mslmath/`, `tools/mtxmath/`, `tools/gxmath/` (`check.sh`) | MSL's maths, the MTX/VEC and JSystem paired-single routines, and the SDK's GX arithmetic against the DOL's own objects under `qemu-ppc`, and between the 32 and 64-bit builds |
+| `tools/quantize/check.sh` | the quantised store model (`port_gekko_quantize`) on every float |
+
+The Linux debugging tools (`gdbrun.sh`, `hangdump.sh`, `run_capture.sh`, `syntax_check.py`) use `build/linux-32/`; set `SMS_ARCH=64` for `build/linux-64/`, or `SMS_BUILD=dir` for any other build folder.
+Tools that compare with retail read the Dolphin captures from `$DOLPHIN_ORACLE`.
+
+- **Moving the decomp pin:** `tools/update-decomp.sh [--64] [REF]` fetches the decomp, moves `decomp/` to REF (default `origin/main`), checks that every `decomp-patches/` patch applies in order with no failed hunk and no fuzz, and builds 32-bit (and 64-bit with `--64`).
+  It keeps the new pin, staged for a commit, only when all of that passes; otherwise it restores the old pin and says what failed.
+  Patches name files by their path in the decomp, so a decomp change that moves files (as the upstream merge that moved the libraries to `libs/` did) needs their `--- a/`/`+++ b/` lines rewritten, and the include roots in `CMakeLists.txt` and the source roots in `tools/gen_sources.py` updated with it.
+  The submodule is always pinned to an exact decomp commit.
+- **Regression checks:** `tools/regress/regress.py CHECK...` makes the scripted runs every port change is verified with, in both word sizes, and prints PASS or FAIL for each run against the baseline and for each pair of 32 and 64-bit runs, which must be identical.
+  These are the runs this page, [64-BIT.md](64-BIT.md) and [ECLIPSE.md](ECLIPSE.md) mean by the scripted title and plaza frames, the plaza audio, the 60 fps plaza gate run and the Eclipse runs.
+  The checks are `title` (captures at fields 300 to 1500), `plaza` (a new game into Delfino Plaza with `SMS_WARP=1,0,1` and scripted input, captures at fields 3700 to 5400, and the same run with audio, whose first 88 s of `SMS_AUDIO_WAV` are hashed), `fps60` (the plaza gate at `SMS_WARP=1,5,0` under gdb, `tools/regress/gate.py`: at `SMS_FRAME_RATE=60` Mario must be captured after 100 frames, with the `setNextStage` of the 30 fps run) and `eclipse` (BSE's first boot, whose saved card the others start from and whose card files are hashed too, the Tutorial, the Tutorial as Luigi and as Piantissimo under gdb (`tools/regress/character.py`, which also reports their movement parameters and jumps), and the Fire Petey and Dark Zhine warps `SMS_WARP=72,0` and `79,0`); `vanilla` is the first three and `all` everything, and `--list` names the single runs, which can be given on their own.
+  Every run uses the deterministic clock, no settings file, no texture packs and skipped movies, so two runs give the same bytes; only hashes are kept (`baseline.txt` records the commit each run was recorded from), and the captures are deleted unless `--keep` is given.
+  Nothing is built: the tool runs `build/linux-32` and `build/linux-64`, and `build-ecl` and `build-ecl64` for Eclipse ([ECLIPSE.md](ECLIPSE.md#building-it)), so build them first, or name other folders with `--build32`, `--build64`, `--ecl32` and `--ecl64`.
+  It takes the disc from `rom/` as `run.sh` does, else from `decomp/orig/GMSE01/` or a neighbouring `sms-english` clone's, or `--disc`, and the Eclipse disc from where `tools/mods/get.py` puts it.
+  `all` takes about 23 minutes on four cores with llvmpipe, two runs at a time (`--jobs`).
+  A change that is meant to change what the runs show is recorded with `--record` (which refuses when 32 and 64-bit differ) and the new `baseline.txt` committed with it, saying why the frames changed.
+
+## Platform layer
+
+| Module | What it does |
+| --- | --- |
+| `platform/sdk_stubs.cpp` | Generated: a weak, logging stub for all 321 SDK functions in `api-surface.tsv` that are not header inlines/macros; real implementations override them. |
+| `platform/port_runtime.cpp` | Boot: emulated MEM1 (24 MiB) mapped at `0x80000000`, game source selection, GLX vendor choice, crash handler. |
+| `platform/os/` | One emulated CPU: every `OSThread` is a host thread, only the CPU owner runs, strict priorities; message queues, mutexes, conds; interrupts delivered at OS-call check points and on idle; arena, clocks, OSAlloc, stopwatches, cache ops (→ `GXPC_InvalidateRange`). |
+| `platform/dvd/` | DVD over the disc image (`platform/disc`) or an extracted folder; the disc's own FST; async reads complete as interrupts. |
+| `platform/disc/` | GameCube `.iso`/`.gcm`/`.ciso` reader; also reads the disc image bundled at the end of the executable. |
+| `platform/vi/` | 59.94 Hz retrace from a host timer (or the deterministic clock), callbacks, captures, trace hook. |
+| `platform/pad/` | Controller 1 from keyboard and SDL game controllers, bindings, scripted input, `.dtm` movie input hook. |
+| `platform/card/` | Memory card in slot A as host files. |
+| `platform/ar/` | 16 MiB ARAM, ARQ transfers (completion runs before `ARQPostRequest` returns: JAudio busy-waits on it). |
+| `platform/mtx/` | `PSMTX*`/`PSVEC*`/`C_MTX*` as the DOL computes them (`mtx_ps.inc`). |
+| `platform/audio/` | DSP mail HLE, software mixer, AI output via SDL2; `noaudio.cpp` is the `SMS_NO_AUDIO` configuration. |
+| `platform/thp/` | THP movie decoding (the decomp's SDK decoder built for the host). |
+| `platform/endian/`, `platform/misc/endian.cpp` | Big-endian → host conversion of resources the game reads in place (dispatch from archive fetches by magic/file name). |
+| `platform/gx/` | GX/GD over OpenGL 3.3. |
+| `platform/trace/` | Native-vs-retail lockstep tracing. |
+| `platform/misc/` | SDK globals, fallback fake DSP (only without the audio HLE), MSL `rand`. |
+
+Low-memory OS globals and hardware register blocks that SDK headers *define* (`AT_ADDRESS`) become weak host globals via the `dolphin/types.h` override; `u32`/`s32` are `int` on LP64 hosts and unchanged on 32-bit.
+
+## Decomp patches
+
+Each file in `decomp-patches/` starts with a `Reason:` line; they are applied in name order to copies under `build/<os>-<arch>/patched/`.
+
+| Patch | Reason |
+| --- | --- |
+| 0001–0003 | g++ rejects `case` labels that jump over initialised locals (`gesso.cpp`, `MarioAutodemo.cpp`, `MarDirectorDirect.cpp`): brace the case bodies. |
+| 0004 | `JASTrack.cpp`: `goto bail` jumps over `u32 r31 = 0`: hoist the declaration. |
+| 0005 | `MapDraw.cpp` redeclares `SMSGetGameRenderWidth/Height` as `int` (conflicts with `Resolution.hpp`). |
+| 0006–0008 | Reference-binding leniency (`MarDirectorInitECT.cpp`, `GCConsole2.cpp`, `bombhei.cpp`, `tobiPuku.cpp`). |
+| 0009–0010 | Duplicate string globals (`SunModel.hpp`, `NpcAnm.cpp`/`NpcParts.cpp`) made weak. |
+| 0011 | Endian: `JKRMemArchive` converts RARC metadata on open and passes each resource (with its name) to the converters on first fetch. |
+| 0012 | Endian: Yaz0 decompressed length read big-endian. |
+| 0013 | Endian: `JSUInputStream` typed reads convert from big-endian. |
+| 0014 | `SMS_NO_AUDIO`: empty JAudio configuration; per-frame work and wave-load queries become no-ops. |
+| 0015 | `TVec2`/`TVec3` `operator+`/`-` (and two TU-local helpers) return a reference to a local, which g++ compiles to a NULL return: return by value on the port. |
+| 0016 | `SMS_SKIP_MOVIES`. |
+| 0017 | Endian: `J3DTevStage::load` builds its `{reg, op, AB, CD}` BP command words big-endian. |
+| 0018–0019 | Host integer types: `JKRArchive`'s default constructors pass `(s32)0` to its `intptr_t` parameter (ambiguous with the `const char*` constructor under g++), and `TMarDirector::fireStartDemoCamera` is defined with `u32` where `MarDirector.hpp` declares `uintptr_t` (the same type under MWCC, not on the host). |
+| 0020 | Clang: `TTabePuku::init` binds `theNerve()`'s const nerve to a non-const `TNerveBase<TLiveActor>*` (g++ `-fpermissive` only warns): `const_cast`. |
+| 0021–0022 | Host integer types for clang (g++ `-fpermissive` only warns): `ARQCallback` takes `uintptr_t` like the callbacks passed to it (`JKRAramPiece::doneDMA`, JASystem's `aramDmaFinish`), and the four `fireStartDemoCamera` callbacks still spelled with `u32` take `uintptr_t` as `MarDirector.hpp` declares. |
+| `endian-01..16` | Loader-site byte-order fixes (JPA, J2D BLO, BMG, JUTColor, PRM, SPC, streams, DL vertex counts, sequences, card saves, THP headers, J3DSkinDeform/J3DCluster display lists, the plaza shine-shadow sphere, the HUD/map 2D archive swap); see `platform/endian/README.md`. |
+| `port-02` | `SMS_WARP` / `SMS_WARP_MOVIE`: debug warp or movie from a file-select load. |
+| `audio-01..02` | JAudio bitfield/byte-order fixes (`TChannel` mix config, BMS note-on flags); see `platform/audio/README.md`. |
+| `ret-02..03` | Explicit returns for the 34 functions that fall off the end of a non-void body and whose value nothing reads (undefined behaviour under g++, harmless under MWCC). |
+| `thp-01..02` | Host THP decoder (portable bit reader and IDCT, big-endian audio header); see `platform/thp/README.md`. |
+| `endian-18` | `JSUInputStream`'s typed reads keep the value when a read fails at the end of the stream, as the console does, instead of byte-swapping it (see [Memory and undefined-behaviour checks](#memory-and-undefined-behaviour-checks)). |
+| `fpu-02..04` | MWCC's float-to-unsigned conversions at every site where the DOL makes them, with the runtime's result (`port_cvt_fp2unsigned` and `port_cvt_dbl_usll` in `port_fpu.h`: 0 below zero and for NaN, 0xFFFFFFFF from 2^32 up): the hit-check table index and the iris wipe's first row (`fpu-02..03`), and the 37 other source sites (`fpu-04`; `TMarDirector`'s wipe fade is in `framerate-35`). See [Float-to-integer conversions](#float-to-integer-conversions). |
+| `fpu-07` | `OSf32tos8` (`JASTrack`'s two calls) stores through GQR4 as the Gekko does, saturated to -128..127 and converted towards zero (`port_gekko_quantize` in `port_fpu.h`); the inline had no host body. See [64-BIT.md](64-BIT.md), item 18. |
+| `bounds-01..03` | Retail out-of-bounds accesses whose result depends on byte order or data layout, given the console's result: `TGCConsole2`'s unset pane index, the two 16-byte null textures read as 32, NPC colour indices past their tables. |
+| `uninit-01..03` | Retail reads of uninitialised stack values made deterministic: the stack light objects' direction, the logo wipe's pen vector z, the plaza tightrope colour. |
+
+## Memory and undefined-behaviour checks
+
+Last audit 2026-09-30, on the scripted title and plaza runs (no stage sweep).
+
+- **Tooling.**
+  AddressSanitizer runs only in a 32-bit build: x86-64 ASan puts its shadow memory at `0x7fff8000`, over MEM1's fixed `0x80000000`.
+  That build also had UBSan (`-fsanitize=address,undefined,float-cast-overflow -fno-sanitize=return -fsanitize-recover=all`, `-O1 -g1`, a separate build folder; GCC's `vptr` check needs `-fno-sanitize=vptr` on `J3DModel.cpp` and `JUTConsole.cpp`, whose classes have no key function).
+  ASan cannot see inside the game's JKR heaps, which live in MEM1, so uninitialised reads there come from valgrind memcheck (`--track-origins=yes`) on the normal 64-bit build, started with `--vgdb-error=0`: gdb stops at `port_os_init`, marks the arena undefined with `monitor make_memory undefined 0x80004000 0x3ffc000`, sets `vgdb-error` back up and detaches.
+  memcheck then reports reads of arena memory that nothing has written since boot, and uninitialised stack values; it does not see stale data in reused heap blocks.
+  It runs the game about 100 times slower than native (llvmpipe, `LP_NUM_THREADS=0`), so in the time available it covered the boot, the logos and the title screen, not the plaza.
+  A gdb probe on `GXLoadLightObjImm` recorded every light object the game loads, in both word sizes.
+- **Fixed** (patches above):
+  - The stack `GXLightObj`s of `TLightCommon`/`TLightMario::setLight` and `perform`, `TSilhouette::setting` and `TMapObjPlane` leave the direction unset, so GX_LIGHT0 and GX_LIGHT1 carried stack garbage, different in each word size: a NaN (`ffffb750`) and values near 1e14 in the 32-bit build, zeros or small values in the 64-bit build (`uninit-01`).
+    The lights' angular coefficients are (1, 0, 0) or all zero, so the result on the console does not depend on a finite direction, but the host shader multiplies it (0 × NaN is NaN), and GLSL's `max(NaN, 0.0)` is undefined, so a GPU driver could light those materials differently from llvmpipe.
+  - `JSUInputStream`'s typed reads byte-swapped the value after a read that failed at the end of the stream, where the console leaves it unchanged (`endian-18`).
+    Delfino Plaza's `TMapWireManager` entry ends after its two counts, so `TMapWire::mDrawWidth` and `mDrawHeight` (5.0 and 6.0) became 5.7e-41 and 6.9e-41 and the tightropes were drawn with no width.
+    The same entry leaves the tightrope colour to an uninitialised stack `s32`: on the console, whatever the scene search in the preceding `TCubeManagerBase::load` left in that slot, which is not reproduced; the port starts it at 0 (black) so both word sizes draw the same (`uninit-03`).
+  - MWCC converts a float to an unsigned integer with `__cvt_fp2unsigned`, which gives 0 for a negative value; the host wraps it (`fpu-02..03`).
+    `TObjHitCheck::getTableIndex` got a first cell of 0xEA instead of 0 for an actor whose entry radius reaches past the world origin, entering it in 22 extra cells; `Hxs2_Circle` started its rows at 0xFFFFFFEC and drew nothing once the iris wipe's ring passed the screen centre.
+    The DOL has 70 such conversions in 22 objects; UBSan saw a negative value only at these two sites on these runs, and `fpu-04` has since given the rest the runtime's result (see [Float-to-integer conversions](#float-to-integer-conversions)).
+  - `TGCConsole2` starts its highlighted-pane index at 0x17, past the 22-entry `unk334`, and calls `isVisible()`/`hide()` on `unk334[23]`, which is the `TBoundPane` `unk390`: the console reads and clears the high byte of its big-endian `unk4.x2` (0), the host the low byte (60), which `hide()` zeroed (`bounds-01`).
+  - `J3DSys` and `gd-reinit-gx` load 4x4 IA8 null textures (32 bytes) from 16-byte arrays; the console's second half is the next `.data` in the DOL, which the port now carries (`bounds-02`).
+  - Scene data can give an NPC a body or cloth colour index past the end of its `NpcInitData` table, and `SMS_InitChangeNpcColor` reads the entry regardless: the console reads the next bytes of that file's `.rodata`, the port whatever its own layout puts there, which differs between the word sizes.
+    `SMSPortNpcColorEntry` returns retail's bytes for every such entry a scene uses (`bounds-03`): Super Mario Eclipse's Yoshi village Yoshis and other Piantas (see [ECLIPSE.md](ECLIPSE.md)), and Nintendo's `test11`, the only one on the retail disc.
+  - `Hxs_PenDraw` normalises a vector with an unset z (`-2e-19` and similar in the 32-bit build, 0 in the 64-bit one); it is now 0 (`uninit-02`).
+- **Real, left as they are** (the port reads what the console reads, or the value does not matter):
+  - Uninitialised members read from never-written arena memory, 0 on both the console (MEM1 is zeroed at boot) and the port: `JUTGamePad::CRumble` reads the pad's port number before the constructor sets it; `MSModBgm::unk0`, `TOptionControl::mSelectedOption`, `TMario::mFreezeImmunityTimer`, `TSpcInterp`'s lock flag, `TConsoleStr::unk2A5`, `J3DMatPacket::mpShapePacket` and joints' scale flags that `J3DModel::calcNrmMtx` reads before anything computes them.
+  - `TMarDirector::direct`'s movement-pass `JDrama::TGraphics` is never initialised, so `setViewport` tests garbage `field_rendering`; the draw pass sets the viewport again.
+  - `TModelDataNode` keeps a pointer to `TMapObjBase::makeMActors`' stack name buffer and later `strcmp`s against it (ASan: stack-use-after-return); on the console and the port the buffer is usually the same address holding the new name.
+  - `J2DPicture::insert` reads `unk104[i + 3]` and `J3DTevBlock4`'s display list reads `mTevKColorSel`/`mTevKAlphaSel` up to index 15 of 4-entry arrays: the neighbouring members, at the same offsets as on the console.
+  - `JDrama` stores -1 in `VITVMode` as a sentinel; the `JPA`, camera and matrix code converts out-of-range floats to `s16`/`u8`/`u16`, which both MWCC (`fctiwz`, then a halfword or byte store) and g++ truncate to the low bits of the 32-bit result; `RumbleChannelMgr::start` and the `pointer-overflow` reports are pointer arithmetic that is never dereferenced.
+- **Benign reports**: UBSan's misaligned-access reports (JKR heaps align to 4, the host ABI wants 8 for classes with `double` or `long long`; x86 does not care), its downcast and member-call type reports on the decomp's approximate class hierarchies (`TBGCheckList` arrays that are never constructed, name-searched objects cast to the searched type), memcheck's reports inside Mesa, and `gx::resolveWriteBack` hashing game memory that holds struct padding copied from the DVD layer.
+- **Result**: the scripted title and plaza frames are unchanged against `3676789` and byte-identical between 32 and 64-bit (the tightropes and the iris ring are not in those frames), and the 60 fps plaza gate run still captures Mario after 100 frames with the same `setNextStage`.
+- **Not covered**: stale data in reused JKR heap blocks (memcheck would need the heaps' frees marked undefined), and anything past the plaza runs.
+
+## Float-to-integer conversions
+
+Audited 2026-09-30 from the DOL's disassembly (the decomp's `build/GMSE01/asm`), mapped to source with a `-fsanitize=float-cast-overflow -O0` compile of every port unit, which lists each host float-to-integer conversion by source line and target type.
+
+- **What the console does.**
+  MWCC converts a float or double to a 32-bit unsigned integer only by calling the runtime's `__cvt_fp2unsigned` (`runtime.c`; no inline sequence anywhere in the DOL): 0 below zero and for NaN, 0xFFFFFFFF from 2^32 up (+inf included), truncation otherwise.
+  To a 64-bit integer, signed or unsigned, it calls `__cvt_dbl_usll`: truncation as a signed value (a negative value wraps as a `u64`), and 0x7FFF...F or 0x8000...0 by the sign bit from 2^63 in magnitude, infinities and NaN included.
+  To `u8`, `u16` and every signed type it uses `fctiwz` and keeps the low bits: saturation to the `s32` range, NaN as 0x80000000.
+- **What the host does.**
+  x86 wraps a negative value, and outside the 32-bit range the two builds disagree with the console and with each other: 5e9 gives 0 (32-bit) or 0x2A05F200 (64-bit), -3e9 gives 0x80000000 or 0x4D2FA200, NaN 0x80000000 or 0; the console gives 0xFFFFFFFF, 0 and 0.
+  No GCC flag changes this code generation (`-fsanitize=float-cast-overflow` only reports).
+  Clang's `-fno-strict-float-cast-overflow` saturates, which is the runtime's rule for `u32` but not the console's for `u8`, `u16` and signed types, which keep the low bits of `fctiwz`, and the Linux build is GCC.
+- **The sites.**
+  The DOL makes 70 `__cvt_fp2unsigned` calls and 2 `__cvt_dbl_usll` calls.
+  60 of the former are game and JSystem code, from 40 source lines (the hit-check table index's two are inlined six times, `JGadget::TVector`'s growth six, `JAISound`'s random value five): `ObjHitCheck` (2 lines), `hx_wiper` (16: frame-buffer rows, the game-over bounce timer, the test wipes, the iris ring), `TGCConsole2::setTimer`, `TSelectDir` and `TMovieDirector`'s sound fades, `TMarDirector`'s wipe fade, `TMarioGamePad::reset`'s button repeat, `CLBLinearInbetween<u32>`, `JGadget::TVector::GetSize_extend`, `MSSetSoundCanRestart`, `J3DDrawBuffer::entryZSort`, `JAIBasic`'s frame-SE priorities and distance waits (5), `JAISound`'s random value and pitch spread, `TOscillator::calc`'s table index, `JPADrawCalcColorAnmFrameRepeat`, and the fog mantissa of `J3DGDSetFog` and `FifoSetFog`.
+  The other 10 are the SDK's: `GXSetFog`, `GXGetNumXfbLines`, `GXGetYScaleFactor` (3) and `GXSetDispCopyYScale`, which `platform/gx` reimplements, and `OSDumpContext` (4), which the port does not have.
+  `__cvt_dbl_usll` is called by `JGeometry::TUtil<f32>::mod` and MSL's `std::fmodf`.
+- **Handled.**
+  `port_fpu.h` has the runtime's two conversions (`port_cvt_fp2unsigned`, `port_cvt_dbl_usll`; checked against a model of the runtime's instructions on 20,000,000 inputs in each word size), and `port_compat.h` has `port_cvt_fp<T>` for a template (the runtime's conversion for a 32-bit unsigned `T`, a cast otherwise).
+  `fpu-02..03` route the first 3 source lines through it, `fpu-04` the other 37 and `TUtil<f32>::mod`, `framerate-35` the wipe fade it rewrites, and `platform/gx` its four SDK sites.
+  `std::fmodf` and `TUtil<f32>::mod` now go through `sms_msl_fmodf` (`msl_math.c`, `fpu-05`), which makes both runtime calls as the DOL does.
+  The port's own `u32` conversion of a frame rate (`framerate-18`) uses it as well.
+  In range the result is the host's own truncation, so nothing changes there.
+- **Left.**
+  When this audit was made, `std::fmodf` was the host's exact `fmodf` and `TUtil<f32>::mod` kept its subtraction unfused; both are the console's since [64-BIT.md](64-BIT.md), item 15.
+  `GCConsole2`'s one `__cvt_sll_flt` (a signed 64-bit integer to float, rounded to double first) is the host's single rounding; the two differ only past 2^53.
+  The `fctiwz` paths (`u8`, `u16`, signed types) match the console except from 2^31 up and +inf, where the console gives 0x7FFFFFFF and x86 0x80000000 (so `u8` 0xFF against 0); the port does not change them.
+- **Result.**
+  The scripted title and plaza frames are unchanged against `6fc6838` and byte-identical between 32 and 64-bit (the previous audit's UBSan run saw an out-of-range value at none of the `fpu-04` sites on these runs), and the 60 fps plaza gate run still captures Mario after 100 frames with the same `setNextStage` in both builds.
+  A 32-bit build with `-fsanitize=float-cast-overflow` (`-O1 -g1`, a separate build folder) reports no conversion to a 32 or 64-bit unsigned type on the same runs; its 25 remaining reports (the first at each source line) are `s16`, `u8` and `u16` conversions of values between -3150 and 48789, where the console and both builds keep the same low bits of the truncated `s32`.
+
+## Environment variables
+
+The everyday options are in the [README](../README.md#options); this is the full list.
+
+| Variable | Effect |
+| --- | --- |
+| `SMS_ARCH=32\|64` | which build `build.sh` and `run.sh` use (see [BUILD.md](../BUILD.md)) |
+| `SMS_DISC_IMAGE`, `SMS_DISC_ROOT` | game source (image file, or extracted `files/` folder); either, or a disc argument, overrides files bundled into the executable |
+| `SMS_SAVE_DIR` | memory card directory |
+| `SMS_HEADLESS=1` / `--headless` | no window (offscreen EGL; Linux only) |
+| `SMS_BINDINGS` | key bindings file (default `./bindings.txt`, then `../../bindings.txt` when started from `build/<os>-<arch>/`) |
+| `SMS_AUDIO=0` | no sound output; the game's audio (JAudio's thread and sequencer, the software DSP) still runs, paced as with no output device ([64-BIT.md](64-BIT.md), item 19) |
+| `SMS_NO_AUDIO=1` | run with an empty JAudio configuration and an idle AI DMA; THP movies stall (their video waits for audio), so combine with `SMS_SKIP_MOVIES=1` |
+| `SMS_SKIP_MOVIES=1` | report every THP movie as finished at once |
+| `SMS_WARP=stage,scenario[,shines]` | debugging: loading a file goes to that area instead (`1,0,1` is Delfino Plaza right after the airstrip), optionally with that Shine count |
+| `SMS_WARP_MOVIE=n` | debugging: loading a file plays streaming movie `n` (0–19, `TMovieDirector::getStreamMovieName`) |
+| `SMS_SHOTS=f,f,...`, `SMS_SHOT_DIR` | capture the XFB at these fields (retail numbering) as PPM; `tools/shots.py` converts them into `build/shots/` and compares with retail |
+| `SMS_AUTOPRESS=control@field[+hold],...` | scripted input (e.g. `start@1400+20,stick_left@3300+40,a@3500+30`); in a window it is injected as SDL key events, i.e. through the keyboard path |
+| `SMS_FIELD_CLOCK=retrace` | shots/autopress count VI retraces (wall clock) instead of game fields (2 per display copy, the default) |
+| `SMS_VI_DETERMINISTIC=1` | virtual VI/OS clock: retraces fire when the game idles (or spins on `OSGetTick` for a whole field), `OSGetTime` follows them from a fixed date, AI DMA is paced by retraces (no output device); two runs with the same input give identical frames |
+| `SMS_VI_HZ=<rate>` | retrace rate override (benchmarking) |
+| `SMS_VI_FIELD_BASE=<n>` | the retrace counter starts at `n` (retail spends about 240 fields in IPL/apploader/DOL load before the game's first frame; 240 puts the Nintendo logo on retail's field 300) and selects game-frame parity |
+| `SMS_DVD_BPS`, `SMS_DVD_SEEK_MS`, `SMS_DVD_LOG=1` | drive timing model (reads occupy the drive for bytes/rate + seek, counted in fields; off by default) and a per-read log |
+| `SMS_MOVIE`, `SMS_TRACE_OUT` | `.dtm` movie input and retail-format field traces (`platform/trace`) |
+| `SMS_MEM_MB`, `SMS_QUIET_STUBS=1` | emulated MEM1 size; silence first-call stub logs |
+| `SMS_OVERLAY=1` | open the debug overlay (frame rate and where the frame's time goes) at start |
+| `SMS_SETTINGS=file` | settings file to read instead of `settings.txt` (working directory, then `../../`); its names map to the variables in `kSettings` (`platform/port_runtime.cpp`), and any `SMS_*` name can be used as is |
+| `SMS_TEXTURE_PACKS`, `SMS_TEXTURE_PACK_MB`, `SMS_TEXTURE_PACK_LOG`, `SMS_TEXTURE_PACK_SYNC` | texture packs (see [mods/README.md](../mods/README.md)); `_SYNC=1` decodes on first use instead of on the worker thread, for repeatable captures |
+| `SMS_GX_*` | graphics switches (`platform/gx/README.md`) |
+
+## Progress log
+
+With the disc image, the 32-bit Linux build boots through the Nintendo logo, the Dolby screen, the opening THP movie and the title, creates a save file on the host memory card, shows file select, and on a scripted run (`SMS_AUTOPRESS=start@1400+20,a@3000+30,stick_left@3300+40,a@3500+30,stick_right@3700+60,a@3900+30`) walks Mario to block A, opens the file menu, starts a new game and plays the airstrip opening cutscene.
+Frames from that run are in [`shots/`](shots/) (`title-*`, `filesel-*`, `airstrip-*`, and `compare-*` next to retail).
+Since then the scripted plaza and beach reference runs have become the regression checks, and warps reach episode 0 of the airstrip and of each stage from Bianco Hills to Pianta Village; [64-BIT.md](64-BIT.md) records those runs.
+
+## Performance
+
+Measured headless on the 32-bit Linux build (Mesa llvmpipe software GL), 2026-09-23; details are in the commit that added this section.
+
+- **Returns fixed.**
+  41 of the 42 fall-off-the-end functions (39 with no return statement, 3 with a path that falls off) now return the value retail's r3 carries.
+  Five of them are live and their callers read the result.
+  Four (`DSPBuf::mixDSP`, `Dvd::openDvd`, `TMap::intersectLine`, `TLampTrapSpike::receiveMessage`) are fixed in the decomp, where the explicit return compiles to the same bytes.
+  `TConductor::isBossDefeated` is not fixed: the decomp's `switch` lacks retail's `default:` arm, every form with it tried so far lowers its match (98.8% to 95.6%), and the port does not patch around the decomp (see [Where a fix goes](#where-a-fix-goes)).
+  The other 37 are `ret-02..03`: nothing reads their value, so only g++ needs the return.
+  The decomp itself has since made `JUTGamePad::read` (0085b21c) and `PushReadedBuffer` (aac56beb) `void` and given JGadget's `TList::Confirm` its `return true` (aac56beb), so `ret-02..03` now cover 34.
+  After the patches, `-Wreturn-type` reports nothing over all units, so the game library no longer depends on `-O0`.
+- **-O1/-O2 are safe as far as the port reaches.**
+  With the existing `-fno-strict-aliasing -fwrapv`, a game library built at -O1 or -O2 boots through the logo, the attract movies (THP) and the title to file select, with audio, and showed no crashes over about 10 runs of 60–100 s.
+  Gameplay levels are not reachable yet, so level code is untested at -O2.
+- **Where the time goes** (main thread = game threads plus the GX translation and the GL driver front-end):
+
+  | Build | Title/movies, VI uncapped | Boot to frame 1600 (VI 240 Hz) | File select: main thread | File select: fps (VI 240 Hz) |
+  | --- | --- | --- | --- | --- |
+  | all -O0 (current) | 61 fps | 97 s | 26.3 ms/frame | ~13 |
+  | game lib -O1 | – | 73 s | 26.2 ms/frame | 17.4 |
+  | game lib -O2 | 77 fps | 58 s | 26.2 ms/frame | 17.8 |
+  | game lib + platform + `platform/gx` -O2 | – | ~42 s | 10.2 ms/frame | 36.6 |
+
+  The game library's -O level mainly speeds up boot and movies (THP decoding lives there).
+  The per-frame cost of 3D scenes is in `platform/` and `platform/gx` at -O0.
+  After both are optimised, llvmpipe (about 52 ms of CPU per frame, spread over its threads) is the limit.
+- **Result:** the default build type is `RelWithDebInfo`, `-O2 -g` for `sms_game`, `sms` and `sms_gx`, keeping `-fno-strict-aliasing` and `-fwrapv` (the decomp type-puns freely; strict aliasing was not tried).
+  `SMS_VI_HZ=<rate>` overrides the retrace rate for benchmarking.
+- **Delfino Plaza, 2026-09-25** (the scripted plaza run, `SMS_GX_STATS=30`, the 810-batch window):
+
+  | | before | after |
+  | --- | --- | --- |
+  | GL calls per frame | ~41,000 | ~5,200 |
+  | of which `glMapBufferRange` + `glUnmapBuffer` | – | ~1,640 (one pair per batch) |
+  | vertex loader (32-bit; 64-bit after: 3.0) | 10.6 ms/frame | 4.7 ms/frame |
+
+  The GL state is shadowed and only changes are sent, samplers and uniforms are cached, each batch's vertices, indices and XF block go into one streamed buffer through one map, and the loader keeps packed per-format vertices and per-VAT readers.
+  What is left on the game thread is mostly the game itself, the vertex loader and the EFB-copy write-back (`encodeTexture`, `hashBytes`); on llvmpipe the rest is rasterisation.
+  The overlay's frame breakdown (README, "Frame rate") shows the same split on any machine.
+- **Widescreen** (`SMS_WIDESCREEN`): the game camera is widened by a port patch and sms_gx maps each draw into the wider EFB (`drawXMap` in `gx_render.cpp`).
+  The HUD stays 4:3 in the middle by default.
+  With `SMS_WIDESCREEN_HUD=edges` the gameplay HUD is anchored to the screen edges per piece, not per 2D batch (which pulls composite panes apart): `TGCConsole2::perform` marks its HUD drawing (`GXPC_SetHud`), and `J2DPane::draw` brackets each pane with its extent (`GXPC_HudPaneBegin`/`End`, patch `widescreen-03`).
+  A piece is the outermost pane narrower than three quarters of the screen (the HUD's containers are 600 wide), and moves by which third of the 4:3 frame its centre is in; draws outside any piece (the water tank, drawn in 3D) move by their own extent.
+- **60 frames per second** (`SMS_FRAME_RATE=60`, patches `framerate-*`): while `TMarDirector` runs, the display waits one retrace per frame instead of two and `SMSGetVSyncTimesPerSec` reports 60 instead of 30.
+  The game is built for this: `TMarDirector::direct` runs the movement pass in ticks of 1/120 s (it adds `600 / SMSGetVSyncTimesPerSec()` per frame and spends 5 per tick: four ticks a frame at 30, two at 60), animations advance `SMSGetAnmFrameRate()` per frame, and `TEmitterViewObj` runs particles that many times per frame, so gameplay keeps its speed; at 60 every other frame matches the 30 fps frame at the same moment.
+  What counts rendered frames instead is fixed where it shows: the root fader takes the rate in force, and the stage-entry wipe keeps its one-second lead (`TConsoleStr::getWipeCloseTime`).
+  Gameplay state that an object steps on its calc-anim pass (`CUE_CALC_ANIM`, once per frame) runs twice as often per second at 60 while movement ticks keep their rate, so a balance between the two passes breaks: the plaza gates (`TModelGate`) open by gaining per movement tick and closing per calc pass, and at 60 an already-opened gate never reopened; `framerate-03` steps the gate's calc-pass state once per 1/30 s.
+  Two classes of step go wrong at 60: a per-frame step with an unscaled constant (a timer or amount stepped on the calc-anim pass, or on every `perform` call) runs twice as fast, and a per-tick step at `SMSGetAnmFrameRate() / 4` (one frame's animation spread over four ticks) runs at half speed, since that rate halves while the tick rate does not.
+  `framerate-04` to `framerate-15` fix the known instances by stepping the first once per 1/30 s and running the second at its 30 fps rate, each only while `port_fps60_active` is set.
+  `framerate-16` to `framerate-35` cover the rest of the calc-anim audit: purely visual steps (flocks, grass, flags, spins, blends, chases) take half a step at 60 so the motion stays smooth, while whole-number counters step once per 1/30 s.
+  Where a counted step emits a keep-alive particle (a type 1 or 3 request, which `TMarioParticleManager` kills on the first pass it is not repeated), the request is repeated on the next frame so the emitter lives its 30 fps time.
+  The menu auto-repeat (counted in pad reads, one per displayed frame) is recomputed from the rate in force when it changes, and `MSound::mainLoop` (JAI's frame work: fades, volume moves, sound lifetimes) runs every other frame at 60, so a sound length given in frames is in 30 fps frames.
+  The check is to run the same scripted input at 30 and at 60 and compare the frames captured at the same fields; random choices (particle scatter, idle NPCs) diverge, since the random numbers are drawn per frame.
+- **Software GL.**
+  The 32-bit Linux build without the GPU driver's `:i386` libraries renders with llvmpipe and cannot hold 30 fps in the plaza; the port logs a warning and the overlay says so.

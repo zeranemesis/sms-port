@@ -1,0 +1,365 @@
+#include <Animal/AnimalBase.hpp>
+#include <Animal/AnimalManager.hpp>
+#include <Animal/AnimalNerve.hpp>
+#include <Animal/AnimalSave.hpp>
+#include <Camera/cameralib.hpp>
+#include <Enemy/Graph.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DSys.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <Map/Map.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/SoundEffects.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/Spine.hpp>
+#include <Strategic/Strategy.hpp>
+#include <System/Application.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+// TODO: 97.7%, frame 0xd8 as retail since setEulerZ stores through set()
+// (c-t7, its two bound words), but every slot above qz's set is one word low
+// (0x8c against 0x90: retail has one more word of low region) and the FPRs
+// in the products are numbered differently. Before that, one
+// degree-to-radian inline at any one of the three angles landed the slots
+// but overshot at all three (0xf0), so the last word's carrier is unknown.
+// The in-place `qx.mul(qz)` gave +0x10 over two-argument muls. The named angles keep this out
+// of line in execWalk as retail has it: without them the body is auto-inlined
+// there (execWalk 89.9 -> 50.1), while two angle locals already suffice to
+// keep it called.
+JGeometry::TQuat4<f32> SMS_Eular2Quat(const JGeometry::TVec3<f32>& rot)
+{
+	f32 z = 0.017453294f * rot.z;
+	JGeometry::TQuat4<f32> qz;
+	qz.setEulerZ(z);
+	f32 y = 0.017453294f * rot.y;
+	JGeometry::TQuat4<f32> qy;
+	qy.setEulerY(y);
+	f32 x = 0.017453294f * rot.x;
+	JGeometry::TQuat4<f32> qx;
+	qx.setEulerX(x);
+	qx.mul(qz);
+	qy.mul(qy, qx);
+	return qy;
+}
+
+TAnimalBase::TAnimalBase(u32 actorType, const char* name)
+    : TSpineEnemy(name)
+{
+	mActorType = actorType;
+}
+
+// TODO: 99.8%, instruction-exact; the frame is 0x28 short (the int-to-float
+// conversion slot sits at 0x50 against retail's 0x78). Tried: getManager(),
+// getSpine(), TMsRange<f32>(0, 1).rand() for either MsRandF (adds code).
+void TAnimalBase::init(TLiveManager* manager)
+{
+	mManager = manager;
+	manager->manageActor(this);
+
+	mMActorKeeper = new TMActorKeeper(manager);
+	mMActorKeeper->createMActorFromAllBmd(3);
+	mMActor = mMActorKeeper->getMActor(0);
+
+	initHitActor(mActorType, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+	mHitFlags |= HIT_FLAG_NO_COLLISION;
+	mBodyScale  = 1.0f;
+	mMarchSpeed = 0.0f;
+	mBodyRadius = 10.0f;
+	mWallRadius = 20.0f;
+	mLiveFlag |= LIVE_FLAG_UNK10 | LIVE_FLAG_UNK20 | LIVE_FLAG_UNK8;
+
+	mSpine->initWith(&TNerveAnimalGraphWander::theNerve());
+	unk124->reset();
+	goToShortestNextGraphNode();
+
+	mFrameTimer = (int*)new TAnimalBaseUnk150;
+
+	mMActor->setBckFromIndex(0);
+	mMarchSpeed = 0.0f;
+	f32 turnSpeed
+	    = ((TAnimalManagerBase*)mManager)->mAnimalSave->mSLWalkTurnSpeed.get();
+	mTurnSpeed = turnSpeed * SMSGetAnmFrameRate();
+
+	J3DFrameCtrl* frameCtrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+	if (frameCtrl) {
+		s32 sharedAnmNum = ((TAnimalManagerBase*)manager)
+		                       ->mAnimalSave->mSLSharedAnmNum.get();
+		f32 phase;
+		if (sharedAnmNum == 0)
+			phase = MsRandF();
+		else
+			phase = (1.0f / sharedAnmNum) * (mInstanceIndex % sharedAnmNum);
+		frameCtrl->setFrame(phase * frameCtrl->getEnd());
+	}
+
+	J3DFrameCtrl* frameCtrl2 = mMActor->getFrameCtrl(ANM_TYPE_BTP);
+	if (frameCtrl2)
+		frameCtrl2->setFrame(frameCtrl2->getEnd() * MsRandF());
+}
+
+// TODO: 99.9%; the push_back iterator temporaries sit 4 below retail's
+// (JGadget iterator block stride). Named group/graph/check-data locals,
+// getManager(), getScaling() and an inline MsWrap argument are inert or worse.
+void TAnimalBase::initNoLoad_(TAnimalBase* other)
+{
+	other->mPosition.x = 1000.0f * (MsRandF() - 0.5f) + mPosition.x;
+	other->mPosition.z = 1000.0f * (MsRandF() - 0.5f) + mPosition.z;
+	if (getActorType() == 0x800001)
+		other->mPosition.y = 1000.0f * MsRandF() + getPosition().y;
+	else
+		other->mPosition.y = mPosition.y - 250.0f * MsRandF();
+
+	other->mScaling = mScaling;
+
+	other->mRotation.x = 0.0f;
+	f32 rotY           = 150.0f * (MsRandF() - 0.5f) + mRotation.y;
+	other->mRotation.y = MsWrap(rotY, 0.0f, 360.0f);
+	other->mRotation.z = 0.0f;
+
+	other->unk3C = unk3C;
+	other->unk124->setGraph(unk124->getGraph());
+	other->mGroundPlane = TMap::getIllegalCheckData();
+	other->init(mManager);
+
+	JDrama::TNameRefGen::search<TIdxGroupObj>("敵グループ")
+	    ->getChildren()
+	    .push_back(this);
+}
+
+void TAnimalBase::load(JSUMemoryInputStream& stream)
+{
+	TSpineEnemy::load(stream);
+
+	s32 count = stream.readS32() - 1;
+
+	for (int i = 0; i < count; ++i) {
+		TAnimalBase* animal = new TAnimalBase(getActorType(), getName());
+		initNoLoad_(animal);
+	}
+}
+
+// Exact since header round 18: MSRegisterRandPlayTrans supplies 8 of the 16
+// missing bytes and getActorType() over the raw mActorType the other 8 (a
+// lever pair -- the accessor is worth nothing on its own). See the wrapper's
+// TODO in MSound/MSoundSE.hpp.
+void TAnimalBase::loadAfter()
+{
+	TNameRef::loadAfter();
+	if (getActorType() == 0x800001)
+		MSRegisterRandPlayTrans(MSD_SE_OBJ_KAMOME_SOLO, &mPosition);
+}
+
+void TAnimalBase::calcRootMatrix() { }
+
+BOOL TAnimalBase::receiveMessage(THitActor* sender, u32 msg) { return FALSE; }
+
+// TODO: 92.5%. Retail's frame is 0x30 larger: save 0xd8, world 0xa8, local
+// 0x78, srcArrays 0x6c and an unreferenced Mtx-sized block below; the
+// swapAllMtx expansion also schedules differently. Declaration order inert.
+// Retail rematerialises `addi r3,r1,world` in the loop and loads
+// getDrawMtxNum before swapAllMtx. Inert (bb15): save/world/local order,
+// j3dSys.mViewMtx as the loop's left operand (92.6%, frame unchanged).
+void TAnimalBase::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_MOVE) {
+		if (graphics->unk0 & 2) {
+			mLinearVelocity.zero();
+			control();
+			mPosition += mLinearVelocity;
+			if (mActorType == 0x800001) {
+				SMSGetMSound()->startSeRandPlay(MSD_SE_OBJ_KAMOME_SOLO,
+				                                mInstanceIndex);
+			}
+		}
+		cue &= ~CUE_MOVE;
+	}
+
+	TLiveManager* manager = mManager;
+	s32 sharedAnmNum
+	    = ((TAnimalManagerBase*)manager)->mAnimalSave->mSLSharedAnmNum.get();
+
+	if (cue & CUE_CALC_ANIM) {
+		updateAnmSound();
+		mMActor->frameUpdate();
+		if (!(mLiveFlag & 6))
+			calcRootMatrix();
+		if ((sharedAnmNum != 0 && mInstanceIndex < sharedAnmNum)
+		    || (sharedAnmNum == 0 && !(mLiveFlag & 6)))
+			mMActor->calc();
+		cue &= ~CUE_CALC_ANIM;
+	}
+
+	if (cue & CUE_CALC_VIEW) {
+		if (!(mLiveFlag & 6)) {
+			Mtx save;
+			Mtx local;
+			Mtx world;
+			MTXCopy(j3dSys.mViewMtx, save);
+			CLBCalcRotateZXYTranslateMatrix(local, mRotation, mPosition);
+			MTXConcat(save, local, world);
+			MTXCopy(world, j3dSys.mViewMtx);
+
+			if (sharedAnmNum == 0 || mInstanceIndex < sharedAnmNum) {
+				mMActor->viewCalc();
+			} else {
+				J3DModel* shared
+				    = manager->getObj(mInstanceIndex % sharedAnmNum)
+				          ->getModel();
+				J3DModel* model    = getModel();
+				J3DModelData* data = model->getModelData();
+				int count          = data->getDrawMtxNum();
+
+				model->swapAllMtx();
+
+				Mtx* srcArrays[2];
+				srcArrays[0] = (Mtx*)shared->getAnmMtx(0);
+				srcArrays[1] = (Mtx*)shared->getWeightAnmMtx(0);
+
+				for (u16 i = 0; i < count; ++i) {
+					u8 flag   = data->getDrawMtxFlag(i);
+					u16 index = data->getDrawMtxIndex(i);
+					MTXConcat(world, srcArrays[flag][index], model->getDrawMtx(i));
+				}
+
+				model->calcNrmMtx();
+				DCStoreRange(model->getDrawMtxPtr(), count * sizeof(Mtx));
+				DCStoreRange(model->getNrmMtxPtr(), count * sizeof(Mtx33));
+				model->prepareShapePackets();
+			}
+
+			MTXCopy(save, j3dSys.mViewMtx);
+		}
+		cue &= ~CUE_CALC_VIEW;
+	}
+
+	TSpineEnemy::perform(cue, graphics);
+}
+
+void TAnimalBase::resetRandomCurPathNode()
+{
+	TPathNode curNode = getUnkF4();
+	if (curNode.unk0 != nullptr)
+		return;
+
+	JGeometry::TVec3<f32> pos = curNode.getPoint();
+	pos.x += 1000.0f * (MsRandF() - 0.5f);
+	pos.z += 1000.0f * (MsRandF() - 0.5f);
+
+	if (mActorType == 0x800001) {
+		pos.y += 1000.0f * (pos.y <= 1000.0f ? MsRandF() : (MsRandF() - 0.5f));
+	} else {
+		pos.y -= 250.0f * MsRandF();
+	}
+
+	// The goal is rebuilt in the copied node's own slot, not a temporary.
+	curNode.unk0 = nullptr;
+	curNode.unk4 = pos;
+	setGoalPath(curNode);
+}
+
+static inline void chaseRoll(f32* roll, f32 delta, f32 speed)
+{
+	f32 targetRoll = MsClamp<f32>(30.0f * -delta, -45.0f, 45.0f);
+	CLBChaseGeneralConstantSpecifySpeed<f32>(roll, targetRoll, 0.1f * speed);
+}
+
+void TAnimalBase::getRotationFlyToDir(JGeometry::TVec3<f32>* current_rot,
+                                      const JGeometry::TVec3<f32>& target_diff,
+                                      f32 speedX, f32 speedY)
+{
+	JGeometry::TVec3<f32> rot = MsGetRotFromZaxis(target_diff);
+	rot.y                     = MsWrap<f32>(rot.y, 0.0f, 360.0f);
+
+	f32 clampedDelta = JGeometry::TUtil<f32>::clamp(
+	    MsAngleDiff(rot.y, current_rot->y), -speedY, speedY);
+
+	current_rot->y += clampedDelta;
+	current_rot->y = MsWrap<f32>(current_rot->y, 0.0f, 360.0f);
+
+	chaseRoll(&current_rot->z, clampedDelta, speedX);
+
+	rot.x          = MsWrap<f32>(rot.x, -180.0f, 180.0f);
+	current_rot->x = MsWrap<f32>(current_rot->x, -180.0f, 180.0f);
+	CLBChaseGeneralConstantSpecifySpeed<f32>(&current_rot->x, rot.x,
+	                                         0.1f * speedX);
+}
+
+// UNUSED (Size: 0x4a0 in MAP)
+void TAnimalBase::flyToCurPathNode(f32 a1, f32 a2) { }
+
+// TODO: validate-symbol-order fails on this TU with two MISSING symbols.
+// Retail's execWalk calls set<f>__Q29JGeometry8TVec3<f>Ffff (0x10),
+// __ct__Q29JGeometry8TVec4<f>Fv (0x4), MsClamp<f>__Ffff (0x20) and
+// MsWrap<f>__Ffff (0x48) out of line. The first two now come out of the
+// header's in-place TQuat4::rotate (two inline levels, see JGQuat4.hpp); MWCC
+// emits a local template instantiation right after the first function in
+// emission order that needs its body, and all three present ones land in the
+// map's slot. MsClamp is called because getRotationFlyToDir's roll chase is
+// its own inline level (chaseRoll): at depth 3 here it no longer fits, while
+// the out-of-line getRotationFlyToDir still expands it. The other,
+// set<f>__Q29JGeometry8TVec4<f>Fffff, is UNUSED and sits right after
+// flyToCurPathNode, i.e. it belongs to that 0x4a0 dead body, which is a stub
+// here.
+void TAnimalBase::execWalk(bool moving)
+{
+	TAnimalSaveIndividual* save = ((TAnimalManagerBase*)mManager)->mAnimalSave;
+	f32 marchSpeed;
+	f32 turnSpeed;
+
+	if (moving) {
+		f32 accel = save->mSLMarchAccel.get();
+		f32 rate  = SMSGetAnmFrameRate();
+		accel = accel * SMSGetAnmFrameRate() * rate;
+		f32 speed = save->mSLMaxMarchSpeed.get();
+		speed *= SMSGetAnmFrameRate();
+		CLBChaseGeneralConstantSpecifySpeed<f32>(&mMarchSpeed, speed,
+		                                         accel);
+	} else {
+		f32 decel = save->mSLMarchDecrease.get();
+		f32 rate  = SMSGetAnmFrameRate();
+		CLBChaseGeneralConstantSpecifySpeed<f32>(
+		    &mMarchSpeed, 0.0f, decel * SMSGetAnmFrameRate() * rate);
+	}
+
+	if (mMarchSpeed < 0.001f) {
+		f32 waitSpeed = save->mSLWaitTurnSpeed.get();
+		mTurnSpeed    = waitSpeed * SMSGetAnmFrameRate();
+	} else {
+		f32 walkSpeed = save->mSLWalkTurnSpeed.get();
+		mTurnSpeed    = walkSpeed * SMSGetAnmFrameRate();
+	}
+
+	turnSpeed  = mTurnSpeed;
+	marchSpeed = mMarchSpeed;
+
+	JGeometry::TVec3<f32> diff = getUnkF4().getPoint();
+	diff -= mPosition;
+
+	f32 dist = diff.length();
+
+	if (dist < 100.0f)
+		return;
+
+	if (dist <= 2.0f * calcMinimumTurnRadius(marchSpeed, turnSpeed))
+		turnSpeed = calcTurnSpeedToReach(marchSpeed, 0.5f * dist);
+
+	getRotationFlyToDir(&mRotation, diff, marchSpeed, turnSpeed);
+
+	JGeometry::TQuat4<f32> quat = SMS_Eular2Quat(mRotation);
+	JGeometry::TVec3<f32> velocity(0.0f, 0.0f, marchSpeed);
+	// TODO: 93.2%. The frame is 0x28 short: retail copies the quaternion once
+	// more (0xb8 -> 0x9c) before the rotate, but spelling that copy (a
+	// by-value or copied q) scored lower; the rotate's products are also
+	// scheduled differently and accel/rate sit in f29 where retail has f31.
+	quat.rotate(velocity);
+	mLinearVelocity = velocity;
+}
+
+// UNUSED (Size: 0x5c in MAP)
+void TAnimalBase::animalWalkIn() { }

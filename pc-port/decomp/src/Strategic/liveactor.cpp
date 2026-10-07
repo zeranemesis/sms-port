@@ -1,0 +1,602 @@
+#include <Strategic/LiveActor.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/question.hpp>
+#include <Strategic/Spine.hpp>
+#include <Strategic/Binder.hpp>
+#include <Strategic/spcinterp.hpp>
+#include <System/MarDirector.hpp>
+#include <MarioUtil/MtxUtil.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/LodAnm.hpp>
+#include <MarioUtil/ShadowUtil.hpp>
+#include <Map/MapData.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapCollisionManager.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <Enemy/Conductor.hpp>
+#include <MSound/MAnmSound.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+f32 TLiveActor::mVelocityMinY = -40.0f;
+
+TLiveActor::TLiveActor(const char* name)
+    : TTakeActor(name)
+{
+	mManager       = nullptr;
+	mMActor        = nullptr;
+	mMActorKeeper  = nullptr;
+	mInstanceIndex = 0;
+	mAnmSound      = nullptr;
+	mAnmSoundPath  = nullptr;
+	mBinder        = nullptr;
+	mSpine         = nullptr;
+	mSpcInterp     = nullptr;
+
+	mLinearVelocity.setAll(0.0f);
+	mAngularVelocity.setAll(0.0f);
+
+	mVelocity.set(0.0f, 0.0f, 0.0f);
+
+	mScaledBodyRadius    = 10.0f;
+	mBodyRadius          = 25.0f;
+	mHeadHeight          = 50.0f;
+	mGroundPlane         = nullptr;
+	mGroundHeight        = 0.0f;
+	mGravity             = 0.15f;
+	unkD0                = nullptr;
+	mGroundActor         = nullptr;
+	mGroundActorYaw      = 0.0f;
+	unkE8                = 1;
+	mMapCollisionManager = nullptr;
+	mLiveFlag            = LIVE_FLAG_UNK100;
+
+	mRidePos.zero();
+
+	mGroundPlane = TMap::getIllegalCheckData();
+	if (SMSGetMarDirector()->getCurrentMap() != 8)
+		mLiveFlag |= LIVE_FLAG_UNK2000;
+}
+
+TLiveActor::~TLiveActor() { }
+
+void TLiveActor::calcRidePos()
+{
+	if (!mGroundActor)
+		return;
+
+	Mtx mtx;
+	if (!mGroundActor->getRootJointMtx())
+		SMS_GetActorMtx(*mGroundActor, mtx);
+	else
+		MTXCopy(*mGroundActor->getRootJointMtx(), mtx);
+	MTXInverse(mtx, mtx);
+	MTXMultVec(mtx, &mPosition, &mRidePos);
+}
+
+BOOL TLiveActor::belongToGround() const
+{
+	if (mGroundPlane && mGroundPlane->isLegal()
+	    && mGroundPlane->getActor() != nullptr && !isAirborne())
+		return true;
+
+	return false;
+}
+
+// TODO: 99.9%, the MsAngleDiff result lands in f1 and the member in f0
+// (retail f0/f1) before the `+=`'s fadds. Tried (cc37): `m = m + d`,
+// `m = d + m`, named `diff`, getRotation() on either operand, TU-local
+// forks/by-value adders (+8 frame), `f32 v = m; v += d;` (breaks the
+// schedule); `f32 d = diff; d += m; m = d;` fixes operand order but not
+// the colouring.
+// c-k9 regalloc.py: MsAngleDiff's result is the IRO temporary @1565, coloured
+// last; the replay closes when it is coloured before the member load's pcode
+// temporary (or that load after it). An inline result stays an IRO
+// temporary, so only a spelling where the difference is not a forced-load
+// inline result (or the member is a named web) can move it.
+// c-k11: with a named `f32 diff = MsAngleDiff(...)` and `m = m + diff`, or a
+// `TVec3& angVel = mAngularVelocity` reference, the colouring is unchanged and
+// the frame grows by 8; hand-expanding MsAngleDiff around a named rotation
+// loses the f31 home (82.6%).
+void TLiveActor::calcRideMomentum()
+{
+	if (unkE8 == 0)
+		return;
+
+	if (belongToGround()) {
+		if (mGroundActor == nullptr
+		    || mGroundActor != mGroundPlane->getActor()) {
+			mGroundActor = mGroundPlane->getActor();
+			calcRidePos();
+
+			if (unkE8 >= 2 && mGroundActor != nullptr)
+				mGroundActorYaw = mGroundActor->mRotation.y;
+		} else {
+			Mtx mtx;
+			if (!mGroundActor->getRootJointMtx())
+				SMS_GetActorMtx(*mGroundActor, mtx);
+			else
+				MTXCopy(*mGroundActor->getRootJointMtx(), mtx);
+
+			// Did they call this function calcRideMomentum because they
+			// didn't know the difference between momentum and velocity?
+			JGeometry::TVec3<f32> rideVelocity;
+			// mRidePos is from last frame here
+			MTXMultVec(mtx, &mRidePos, &rideVelocity);
+			rideVelocity -= getPosition();
+			mLinearVelocity += rideVelocity;
+
+			if (unkE8 >= 2) {
+				mAngularVelocity.y
+				    += MsAngleDiff(mGroundActor->mRotation.y, mGroundActorYaw);
+				mGroundActorYaw = mGroundActor->mRotation.y;
+			}
+		}
+	} else {
+		mGroundActor = nullptr;
+	}
+}
+
+J3DModel* TLiveActor::getModel() const { return mMActor->mModel; }
+
+Mtx* TLiveActor::getRootJointMtx() const { return nullptr; }
+
+void TLiveActor::initLodAnm(const TLodAnmIndex* param_1, int param_2,
+                            f32 param_3)
+{
+	if (!unkD0)
+		unkD0 = new TLodAnm(this, param_1, param_2, param_3);
+}
+
+// TODO (c-k13): TLiveActor::init is instruction-exact at 0x60 only with the
+// two binders below. The header accessors (getActorKeeper(), getManager())
+// or raw members are frame 0x48: the debugger puts all six missing words
+// after initAnmSound's depth-2 objects (retail has twelve words below the
+// MAnmSoundNPC buffer, the honest spelling six), so they are late IRO or
+// deeper-inline words, not the binders' high ECOMMA words.
+static inline TMActorKeeper* LiveactorActorKeeper(const TLiveActor* p)
+{
+	TMActorKeeper* keeper = p->mMActorKeeper;
+	return keeper;
+}
+
+static inline TLiveManager* LiveactorManager(const TLiveActor* p)
+{
+	TLiveManager* manager = p->mManager;
+	return manager;
+}
+
+void TLiveActor::init(TLiveManager* manager)
+{
+	if (!manager) {
+		if (TObjChara* chara = (TObjChara*)unk3C) {
+			mMActorKeeper = new TMActorKeeper(nullptr, 1);
+			// TODO: could be TSMSSmplChara instead
+			mMActor = LiveactorActorKeeper(this)->createMActorFromDefaultBmd(
+			    chara->getFolder(), 0);
+		}
+		gpConductor->registerAloneActor(this);
+	} else {
+		mManager      = manager;
+		mMActorKeeper = new TMActorKeeper(mManager, 1);
+		LiveactorManager(this)->manageActor(this);
+		mMActor = LiveactorActorKeeper(this)->createMActorFromNthData(0, 0);
+	}
+
+	initHitActor(0, 1, 0, mBodyRadius, mHeadHeight, mBodyRadius, mHeadHeight);
+
+	onHitFlag(HIT_FLAG_NO_COLLISION);
+	offLiveFlag(LIVE_FLAG_UNK400);
+
+	if (!mAnmSound)
+		initAnmSound();
+}
+
+void TLiveActor::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TActor::load(stream);
+
+	char buffer[256];
+	stream.readString(buffer, 256);
+	TLiveManager* mgr = JDrama::TNameRefGen::search<TLiveManager>(buffer);
+
+	mGroundPlane = TMap::getIllegalCheckData();
+
+	init(mgr);
+}
+
+void TLiveActor::bind()
+{
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
+		return;
+
+	if (mBinder != nullptr) {
+		mBinder->bind(this);
+		return;
+	}
+
+	JGeometry::TVec3<f32> nextPos = mPosition;
+	nextPos += mLinearVelocity;
+	nextPos += mVelocity;
+
+	// Apply gravity & air resistance
+	mVelocity.y -= getGravityY();
+	if (mVelocity.y < -40.0f)
+		mVelocity.y = -40.0f;
+
+	// Handle vertical collisions
+	{
+		if (checkLiveFlag(LIVE_FLAG_UNK1000)) {
+			mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
+			    nextPos.x, nextPos.y + mHeadHeight, nextPos.z, &mGroundPlane);
+		} else {
+			mGroundHeight = gpMap->checkGround(
+			    nextPos.x, nextPos.y + mHeadHeight, nextPos.z, &mGroundPlane);
+		}
+		mGroundHeight += 1.0f;
+
+		// Will we hit the ground next frame?
+		if (nextPos.y <= mGroundHeight + 0.05f) {
+			if (mGroundPlane->checkFlag(BG_CHECK_FLAG_ILLEGAL))
+				kill();
+			offLiveFlag(LIVE_FLAG_AIRBORNE);
+			mVelocity.set(0.0f, 0.0f, 0.0f);
+			nextPos.y = mGroundHeight;
+		} else {
+			onLiveFlag(LIVE_FLAG_AIRBORNE);
+		}
+	}
+
+	// Handle horizontal collisions
+	gpMap->isTouchedOneWallAndMoveXZ(&nextPos.x, nextPos.y + mHeadHeight,
+	                                 &nextPos.z, mBodyRadius);
+
+	// We're done, this is the displacement for this frame
+	mLinearVelocity = nextPos - mPosition;
+}
+
+void TLiveActor::control()
+{
+	// unk90 is the actor's SPC script interpreter: the guard reads its
+	// mStepsToDo (0x4) and the calls go through its vtable at 0x5c slot 0x10,
+	// which is TSpcInterp::update(). While a script has steps queued it drives
+	// the actor instead of the spine, except that a spine that is not idle
+	// still gets its own update.
+	if (mSpcInterp == nullptr || mSpcInterp->mStepsToDo == 0) {
+		if (mSpine)
+			mSpine->update();
+	} else {
+		if (!mSpine) {
+			if (mSpcInterp && mSpcInterp->mStepsToDo != 0)
+				mSpcInterp->update();
+		} else if (mSpine->getCurrentNerve() != nullptr
+		           || mSpine->getVertebraeCount() > 0) {
+			mSpine->update();
+		} else {
+			mSpcInterp->update();
+		}
+	}
+}
+
+void TLiveActor::calcRootMatrix()
+{
+	J3DModel* model = mMActor->getModel();
+	MsMtxSetXYZRPH(model->getBaseTRMtx(), mPosition.x, mPosition.y, mPosition.z,
+	               mRotation.x, mRotation.y, mRotation.z);
+	model->setBaseScale(mScaling);
+}
+
+void TLiveActor::kill()
+{
+	mLiveFlag |= LIVE_FLAG_DEAD;
+	mLiveFlag |= LIVE_FLAG_UNK40;
+}
+
+BOOL TLiveActor::receiveMessage(THitActor*, u32) { return FALSE; }
+
+u32 TLiveActor::getShadowType() { return SHADOW_TYPE_CIRCLE; }
+
+void TLiveActor::setGroundCollision()
+{
+	if (!mMapCollisionManager)
+		return;
+	if (!mMapCollisionManager->unk8)
+		return;
+
+	mMapCollisionManager->unk8->moveSRT(mPosition, mRotation, mScaling);
+}
+
+void TLiveActor::moveObject()
+{
+	ensureTakeSituation();
+
+	mLinearVelocity.zero();
+	mAngularVelocity.zero();
+
+	control();
+	calcRideMomentum();
+	bind();
+
+	mPosition += mLinearVelocity;
+	mRotation += mAngularVelocity;
+
+	setGroundCollision();
+	calcRidePos();
+}
+
+void TLiveActor::requestShadow()
+{
+	if (mLiveFlag & (LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN | LIVE_FLAG_UNK8))
+		return;
+
+	if (!(mLiveFlag & (LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT))
+	    || (mLiveFlag & LIVE_FLAG_UNK400)) {
+		TCircleShadowRequest local_2c;
+
+		local_2c.mPosition = mPosition;
+
+		if (!isAirborne()) {
+			local_2c.mPosition.y       = mGroundHeight;
+			local_2c.mNeedsGroundCheck = 0;
+		}
+
+		local_2c.mRadiusX = local_2c.mRadiusZ = mScaledBodyRadius;
+
+		local_2c.mShadowType = getShadowType();
+		local_2c.mRotationY  = mRotation.y;
+
+		if (mLiveFlag & LIVE_FLAG_UNK400) {
+			gpBindShadowManager->forceRequest(local_2c, getActorType());
+		} else {
+			gpBindShadowManager->request(local_2c, getActorType());
+		}
+	}
+
+	if (!(mLiveFlag & (LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT))
+	    && !checkActorType(ACTOR_TYPE_UNK40000000)) {
+		gpQuestionManager->request(mPosition, mScaledBodyRadius);
+	}
+}
+
+void TLiveActor::drawObject(JDrama::TGraphics*)
+{
+	if (mLiveFlag & (LIVE_FLAG_DEAD | LIVE_FLAG_HIDDEN) || !mMActor)
+		return;
+
+	mMActor->setLightData(mGroundPlane, mPosition);
+	mMActor->entry();
+}
+
+void TLiveActor::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (mLiveFlag & (LIVE_FLAG_UNK200 | LIVE_FLAG_DEAD))
+		return;
+
+	if (cue & CUE_MOVE)
+		moveObject();
+
+	if (cue & CUE_CALC_ANIM)
+		updateAnmSound();
+
+	if (mMActor) {
+#ifdef VERSION_GMSP01
+		f32 frame;
+#endif
+		if (cue & CUE_CALC_ANIM) {
+			mMActor->frameUpdate();
+#ifdef VERSION_GMSP01
+			if (mLiveFlag & LIVE_FLAG_CALC_INT_FRAME) {
+				J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(0);
+				frame              = ctrl->getFrame();
+				ctrl->setFrame((int)frame);
+			}
+#endif
+		}
+
+		if (cue & CUE_CALC_VIEW)
+			requestShadow();
+
+		if (!(mLiveFlag & (LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT))) {
+			if (cue & CUE_CALC_ANIM) {
+				calcRootMatrix();
+				mMActor->calc();
+#ifdef VERSION_GMSP01
+				if (mLiveFlag & LIVE_FLAG_CALC_INT_FRAME)
+					mMActor->getFrameCtrl(0)->setFrame(frame);
+#endif
+			}
+
+			if (cue & CUE_CALC_VIEW)
+				mMActor->viewCalc();
+
+			if (cue & CUE_ENTRY)
+				drawObject(graphics);
+		}
+	}
+}
+
+void TLiveActor::performOnlyDraw(u32 param_1, JDrama::TGraphics* param_2)
+{
+	if (mLiveFlag & (LIVE_FLAG_UNK200 | LIVE_FLAG_DEAD))
+		return;
+	if (!mMActor)
+		return;
+
+	if (param_1 & CUE_CALC_VIEW)
+		requestShadow();
+
+	if (!(mLiveFlag & (LIVE_FLAG_HIDDEN | LIVE_FLAG_CLIPPED_OUT))) {
+		if (param_1 & CUE_CALC_ANIM) {
+			calcRootMatrix();
+			mMActor->calc();
+		}
+
+		if (param_1 & CUE_CALC_VIEW)
+			mMActor->viewCalc();
+
+		if (param_1 & CUE_ENTRY)
+			drawObject(param_2);
+	}
+}
+
+JGeometry::TVec3<f32>
+TLiveActor::calcVelocityToJumpToXZ(const JGeometry::TVec3<f32>& param_1,
+                                   f32 speed, f32 gravity) const
+{
+	JGeometry::TVec3<f32> vec;
+	SMSCalcJumpVelocityXZ(param_1, mPosition, speed, gravity, &vec);
+	return vec;
+}
+
+JGeometry::TVec3<f32>
+TLiveActor::calcVelocityToJumpToY(const JGeometry::TVec3<f32>& param_1,
+                                  f32 speed, f32 gravity) const
+{
+	JGeometry::TVec3<f32> vec;
+	SMSCalcJumpVelocityY(param_1, mPosition, speed, gravity, -40.0f, &vec);
+	return vec;
+}
+
+f32 TLiveActor::getGravityY() const { return mGravity; }
+
+BOOL TLiveActor::hasMapCollision() const
+{
+	return mMapCollisionManager ? 1 : 0;
+}
+
+// UNUSED. getJointTransByIndex on the model's joint-name lookup, behind the
+// same null-MActor fallback and -1 result; this reading is 0xec, the map size.
+int TLiveActor::getJointTransByName(const char* name,
+                                     JGeometry::TVec3<f32>* out) const
+{
+	if (mMActor == nullptr) {
+		*out = mPosition;
+		return -1;
+	}
+
+	return getJointTransByIndex(
+	    mMActor->getModel()->getModelData()->getJointName()->getIndex(name),
+	    out);
+}
+
+int TLiveActor::getJointTransByIndex(int param_1,
+                                     JGeometry::TVec3<f32>* param_2) const
+{
+	if (mMActor == nullptr) {
+		*param_2 = mPosition;
+		return -1;
+	}
+
+	if (mLiveFlag & LIVE_FLAG_CLIPPED_OUT) {
+		*param_2 = mPosition;
+		return param_1;
+	}
+
+	MtxPtr mtx = mMActor->mModel->getAnmMtx(param_1);
+	param_2->set(mtx[0][3], mtx[1][3], mtx[2][3]);
+	return param_1;
+}
+
+JGeometry::TVec3<f32> TLiveActor::getFocalPoint() const { return mPosition; }
+
+MtxPtr TLiveActor::getTakingMtx()
+{
+	if (!mMActor)
+		return nullptr;
+
+	return mMActor->getModel()->getBaseTRMtx();
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TLiveActor::initAnmSound (batch 127).
+static inline MAnmSound* LiveactorAnmSound(const TLiveActor* p)
+{
+	MAnmSound* anmSound = p->mAnmSound;
+	return anmSound;
+}
+
+// TODO: the MAnmSoundNPC ctor's random-float buffer sits at 0x24, retail
+// 0x2c (frame equal). Tried (cc37): gpMSound/SMSGetMSound forks and binders
+// at either `new` (+0 or frame +8/+0x10), naming/forking the `new`
+// (inlining breaks), a `u32` wrapper over checkActorType (+4 -> 0x28, the
+// only buffer-moving rung found), bool/nested/binder wrappers over it,
+// a nested fork over LiveactorAnmSound (frame +8). Header-side (c-strat):
+// MAnmSoundNPC ctor assigning unk98 in the body, via a named u8, get_uint8
+// with a named f32 are inert (also in init); get_uint8 through get_ufloat
+// is too deep to inline. JAISound::setSeDistancePitch pins get_uint8's body.
+// c-d11 debugger: retail's buffer is the topmost object, so no depth-1 dead
+// word may precede it; raw `mAnmSound` at the test with the binder at the
+// final receiver lands the frame (0x40) with the binder local 4 above the
+// buffer and one word short below: that local must be created at depth > 3.
+// c-k9: iro.py shows the dead set below the buffer as six IRO words (four F,
+// two P from the MAnmSoundNPC ctor's random byte); retail has eight words
+// below it and nothing above, i.e. the binder word moved under the buffer and
+// one more IRO word.
+void TLiveActor::initAnmSound()
+{
+	if (LiveactorAnmSound(this))
+		return;
+
+	if (checkActorType(0x4000000))
+		mAnmSound = new MAnmSoundNPC(SMSGetMSound());
+	else
+		mAnmSound = new MAnmSound(SMSGetMSound());
+
+	mAnmSound->initAnmSound(nullptr, 1, 0.0f);
+}
+
+void TLiveActor::updateAnmSound()
+{
+	if (!mAnmSound)
+		return;
+	if (!mAnmSoundPath)
+		return;
+
+	J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+	mAnmSound->animeLoop(&mPosition, ctrl->getFrame(), ctrl->getRate(), 0, 4);
+}
+
+void TLiveActor::setAnmSound(const char* path)
+{
+	if (!mAnmSound)
+		OSPanic(__FILE__, 0x386, "TLiveActor[%s] : mAnmSound == NULL\n", mName);
+
+	mAnmSoundPath = path;
+
+	if (mAnmSoundPath != nullptr) {
+		void* res = JKRFileLoader::getGlbResource(mAnmSoundPath);
+		mAnmSound->initAnmSound(res, 1, 0.0f);
+	} else {
+		mAnmSound->initAnmSound(nullptr, 1, 0.0f);
+	}
+}
+
+void TLiveActor::setCurAnmSound()
+{
+	const char* name = nullptr;
+
+	if (mMActor) {
+		int idx = mMActor->getCurAnmIdx(ANM_TYPE_BCK);
+		if (idx >= 0) {
+			const char** table = getBasNameTable();
+
+			name = !table ? nullptr : table[idx];
+		}
+	}
+
+	setAnmSound(name);
+}
+
+const char** TLiveActor::getBasNameTable() const { return nullptr; }
+
+void TLiveActor::stopAnmSound()
+{
+	if (mAnmSound && mAnmSoundPath)
+		mAnmSound->stop();
+}

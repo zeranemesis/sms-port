@@ -1,0 +1,1053 @@
+#include <Enemy/TamaNoko.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <System/Particles.hpp>
+#include <System/Particles.hpp>
+#include <System/MarDirector.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/RumbleMgr.hpp>
+#include <MarioUtil/ShadowUtil.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <Strategic/question.hpp>
+#include <Strategic/Spine.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/SDLModel.hpp>
+#include <MSound/MSound.hpp>
+#include <MSound/MSoundSE.hpp>
+#include <MSound/MAnmSound.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <MoveBG/MapObjBase.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Player/Mario.hpp>
+#include <Camera/CameraShake.hpp>
+#include <Enemy/EffectObj.hpp>
+#include <Enemy/Conductor.hpp>
+#include <NPC/NpcEvent.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+
+static const char* tamaNoko_bastable[] = {
+	"/scene/tamaNoko/bas/tamaflower_grow1.bas",
+	"/scene/tamaNoko/bas/tamanoko_appear1.bas",
+	"/scene/tamaNoko/bas/tamanoko_attack1.bas",
+	"/scene/tamaNoko/bas/tamanoko_down1.bas",
+	"/scene/tamaNoko/bas/tamanoko_land1.bas",
+	"/scene/tamaNoko/bas/tamanoko_mogaki1.bas",
+	"/scene/tamaNoko/bas/tamanoko_mudland1.bas",
+	"/scene/tamaNoko/bas/tamanoko_return1.bas",
+	nullptr,
+	"/scene/tamaNoko/bas/tamanoko_run1_loop.bas",
+	nullptr,
+	"/scene/tamaNoko/bas/tamanoko_sleep1.bas",
+	nullptr,
+	nullptr,
+	nullptr,
+	"/scene/tamaNoko/bas/tamanoko_waterhit1.bas",
+	"/scene/tamaNoko/bas/tamanoko_waterhit1_loop.bas",
+};
+
+int TTamaNoko::mStopOnAirTimeMax = 40;
+int TTamaNoko::mRollOnAirTimeMax = 20;
+
+f32 TTamaNoko::mRollOnAirAngle = 360.0f;
+f32 TTamaNoko::mDropVelocityY  = -30.0f;
+
+TTamaNokoFlower::TTamaNokoFlower(const TLiveActor* param_1, int param_2,
+                                 SDLModelData* param_3, u32 param_4,
+                                 const char* name)
+    : TSharedParts(param_1, param_2, param_3, param_4, name)
+    , unk1C(0)
+    , unk2C(nullptr)
+    , unk30(nullptr)
+    , unk34(0)
+    , unk35(0)
+{
+	unk2C = new MAnmSound(SMSGetMSound());
+	unk2C->initAnmSound(nullptr, 1, 0.0f);
+}
+
+// TODO: 97.0%. Retail hoists &local_b8 into a saved GPR (r30, with i in r29
+// and one more stmw register) and parks local_c4 8 bytes higher; declaring
+// the matrix outside the loop or before local_88 does not move either.
+// A `MtxPtr m = local_b8` alias passed to MsMtxSetRotY and MTXMultVec
+// reproduces the hoist (99.8%, local_c4 still 8 low) but is an alias
+// temporary, so it is not taken. Inert: TPosition3f/TRotation3f/TMatrix34
+// for the matrix, a named angle, PSMTXMultVec directly.
+void TTamaNokoFlower::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (cue & CUE_MOVE) {
+		if (!gpMarDirector->isTalkModeNow()) {
+			if (unk35 != 0 && unk1C == 0) {
+				if (!gpMarDirector->isDemoModeNow()) {
+					unk1C = 1;
+
+					for (int i = 0; i < 5; ++i) {
+						JGeometry::TVec3<f32> local_88(0.0f, 0.0f, 350.0f);
+						Mtx local_b8;
+
+						MsMtxSetRotY(local_b8, (i + 1) * 72.0f);
+
+						MTXMultVec(local_b8, &local_88, &local_88);
+
+						JGeometry::TVec3<f32> local_c4 = unk10->getPosition();
+						f32 x = local_c4.x;
+						f32 y = local_c4.y;
+						f32 z = local_c4.z;
+						if (TMapObjBase* mapObj = gpItemManager->makeObjAppear(
+						        x + local_88.x, y, z + local_88.z, 0x2000000e, true)) {
+							mapObj->mPosition.y = y;
+							MsVECNormalize(&local_88, &local_88);
+							mapObj->mVelocity.set(local_88.x * 4.0f, 20.0f,
+							                      local_88.z * 4.0f);
+							mapObj->offLiveFlag(LIVE_FLAG_UNK10);
+						}
+					}
+				}
+			}
+
+			if (unk35 == 0 && unk18->checkCurBckFromIndex(0)
+			    && unk18->curAnmEndsNext()) {
+				unk35 = 1;
+				TNpcEvent::reviveOneSunflower();
+			}
+		}
+	}
+
+	if (cue & CUE_CALC_ANIM) {
+		TPosition3f magic;
+		magic.translation(unk10->getPosition().x, unk10->getPosition().y,
+		                  unk10->mPosition.z);
+		unk18->getModel()->setBaseTRMtx(magic);
+		if (unk2C != nullptr && unk30 != 0) {
+			J3DFrameCtrl* ctrl = unk18->getFrameCtrl(ANM_TYPE_BCK);
+
+			unk20 = unk10->getPosition();
+
+			unk2C->animeLoop(&unk20, ctrl->getFrame(), ctrl->getRate(), 0, 4);
+		}
+	}
+
+	if (!gpMarDirector->isDemoModeNow() && gpMarDirector->isTalkModeNow()) {
+		if (cue & CUE_CALC_VIEW)
+			unk18->viewCalc();
+
+		if (cue & CUE_ENTRY)
+			unk18->entry();
+		return;
+	}
+
+	unk18->perform(cue, graphics);
+}
+
+// UNUSED (0xa8): TCannonDom::setBckAnm (cannon.cpp) is the same TSharedParts
+// body at the same map size.
+void TTamaNokoFlower::setBckAnm(int idx)
+{
+	getMActor()->setBckFromIndex(idx);
+	const char** basTable = unk10->getBasNameTable();
+	unk30                 = !basTable ? nullptr : basTable[idx];
+	if (unk30 != nullptr) {
+		unk2C->initAnmSound(JKRGetResource(unk30), 1, 0.0f);
+	} else {
+		unk2C->initAnmSound(nullptr, 1, 0.0f);
+	}
+}
+
+TTamaNokoSaveLoadParams::TTamaNokoSaveLoadParams(const char* path)
+    : TWalkerEnemyParams(path)
+    , PARAM_INIT(mSLPickUpTime, 60)
+    , PARAM_INIT(mSLJumpAttackDist, 200.0f)
+    , PARAM_INIT(mSLThrownVY, 50.0f)
+    , PARAM_INIT(mSLThrownRateXZ, 0.5f)
+    , PARAM_INIT(mSLThrownGravityY, 1.5f)
+    , PARAM_INIT(mSLJumpAttackSp, 10.0f)
+    , PARAM_INIT(mSLAttackGravityY, 0.2f)
+    , PARAM_INIT(mSLSinkTime, 500)
+    , PARAM_INIT(mSLWakeUpTimer, 100)
+{
+	TParams::load(mPrmPath);
+}
+
+TTamaNokoManager::TTamaNokoManager(const char* name)
+    : TSmallEnemyManager(name)
+{
+}
+
+void TTamaNokoManager::load(JSUMemoryInputStream& stream)
+{
+	TSmallEnemyManager::load(stream);
+
+	unk38 = new TTamaNokoSaveLoadParams("/enemy/tamanoko.prm");
+}
+
+void TTamaNokoManager::loadAfter()
+{
+	TSmallEnemyManager::loadAfter();
+	SMS_LoadParticle("/scene/tamaNoko/jpa/ms_mnt_kira.jpa", 0x70);
+}
+
+// TODO: instruction-exact; frame 0x48 against retail 0xe0 (0x38 before
+// getObjNum() and getObj(), c-hs5), a dead low region.
+void TTamaNokoManager::initSetEnemies()
+{
+	void* data = JKRGetResource("/scene/tamaNoko/tamaflower_model1.bmd");
+	SDLModelData* modelData = new SDLModelData(J3DModelLoaderDataBase::load(
+	    data, J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+	              | (2 << J3DMLF_TevStageNumShift)));
+
+	for (int i = 0; i < getObjNum(); ++i) {
+		TTamaNoko* enemy = (TTamaNoko*)getObj(i);
+		enemy->unk19C
+		    = new TTamaNokoFlower(enemy, 0, modelData, 0x3, "タマノコフラワー");
+	}
+}
+
+TSmallEnemy* TTamaNokoManager::createEnemyInstance() { return new TTamaNoko; }
+
+void TTamaNokoManager::createModelData()
+{
+	static TModelDataLoadEntry entry[] = {
+		{ "tamanoko_model1.bmd",
+		  J3DMLF_MaterialPEFull | J3DMLF_UseUniqueMaterials
+		      | (2 << J3DMLF_TevStageNumShift),
+		  0 },
+		{ nullptr, 0, 0 },
+	};
+	createModelDataArray(entry);
+}
+
+TTamaNoko::TTamaNoko(const char* name)
+    : TWalkerEnemy(name)
+    , mIsDoingJumpAttack(false)
+    , mIsSunkInGround(false)
+    , unk1B8(false)
+    , unk1B9(true)
+    , mWakeUpTimer(0)
+{
+}
+
+void TTamaNoko::load(JSUMemoryInputStream& stream)
+{
+	TWalkerEnemy::load(stream);
+	reset();
+}
+
+void TTamaNoko::init(TLiveManager* manager)
+{
+	TWalkerEnemy::init(manager);
+
+	mActorType = 0x10000018;
+	unk150     = 0x11;
+	mSpine->initWith(&TNerveTamaNokoSleep::theNerve());
+	unk198 = (TTamaNokoSaveLoadParams*)getSaveParam();
+	if (mInstanceIndex == 0) {
+		for (u8 i = 0; i < getModel()->getModelData()->getJointNum(); ++i)
+			; // assert?
+	}
+}
+
+void TTamaNoko::setMActorAndKeeper()
+{
+	mMActorKeeper = new TMActorKeeper(mManager, 1);
+	mMActor       = mMActorKeeper->createMActor("tamanoko_model1.bmd", 3);
+}
+
+void TTamaNoko::reset()
+{
+	TWalkerEnemy::reset();
+	mIsDoingJumpAttack = false;
+	mIsSunkInGround    = false;
+	unk1B8             = false;
+	unk1B9             = true;
+	mScaledBodyRadius  = 280.0f;
+	onLiveFlag(LIVE_FLAG_UNK1000);
+}
+
+void TTamaNoko::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	TSmallEnemy::perform(cue, graphics);
+	if (unk19C->unk34)
+		unk19C->perform(cue, graphics);
+}
+
+void TTamaNoko::moveObject()
+{
+	TWalkerEnemy::moveObject();
+	if (mSpine->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()
+	    && isBckAnm(10) && checkCurAnmEnd(0))
+		setBckAnm(9);
+}
+
+void TTamaNoko::behaveToFindMario()
+{
+	mSpine->pushAfterCurrent(&TNerveTamaNokoAttack::theNerve());
+}
+
+void TTamaNoko::behaveToWater(THitActor*)
+{
+	mSprayedByWaterCooldown = 0;
+	unk165                  = 1;
+
+	if (mSpine->getCurrentNerve() == &TNerveTamaNokoSleep::theNerve()) {
+		mSpine->pushNerve(&TNerveTamaNokoHitWater::theNerve());
+		return;
+	}
+
+	if (mSpine->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()) {
+		mSpine->pushNerve(&TNerveTamaNokoAttack::theNerve());
+		return;
+	}
+}
+
+// TODO: fake. MathUtil.hpp's fromPolar with the angle named; the shared
+// body drops walkBehavior from exact to a frame 0x10 short.
+static inline JGeometry::TVec3<f32> TamaNokoFromPolar(f32 theta, f32 radius)
+{
+	f32 angle = theta * (65536.0f / 360.0f);
+	return JGeometry::TVec3<f32>(radius * JMASSin(angle), 0.0f,
+	                             radius * JMASCos(angle));
+}
+
+// diff is declared first: it is a dead named float, and retail keeps its
+// slot above local_34.
+void TTamaNoko::walkBehavior(int param_1, f32 param_2)
+{
+	f32 diff;
+
+	mTurnSpeed  = getSaveParams2()->mSLTurnSpeedLow.get();
+	mMarchSpeed = getSaveParams2()->mSLMarchSpeedLow.get();
+
+	JGeometry::TVec3<f32> local_34 = getUnkF4().getPoint();
+	local_34 -= mPosition;
+	VECMag(&local_34);
+
+	f32 rot  = MsWrap(MsGetRotFromZaxisY(local_34), 0.0f, 360.0f);
+	diff     = MsAngleDiff(rot, mRotation.y);
+
+	f32 fVar3;
+	if (diff > 0.0f) {
+		fVar3 = diff > mTurnSpeed * param_2 ? mTurnSpeed * param_2 : diff;
+	} else {
+		fVar3 = diff > -mTurnSpeed * param_2 ? diff : -mTurnSpeed * param_2;
+	}
+
+	mRotation.y = MsWrap(mRotation.y + fVar3, 0.0f, 360.0f);
+
+	if (param_1 != 5 && param_1 != 3) {
+		JGeometry::TVec3<f32> local_40 = mLinearVelocity;
+		f32 speed = mMarchSpeed * param_2;
+		local_40 += TamaNokoFromPolar(mRotation.y, speed);
+		mLinearVelocity = local_40;
+	}
+
+	if (getSpine()->getCurrentNerve() == &TNerveWalkerGraphWander::theNerve()
+	    && getSpine()->getTime() % 200 == 1) {
+		forceSleep();
+	}
+
+	if (mWakeUpTimer > 0
+	    && getSpine()->getCurrentNerve() == &TNerveTamaNokoSleep::theNerve()) {
+		++mWakeUpTimer;
+		if (mWakeUpTimer > 400) {
+			mWakeUpTimer = 0;
+			mSpine->reset();
+			mSpine->setNext(&TNerveTamaNokoHitWater::theNerve());
+		}
+	}
+}
+
+void TTamaNoko::behaveToTaken(THitActor*)
+{
+	if (mSpine->getCurrentNerve() != &TNerveTamaNokoPickUp::theNerve())
+		mSpine->pushNerve(&TNerveTamaNokoPickUp::theNerve());
+}
+
+void TTamaNoko::behaveToRelease()
+{
+	if (unk164 != 0
+	    && mSpine->getCurrentNerve() != &TNerveTamaNokoThrown::theNerve())
+		mSpine->pushNerve(&TNerveTamaNokoThrown::theNerve());
+}
+
+// TODO: instruction-exact; frame 0x40 vs ours 0x20, no stack reference.
+// Same dead region as TSmallEnemy/TDangoHamuKuri::receiveMessage. -inline
+// off shows only onLiveFlag/onHitFlag expand here; the map lists no UNUSED
+// helper. Inert (frame never moves): every subset of getPosition() on both
+// emitter arguments and SMSGetMSound(), a TU-local inline level with
+// parameters over each of the four blocks, and deleting any one block.
+BOOL TTamaNoko::receiveMessage(THitActor* sender, u32 message)
+{
+	if (message == HIT_MESSAGE_TRAMPLE || message == HIT_MESSAGE_HIP_DROP) {
+		if (isHitValid(message)) {
+			unk184 = 0;
+			kill();
+		}
+		return true;
+	}
+
+	if (message == HIT_MESSAGE_UNKD) {
+		mHitPoints = 0;
+		onLiveFlag(LIVE_FLAG_DEAD);
+		onHitFlag(HIT_FLAG_NO_COLLISION);
+	}
+
+	if (message == HIT_MESSAGE_SPRAYED_BY_WATER) {
+		gpMarioParticleManager->emit(PARTICLE_MS_ENM_WATHIT, &sender->mPosition,
+		                             0, nullptr);
+		gpMSound->startSoundSet(MSD_SE_EN_COMMON_W_HIT_OK, &mPosition, 0, 0.0f,
+		                        0, 0, 4);
+
+		if (mSprayedByWaterCooldown == 0) {
+			mSprayedByWaterCooldown = 1;
+			if (!changeByJuice()) {
+				decHpByWater(sender);
+				behaveToWater(sender);
+			}
+		}
+
+		return true;
+	}
+
+	return false;
+}
+
+bool TTamaNoko::isHitValid(u32 param_1)
+{
+	if (param_1 == 11)
+		return false;
+
+	if (!mIsSunkInGround || (isBckAnm(7) && getCurAnmFrameNo(0) > 80.0f))
+		return false;
+
+	if (param_1 == 1)
+		return true;
+
+	return false;
+}
+
+void TTamaNoko::attackToMario()
+{
+	if (unk164 == 0
+	    && mSpine->getCurrentNerve() != &TNerveTamaNokoSleep::theNerve()
+	    && (!mIsSunkInGround || !(SMS_GetMarioPos().y > mPosition.y + 10.0f))) {
+
+		SMS_SendMessageToMario(this, 14);
+	}
+}
+
+bool TTamaNoko::doKeepDistance()
+{
+	return mSpine->getCurrentNerve() == &TNerveTamaNokoSleep::theNerve()
+	           ? true
+	           : false;
+}
+
+void TTamaNoko::calcRootMatrix()
+{
+	if (isBckAnm(16))
+		if (JPABaseEmitter* emitter
+		    = gpMarioParticleManager->emitAndBindToPosPtr(
+		        PARTICLE_MS_TAMA_HIT, &mPosition, 1, this)) {
+			emitter->setGlobalScale(mScaling);
+		}
+
+	if (isBckAnm(11) && mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame() > 90.0f)
+		if (JPABaseEmitter* emitter
+		    = gpMarioParticleManager->emitAndBindToPosPtr(
+		        PARTICLE_MS_TAMA_HIT, &mPosition, 1, this)) {
+			emitter->setGlobalScale(mScaling);
+		}
+
+	if (isBckAnm(1)) {
+		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(0.0f)
+		    || mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(46.0f)) {
+			gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_JUMP_ED_B,
+			                                            &mPosition, 0, nullptr);
+		}
+
+		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(25.0f)) {
+			if (mGroundPlane->isSand()) {
+				landEffect();
+			} else {
+				gpCameraShake->startShake(CAM_SHAKE_MODE_TAMANOKO, 1.0f);
+				SMSRumbleMgr->start(8, 1, (float*)nullptr);
+
+				JGeometry::TVec3<f32> scale(2.0f, 2.0f, 2.0f);
+				if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+				        PARTICLE_MS_SMB_AP_ROCK, &mPosition, 0, nullptr)) {
+					emitter->setGlobalScale(scale);
+				}
+				if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+				        PARTICLE_MS_SMB_AP_SMOKE, &mPosition, 0, nullptr)) {
+					emitter->setGlobalScale(scale);
+				}
+			}
+		}
+	}
+
+	if (isBckAnm(7)) {
+		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(110.0f))
+			landEffect();
+
+		if (mMActor->getFrameCtrl(ANM_TYPE_BCK)->checkPass(152.0f)) {
+			const TBGCheckData* local_18;
+			gpMap->checkGround(mPosition.x, mPosition.y + 500.0f, mPosition.z,
+			                   &local_18);
+			if (local_18 && !local_18->isWaterSurface())
+				gpMarioParticleManager->emitAndBindToPosPtr(
+				    PARTICLE_MS_JUMP_ED_B, &mPosition, 0, nullptr);
+		}
+	}
+
+	if (mSpine->getCurrentNerve() == &TNerveTamaNokoSleep::theNerve())
+		if (JPABaseEmitter* emitter
+		    = gpMarioParticleManager->emitAndBindToPosPtr(
+		        PARTICLE_MS_POI_ZZZ, &mPosition, 1, this)) {
+			emitter->setGlobalScale(mScaling);
+		}
+
+	TSpineEnemy::calcRootMatrix();
+}
+
+void TTamaNoko::requestShadow()
+{
+	if (!checkLiveFlag(LIVE_FLAG_DEAD | LIVE_FLAG_UNK8 | LIVE_FLAG_HIDDEN)) {
+		if (!checkLiveFlag(LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT)
+		    || checkLiveFlag(LIVE_FLAG_UNK400)) {
+			TCircleShadowRequest local_2c;
+
+			Vec local_38;
+			if (!checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)) {
+				local_38.x = getMActor()->getModel()->getAnmMtx(1)[0][3];
+				local_38.y = getGroundHeight();
+				local_38.z = getMActor()->getModel()->getAnmMtx(1)[2][3];
+				if (!isAirborne())
+					local_2c.mNeedsGroundCheck = 0;
+			} else {
+				local_38 = getPosition();
+				if (!isAirborne()) {
+					local_2c.mNeedsGroundCheck = 0;
+					local_38.y                 = getGroundHeight();
+				}
+			}
+
+			local_2c.mPosition   = local_38;
+			local_2c.mRadiusX = local_2c.mRadiusZ = mScaledBodyRadius;
+			local_2c.mShadowType = getShadowType();
+			local_2c.mRotationY  = mRotation.y;
+			if (checkLiveFlag(LIVE_FLAG_UNK400)) {
+				gpBindShadowManager->forceRequest(local_2c, getActorType());
+			} else {
+				gpBindShadowManager->request(local_2c, getActorType());
+			}
+		}
+
+		if (!checkLiveFlag(LIVE_FLAG_UNK200 | LIVE_FLAG_CLIPPED_OUT)
+		    && !checkActorType(ACTOR_TYPE_UNK40000000)) {
+			gpQuestionManager->request(mPosition, mScaledBodyRadius);
+		}
+	}
+}
+
+// The ROM scales mScaling by 0.8f into a per-block temporary and *calls*
+// JGeometry::TVec3<f>::scale(f) (weak, boid.cpp holds the surviving copy) at
+// all four sites.  Batch 106 landed that without any new level: `scale(f)` is
+// three statements,
+// so it expands through depth 3 and is a `bl` from depth 4 down, and
+// `setGlobalScale(mScaling * 0.8f)` reaches exactly that depth --
+// `operator*` sits inside an inlined call's *argument*, which costs one
+// level, so operator* is 2, operator*= 3 and scale 4. The copy in front of
+// the `bl` is operator*'s by-value left operand and the copy behind it is its
+// return value (landEffect 57.2 -> 94.6).
+// TODO: frame 0x80 against retail's 0x90. mwcc-stack (c-k10): retail creates
+// the four operator* return copies first (0x74/0x68/0x5c/0x50, source order)
+// and the four scale() operands after them (0x40/0x34/0x28/0x1c), the order
+// frame-model rule 8d gives a by-value return with a body local (`TVec3
+// r(a); r *= k; return r;`); the header's by-value `fst` parameter pairs each
+// copy with its operand instead. JGVec3.hpp item; a TU-local helper of that
+// shape is inert here (99.7) since it changes the call depth.
+void TTamaNoko::landEffect()
+{
+	if (mGroundPlane->isSand()) {
+		if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+		        PARTICLE_MS_HIPDROP_C, &mPosition, 0, nullptr)) {
+			emitter->setGlobalScale(mScaling * 0.8f);
+		}
+		if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+		        PARTICLE_MS_POI_SAND, &mPosition, 0, nullptr)) {
+			emitter->setGlobalScale(mScaling * 0.8f);
+		}
+	} else {
+		const TBGCheckData* local_10;
+		gpMap->checkGround(mPosition.x, mPosition.y + 500.0f, mPosition.z,
+		                   &local_10);
+		if (local_10 && local_10->isWaterSurface()) {
+			generateEffectColumWater();
+		} else {
+			if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+			        PARTICLE_MS_HIPDROP_C, &mPosition, 0, nullptr)) {
+				emitter->setGlobalScale(mScaling * 0.8f);
+			}
+			if (JPABaseEmitter* emitter = gpMarioParticleManager->emit(
+			        PARTICLE_MS_HIPDROP_B, &mPosition, 0, nullptr)) {
+				emitter->setGlobalScale(mScaling * 0.8f);
+			}
+		}
+	}
+
+	gpCameraShake->startShake(CAM_SHAKE_MODE_TAMANOKO, 1.0f);
+	SMSRumbleMgr->start(8, 1, (float*)nullptr);
+}
+
+// TODO: UNUSED (0xf8 in the map); no call site or inlined copy, body unknown.
+void TTamaNoko::forceWakeUp() { }
+
+void TTamaNoko::forceSleep()
+{
+	updateSquareToMario();
+	f32 giveUpLen = getSaveParams2()->mSLGiveUpLength.get();
+	giveUpLen *= giveUpLen;
+	if (mDistToMarioSquared > giveUpLen) {
+		setBckAnm(11);
+		mSpine->reset();
+		mSpine->setNext(mSpine->getDefault());
+	}
+}
+
+void TTamaNoko::setAfterDeadEffect()
+{
+	TSmallEnemy::setAfterDeadEffect();
+	unk19C->unk34 = 1;
+	unk19C->setBckAnm(0);
+
+	gpMarioParticleManager->emitAndBindToPosPtr(PARTICLE_MS_TAMA_FLOWER,
+	                                            &mPosition, 0, nullptr);
+	SMSGetMSound()->startSoundActor(MSD_SE_EN_COMMON_SMOKE, &mPosition);
+}
+
+const char** TTamaNoko::getBasNameTable() const { return tamaNoko_bastable; }
+
+// Binding level over a raw member read, worth +8 of low region in
+// TTamaNoko::getGravityY (batch 127).
+static inline TSpineBase<TLiveActor>* TamaNokoSpine(const TTamaNoko* p)
+{
+	TSpineBase<TLiveActor>* spine = p->mSpine;
+	return spine;
+}
+
+f32 TTamaNoko::getGravityY() const
+{
+	if (TamaNokoSpine(this)->getCurrentNerve() == &TNerveTamaNokoAttack::theNerve())
+		return unk198->mSLAttackGravityY.get();
+
+	if (mSpine->getCurrentNerve() == &TNerveTamaNokoThrown::theNerve())
+		return unk198->mSLThrownGravityY.get();
+
+	return mGravity;
+}
+
+void TTamaNoko::setWalkAnm() { setBckAnm(10); }
+
+void TTamaNoko::setDeadAnm() { setBckAnm(3); }
+
+BOOL TTamaNoko::isReachedToGoal() const
+{
+	JGeometry::TVec3<f32> pos = getUnk104().getPointRaw();
+	pos -= mPosition;
+	pos.y = 0.0f;
+	if (pos.x == 0.0f && pos.z == 0.0f)
+		return true;
+
+	if (MsVECMag2(&pos) < 200.0f)
+		return true;
+
+	return false;
+}
+
+bool TTamaNoko::isCollidMove(THitActor* param_1)
+{
+	if (param_1->getActorType() == getActorType())
+		return true;
+
+	if (mSpine->getCurrentNerve() == &TNerveTamaNokoDown::theNerve()) {
+		param_1->receiveMessage(this, HIT_MESSAGE_TRAMPLE);
+		return true;
+	}
+
+	return false;
+}
+
+// NOTE: tamanoko is sleeping inside of it's shell, zzzz
+DEFINE_NERVE(TNerveTamaNokoSleep, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (!self->isBckAnm(15) && self->checkCurAnmEnd(0)) {
+		self->setBckAnm(15);
+		self->getMActor()->setFrameRate(0.0f, ANM_TYPE_BCK);
+	}
+
+	self->walkBehavior(5, 0.0f);
+	return false;
+}
+
+// c-k10: TGessoPolluteObj::set has the same tell (two velocity test copies
+// created at depth 1 after the earlier sites' inline words); a by-value
+// velocity getter over the raw member does not reproduce it here (same
+// markers).
+// 3 in 1: chase mario & try to initiate & land a jump attack
+// TODO: retail places the two velocity copies (local_48, local_54) below the
+// inline temporaries, as if they were by-value temporaries themselves.
+// Retail order, top down: setVelocity's TVec3 temporary, setGoalPathMario's
+// TPathNode, the two velocity copies, calcVelocityToJumpToY's result. Both
+// copies as locals of a `bool f(self, y)` inline test, the jump block as an
+// inline helper and a raw mMActor at the blur emitter land the first three
+// exactly (8 slot mismatches left); the second copy is still 0xc and the
+// jump result 0x20 low under the air block's depth-1 bindings.
+DEFINE_NERVE(TNerveTamaNokoAttack, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	// Initially, start chasing mario
+	if (spine->getTime() == 0) {
+		if (!self->isBckAnm(9))
+			self->setBckAnm(10);
+
+		self->setGoalPathMario();
+	}
+
+	JGeometry::TVec3<f32> local_48 = self->getVelocity();
+	if (local_48.y < -1.0f) {
+		if (JPABaseEmitter* emitter
+		    = gpMarioParticleManager->emitAndBindToMtxPtr(
+		        PARTICLE_MS_TAMA_BLUR,
+		        self->getMActor()->getModel()->getAnmMtx(1), 1, self)) {
+			emitter->setGlobalScale(self->mScaling);
+		}
+	}
+
+	// If doing jump attack -- we're basically playing out the jump arc,
+	// a tiny lil 360 and then a crash landing.
+	if (self->mIsDoingJumpAttack) {
+		if (!self->isAirborne()) {
+			self->landEffect();
+			self->mIsDoingJumpAttack = false;
+			spine->pushAfterCurrent(&TNerveTamaNokoDown::theNerve());
+			return true;
+		}
+
+		JGeometry::TVec3<f32> local_54 = self->getVelocity();
+		if (local_54.y < 0.0f) {
+			MtxPtr mtx = self->getMActor()->getModel()->getAnmMtx(1);
+			self->unk1AC.set(mtx[0][3], mtx[1][3] - 200.0f, mtx[2][3]);
+			if (JPABaseEmitter* emitter
+			    = gpMarioParticleManager->emitAndBindToPosPtr(
+			        PARTICLE_MS_M_BLUR2, &self->unk1AC, 1, self)) {
+				emitter->setGlobalScale(self->mScaling);
+			}
+
+			if (self->mAirAttackTimer < TTamaNoko::mStopOnAirTimeMax) {
+				self->onLiveFlag(LIVE_FLAG_UNK10);
+
+				// NOTE: at the top of the arc, we do a lil 360 spin
+				f32 delta
+				    = TTamaNoko::mRollOnAirAngle / TTamaNoko::mRollOnAirTimeMax;
+				if (self->mAirAttackTimer < TTamaNoko::mRollOnAirTimeMax)
+					self->mRotation.y += delta;
+
+				++self->mAirAttackTimer;
+			} else {
+				self->setVelocity(JGeometry::TVec3<f32>(
+				    0.0f, TTamaNoko::mDropVelocityY, 0.0f));
+				self->offLiveFlag(LIVE_FLAG_UNK10);
+			}
+		}
+	} else {
+		// Not doing jump attack -- chase mario & try to do the jump attack
+		if (self->checkCurAnmEnd(0)) {
+			if (self->isBckAnm(10)) {
+				self->setBckAnm(9);
+			} else if (self->isBckAnm(9)) {
+				self->updateSquareToMario();
+				f32 searchLen = self->getSaveParams2()->mSLSearchLength.value;
+				searchLen *= searchLen;
+				if (self->getDistToMarioSquared() > searchLen) {
+					self->unk1B8 = true;
+					self->setBckAnm(8);
+				} else {
+					f32 jumpAttackDist
+					    = self->getSaveParams2()->mSLJumpAttackDist.get();
+					if (!self->checkLiveFlag(LIVE_FLAG_CLIPPED_OUT)
+					    && self->getDistToMarioSquared()
+					           < jumpAttackDist * jumpAttackDist)
+						self->setBckAnm(8);
+				}
+			} else if (self->isBckAnm(8)) {
+				if (self->unk1B8) {
+					self->unk1B8 = false;
+					spine->pushAfterCurrent(
+					    &TNerveWalkerGraphWander::theNerve());
+					return true;
+				}
+
+				if (SMS_CheckMarioFlag(MARIO_FLAG_IN_SHALLOW_WATER)
+				    || SMS_IsMarioStatusTypeSwimming()
+				    || SMS_GetMarioGrPlane()->isWaterSurface()) {
+					spine->pushAfterCurrent(
+					    &TNerveWalkerGraphWander::theNerve());
+					return true;
+				}
+
+				if (gpMarioOriginal->isInvincible())
+					spine->pushNerve(&TNerveTamaNokoWait::theNerve());
+
+				self->setBckAnm(2);
+			}
+		}
+
+		// The "preparing to jump" animation?
+		if (self->isBckAnm(2)) {
+			if (self->getMActor()
+			        ->getFrameCtrl(ANM_TYPE_BCK)
+			        ->checkPass(63.0f)) {
+				// ...and jump attack!
+				self->unk1A0 = self->calcVelocityToJumpToY(
+				    SMS_GetMarioPos(),
+				    self->getSaveParams2()->getJumpAttackSp(),
+				    self->getGravityY());
+				self->unk1A0.x *= 2.0f;
+				self->unk1A0.z *= 2.0f;
+				self->mPosition.y += 30.0f;
+				self->setVelocity(self->unk1A0);
+				self->onLiveFlag(LIVE_FLAG_AIRBORNE);
+				self->mIsDoingJumpAttack = true;
+				self->mAirAttackTimer    = 0;
+			}
+			self->walkBehavior(3, 0.5f);
+		} else {
+			self->walkBehavior(2, 1.0f);
+		}
+	}
+
+	return false;
+}
+
+// Landing after jump attack
+DEFINE_NERVE(TNerveTamaNokoDown, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (!spine->getTime()) {
+		// If hit sand -- we get stuck
+		if (self->getGroundPlane()->isSand()) {
+			spine->pushAfterCurrent(&TNerveTamaNokoSink::theNerve());
+			if (TEffectColumSand* sand
+			    = (TEffectColumSand*)gpConductor->makeOneEnemyAppear(
+			        self->mPosition, "エフェクト砂柱マネージャー", 1)) {
+				JGeometry::TVec3<f32> local_1c(1.2f, 0.5f, 1.2f);
+				sand->generate(self->mPosition, local_1c);
+			}
+			return true;
+		}
+
+		SMSGetMSound()->startSoundActor(MSD_SE_EN_TAMANOKO_DROPOK,
+		                                &self->mPosition, 0, nullptr, 0, 4);
+		self->unk164 = 1;
+		gpCameraShake->startShake(CAM_SHAKE_MODE_TAMANOKO, 1.0f);
+		self->setBckAnm(4);
+	}
+
+	if (spine->getTime() == 10)
+		SMSRumbleMgr->start(0x13, &self->mPosition);
+
+	// If didn't land on sand -- we pick ourselves back up after a moment
+	int pickUpTime = self->getSaveParams2()->mSLPickUpTime.get();
+	if (self->checkCurAnmEnd(0) && spine->getTime() > pickUpTime) {
+		self->unk164 = 0;
+		spine->pushAfterCurrent(&TNerveTamaNokoWait::theNerve());
+		return true;
+	}
+
+	return false;
+}
+
+DEFINE_NERVE(TNerveTamaNokoPickUp, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (spine->getTime() == 0 && self->unk164 == 0)
+		return true;
+
+	if (self->checkCurAnmEnd(0)
+	    && spine->getTime() > self->getSaveParams2()->mSLPickUpTime.get()) {
+		self->unk164 = 0;
+		self->attackToMario();
+		return true;
+	}
+
+	return false;
+}
+
+// Real bug fixed here: the horizontal components were swapped, so a thrown
+// koopa flew off at ninety degrees to the direction Mario was facing. The ROM
+// multiplies the *sine* of gpMarioAngleY into x and the cosine into z
+// (`fmuls f1, f2, f0` with f0 out of jmaSinTable stores to 0x40 = x), and it
+// associates the product as rate * (power * trig), not (rate * power) * trig.
+// 75.9 -> 89.6%. Spelling it as TNerveMameGessoThrown does (power, rate,
+// z before x, a component-assigned `vel`) gives 99.6%.
+// The throw power is read through an inline accessor: its result makes
+// `power` an IR-optimiser temporary (a dead stack word, the ROM's 8 bytes
+// above `vel` with `rate`), created ahead of the cosine's, so it takes f2.
+DEFINE_NERVE(TNerveTamaNokoThrown, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		TTamaNokoSaveLoadParams* params = self->getSaveParams2();
+
+		f32 power = SMS_GetMarioThrowPower();
+		f32 rate  = params->mSLThrownRateXZ.get();
+		JGeometry::TVec3<f32> vel;
+		f32 z = rate * (power * JMASCos(SMS_GetMarioAngleY()));
+		f32 x = rate * (power * JMASSin(SMS_GetMarioAngleY()));
+		vel.x = x;
+		vel.y = params->mSLThrownVY.get();
+		vel.z = z;
+		self->setVelocity(vel);
+		self->mPosition.y += 2.0f;
+
+		self->onLiveFlag(LIVE_FLAG_AIRBORNE);
+	}
+
+	if (!self->isAirborne()) {
+		self->unk164 = 0;
+		return true;
+	}
+
+	return false;
+}
+
+DEFINE_NERVE(TNerveTamaNokoSink, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		self->mIsSunkInGround = true;
+		self->setBckAnm(6);
+	}
+
+	if (self->checkCurAnmEnd(0)) {
+		if (self->isBckAnm(6))
+			self->setBckAnm(5);
+
+		int sinkTime              = self->getSaveParams2()->mSLSinkTime.value;
+		TTamaNokoManager* manager = (TTamaNokoManager*)self->mManager;
+
+		// The less tamanokos remain, the faster they get back up
+		f32 fVar1 = 0.0f;
+		for (int i = 0; i < manager->getObjNum(); ++i)
+			if (!manager->getObj(i)->checkLiveFlag(LIVE_FLAG_DEAD))
+				fVar1 += 1.0f;
+		fVar1 /= manager->getObjNum();
+
+		sinkTime *= fVar1;
+		if (spine->getTime() > sinkTime) {
+			if (self->isBckAnm(7)) {
+				self->mIsSunkInGround = false;
+				spine->pushAfterCurrent(&TNerveTamaNokoWait::theNerve());
+				return true;
+			}
+			self->setBckAnm(7);
+		}
+	}
+
+	return false;
+}
+
+// Binding level worth +8 of low region, landing
+// TNerveTamaNokoHitWater::execute's frame at 0x58 (batch 121).
+static inline bool TamaNokoUnsetUnk165(TTamaNoko* p)
+{
+	bool result = p->unsetUnk165();
+	return result;
+}
+
+// NOTE: lil shaking when mario sprays water on a sleeping tamanoko
+DEFINE_NERVE(TNerveTamaNokoHitWater, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (spine->getTime() < 2) {
+		self->setBckAnm(15);
+		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
+	}
+
+	if (self->checkCurAnmEnd(0)) {
+		if (self->isBckAnm(15)) {
+			self->setBckAnm(16);
+		} else if (self->isBckAnm(16)) {
+			if (spine->getTime() > self->unk198->mSLWakeUpTimer.get()
+			    || !self->unk1B9) {
+				self->unk1B9 = false;
+				if (!self->isBckAnm(1))
+					self->setBckAnm(1);
+			} else if (TamaNokoUnsetUnk165(self)) {
+				self->setBckAnm(16);
+			} else {
+				spine->reset();
+				spine->setNext(&TNerveTamaNokoSleep::theNerve());
+				spine->pushAfterCurrent(&TNerveTamaNokoSleep::theNerve());
+				return true;
+			}
+		} else if (self->isBckAnm(1)) {
+			spine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+			spine->pushAfterCurrent(&TNerveTamaNokoWait::theNerve());
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// Binding level worth +8 of low region, landing
+// TNerveTamaNokoWait::execute's frame at 0x40 (batch 124).
+static inline bool TamaNokoIsBckAnmL0(const TTamaNoko* p, int i)
+{
+	bool bckAnm = p->isBckAnm(i);
+	return bckAnm;
+}
+
+static inline bool TamaNokoIsBckAnm(const TTamaNoko* p, int i)
+{
+	bool bckAnm = TamaNokoIsBckAnmL0(p, i);
+	return bckAnm;
+}
+
+DEFINE_NERVE(TNerveTamaNokoWait, TLiveActor)
+{
+	TTamaNoko* self = (TTamaNoko*)spine->getBody();
+
+	if (spine->getTime() < 2) {
+		self->setBckAnm(14);
+		self->getMActor()->setFrameRate(SMSGetAnmFrameRate(), ANM_TYPE_BCK);
+	}
+
+	if (self->checkCurAnmEnd(0)) {
+		if (self->isBckAnm(14)) {
+			self->setBckAnm(13);
+		} else if (self->isBckAnm(13)) {
+			if (spine->getTime() > self->unk198->mSLWaitTime.get()
+			    && TamaNokoIsBckAnm(self, 13))
+				self->setBckAnm(12);
+		} else if (self->isBckAnm(12)) {
+			spine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+			return true;
+		}
+	}
+
+	return false;
+}

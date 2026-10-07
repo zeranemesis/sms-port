@@ -1,0 +1,238 @@
+#ifndef ENEMY_GRAPH_HPP
+#define ENEMY_GRAPH_HPP
+
+#include <JSystem/JGeometry/JGVec3.hpp>
+#include <JSystem/JDrama/JDRGraphics.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+
+class TGraphWeb;
+class TSplinePath;
+
+struct TRailNode {
+	/* 0x0 */ S16Vec mPosition;
+	/* 0x6 */ s16 mConnectionNum;
+	/* 0x8 */ u32 mFlags;
+	/* 0xC */ u16 mPitch;
+	/* 0xE */ u16 mYaw;
+	/* 0x10 */ u16 mRoll;
+	/* 0x12 */ u16 mSpeed;
+	/* 0x14 */ u16 mConnections[8];
+	/* 0x24 */ f32 mPeriods[8];
+};
+
+class TGraphNode {
+public:
+	TGraphNode();
+	void getPoint(Vec*) const;
+	JGeometry::TVec3<f32> getPoint() const
+	{
+		S16Vec* v = &unk0->mPosition;
+		JGeometry::TVec3<f32> p;
+		p.x = v->x;
+		p.y = v->y;
+		p.z = v->z;
+		return p;
+	}
+
+	// fabricated
+	TRailNode* getRailNode() { return unk0; }
+	const TRailNode* getRailNode() const { return unk0; }
+	f32 getUnk8() { return unk8; }
+	void setUnk8(f32 v) { unk8 = v; }
+	void incUnk4() { ++unk4; }
+	int getUnk4() { return unk4; }
+	void setUnk4(int v) { unk4 = v; }
+	bool checkFlag(u32 f) const { return unk0->mFlags & f; }
+
+public:
+	/* 0x0 */ TRailNode* unk0;
+	/* 0x4 */ int unk4;
+	/* 0x8 */ f32 unk8;
+	/* 0xC */ s16 unkC;
+};
+
+class TSplineRail {
+public:
+	TSplineRail(const TGraphWeb*);
+	f32 wrapT(f32);
+	f32 getNthT(int);
+	JGeometry::TVec3<f32> getPosition(f32);
+	void getPosAndRot(f32, JGeometry::TVec3<f32>*, JGeometry::TVec3<f32>*);
+	BOOL isUnk4() const { return unk4; }
+
+public:
+	/* 0x0 */ TSplinePath* unk0;
+	/* 0x4 */ BOOL unk4;
+};
+
+class TGraphWeb {
+public:
+	/* 0x0 */ TGraphNode* unk0;
+	/* 0x4 */ TRailNode* unk4;
+	/* 0x8 */ int unk8;
+	/* 0xC */ const char* unkC;
+	/* 0x10 */ int unk10;
+	/* 0x14 */ TSplineRail* unk14;
+	/* 0x18 */ // vt
+
+public:
+	TGraphWeb(TRailNode*, const char*, int);
+
+	virtual ~TGraphWeb();
+
+	int filterRailNode(u32, const TRailNode*, const TRailNode*,
+	                   TRailNode*) const;
+	void translateNodes(TRailNode*);
+	void getAimToGoalNextIndex(int, int, u32, f32) const;
+	int getShortestNextIndex(int, int, u32) const;
+	int getRandomNextIndex(int, int, u32) const;
+	int getEscapeFromMarioIndex(int, int, const JGeometry::TVec3<f32>&,
+	                            u32) const;
+	int getAimToDirNextIndex(int, int, const JGeometry::TVec3<f32>&,
+	                         const JGeometry::TVec3<f32>&, u32) const;
+	int getRandomButDirLimited(int, int, const JGeometry::TVec3<f32>&,
+	                           const JGeometry::TVec3<f32>&, f32, u32) const;
+	int getEscapeDirLimited(int, int, const JGeometry::TVec3<f32>&,
+	                        const JGeometry::TVec3<f32>&, f32, u32) const;
+	int findNearestNodeIndex(const JGeometry::TVec3<f32>&, u32) const;
+	int findFarthestNodeIndex(const JGeometry::TVec3<f32>&, u32) const;
+	int findNearestVisibleIndex(const JGeometry::TVec3<f32>&, f32, f32, f32,
+	                            u32) const;
+	int findNearestNodeIndexCheckY(const JGeometry::TVec3<f32>&, f32,
+	                               u32) const;
+	void getNodeIndexInXZRange(const JGeometry::TVec3<f32>&, f32, u32) const;
+	void calcGraphDirection(int);
+	void initGoalIndex(const Vec&);
+	void attachToGround();
+	void isOnePath() const;
+	BOOL startIsEnd() const;
+	JGeometry::TVec3<f32> indexToPoint(int) const;
+	void perform(u32 cue, JDrama::TGraphics* graphics);
+	BOOL isDummy() const;
+	JGeometry::TVec3<f32>
+	getNearestPosOnGraphLink(const JGeometry::TVec3<f32>&) const;
+	int getNeighborNodeIndexByFlag(int, int, u32) const;
+	void getDesignatedNodeIndex(u32, int, f32) const;
+
+	// fabricated
+	TGraphNode& getGraphNode(int i) { return unk0[i]; }
+	const TGraphNode& getGraphNode(int i) const { return unk0[i]; }
+	TGraphNode& getCurrentNode() { return unk0[unk10]; }
+	TSplineRail* getSplineRail() { return unk14; }
+	const TGraphNode& getFirstGraphNode() const { return unk0[0]; }
+	const TGraphNode& getLastGraphNode() const { return unk0[unk8 - 1]; }
+	int getNodeNum() const { return unk8; }
+};
+
+class TGraphGroup {
+public:
+	TGraphGroup(void*);
+	~TGraphGroup();
+	void initGraphGroup();
+	TGraphWeb* getGraphByName(const char*);
+	void perform(u32 cue, JDrama::TGraphics* graphics);
+
+	TRailNode* getNode(int i)
+	{
+		return (TRailNode*)((u8*)unk0 + unk0[i].mRailNodesOffset);
+	}
+	const char* getNodeName(int i)
+	{
+		return (const char*)((u8*)unk0 + unk0[i].mNameOffset);
+	}
+
+	// fabricated
+	struct GraphDesc {
+		/* 0x0 */ int mNodeNum;
+		/* 0x4 */ u32 mNameOffset;
+		/* 0x8 */ u32 mRailNodesOffset;
+	};
+
+public:
+	/* 0x0 */ GraphDesc* unk0;
+	/* 0x4 */ int unk4;
+	/* 0x8 */ TGraphWeb** unk8;
+	/* 0xC */ TGraphWeb* unkC;
+};
+
+class TGraphTracer {
+public:
+	TGraphTracer();
+	void setParamFromGraph();
+	void setTo(int node_idx);
+	int moveTo(int node_idx);
+	f32 calcSplineSpeed(float);
+	BOOL traceSpline(float);
+	int getCurGraphIndex() const { return mCurrIdx; }
+	const TGraphWeb* getGraph() const { return unk0; }
+
+	// fabricated
+	TGraphNode& getCurrent() { return getGraph()->getGraphNode(mCurrIdx); }
+	TGraphNode& getPrevious() { return getGraph()->getGraphNode(mPrevIdx); }
+	const TGraphNode& getCurrent() const
+	{
+		return getGraph()->getGraphNode(mCurrIdx);
+	}
+	int getPrevIndex() const { return mPrevIdx; }
+	int& getPrevIndexRef() { return mPrevIdx; }
+	void init(TGraphWeb* web) { unk0 = web; }
+	void reset() { mPrevIdx = -1; }
+	void reset2() { mCurrIdx = -1; }
+	JGeometry::TVec3<f32> getCurrentPos()
+	{
+		return unk0->indexToPoint(mCurrIdx);
+	}
+	void moveToShortestNext()
+	{
+		moveTo(unk0->getShortestNextIndex(getCurGraphIndex(), getPrevIndex(),
+		                                  0xffffffff));
+	}
+	void setToNearest(const JGeometry::TVec3<f32>& pos)
+	{
+		setTo(unk0->findNearestNodeIndex(pos, 0xffffffff));
+	}
+	TGraphWeb* getGraph() { return unk0; }
+	void setGraph(TGraphWeb* web) { unk0 = web; }
+	// TODO: the reference accessor is what puts the tracer in r3 and
+	// &mPrevIdx in r4 as retail does (a raw `int& prev = mPrevIdx;`, a
+	// pointer, a setter level and a by-value read all rank them the other
+	// way round); it is the one inline level here, so the caller
+	// (TFireWanwan::initTurnNextGraphNode) still owes 8 bytes of frame.
+	u32 popCurr()
+	{
+		int result = mPrevIdx;
+		int& prev  = getPrevIndexRef();
+		int curr   = mCurrIdx;
+		if (result == -1)
+			result = curr;
+		prev = curr;
+		return result;
+	}
+	bool currPitchIsZero() const
+	{
+		if (getCurrent().getRailNode()->mPitch == 0)
+			return true;
+		return false;
+	}
+	bool hasOnlyOneNext() const
+	{
+		if (getCurrent().getRailNode()->mConnectionNum == 1)
+			return true;
+		return false;
+	}
+	void moveToRandomNext()
+	{
+		moveTo(
+		    unk0->getRandomNextIndex(getCurGraphIndex(), getPrevIndex(), -1));
+	}
+
+public:
+	/* 0x0 */ TGraphWeb* unk0;
+	/* 0x4 */ int mCurrIdx;
+	/* 0x8 */ int mPrevIdx;
+	/* 0xC */ f32 unkC;
+	/* 0x10 */ f32 unk10;
+	/* 0x14 */ f32 unk14;
+};
+
+#endif

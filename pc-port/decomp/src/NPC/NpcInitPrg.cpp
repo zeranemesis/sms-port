@@ -1,0 +1,565 @@
+#include <NPC/NpcBase.hpp>
+#include <JSystem/J3D/J3DGraphBase/Components/J3DGXColorS10.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DShape.hpp>
+#include <Strategic/Spine.hpp>
+#include <Strategic/ObjModel.hpp>
+#include <System/MarDirector.hpp>
+#include <System/FlagManager.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <M3DUtil/SDLModel.hpp>
+#include <MarioUtil/MtxUtil.hpp>
+#include <MarioUtil/ModelUtil.hpp>
+#include <MarioUtil/PacketUtil.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/LightUtil.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/Graph.hpp>
+#include <Map/Map.hpp>
+#include <Camera/cameralib.hpp>
+#include <NPC/NpcParts.hpp>
+#include <NPC/NpcColor.hpp>
+#include <NPC/NpcThrow.hpp>
+#include <NPC/NpcCoin.hpp>
+#include <NPC/NpcInitAnmData.hpp>
+#include <NPC/NpcInbetween.hpp>
+#include <NPC/NpcInitData.hpp>
+#include <NPC/NpcNerve.hpp>
+
+// rogue
+#include <M3DUtil/InfectiousStrings.hpp>
+static const char dummy5[] = "__ROOT_JOINT__";
+
+static const char* cManiyaParentViewObjName    = "マニ屋親タヌキ";
+static const char* cManiyaChildViewObjName     = "マニ屋子タヌキ";
+static const char* cNotUseFastCubeViewObjName0 = "モンテ26";
+static const char* cNotUseFastCubeViewObjName1 = "モンテ27";
+static const char* cEyeMaterialName            = "_eye_mat";
+static const char* cFruitsBoatRideJointName    = "monte_koko";
+static const char* cNeckJointName              = "kubi";
+
+// Factory and binder levels for TBaseNPC::init's frame (cc32). Retail's
+// init references no stack slot at all, so its 0x168 frame is pure dead
+// region; these name-and-return levels price it additively (a naming `new`
+// factory +8 or +0x10, the two-level joint-name binder +0x10 per site) and
+// are the only structure this TU gives them. Names are fabricated.
+static inline TMActorKeeper* NpcNewKeeper(TLiveManager* manager)
+{
+	TMActorKeeper* keeper = new TMActorKeeper(manager);
+	return keeper;
+}
+
+static inline TBaseNPC::TNpcUnk22CStruct* NpcNew22C()
+{
+	TBaseNPC::TNpcUnk22CStruct* p = new TBaseNPC::TNpcUnk22CStruct;
+	return p;
+}
+
+static inline TBaseNPC::TNpcUnk230Struct* NpcNew230()
+{
+	TBaseNPC::TNpcUnk230Struct* p = new TBaseNPC::TNpcUnk230Struct;
+	return p;
+}
+
+static inline TMultiMtxEffect* NpcNewMtxEffect()
+{
+	TMultiMtxEffect* effect = new TMultiMtxEffect;
+	return effect;
+}
+
+static inline JUTNameTab* NpcJointNameTab(J3DModel* model)
+{
+	J3DModelData* data = model->getModelData();
+	JUTNameTab* tab    = data->getJointName();
+	return tab;
+}
+
+static inline TGraphWeb* NpcGraph(TGraphTracer* tracer)
+{
+	TGraphWeb* graph = tracer->getGraph();
+	return graph;
+}
+
+void TBaseNPC::initNpcLight_()
+{
+	mMActor->setLightType(LIGHT_TYPE_OBJECT);
+	if (checkLiveFlag(LIVE_FLAG_UNK10))
+		mGroundHeight = gpMap->checkGroundIgnoreWaterSurface(
+		    mPosition.x, mPosition.y + 10.0f, mPosition.z, &mGroundPlane);
+}
+
+// NOTE: this is not present as an UNUSED symbol, so it was an inline, but it is
+// sure as hell isn't used anywhere but here so I'm not defining it in the
+// header and putting it here instead.
+inline void TBaseNPC::setMtxEffect_()
+{
+	static const char* sWaistJointName[] = { "koshi_null" };
+
+	struct TMtxEffectInitInfo {
+		/* 0x0 */ u32 mActorType;
+		/* 0x4 */ const char** unk4;
+		/* 0x8 */ const char* unk8;
+		/* 0xC */ u8 unkC;
+		/* 0xD */ u8 unkD;
+	};
+
+	static const TMtxEffectInitInfo sMtxEffectInitData[] = {
+		{ 0x4000001, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000002, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000003, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000004, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000005, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000007, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000008, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x4000009, sWaistJointName, "Npc/MonteM", 0, 1 },
+		{ 0x400000A, sWaistJointName, "Npc/MonteW", 0, 1 },
+		{ 0x400000B, sWaistJointName, "Npc/MonteW", 0, 1 },
+		{ 0x400000C, sWaistJointName, "Npc/MonteW", 0, 1 },
+		{ 0x400000D, sWaistJointName, "Npc/MonteW", 0, 1 },
+		{ 0x4000018, sWaistJointName, "Npc/Peach", 0, 1 },
+		{ 0, nullptr, nullptr, 0, 0 },
+	};
+
+	const TMtxEffectInitInfo* pInfo = sMtxEffectInitData;
+	for (;;) {
+		if (pInfo->mActorType == 0)
+			return;
+		if (pInfo->mActorType == mActorType)
+			break;
+		pInfo += 1;
+	}
+
+	mMultiMtxEffect            = NpcNewMtxEffect();
+	mMultiMtxEffect->mNumBones = pInfo->unkD;
+
+	u16* boneIds       = new u16[pInfo->unkD];
+	u8* mtxEffectTypes = new u8[pInfo->unkD];
+
+	JUTNameTab* jointNameTab = NpcJointNameTab(getModel());
+	for (int i = 0; i < pInfo->unkD; ++i) {
+		boneIds[i]        = jointNameTab->getIndex(pInfo->unk4[i]);
+		mtxEffectTypes[i] = pInfo->unkC;
+	}
+
+	mMultiMtxEffect->mBoneIDs       = boneIds;
+	mMultiMtxEffect->mMtxEffectType = mtxEffectTypes;
+
+	J3DModel* model = getModel();
+	mMultiMtxEffect->setup(model, pInfo->unk8);
+	mMultiMtxEffect->flagOn(0x1);
+}
+
+// NOTE: same as above
+inline void TBaseNPC::initSinkNpc_()
+{
+	static int sCheckPollutedStartCounter = 0;
+
+	int iVar4 = CLBPalFrame(30);
+
+	unk15C = new TNpcSink(sCheckPollutedStartCounter, iVar4);
+
+	sCheckPollutedStartCounter += 1;
+	if (sCheckPollutedStartCounter >= iVar4)
+		sCheckPollutedStartCounter = 0;
+}
+
+// Frame closed in cc32 by pricing the dead region additively: the director
+// accessor for the map test (+0x10), getScaling() at both mScaling reads
+// (+8), the joint-name binder at its three sites (+0x30, one of them in
+// setMtxEffect_), the graph binder (+8), naming factories for the keeper,
+// the two NPC sub-structs and the matrix effect (+0x30) and a named
+// TNpcInbetween result (+8). Many other combinations fit (a named result
+// saturates in the caller's block; factory forms of the TNpcSink and
+// TNpcInbetween `new`s change instructions), so the choice is weakly
+// evidenced. Header round 25's reading below still stands: the inlined
+// constructors are not carriers.
+//
+// Header round 25 priced the inlined-constructor carrier and closed it. A
+// 12-byte non-trivial dead local is worth exactly +0x10 here in each of
+// TNpcSink, TNpcUnk22CStruct, TNpcUnk230Struct (NpcBase.hpp) and
+// TMultiMtxEffect (MtxUtil.hpp); none of the four is legal (pure
+// initialiser lists, or a provably empty body).
+void TBaseNPC::init(TLiveManager* param_1)
+{
+	int iVar18 = mActorType - 0x4000001;
+
+	mIndividualParams = gpConductor->unkF4->unk8[iVar18];
+
+	if (param_1 == nullptr) {
+		onLiveFlag(LIVE_FLAG_DEAD);
+		initHitActor(mActorType, 0, 0, 0.0f, 0.0f, 0.0f, 0.0f);
+		onHitFlag(HIT_FLAG_NO_COLLISION);
+		mSpine->initWith(&TNerveNPCWaitMarioApproach::theNerve());
+		mTurnSpeed = mIndividualParams->mWaitTurnSpeed.get();
+		gpConductor->registerAloneActor(this);
+		return;
+	}
+
+	const TNpcInitInfo* pTVar3 = SMSGetNpcInitData(iVar18);
+	mManager                   = param_1;
+	param_1->manageActor(this);
+
+	mMActorKeeper = NpcNewKeeper(param_1);
+	u32 uVar21    = 0;
+	if (mActorType == 0x400001d)
+		uVar21 = 3;
+	mMActorKeeper->createMActorFromNthData(0, uVar21);
+	if (param_1->unk28 == 2)
+		mMActorKeeper->createMActorFromNthData(1, 3);
+	mMActor = mMActorKeeper->mActors[0];
+
+	mBodyScale        = 1.0f;
+	mBodyRadius       = 10.0f;
+	mMarchSpeed       = 0.0f;
+	mWallRadius       = pTVar3->mAttackRadius * getScaling().x;
+	mHeadHeight       = mPtrSaveNormal->mSLHeadHeightNormal.get();
+	mGravity          = mPtrSaveNormal->mGravityY.get();
+	mScaledBodyRadius = getScaling().x * mIndividualParams->mCircleShadowSize.get();
+
+	if (mActorType == 0x400001d) {
+		onLiveFlag(LIVE_FLAG_UNK2000 | LIVE_FLAG_UNK10 | LIVE_FLAG_UNK8);
+		initNpcObjCollision_(pTVar3);
+		mSpine->initWith(&TNerveNPCWaitMarioApproach::theNerve());
+		mTurnSpeed = 0.0f;
+		initNpcLight_();
+		return;
+	}
+
+	onLiveFlag(LIVE_FLAG_UNK1000000);
+	onLiveFlag(LIVE_FLAG_AIRBORNE);
+	onLiveFlag(LIVE_FLAG_UNK1000);
+	if (SMSGetMarDirector()->getCurrentMap() != 8
+	    || (strcmp(mName, cNotUseFastCubeViewObjName0) != 0
+	        && strcmp(mName, cNotUseFastCubeViewObjName1) != 0)) {
+		onLiveFlag(LIVE_FLAG_UNK2000);
+	}
+
+	if (mActorType == 0x4000006)
+		onLiveFlag(LIVE_FLAG_UNK10 | LIVE_FLAG_UNK8);
+
+	if (isJellyFishMare() || isSunflower() || mActorType == 0x4000007) {
+		onLiveFlag(LIVE_FLAG_UNK10);
+	}
+
+	if (getMActor()->getAnmBck())
+		getMActor()->getAnmBck()->initNormalMotionBlend();
+
+	if (isPollutionNpc())
+		initSinkNpc_();
+
+	unk22C = NpcNew22C();
+
+	if (NpcGraph(unk124)->isDummy()) {
+		mSpine->initWith(&TNerveNPCWaitMarioApproach::theNerve());
+	} else {
+		mSpine->initWith(&TNerveNPCGraphWander::theNerve());
+		unk124->reset();
+		goToShortestNextGraphNode();
+	}
+
+	initNpcObjCollision_(pTVar3);
+	setMtxEffect_();
+
+	JUTNameTab* jointNameTab = NpcJointNameTab(getModel());
+	mNeckJointIndex          = jointNameTab->getIndex(cNeckJointName);
+
+	if (mNeckJointIndex != -1) {
+		unk230 = NpcNew230();
+		extern int NPCNeckCallBack(J3DNode * param_1, int param_2);
+		getMActor()->setJointCallback(mNeckJointIndex, &NPCNeckCallBack);
+	}
+
+	setHappyEffectMtxPtr_(jointNameTab);
+	switch (mActorType) {
+	case 0x4000012:
+	case 0x4000009:
+		setNoteEffectMtxPtr_(jointNameTab);
+		break;
+	}
+	if (isPollutionNpc())
+		setPollutionEffectMtxPtr_(jointNameTab);
+
+	if (pTVar3->unk0 != nullptr) {
+		unk150  = SMS_CreateMinimumSDLModel(pTVar3->unk0->unk0);
+		u16 idx = NpcJointNameTab(unk150)->getIndex(pTVar3->unk0->unk4);
+		unk154 = unk150->getAnmMtx(idx);
+	}
+
+	initAnmSound();
+	TNpcInbetween* inb = new TNpcInbetween(
+	    CLBPalFrame(mPtrSaveNormal->mPosInbetweenFrame.get()),
+	    CLBPalFrame(mPtrSaveNormal->mMotionBlendFrame.get()));
+	mInbetweenCtrl = inb;
+	const TNpcInitAnmInfo* anmInitInfo = SMSGetNpcInitAnmData(iVar18);
+	initLodAnm(anmInitInfo->unk0, 0, mIndividualParams->mLodChangeDist.get());
+	initNpcLight_();
+}
+
+// NOTE: see above for inline motivation
+inline void TBaseNPC::initBaseActionFlag_()
+{
+	static const TAnmBckMapping sIndividualHoldArrowBck[] = {
+		{ 14, 16 },
+		{ -1, -1 },
+	};
+
+	static const TAnmBckMapping sIndividualKinopioBck[] = {
+		{ 15, 16 }, { 6, 7 },   { 4, 5 },   { 14, 24 },
+		{ 9, 11 },  { 19, 20 }, { -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualKinopioBtp[] = {
+		{ 1, 2 },
+		{ 0, 5 },
+		{ -1, -1 },
+	};
+
+	static const TAnmBckMapping sIndividualKinojiiBck[] = {
+		{ 11, 12 }, { 2, 3 }, { 10, 17 }, { 5, 7 }, { 13, 14 }, { -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualKinojiiBtp[] = {
+		{ 1, 2 },
+		{ 0, 5 },
+		{ -1, -1 },
+	};
+
+	if (isMonte()) {
+		setMonteActionFlag_();
+		if (checkActionFlag(NPC_ACTION_UNK400))
+			unkD0->unk18 = sIndividualHoldArrowBck;
+	} else if (isMare()) {
+		setMareActionFlag_();
+	} else if (mActorType == 0x4000016 || mActorType == 0x4000017) {
+		setKinoActionFlag_();
+		if (checkActionFlag(NPC_ACTION_UNK100)) {
+			switch (mActorType) {
+			case 0x4000016:
+				unkD0->unk18 = sIndividualKinopioBck;
+				unkD0->unk1C = sIndividualKinopioBtp;
+				break;
+			case 0x4000017:
+				unkD0->unk18 = sIndividualKinojiiBck;
+				unkD0->unk1C = sIndividualKinojiiBtp;
+				break;
+			}
+		}
+	} else {
+		unk16C      = 0;
+		mActionFlag = 0;
+	}
+}
+
+// NOTE: see above for inline motivation
+inline void TBaseNPC::initIndividualAnm_()
+{
+	static const TAnmBckMapping sIndividualParentRaccoonDogAnmBck[] = {
+		{ 0, 1 },
+		{ -1, -1 },
+	};
+	static const TAnmBckMapping sIndividualChildRaccoonDogAnmBck[] = {
+		{ 0, 2 },
+		{ -1, -1 },
+	};
+
+	static const TAnmBckMapping sIndividualMareMA0Bck[] = {
+		{ 0, 3 },
+		{ -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualMareMA0Btp[] = {
+		{ 2, 3 },
+		{ -1, -1 },
+	};
+
+	static const TAnmBckMapping sIndividualMareMA1Bck[] = {
+		{ 0, 4 },
+		{ -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualMareMA1Btp[] = {
+		{ 2, 0 },
+		{ -1, -1 },
+	};
+
+	// BUG: missing -1 terminator
+	static const TAnmBckMapping sIndividualMareWA0Bck[] = {
+		{ 0, 3 },
+	};
+
+	switch (mActorType) {
+	case 0x4000019:
+		if (strcmp(mName, cManiyaParentViewObjName) == 0) {
+			onActionFlag(NPC_ACTION_UNK800);
+			unkD0->unk18 = sIndividualParentRaccoonDogAnmBck;
+		} else if (strcmp(mName, cManiyaChildViewObjName) == 0) {
+			onActionFlag(NPC_ACTION_UNK800);
+			onLiveFlag(LIVE_FLAG_DONT_TALK);
+			unkD0->unk18 = sIndividualChildRaccoonDogAnmBck;
+		}
+		break;
+
+	case 0x400000F:
+		switch ((int)(MsRandF() * 3.0f)) {
+		case 0:
+			unkD0->unk18 = sIndividualMareMA0Bck;
+			unkD0->unk1C = sIndividualMareMA0Btp;
+			break;
+		case 1:
+			unkD0->unk18 = sIndividualMareMA1Bck;
+			unkD0->unk1C = sIndividualMareMA1Btp;
+			break;
+		}
+		break;
+
+	case 0x4000014:
+		switch ((int)(MsRandF() * 2.0f)) {
+		case 0:
+			unkD0->unk18 = sIndividualMareWA0Bck;
+			break;
+		}
+		break;
+	}
+}
+
+// TODO: 98.0% -- frame 0x158 vs 0x1f0 plus a whole-function callee-saved
+// renumbering (retail keeps `this` in r31, we get r29). Slot triage: the named
+// block (local_78 and the six double-conversion slots) and the ten stream-read
+// slots are each the right size and at the right distance from the frame top,
+// but retail has 164 dead bytes *below* the read pool where we have 152, and we
+// have 12 extra bytes between the read pool and the named block. The only real
+// instruction difference is in the colour-change double loop: retail loads
+// `initInfo->unk34[j][i]` twice with two different address associations --
+// (initInfo + i*4) + (j*8+0x34) for the test, (initInfo + j*8+0x34) + i*4 for
+// the argument -- so the two reads are spelled differently in the source and do
+// not CSE. Rejected: a named `row = initInfo->unk34[j]` used for the argument
+// (97.6), for the argument with the row fetched before the test (98.2), and for
+// the test with the raw expression as the argument (97.8, +8 frame).
+// cc32, all keep 569 instructions: a TU-local `unk34[j][i]` accessor at the
+// argument, the test or both (97.8/98.0/97.8), a row-returning accessor then
+// `[i]` (97.6/97.8), `*(initInfo->unk34[j] + i)` at the argument (98.0).
+// A named material name at the eye test and the raw mCurrArea.unk0 for the
+// blue-coin stage together take this from 98.1 to 98.9 (alone: 98.2, 98.0).
+void TBaseNPC::setIndividualDifference_(JSUMemoryInputStream& stream)
+{
+	int iVar15                         = mActorType - 0x4000001;
+	const TNpcInitInfo* initInfo       = SMSGetNpcInitData(iVar15);
+	const TNpcInitAnmInfo* anmInitInfo = SMSGetNpcInitAnmData(iVar15);
+
+	J3DGXColorS10 local_78[2];
+	for (int i = 0; i < 2; ++i) {
+		local_78[i].color.r = stream.readS32();
+		local_78[i].color.g = stream.readS32();
+		local_78[i].color.b = stream.readS32();
+		local_78[i].color.a = 0xff;
+	}
+
+	if (isPollutionNpc()) {
+		mPollutionAmount = local_78[0].color.b * (1.0f / 255);
+		unk174.a = mPollutionAmount * mIndividualParams->mPollutionMax.get();
+	}
+
+	int uVar21   = stream.readS32();
+	unk16C       = stream.readS32();
+	int uVar20   = stream.readS32();
+	f32 local_a0 = stream.readS32();
+	f32 local_a4 = stream.readS32();
+	int local_a8 = stream.readU32();
+
+	if (uVar21 < 0)
+		uVar21 = 0;
+	if (uVar20 < 0)
+		uVar20 = 0;
+
+	{
+		int uVar16           = mManager->unk28;
+		s16* indices         = &local_78[0].color.r;
+		const GXColor* color = getPtrInitPollutionColor();
+		for (int i = 0; i < uVar16; ++i) {
+			for (int j = 0; j < 2; ++j) {
+				s16 tmp = indices[j];
+				if (initInfo->unk34[j][i]) {
+					SMS_InitChangeNpcColor(mMActorKeeper->getMActor(i),
+					                       initInfo->unk34[j][i], tmp, color);
+				}
+			}
+		}
+	}
+
+	if (getPtrInitPollutionColor()) {
+		J3DModel* model         = getModel();
+		J3DModelData* modelData = model->getModelData();
+		JUTNameTab* matNameTab  = modelData->getMaterialName();
+		for (u16 i = 0, e = modelData->getMaterialNum(); i < e; ++i) {
+			const char* name = matNameTab->getName(i);
+			if (strcmp(name, cEyeMaterialName) != 0) {
+				J3DMaterial* mat = modelData->getMaterialNodePointer(i);
+				J3DShapePacket* shape
+				    = model->getShapePacket(mat->getShape()->getIndex());
+				if (shape->getUserArea() == 0)
+					SMS_InitPacket_OneTevKColor(model, i, GX_KCOLOR0, &unk174);
+			}
+		}
+	}
+
+	if (mActorType == 0x4000018) {
+		uVar21 |= 0x6;
+		if (uVar21 & 0x10) {
+			uVar21 |= 0x60;
+			peachParasolIn_();
+		} else {
+			uVar21 &= ~0x60;
+		}
+	}
+
+	if (TFlagManager::getInstance()->getBool(0x50003) && isSunflower())
+		sunflowerDownIn_();
+
+	if (uVar21 > 0)
+		unk168 = new TNpcParts(uVar21, &local_78[1], this);
+
+	if (anmInitInfo->unk4 != nullptr)
+		unkD0->unk1C = anmInitInfo->unk4;
+
+	initBaseActionFlag_();
+	initIndividualAnm_();
+
+	if (uVar20 & 0x1)
+		mThrowCtrl = new TNpcThrow(local_a0, local_a4);
+
+	bool bVar4 = isNormalMonteM() && checkActionFlag(NPC_ACTION_BURNING)
+	                 ? true
+	                 : false;
+
+	bool bVar3 = true;
+	if (local_a8 == 2000 || local_a8 == 200
+	    || (local_a8 >= 0 && local_a8 < 50)) {
+		bool bVar5 = local_a8 >= 0 && local_a8 < 50
+		                     && TFlagManager::getInstance()->getBlueCoinFlag(
+		                         gpApplication.mCurrArea.unk0, local_a8)
+		                 ? true
+		                 : false;
+
+		if (bVar4 && bVar5) {
+			bVar3 = false;
+			offActionFlag(NPC_ACTION_BURNING | NPC_ACTION_UNK80
+			              | NPC_ACTION_RUN);
+		} else {
+			if (bVar5)
+				local_a8 = 2000;
+			mCoinCtrl = new TNpcCoin(local_a8);
+		}
+	}
+
+	if (bVar4 && bVar3) {
+		bool b = (uVar21 & NPC_ACTION_UNK800) != 0;
+		setSmokeEffectMtxPtr_(b);
+	}
+
+	npcWaitIn();
+	randomizeBckAndBtpFrame_();
+
+	f32 fVar1 = mMActor->getFrameCtrl(ANM_TYPE_BCK)->getFrame();
+	if (unk168 != nullptr) {
+		if (isJellyFishMare())
+			unk168->addJellyFishParts(fVar1);
+
+		unk168->setPartsAnmFrame(fVar1);
+	}
+}

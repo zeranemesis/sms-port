@@ -1,0 +1,1292 @@
+#include <MoveBG/MapObjBase.hpp>
+#include <MoveBG/MapObjTurn.hpp>
+#include <MoveBG/MapObjMessenger.hpp>
+#include <MoveBG/MapObjLibWave.hpp>
+#include <MoveBG/MapObjVibration.hpp>
+#include <MoveBG/MapObjWave.hpp>
+#include <MoveBG/MapObjTown.hpp>
+#include <Enemy/Conductor.hpp>
+#include <Enemy/EffectObj.hpp>
+#include <System/EmitterViewObj.hpp>
+#include <System/MarDirector.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Player/ModelWaterManager.hpp>
+#include <MarioUtil/PacketUtil.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <Map/MapModel.hpp>
+#include <MoveBG/ItemManager.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <JSystem/JMath.hpp>
+#include <Map/MapCollisionEntry.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DModel.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DJoint.hpp>
+#include <JSystem/JParticle/JPAEmitter.hpp>
+#include <JSystem/JParticle/JPAMath.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <JSystem/JGeometry/JGRotation3.hpp>
+#include <JSystem/JGeometry/JGMatrix33.hpp>
+#include <JSystem/JGeometry/JGMatrix34.hpp>
+#include <stdlib.h>
+#include <ctype.h>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+bool TMapObjBase::isHideObj(THitActor* param_1)
+{
+	if (param_1->isActorType(0x40000320) || param_1->isActorType(0x40000013)
+	    || param_1->isActorType(0x40000012) || param_1->isActorType(0x40000018)
+	    || param_1->isActorType(0x40000019) || param_1->isActorType(0x4000001a)
+	    || param_1->isActorType(0x40000020) || param_1->isActorType(0x4000003b))
+		return true;
+
+	return false;
+}
+
+// TODO: these two predicates are almost certainly TMarDirector members in
+// retail (the `||` must expand both bodies at the call site so that the second
+// range test is only evaluated when the first fails). They are parked as
+// TU-local helpers because this batch may not edit System/MarDirector.hpp.
+static inline bool isDemoMovieKind()
+{
+	bool ret = true;
+	if (gpMarDirector->unk124 != 1 && gpMarDirector->unk124 != 2)
+		ret = false;
+	return ret;
+}
+
+static inline bool isDemoEventKind()
+{
+	bool ret = true;
+	if (gpMarDirector->unk124 != 3 && gpMarDirector->unk124 != 4)
+		ret = false;
+	return ret;
+}
+
+bool TMapObjBase::isDemo()
+{
+	if (isDemoMovieKind() || isDemoEventKind())
+		return true;
+
+	return false;
+}
+
+void TMapObjBase::loadHideObjInfo(JSUMemoryInputStream& stream, s32* param_2,
+                                  f32* appear_speed, f32* appear_y_speed,
+                                  s32* param_5)
+{
+	stream >> *param_2;
+	f32 val;
+	stream >> val;
+	*appear_speed = val * 0.06f;
+	stream >> val;
+	if (val < 0.0f)
+		val = 20.0f;
+	*appear_y_speed = val;
+	s32 val2;
+	stream >> val2;
+	if (val2 <= 0)
+		val2 = 1200;
+	else
+		val2 *= 10;
+	*param_5 = val2;
+}
+
+void TMapObjBase::checkOnManhole()
+{
+	mGroundHeight = gpMap->checkGround(mPosition.x, mPosition.y + 20.0f,
+	                                   mPosition.z, &mGroundPlane);
+	if (getGroundPlane()->getActor()
+	    && getGroundPlane()->getActor()->isActorType(0x4000000b)) {
+		((TManhole*)getGroundPlane()->getActor())->makeManholeUnuseful(this);
+	}
+}
+
+void TMapObjBase::throwObjToOverhead(TMapObjBase* object, f32 y_offset,
+                                     f32 vertical_speed) const
+{
+	object->appear();
+	object->mPosition.set(mPosition.x, mPosition.y + y_offset, mPosition.z);
+	object->mVelocity.set(0.0f, vertical_speed, 0.0f);
+	object->offLiveFlag(LIVE_FLAG_UNK10);
+}
+
+void TMapObjBase::throwObjToFront(TMapObjBase* object, f32 y_offset, f32 speed,
+                                  f32 vertical_speed) const
+{
+	object->appear();
+	object->mPosition.set(getPosition().x, mPosition.y + y_offset,
+	                      getPosition().z);
+	MActor* actor = getMActor();
+	if (actor) {
+		MtxPtr mtx = getModel()->getAnmMtx(0);
+		object->mVelocity.set(mtx[0][2] * speed,
+		                      mtx[1][2] * speed + vertical_speed,
+		                      mtx[2][2] * speed);
+		object->offLiveFlag(LIVE_FLAG_UNK10);
+	} else {
+		Mtx mtx;
+		MsMtxSetRotRPH(mtx, getRotation().x, getRotation().y, getRotation().z);
+		object->mVelocity.set(mtx[0][2] * speed,
+		                      mtx[1][2] * speed + vertical_speed,
+		                      mtx[2][2] * speed);
+		object->offLiveFlag(LIVE_FLAG_UNK10);
+	}
+}
+
+// A named-result binder over getMActor() tested directly and a by-value level
+// over the rotation's x put throwObjToFrontFromPoint's else-branch Mtx at
+// retail's 0x34 in the same 0x88 frame.
+static inline MActor* MapObjLibMActor(const TMapObjBase* obj)
+{
+	MActor* actor = obj->getMActor();
+	return actor;
+}
+
+static inline f32 MapObjLibRotX(const TMapObjBase* obj)
+{
+	return obj->getRotation().x;
+}
+
+void TMapObjBase::throwObjToFrontFromPoint(TMapObjBase* object,
+                                           const JGeometry::TVec3<f32>& point,
+                                           f32 speed, f32 y_speed) const
+{
+	object->appear();
+	object->mPosition.set(point);
+	if (MapObjLibMActor(this)) {
+		MtxPtr mtx = getModel()->getAnmMtx(0);
+		object->mVelocity.set(mtx[0][2] * speed, mtx[1][2] * speed + y_speed,
+		                      mtx[2][2] * speed);
+		object->offLiveFlag(LIVE_FLAG_UNK10);
+	} else {
+		Mtx mtx;
+		MsMtxSetRotRPH(mtx, MapObjLibRotX(this), getRotation().y,
+		               getRotation().z);
+		object->mVelocity.set(mtx[0][2] * speed, mtx[1][2] * speed + y_speed,
+		                      mtx[2][2] * speed);
+		object->offLiveFlag(LIVE_FLAG_UNK10);
+	}
+}
+
+void TMapObjBase::throwObjFromPointWithRot(TMapObjBase* param_1,
+                                           const JGeometry::TVec3<f32>& param_2,
+                                           const JGeometry::TVec3<f32>& param_3,
+                                           f32 param_4, f32 param_5)
+{
+	param_1->appear();
+	param_1->mPosition.set(param_2);
+
+	Mtx mtx;
+	MsMtxSetRotRPH(mtx, param_3.x, param_3.y, param_3.z);
+	param_1->mVelocity.set(mtx[0][2] * param_4, mtx[1][2] * param_4 + param_5,
+	                       mtx[2][2] * param_4);
+	param_1->offLiveFlag(LIVE_FLAG_UNK10);
+}
+
+bool TMapObjBase::isCoin(THitActor* param_1)
+{
+	if (param_1->isActorType(0x2000000e) || param_1->isActorType(0x2000000f)
+	    || param_1->isActorType(0x20000010))
+		return true;
+
+	return false;
+}
+
+bool TMapObjBase::isFruit(THitActor* param_1)
+{
+	if (param_1->isActorType(0x40000390) || param_1->isActorType(0x40000391)
+	    || param_1->isActorType(0x40000392) || param_1->isActorType(0x40000393)
+	    || param_1->isActorType(0x40000394) || param_1->isActorType(0x40000395))
+		return true;
+	return false;
+}
+
+void TMapObjBase::initPacketMatColor(J3DModel* param_1, GXTevRegID param_2,
+                                     const GXColorS10* param_3)
+{
+	for (u16 i = 0; i < param_1->getModelData()->getMaterialNum(); ++i)
+		SMS_InitPacket_OneTevColor(param_1, i, param_2, param_3);
+}
+
+void TMapObjBase::startAllAnim(MActor* param_1, const char* param_2)
+{
+	char lowerCased[128];
+	makeLowerStr(param_2, lowerCased);
+
+	if (param_1->checkAnmFileExist(lowerCased, ANM_TYPE_BCK))
+		param_1->setBck(lowerCased);
+	if (param_1->checkAnmFileExist(lowerCased, ANM_TYPE_BRK))
+		param_1->setBrk(lowerCased);
+	if (param_1->checkAnmFileExist(lowerCased, ANM_TYPE_BPK))
+		param_1->setBpk(lowerCased);
+	if (param_1->checkAnmFileExist(lowerCased, ANM_TYPE_BTP))
+		param_1->setBtp(lowerCased);
+	if (param_1->checkAnmFileExist(lowerCased, ANM_TYPE_BTK))
+		param_1->setBtk(lowerCased);
+}
+
+void TMapObjBase::joinToGroup(const char* param_1, THitActor* param_2)
+{
+	// The named group plus getChildren() lands the JGadget iterator pool
+	// (a named group calling push_back directly moves the list base).
+	JDrama::TViewObjPtrListT<THitActor>* group
+	    = JDrama::TNameRefGen::search<JDrama::TViewObjPtrListT<THitActor> >(
+	        param_1);
+	group->getChildren().push_back(param_2);
+}
+
+TMapCollisionWarp*
+TMapObjBase::newAndInitBuildingCollisionWarp(int param_1, TLiveActor* param_2)
+{
+	TMapCollisionWarp* warp = new TMapCollisionWarp;
+	char buffer[64];
+	snprintf(buffer, 64, "/scene/map/map/building%02d.col", param_1);
+	warp->init(buffer, 0, param_2);
+	return warp;
+}
+
+TMapCollisionMove*
+TMapObjBase::newAndInitBuildingCollisionMove(int param_1, TLiveActor* param_2)
+{
+	TMapCollisionMove* move = new TMapCollisionMove;
+	char buffer[64];
+	snprintf(buffer, 64, "/scene/map/map/building%02d.col", param_1);
+	move->init(buffer, 0, param_2);
+	return move;
+}
+
+TMapCollisionStatic*
+TMapObjBase::newAndInitBuildingCollisionStatic(int param_1, TLiveActor* param_2)
+{
+	TMapCollisionStatic* coll = new TMapCollisionStatic;
+	char buffer[64];
+	snprintf(buffer, 64, "/scene/map/map/building%02d.col", param_1);
+	coll->init(buffer, 0, param_2);
+	return coll;
+}
+
+J3DJoint* TMapObjBase::getBuildingJoint(int i)
+{
+	return getBuildingJointObj(i)->getJoint();
+}
+
+TJointObj* TMapObjBase::getBuildingJointObj(int i)
+{
+	return gpMap->getModelManager()->getJointModel(0)->getChild(0)->getChild(
+	    (u16)i);
+}
+
+MActor* TMapObjBase::getMapMActor() { return gpMap->getRootJointModel()->mActor; }
+
+J3DModelData* TMapObjBase::getMapModelData()
+{
+	return gpMap->getRootJointModel()->getModel()->getModelData();
+}
+
+J3DModel* TMapObjBase::getMapModel() { return gpMap->getRootJointModel()->getModel(); }
+
+void TMapObjBase::calcMap()
+{
+	gpMap->getModelManager()->getJointModel(0)->getModel()->calc();
+}
+
+void TMapObjBase::setJointScaleZ(J3DJoint* joint, f32 scale)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mScale.z    = scale;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointScaleY(J3DJoint* joint, f32 scale)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mScale.y          = scale;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointScaleX(J3DJoint* joint, f32 scale)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mScale.x    = scale;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointScale(J3DJoint* joint, f32 x, f32 y, f32 z)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mScale.x          = x;
+	info.mScale.y          = y;
+	info.mScale.z          = z;
+	joint->setTransformInfo(info);
+}
+
+f32 TMapObjBase::getJointScaleZ(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mScale.z;
+}
+
+f32 TMapObjBase::getJointScaleY(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mScale.y;
+}
+
+f32 TMapObjBase::getJointScaleX(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mScale.x;
+}
+
+void TMapObjBase::rotateJointZ(J3DJoint* joint, f32 angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	int rotation           = info.mRotation.z;
+	rotation += (s16)angle;
+	info.mRotation.z = rotation;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::rotateJointY(J3DJoint* joint, f32 angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	int rotation           = info.mRotation.y;
+	rotation += (s16)angle;
+	info.mRotation.y = rotation;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::rotateJointX(J3DJoint* joint, f32 angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	int rotation           = info.mRotation.x;
+	rotation += (s16)angle;
+	info.mRotation.x = rotation;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointRotateZ(J3DJoint* joint, short angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mRotation.z    = angle;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointRotateY(J3DJoint* joint, short angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mRotation.y    = angle;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointRotateX(J3DJoint* joint, short angle)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mRotation.x    = angle;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointRotate(J3DJoint* joint, short x, short y, short z)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mRotation.x       = x;
+	info.mRotation.y       = y;
+	info.mRotation.z       = z;
+	joint->setTransformInfo(info);
+}
+
+s16 TMapObjBase::getJointRotateZ(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mRotation.z;
+}
+
+s16 TMapObjBase::getJointRotateY(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mRotation.y;
+}
+
+s16 TMapObjBase::getJointRotateX(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mRotation.x;
+}
+
+void TMapObjBase::setJointTransZ(J3DJoint* joint, f32 z)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mTranslate.z      = z;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointTransY(J3DJoint* joint, f32 y)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mTranslate.y      = y;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointTransX(J3DJoint* joint, f32 x)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mTranslate.x      = x;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::setJointTrans(J3DJoint* joint, f32 x, f32 y, f32 z)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mTranslate.x      = x;
+	info.mTranslate.y      = y;
+	info.mTranslate.z      = z;
+	joint->setTransformInfo(info);
+}
+
+f32 TMapObjBase::getJointTransZ(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mTranslate.z;
+}
+
+f32 TMapObjBase::getJointTransY(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mTranslate.y;
+}
+
+f32 TMapObjBase::getJointTransX(J3DJoint* joint)
+{
+	return joint->getTransformInfo().mTranslate.x;
+}
+
+void TMapObjBase::moveJoint(J3DJoint* joint, f32 x, f32 y, f32 z)
+{
+	J3DTransformInfo& info = joint->getTransformInfo();
+	info.mTranslate.x += x;
+	info.mTranslate.y += y;
+	info.mTranslate.z += z;
+	joint->setTransformInfo(info);
+}
+
+void TMapObjBase::makeLowerStr(const char* in, char* out)
+{
+	for (; *in; ++in, ++out)
+		*out = std::tolower(*in);
+	*out = 0;
+}
+
+// Binder over the actor position.
+static inline const JGeometry::TVec3<f32>* MapObjLibPos(const TMapObjBase* p)
+{
+	const JGeometry::TVec3<f32>* v = &p->mPosition;
+	return v;
+}
+
+void TMapObjBase::makeRootMtxRotZ(MtxPtr ptr)
+{
+	f32 fVar1 = sinf(mRotation.z * 0.017453294f);
+	f32 fVar2 = cosf(mRotation.z * 0.017453294f);
+
+	ptr[0][0] = fVar2;
+	ptr[0][1] = -fVar1;
+	ptr[0][2] = 0.0f;
+	ptr[0][3] = MapObjLibPos(this)->x;
+
+	ptr[1][0] = fVar1;
+	ptr[1][1] = fVar2;
+	ptr[1][2] = 0.0f;
+	ptr[1][3] = mPosition.y - mYOffset;
+
+	ptr[2][0] = 0.0f;
+	ptr[2][1] = 0.0f;
+	ptr[2][2] = 1.0f;
+	ptr[2][3] = MapObjLibPos(this)->z;
+}
+
+void TMapObjBase::setRootMtxRotZ()
+{
+	J3DModel* model = getModel();
+	makeRootMtxRotZ(model->getAnmMtx(0));
+}
+
+void TMapObjBase::makeRootMtxRotY(MtxPtr ptr)
+{
+	f32 fVar1 = sinf(mRotation.y * 0.017453294f);
+	f32 fVar2 = cosf(mRotation.y * 0.017453294f);
+
+	ptr[0][0] = fVar2;
+	ptr[0][1] = 0.0f;
+	ptr[0][2] = fVar1;
+	ptr[0][3] = MapObjLibPos(this)->x;
+
+	ptr[1][0] = 0.0f;
+	ptr[1][1] = 1.0f;
+	ptr[1][2] = 0.0f;
+	ptr[1][3] = mPosition.y - mYOffset;
+
+	ptr[2][0] = -fVar1;
+	ptr[2][1] = 0.0f;
+	ptr[2][2] = fVar2;
+	ptr[2][3] = MapObjLibPos(this)->z;
+}
+
+void TMapObjBase::setRootMtxRotY()
+{
+	J3DModel* model = getModel();
+	makeRootMtxRotY(model->getAnmMtx(0));
+}
+
+void TMapObjBase::makeRootMtxRotX(MtxPtr ptr)
+{
+	f32 fVar1 = sinf(mRotation.x * 0.017453294f);
+	f32 fVar2 = cosf(mRotation.x * 0.017453294f);
+
+	ptr[0][0] = 1.0f;
+	ptr[0][1] = 0.0f;
+	ptr[0][2] = 0.0f;
+	ptr[0][3] = MapObjLibPos(this)->x;
+
+	ptr[1][0] = 0.0f;
+	ptr[1][1] = fVar2;
+	ptr[1][2] = -fVar1;
+	ptr[1][3] = mPosition.y - mYOffset;
+
+	ptr[2][0] = 0.0f;
+	ptr[2][1] = fVar1;
+	ptr[2][2] = fVar2;
+	ptr[2][3] = MapObjLibPos(this)->z;
+}
+
+void TMapObjBase::setRootMtxRotX()
+{
+	J3DModel* model = getModel();
+	makeRootMtxRotX(model->getAnmMtx(0));
+}
+
+void TMapObjBase::updateRootMtxTrans()
+{
+	MtxPtr mtx = getModel()->getAnmMtx(0);
+	// BUG: oops, all coord go into the same matrix cell!
+	mtx[0][3] = mPosition.x;
+	mtx[0][3] = mPosition.y - mYOffset;
+	mtx[0][3] = mPosition.z;
+}
+
+void TMapObjBase::makeRootMtxTrans(MtxPtr ptr)
+{
+	ptr[0][0] = 1.0f;
+	ptr[0][1] = 0.0f;
+	ptr[0][2] = 0.0f;
+	ptr[0][3] = mPosition.x;
+
+	ptr[1][0] = 0.0f;
+	ptr[1][1] = 1.0f;
+	ptr[1][2] = 0.0f;
+	ptr[1][3] = mPosition.y - mYOffset;
+
+	ptr[2][0] = 0.0f;
+	ptr[2][1] = 0.0f;
+	ptr[2][2] = 1.0f;
+	ptr[2][3] = mPosition.z;
+}
+
+void TMapObjBase::setRootMtxTrans()
+{
+	J3DModel* model = getModel();
+	makeRootMtxTrans(model->getAnmMtx(0));
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TMapObjBase::updateObjMtx (batch 127).
+static inline f32 MapObjLibYOffset(const TMapObjBase* p)
+{
+	f32 yOffset = p->mYOffset;
+	return yOffset;
+}
+
+void TMapObjBase::updateObjMtx()
+{
+	MsMtxSetXYZRPH(getModel()->getAnmMtx(0), mPosition.x,
+	               mPosition.y - MapObjLibYOffset(this), mPosition.z, mRotation.x,
+	               mRotation.y, mRotation.z);
+}
+
+void TMapObjBase::concatOnlyRotFromLeft(MtxPtr param_1, MtxPtr param_2,
+                                        MtxPtr param_3)
+{
+	f32 fVar1 = param_2[0][3];
+	f32 fVar2 = param_2[1][3];
+	f32 fVar3 = param_2[2][3];
+
+	param_2[0][3] = 0.0f;
+	param_2[1][3] = 0.0f;
+	param_2[2][3] = 0.0f;
+
+	MTXConcat(param_1, param_2, param_3);
+
+	param_3[0][3] = fVar1;
+	param_3[1][3] = fVar2;
+	param_3[2][3] = fVar3;
+}
+
+void TMapObjBase::concatOnlyRotFromRight(MtxPtr param_1, MtxPtr param_2,
+                                         MtxPtr param_3)
+{
+	f32 fVar1 = param_1[0][3];
+	f32 fVar2 = param_1[1][3];
+	f32 fVar3 = param_1[2][3];
+
+	param_1[0][3] = 0.0f;
+	param_1[1][3] = 0.0f;
+	param_1[2][3] = 0.0f;
+
+	MTXConcat(param_1, param_2, param_3);
+
+	param_3[0][3] = fVar1;
+	param_3[1][3] = fVar2;
+	param_3[2][3] = fVar3;
+}
+
+// TODO: frame 0x90 vs retail 0x80; the rotation body is exact up to
+// registers. iro.py: the extra words are three S temporaries (scalar
+// replacement of setRotate's f2f3f0 mul() TVec3). Header setRotate with named
+// f32 squares and `(1.0f - f1)` unnamed lands the frame (99.3%, x/z CSE webs
+// f5/f7 swapped) but drops both weak setRotate copies 100 -> 98.6, so not made.
+// Inert or worse: TRotation3f locals/ctor, identity33, member reads for src.
+void TMapObjBase::makeMtxRotByAxis(const JGeometry::TVec3<f32>& param_1,
+                                   f32 param_2, MtxPtr param_3)
+{
+	TPosition3f rotation;
+	rotation.identity();
+	rotation.setRotate(param_1, param_2);
+
+	MtxPtr src = rotation;
+
+	param_3[0][0] = src[0][0];
+	param_3[0][1] = src[0][1];
+	param_3[0][2] = src[0][2];
+
+	param_3[1][0] = src[1][0];
+	param_3[1][1] = src[1][1];
+	param_3[1][2] = src[1][2];
+
+	param_3[2][0] = src[2][0];
+	param_3[2][1] = src[2][1];
+	param_3[2][2] = src[2][2];
+}
+
+void TMapObjBase::makeObjMtxRotByAxis(const JGeometry::TVec3<f32>& param_1,
+                                      f32 param_2, MtxPtr param_3) const
+{
+	makeMtxRotByAxis(param_1, param_2, param_3);
+	param_3[0][0] *= mScaling.x;
+	param_3[0][1] *= getScaling().y;
+	param_3[0][2] *= mScaling.z;
+	param_3[0][3] = mPosition.x;
+
+	param_3[1][0] *= mScaling.x;
+	param_3[1][1] *= mScaling.y;
+	param_3[1][2] *= mScaling.z;
+	param_3[1][3] = mPosition.y - mYOffset;
+
+	param_3[2][0] *= mScaling.x;
+	param_3[2][1] *= mScaling.y;
+	param_3[2][2] *= mScaling.z;
+	param_3[2][3] = mPosition.z;
+}
+
+void TMapObjBase::calcReflectingVelocity(const TBGCheckData* wall, f32 param_2,
+                                         JGeometry::TVec3<f32>* velocity) const
+{
+	f32 dot     = velocity->dot(wall->getNormal());
+	f32 onePlus = 1.0f + param_2;
+	velocity->x -= onePlus * (dot * wall->getNormal().x);
+	velocity->y -= onePlus * (dot * wall->getNormal().y);
+	velocity->z -= onePlus * (dot * wall->getNormal().z);
+}
+
+static inline void
+rotateVecByAxisYMult(JGeometry::TRotation3<TMtx33f>& rot,
+                     JGeometry::TVec3<f32>& vec)
+{
+	rot.mult33(vec, vec);
+}
+
+// One call-site level plus rotMult inside rotateVecByAxisY puts both
+// SMatrix33C() and at() at depth 5 (retail `bl`s both).
+static inline void rotateVecByAxisYInl(JGeometry::TVec3<f32>* vec, f32 angle)
+{
+	TMapObjBase::rotateVecByAxisY(vec, angle);
+}
+
+void TMapObjBase::getVerticalVecToTargetXZ(f32 x, f32 z,
+                                           JGeometry::TVec3<f32>* vec) const
+{
+	vec->set(x - mPosition.x, 0.0f, z - mPosition.z);
+	MsVECNormalize(vec, vec);
+
+	rotateVecByAxisYInl(vec, 1.5707963f);
+}
+
+// TODO: 0xb4 against the map's 0xb0; the sibling-call spelling
+// (getNormalVecFromOffsetXZ then the rotate) measures the same 0xb4, so the
+// extra instruction is not in the statement split.
+void TMapObjBase::getVerticalVecFromOffsetXZ(f32 x, f32 z,
+                                             JGeometry::TVec3<f32>* vec)
+{
+	vec->set(x, 0.0f, z);
+	MsVECNormalize(vec, vec);
+
+	rotateVecByAxisY(vec, 1.5707963f);
+}
+
+void TMapObjBase::rotateVecByAxisY(JGeometry::TVec3<f32>* vec, f32 angle)
+{
+	JGeometry::TRotation3<TMtx33f> rot;
+	rot.setEular(0.0f, angle, 0.0f);
+	rotateVecByAxisYMult(rot, *vec);
+}
+
+void TMapObjBase::getNormalVecFromOffsetXZ(f32 x, f32 z,
+                                           JGeometry::TVec3<f32>* vec)
+{
+	vec->set(x, 0.0f, z);
+	MsVECNormalize(vec, vec);
+}
+
+void TMapObjBase::getNormalVecFromTargetXZ(f32 param_1, f32 param_2,
+                                           JGeometry::TVec3<f32>* param_3) const
+{
+	param_3->set(param_1 - mPosition.x, 0.0f, param_2 - mPosition.z);
+	MsVECNormalize(param_3, param_3);
+}
+
+void TMapObjBase::getNormalVecFromOffset(f32 x, f32 y, f32 z,
+                                         JGeometry::TVec3<f32>* vec)
+{
+	vec->set(x, y, z);
+	MsVECNormalize(vec, vec);
+}
+
+void TMapObjBase::getNormalVecFromTarget(f32 param_1, f32 param_2, f32 param_3,
+                                         JGeometry::TVec3<f32>* param_4) const
+{
+	// BUG: copy-pasta from above but forgot to change x to y
+	param_4->set(param_1 - mPosition.x, param_2 - mPosition.x,
+	             param_3 - mPosition.z);
+	MsVECNormalize(param_4, param_4);
+}
+
+void TMapObjBase::makeVecToLocalZ(f32 param_1,
+                                  JGeometry::TVec3<f32>* param_2) const
+{
+	Mtx mtx;
+	MsMtxSetRotRPH(mtx, mRotation.x, mRotation.y, mRotation.z);
+	param_2->x = 0.0f;
+	param_2->y = 0.0f;
+	param_2->z = param_1;
+	MTXMultVec(mtx, param_2, param_2);
+}
+
+void TMapObjBase::makeVecToLocalX(f32 param_1,
+                                  JGeometry::TVec3<f32>* param_2) const
+{
+	Mtx mtx;
+	MsMtxSetRotRPH(mtx, mRotation.x, mRotation.y, mRotation.z);
+	param_2->x = param_1;
+	param_2->y = 0.0f;
+	param_2->z = 0.0f;
+	MTXMultVec(mtx, param_2, param_2);
+}
+
+f32 TMapObjBase::getRotYFromAxisX(const JGeometry::TVec3<f32>& param_1) const
+{
+	return std::atan2f(param_1.z - mPosition.z, param_1.x - mPosition.x);
+}
+
+f32 TMapObjBase::getRotYFromAxisZ(const JGeometry::TVec3<f32>& param_1) const
+{
+	return std::atan2f(param_1.z - mPosition.z, param_1.x - mPosition.x);
+}
+
+f32 TMapObjBase::getDistanceXZ(const JGeometry::TVec3<f32>& param_1) const
+{
+	f32 dx    = param_1.x - mPosition.x;
+	f32 dz    = param_1.z - mPosition.z;
+	f32 lenSq = dx * dx + dz * dz;
+	if (lenSq > 0.0f) {
+		f64 guess = __frsqrte((f64)lenSq);
+		volatile f32 y
+		    = (f32)((f64)lenSq
+		            * (0.5 * guess * -((f64)lenSq * (guess * guess) - 3.0)));
+		lenSq = y;
+	}
+	return lenSq;
+}
+
+// +4 pool so MsSqrtf's volatile lands at 0x14 (raw mYOffset leaves it at 0x10).
+static inline f32 mapObjLibHeightOffset(const TMapObjBase* p)
+{
+	return p->getObjCollisionHeightOffset();
+}
+
+f32 TMapObjBase::getDistance(const JGeometry::TVec3<f32>& param_1) const
+{
+	f32 dx = param_1.x - mPosition.x;
+	f32 dy = param_1.y - (mPosition.y - mapObjLibHeightOffset(this));
+	f32 dz = param_1.z - mPosition.z;
+	return MsSqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+int TMapObjBase::getWaterID(THitActor* actor)
+{
+	return (intptr_t)((TTakeActor*)actor)->mHolder;
+}
+
+const TBGCheckData* TMapObjBase::getWaterPlane(THitActor* actor)
+{
+	return gpModelWaterManager->unk2914[getWaterID(actor)];
+}
+
+const JGeometry::TVec3<f32>& TMapObjBase::getWaterSpeed(THitActor* actor)
+{
+	return gpModelWaterManager->mParticleVelocitySOA[getWaterID(actor)];
+}
+
+const JGeometry::TVec3<f32>& TMapObjBase::getWaterPos(THitActor* actor)
+{
+	return gpModelWaterManager->mParticlePositionSOA[getWaterID(actor)];
+}
+
+bool TMapObjBase::waterHitPlane(THitActor* actor)
+{
+	int idx                   = getWaterID(actor);
+	const TBGCheckData* plane = gpModelWaterManager->unk2914[idx];
+	if (plane == nullptr)
+		return false;
+	{
+		const JGeometry::TVec3<f32>& v
+		    = gpModelWaterManager->mParticleVelocitySOA[idx];
+		if (v.x == 0.0f && v.z == 0.0f)
+			return false;
+	}
+
+	{
+		const JGeometry::TVec3<f32>& v
+		    = gpModelWaterManager->mParticleVelocitySOA[idx];
+		if (v.x * plane->mNormal.x > 0.0f || v.z * plane->mNormal.z > 0.0f)
+			return false;
+	}
+
+	return true;
+}
+
+void TMapObjBase::sendMsg(u32 param_1, u32 param_2)
+{
+	for (int i = 0; i < getColNum(); ++i) {
+		THitActor* col = getCollision(i);
+		if (col->isActorType(param_1))
+			col->receiveMessage(this, param_2);
+	}
+}
+
+void TMapObjBase::sendMsgToAll(u32 param_1)
+{
+	for (int i = 0; i < getColNum(); ++i) {
+		THitActor* col = getCollision(i);
+		col->receiveMessage(this, param_1);
+	}
+}
+
+bool TMapObjBase::actorIsOn(TLiveActor* param_1) const
+{
+	if (param_1->getGroundPlane()->getActor() == this
+	    && !param_1->isAirborne())
+		return true;
+
+	return false;
+}
+
+bool TMapObjBase::marioIsOn(const TLiveActor* param_1)
+{
+	if (SMS_GetMarioGrPlane()->getActor() == param_1
+	    && SMS_IsMarioTouchGround4cm())
+		return true;
+
+	return false;
+}
+
+bool TMapObjBase::marioIsOn() const
+{
+	if (SMS_GetMarioGrPlane()->getActor() == this
+	    && SMS_IsMarioTouchGround4cm())
+		return true;
+
+	return false;
+}
+
+bool TMapObjBase::marioHeadAttack() const
+{
+	if (gpMarioPos->y < (mPosition.y - mYOffset)
+	    && SMS_IsMarioStatusTypeJumping() && *gpMarioSpeedY > 0.0f)
+		return true;
+	return false;
+}
+
+// Binding level over the ground-plane accessor, worth +8 of low region in
+// TMapObjBase::marioHipAttack.
+static inline const TBGCheckData* MapObjLibMarioGrPlane()
+{
+	const TBGCheckData* plane = SMS_GetMarioGrPlane();
+	return plane;
+}
+
+bool TMapObjBase::marioHipAttack() const
+{
+	if (MapObjLibMarioGrPlane()->getActor() == this && SMS_IsMarioStatusHipDrop()
+	    && (gpMarioPos->y + *gpMarioSpeedY) < SMS_GetMarioGrLevel())
+		return true;
+	return false;
+}
+
+void TMapObjBase::emitColumnWater()
+{
+	TEffectColumWater* eff
+	    = (TEffectColumWater*)gpConductor->makeOneEnemyAppear(
+	        mPosition, "エフェクト水柱マネージャー", 0);
+	if (eff)
+		eff->generate(mPosition, mScaling);
+}
+
+// The angles are converted into named s16 locals before setRotation, as in
+// emitAndRotateScale.
+// TODO: 99.7%, every instruction in place; the fctiwz slots still differ.
+// Retail's locals end in (0x20, 0x28], ours at 0x1e (only x is homed). c-k28:
+// a TVec3<s16> rot scalarises to identical code but homes rot plus three
+// setRotation bindings (0x58, 0x60 with its constructor); reversed
+// declarations, f32 or s32 locals and direct arguments change the code.
+void TMapObjBase::emitAndSRT(s32 param_1, u8 param_2,
+                             const JGeometry::TVec3<f32>* param_3,
+                             const JGeometry::TVec3<f32>& param_4,
+                             const JGeometry::TVec3<f32>& param_5)
+{
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(param_1, param_3, param_2, param_3);
+
+	if (emitter) {
+		s16 x = param_4.x;
+		s16 y = param_4.y;
+		s16 z = param_4.z;
+		emitter->setRotation(x, y, z);
+		emitter->setGlobalScale(param_5);
+	}
+}
+
+void TMapObjBase::emitAndRotateScale(s32 param_1, u8 param_2,
+                                     const JGeometry::TVec3<f32>* param_3) const
+{
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(param_1, param_3, param_2, this);
+
+	if (emitter) {
+		s16 x = getRotation().x / 180.0f * 32768.0f;
+		s16 y = getRotation().y / 180.0f * 32768.0f;
+		s16 z = getRotation().z / 180.0f * 32768.0f;
+		emitter->setRotation(x, y, z);
+		emitter->setGlobalScale(getScaling());
+	}
+}
+
+JPABaseEmitter*
+TMapObjBase::emitAndScale(s32 param_1, u8 param_2,
+                          const JGeometry::TVec3<f32>* param_3) const
+{
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(param_1, param_3, param_2, this);
+
+	if (emitter) {
+		emitter->setGlobalScale(mScaling);
+	}
+
+	return emitter;
+}
+
+JPABaseEmitter*
+TMapObjBase::emitAndBindScale(s32 param_1, u8 param_2,
+                              const JGeometry::TVec3<f32>* param_3,
+                              const JGeometry::TVec3<f32>& param_4) const
+{
+	JPABaseEmitter* emitter = gpMarioParticleManager->emitAndBindToPosPtr(
+	    param_1, param_3, param_2, this);
+
+	if (emitter) {
+		emitter->setGlobalScale(param_4);
+	}
+
+	return emitter;
+}
+
+JPABaseEmitter*
+TMapObjBase::emitAndScale(s32 param_1, u8 param_2,
+                          const JGeometry::TVec3<f32>* param_3,
+                          const JGeometry::TVec3<f32>& param_4) const
+{
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(param_1, param_3, param_2, this);
+
+	if (emitter) {
+		emitter->setGlobalScale(param_4);
+	}
+
+	return emitter;
+}
+
+// TODO: 0xc4 against the map's 0xb8; the body is emitAndRotateScale's
+// without the scale. `* 182.04445f` gives 0xb4, an early null return +8.
+JPABaseEmitter*
+TMapObjBase::emitAndRotate(s32 param_1, u8 param_2,
+                           const JGeometry::TVec3<f32>* param_3) const
+{
+	JPABaseEmitter* emitter
+	    = gpMarioParticleManager->emit(param_1, param_3, param_2, this);
+
+	if (emitter) {
+		emitter->setRotation(getRotation().x / 180.0f * 32768.0f,
+		                     getRotation().y / 180.0f * 32768.0f,
+		                     getRotation().z / 180.0f * 32768.0f);
+	}
+
+	return emitter;
+}
+
+void TMapObjVibration::startSlowly(f32) { }
+
+void TMapObjVibration::startQuickly(f32) { }
+
+void TMapObjVibration::movement() { }
+
+TMapObjVibration::TMapObjVibration() { }
+
+void TMapObjLibWave::push()
+{
+	unk8 += unk10;
+	if (unk8 > unkC)
+		unk8 = unkC;
+}
+
+f32 TMapObjLibWave::getCurrentHeight(f32 param_1, f32 param_2) const
+{
+	return gpMapObjWave->getWaveHeight(param_1, param_2) - unk8;
+}
+
+f32 TMapObjLibWave::mWaveSpeed = 0.7f;
+
+void TMapObjLibWave::movement()
+{
+	if (unk8 > 0.0f) {
+		unk8 -= unk14;
+		if (unk8 < 0.0f)
+			unk8 = 0.0f;
+	}
+
+	unk0 += mWaveSpeed;
+
+	if (unk0 > 360.0f)
+		unk0 -= 360.0f;
+}
+
+TMapObjLibWave::TMapObjLibWave(f32 param_1, f32 param_2, f32 param_3,
+                               f32 param_4)
+{
+	unk0  = rand() * (1.0f / (RAND_MAX + 1)) * 360.0f;
+	unk4  = param_1;
+	unk8  = 0.0f;
+	unkC  = param_2;
+	unk10 = param_3;
+	unk14 = param_4;
+}
+
+BOOL TMapObjMessenger::receiveMessage(THitActor* sender, u32 message)
+{
+	return unk68->receiveMessage(sender, message);
+}
+
+TMapObjMessenger::TMapObjMessenger(const char* name)
+    : THitActor(name)
+    , unk68(0)
+{
+}
+
+// TODO: 99.9%. The MActor binder and a by-value getRotation().x level (the
+// throwObjToFrontFromPoint levers) land the else-branch Mtx, and
+// `throwY = throwY + 200.0f` puts the sum in the literal's FPR as retail;
+// only the fadds operand order is left (retail throwY first). Tried: the
+// literal first, `+=`, the sum in the set() argument or a TU-local adder,
+// declaration order, getPosition() on either component (+8 frame, inert),
+// and calling throwObjToFront itself (inlines, 96.2%).
+// c-r11: that call is retail's: y_offset as an inline parameter is what gives
+// the throwY-first fadds; left there are an obj/this r30/r31 swap, the Mtx 4
+// low and a frame 8 over (0x80 with `if (getMActor())`, which costs the
+// standalone throwObjToFront its 0x90).
+static inline f32 MapObjTurnRotX(const TMapObjBase* obj)
+{
+	return obj->getRotation().x;
+}
+
+u32 TMapObjTurn::touchWater(THitActor*)
+{
+	if (fabsf(unk158) < unk164) {
+		unk158 += unk15C;
+	} else if (unk168) {
+		TMapObjBase* obj;
+		if (mHiddenObj->isActorType(0x2000000E))
+			obj = gpItemManager->makeObjAppear(0x2000000E);
+		else
+			obj = mHiddenObj;
+
+		if (obj) {
+			f32 speed;
+			f32 ySpeed;
+
+			ySpeed = mAppearYSpeed;
+			speed  = mAppearSpeed;
+			obj->appear();
+			f32 throwY = mPosition.y;
+			f32 throwZ = mPosition.z;
+			throwY = throwY + 200.0f;
+			obj->mPosition.set(mPosition.x, throwY, throwZ);
+			if (MapObjLibMActor(this)) {
+				MtxPtr mtx = getModel()->getAnmMtx(0);
+				obj->mVelocity.set(mtx[0][2] * speed,
+				                   mtx[1][2] * speed + ySpeed,
+				                   mtx[2][2] * speed);
+				obj->offLiveFlag(LIVE_FLAG_UNK10);
+			} else {
+				Mtx mtx;
+				MsMtxSetRotRPH(mtx, MapObjTurnRotX(this), mRotation.y,
+			               mRotation.z);
+				obj->mVelocity.set(mtx[0][2] * speed,
+				                   mtx[1][2] * speed + ySpeed,
+				                   mtx[2][2] * speed);
+				obj->offLiveFlag(LIVE_FLAG_UNK10);
+			}
+			unk168 = 0;
+		}
+	}
+	return 1;
+}
+
+void TMapObjTurn::turn()
+{
+	unk154 += unk158;
+	unk154 = MsWrap(unk154, 0.0f, 360.0f);
+	if (checkMapObjFlag(MAP_OBJ_FLAG_ENABLE_WALL_COLLISION)) {
+		if ((int)fabsf(unk154) % 180 == 0)
+			unk158 = 0.0f;
+		else if (fabsf(unk158) > fabsf(unk160))
+			unk158 -= unk160;
+	} else {
+		unk158 -= unk160;
+		if (fabsf(unk158) < fabsf(unk160))
+			unk158 = 0.0f;
+	}
+}
+
+// TODO: retail materialises the matrix pointer inside each case (after the
+// MsWrap store) rather than before the switch. getPosition() and
+// getObjCollisionHeightOffset() in the translation land the frame (0x140) and
+// every slot (c-hs9). Worse or inert (c-mbg):
+// `mtx` passed directly (91.5), `ptr = mtx;` inside each case (94.2), a
+// TMtx34f matrix (96.2), one function-scope yRot (frame 0x100), a block-local
+// `MtxPtr p = mtx` in cases 0/2 with case 1 on `mtx` (94.2).
+void TMapObjTurn::control()
+{
+	TMapObjBase::control();
+	if (unk158 == 0.0f)
+		return;
+
+	turn();
+	Mtx mtx;
+	MtxPtr ptr = mtx;
+	switch (unk150) {
+	case 0:
+		mRotation.x = MsWrap(unk154 + mInitialRotation.x, 0.0f, 360.0f);
+		MsMtxSetRotX(ptr, mRotation.x);
+		if (mRotation.y != 0.0f) {
+			MsMtxSetRotX(ptr, mRotation.x);
+			Mtx yRot;
+			MsMtxSetRotY(yRot, mRotation.y);
+			MTXConcat(yRot, ptr, ptr);
+		} else {
+			MsMtxSetRotX(ptr, mRotation.x);
+		}
+		break;
+
+	case 1:
+		mRotation.y = MsWrap(unk154 + mInitialRotation.y, 0.0f, 360.0f);
+		MsMtxSetRotY(ptr, mRotation.y);
+		break;
+
+	case 2:
+		mRotation.z = MsWrap(unk154 + mInitialRotation.z, 0.0f, 360.0f);
+		MsMtxSetRotZ(ptr, mRotation.z);
+		if (mRotation.y != 0.0f) {
+			MsMtxSetRotZ(ptr, mRotation.z);
+			Mtx yRot;
+			MsMtxSetRotY(yRot, mRotation.y);
+			MTXConcat(yRot, ptr, ptr);
+		} else {
+			MsMtxSetRotZ(ptr, mRotation.z);
+		}
+		break;
+	}
+
+	MtxPtr m = mtx;
+	m[0][3]  = getPosition().x;
+	m[1][3]  = getPosition().y;
+	m[2][3]  = getPosition().z;
+	m[1][3] -= getObjCollisionHeightOffset();
+	getModel()->setAnmMtx(0, m);
+}
+
+BOOL TMapObjTurn::receiveMessage(THitActor* sender, u32 message)
+{
+	u32 result;
+	if (message == HIT_MESSAGE_UNK5
+	    && (sender->isActorType(0x2000000E) || sender->isActorType(0x2000000F)
+	        || sender->isActorType(0x20000010))) {
+		unk168 = 1;
+		result = 1;
+	} else {
+		// BUG: should've been THideObjBase?
+		result = TMapObjBase::receiveMessage(sender, message);
+	}
+	return result;
+}
+
+void TMapObjTurn::loadAfter()
+{
+	THideObjBase::loadAfter();
+	if (mHiddenObj)
+		unk168 = 1;
+}
+
+void TMapObjTurn::initMapObj()
+{
+	THideObjBase::initMapObj();
+	if (isActorType(0x4000007E)) {
+		unk150 = 1;
+		unk15C = 0.5f;
+		unk164 = 10.0f;
+		unk160 = 0.01f;
+	}
+}
+
+TMapObjTurn::TMapObjTurn(const char* name)
+    : THideObjBase(name)
+    , unk150(0)
+    , unk154(0.0f)
+    , unk158(0.0f)
+    , unk15C(0.0f)
+    , unk160(0.0f)
+    , unk164(0.0f)
+    , unk168(0)
+{
+}

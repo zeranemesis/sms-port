@@ -1,0 +1,2458 @@
+#include <Player/Mario.hpp>
+#include <Player/MarioCap.hpp>
+#include <Player/WaterGun.hpp>
+
+#include <MarioUtil/MathUtil.hpp>
+#include <MarioUtil/PacketUtil.hpp>
+#include <MarioUtil/TexUtil.hpp>
+#include <MarioUtil/ModelUtil.hpp>
+#include <MarioUtil/DrawUtil.hpp>
+#include <MSound/MAnmSound.hpp>
+#include <M3DUtil/M3UModelMario.hpp>
+#include <M3DUtil/SampleCtrlModel.hpp>
+#include <M3DUtil/M3UJoint.hpp>
+#include <Map/Map.hpp>
+#include <Map/MapData.hpp>
+#include <MoveBG/MapObjWave.hpp>
+#include <JSystem/JGeometry.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <JSystem/J3D/J3DGraphBase/Blocks/J3DPEBlocks.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <System/MarDirector.hpp>
+#include <NPC/NpcBase.hpp>
+#include <math.h>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+#include <Player/MarioAnimeData.hpp>
+
+TMario* gpMarioForCallBack;
+
+#include <Player/MarioDirtyStrings.hpp>
+
+// clang-format off
+TMarioAnimeData gMarioAnimeData[336] = {
+	/* 0x00 */ { 0x00, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // hgup
+	/* 0x01 */ { 0x01, 0x00C8, 0x01, 0x00, 0x06, 0x16 }, // bdwn
+	/* 0x02 */ { 0x02, 0x00C8, 0x02, 0x00, 0x06, 0x0A }, // bkdwn
+	/* 0x03 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x04 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x06, 0x16 }, // -
+	/* 0x05 */ { 0x03, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // tree_climb
+	/* 0x06 */ { 0x04, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // tree_catch
+	/* 0x07 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x08 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x09 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x0A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x0B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x0C */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x0D */ { 0x06, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // tree_wait
+	/* 0x0E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x0F */ { 0x07, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // brake
+	/* 0x10 */ { 0x08, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // brend
+	/* 0x11 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x12 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x13 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x14 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x15 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x16 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x17 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x18 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x19 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x1A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x1B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x1C */ { 0x09, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // hgdwn
+	/* 0x1D */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x1E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x1F */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x20 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x21 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x22 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x23 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x24 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x25 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x26 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x27 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x28 */ { 0x0A, 0x00C8, 0x0A, 0x00, 0x06, 0x0B }, // fjpend
+	/* 0x29 */ { 0x0B, 0x00C8, 0x09, 0x00, 0x06, 0x0A }, // firejmp
+	/* 0x2A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x2B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x2C */ { 0x0C, 0x00C8, 0x03, 0x00, 0x06, 0x16 }, // sdwnf
+	/* 0x2D */ { 0x0D, 0x00C8, 0x04, 0x00, 0x06, 0x0A }, // jfdwn
+	/* 0x2E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x2F */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x30 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x31 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x32 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x33 */ { 0x0E, 0x0045, 0x00, 0x01, 0x04, 0x16 }, // hang
+	/* 0x34 */ { 0x0F, 0x00C8, 0x00, 0x01, 0x06, 0x0A }, // hgjmp
+	/* 0x35 */ { 0x10, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_catch
+	/* 0x36 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x37 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x38 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x39 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x3A */ { 0x11, 0x00C8, 0x00, 0x02, 0x06, 0x16 }, // hiped
+	/* 0x3B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x3C */ { 0x12, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // hipsr
+	/* 0x3D */ { 0x13, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // hipat
+	/* 0x3E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x3F */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x40 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x41 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x42 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x43 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x44 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x45 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x46 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x47 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x48 */ { 0x14, 0x0044, 0x00, 0x01, 0x0E, 0x0F }, // run1
+	/* 0x49 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x4A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x4B */ { 0x15, 0x0044, 0x00, 0x00, 0x06, 0x0B }, // 2jmed
+	/* 0x4C */ { 0x16, 0x0044, 0x00, 0x00, 0x06, 0x0A }, // 2jmp2
+	/* 0x4D */ { 0x17, 0x0044, 0x00, 0x02, 0x06, 0x0A }, // jump
+	/* 0x4E */ { 0x18, 0x0044, 0x00, 0x01, 0x06, 0x0B }, // jmped
+	/* 0x4F */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x50 */ { 0x19, 0x0044, 0x00, 0x00, 0x06, 0x0B }, // 2jmp1
+	/* 0x51 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x52 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x53 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x54 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x55 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x56 */ { 0x1A, 0x0044, 0x00, 0x00, 0x06, 0x0C }, // land
+	/* 0x57 */ { 0x1B, 0x0044, 0x00, 0x00, 0x06, 0x0B }, // laend
+	/* 0x58 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x59 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x5A */ { 0x1C, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // lost
+	/* 0x5B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x5C */ { 0x20, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_move_l
+	/* 0x5D */ { 0x21, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_move_r
+	/* 0x5E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x5F */ { 0x1D, 0x00C8, 0x00, 0x00, 0x04, 0x16 }, // door_openr
+	/* 0x60 */ { 0x1E, 0x00C8, 0x00, 0x00, 0x04, 0x16 }, // door_openl
+	/* 0x61 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x62 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x63 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x64 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x65 */ { 0x1F, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // throw
+	/* 0x66 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x67 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x68 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x69 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x6A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x6B */ { 0x22, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // raise
+	/* 0x6C */ { 0x23, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // push
+	/* 0x6D */ { 0x24, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // ride_shell
+	/* 0x6E */ { 0x25, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // put
+	/* 0x6F */ { 0x26, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // roll
+	/* 0x70 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x71 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x72 */ { 0x27, 0x0044, 0x00, 0x02, 0x06, 0x0F }, // run2
+	/* 0x73 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x74 */ { 0x29, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sfbdn
+	/* 0x75 */ { 0x2A, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sffdn
+	/* 0x76 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x77 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x78 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x79 */ { 0xB1, 0x00C8, 0x05, 0x00, 0x06, 0x16 }, // shock_down
+	/* 0x7A */ { 0x28, 0x00C8, 0x05, 0x00, 0x06, 0x16 }, // shock
+	/* 0x7B */ { 0x2B, 0x00C8, 0x05, 0x00, 0x06, 0x16 }, // sdown
+	/* 0x7C */ { 0x2C, 0x00C8, 0x03, 0x00, 0x06, 0x16 }, // shfdn
+	/* 0x7D */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x7E */ { 0x2D, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // swait
+	/* 0x7F */ { 0x2E, 0x0044, 0x00, 0x00, 0x06, 0x10 }, // swlkl
+	/* 0x80 */ { 0x2F, 0x0044, 0x00, 0x00, 0x06, 0x11 }, // swlkr
+	/* 0x81 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x82 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x83 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x84 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x85 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x86 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x87 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x88 */ { 0x30, 0x00C8, 0x00, 0x00, 0x06, 0x13 }, // sldct
+	/* 0x89 */ { 0x31, 0x00C8, 0x00, 0x00, 0x06, 0x13 }, // slpbk
+	/* 0x8A */ { 0x32, 0x00C8, 0x06, 0x00, 0x06, 0x13 }, // sldwn
+	/* 0x8B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x8C */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x8D */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x8E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x8F */ { 0x33, 0x00C8, 0x00, 0x01, 0x06, 0x12 }, // slped
+	/* 0x90 */ { 0x34, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // slpla
+	/* 0x91 */ { 0x35, 0x00C8, 0x00, 0x01, 0x06, 0x13 }, // slip
+	/* 0x92 */ { 0x36, 0x0044, 0x00, 0x00, 0x06, 0x0F }, // sstep
+	/* 0x93 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x94 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x95 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x96 */ { 0x37, 0x0044, 0x00, 0x01, 0x00, 0x16 }, // sqend
+	/* 0x97 */ { 0x38, 0x0044, 0x00, 0x01, 0x00, 0x16 }, // sqsta
+	/* 0x98 */ { 0x39, 0x0044, 0x00, 0x01, 0x00, 0x16 }, // sqwat
+	/* 0x99 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9A */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9B */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9C */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9D */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9E */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0x9F */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA0 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA1 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA2 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA3 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA4 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA5 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA6 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA7 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA8 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xA9 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAA */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAB */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAC */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAD */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAE */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xAF */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB0 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB1 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB2 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB3 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB4 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB5 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB6 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB7 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB8 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xB9 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xBA */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xBB */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xBC */ { 0x3A, 0x0044, 0x00, 0x01, 0x06, 0x16 }, // turn
+	/* 0xBD */ { 0x3B, 0x0044, 0x00, 0x01, 0x06, 0x16 }, // trned
+	/* 0xBE */ { 0x3C, 0x0044, 0x00, 0x02, 0x06, 0x0B }, // tjmp2
+	/* 0xBF */ { 0x3D, 0x0044, 0x00, 0x02, 0x06, 0x0A }, // tjmp1
+	/* 0xC0 */ { 0x3C, 0x0044, 0x00, 0x02, 0x06, 0x0B }, // tjmp2
+	/* 0xC1 */ { 0x6C, 0x0044, 0x00, 0x02, 0x06, 0x0A }, // jump_rolling
+	/* 0xC2 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xC3 */ { 0x3E, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // wait
+	/* 0xC4 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xC5 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xC6 */ { 0x3F, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_wait_l
+	/* 0xC7 */ { 0x40, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_wait_r
+	/* 0xC8 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xC9 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xCA */ { 0x41, 0x0044, 0x00, 0x00, 0x06, 0x18 }, // walk
+	/* 0xCB */ { 0x42, 0x0044, 0x00, 0x00, 0x06, 0x0A }, // wjmp
+	/* 0xCC */ { 0x43, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // wsld
+	/* 0xCD */ { 0x82, 0x00C8, 0x00, 0x00, 0x00, 0x02 }, // demo_shine_get
+	/* 0xCE */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xCF */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xD0 */ { 0xC8, 0x00C8, 0x19, 0x05, 0x00, 0x16 }, // -
+	/* 0xD1 */ { 0x46, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // step1
+	/* 0xD2 */ { 0x47, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // step2
+	/* 0xD3 */ { 0x48, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // step3
+	/* 0xD4 */ { 0x49, 0x00C8, 0x00, 0x02, 0x06, 0x16 }, // jkick
+	/* 0xD5 */ { 0x4A, 0x00C8, 0x07, 0x02, 0x06, 0x16 }, // dgrun
+	/* 0xD6 */ { 0x1A, 0x0044, 0x00, 0x01, 0x06, 0x16 }, // land
+	/* 0xD7 */ { 0x4C, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // hmov_l
+	/* 0xD8 */ { 0x4D, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // hmov_r
+	/* 0xD9 */ { 0x4E, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // t_wait
+	/* 0xDA */ { 0x4F, 0x0044, 0x08, 0x00, 0x06, 0x16 }, // hot_wait
+	/* 0xDB */ { 0x50, 0x0044, 0x00, 0x00, 0x06, 0x18 }, // rope_walk
+	/* 0xDC */ { 0x51, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // rope_run
+	/* 0xDD */ { 0x52, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // rope_wait
+	/* 0xDE */ { 0x53, 0x0044, 0x00, 0x00, 0x00, 0x16 }, // rope_wtosw
+	/* 0xDF */ { 0x54, 0x0044, 0x00, 0x00, 0x00, 0x16 }, // rope_wtosw_r
+	/* 0xE0 */ { 0x55, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // rope_swait
+	/* 0xE1 */ { 0x56, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // rope_whg
+	/* 0xE2 */ { 0x57, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // rope_swhg
+	/* 0xE3 */ { 0x58, 0x0045, 0x00, 0x00, 0x06, 0x16 }, // rope_hgwat
+	/* 0xE4 */ { 0x59, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // rope_return
+	/* 0xE5 */ { 0x5A, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // rope_hmovr
+	/* 0xE6 */ { 0x5B, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // rope_hmovl
+	/* 0xE7 */ { 0x5C, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // sinking
+	/* 0xE8 */ { 0x5D, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // sink_down
+	/* 0xE9 */ { 0x5E, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // door_kick
+	/* 0xEA */ { 0x5F, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold
+	/* 0xEB */ { 0x60, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_wait
+	/* 0xEC */ { 0x61, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_back
+	/* 0xED */ { 0x62, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_move_r
+	/* 0xEE */ { 0x63, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_move_l
+	/* 0xEF */ { 0x64, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_drag
+	/* 0xF0 */ { 0x65, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_to_hang
+	/* 0xF1 */ { 0x66, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_hang
+	/* 0xF2 */ { 0x67, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hang_to_hold
+	/* 0xF3 */ { 0x68, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // hold_return
+	/* 0xF4 */ { 0x69, 0x0044, 0x00, 0x00, 0x00, 0x0A }, // spin_p
+	/* 0xF5 */ { 0x6A, 0x0044, 0x00, 0x02, 0x06, 0x0F }, // turbo_dash
+	/* 0xF6 */ { 0x6B, 0x0044, 0x00, 0x00, 0x06, 0x0A }, // broad_jump
+	/* 0xF7 */ { 0x6C, 0x0044, 0x00, 0x00, 0x06, 0x0A }, // jump_rolling
+	/* 0xF8 */ { 0x6D, 0x0044, 0x00, 0x02, 0x06, 0x16 }, // giant_rolling
+	/* 0xF9 */ { 0x6E, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // fence_catch
+	/* 0xFA */ { 0x6F, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // fence_jcatch
+	/* 0xFB */ { 0x70, 0x0094, 0x00, 0x01, 0x06, 0x16 }, // fence_wait
+	/* 0xFC */ { 0x71, 0x0094, 0x00, 0x01, 0x04, 0x16 }, // fence_move_l
+	/* 0xFD */ { 0x72, 0x0094, 0x00, 0x01, 0x04, 0x16 }, // fence_move_r
+	/* 0xFE */ { 0x73, 0x0094, 0x00, 0x01, 0x04, 0x16 }, // fence_move_up
+	/* 0xFF */ { 0x74, 0x0045, 0x00, 0x01, 0x04, 0x16 }, // fence_move_down
+	/* 0x100 */ { 0x75, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // fence_punch
+	/* 0x101 */ { 0x76, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // ladder_hang_kick
+	/* 0x102 */ { 0x77, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // ladder_roll_up
+	/* 0x103 */ { 0x78, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // ladder_roll_down
+	/* 0x104 */ { 0x79, 0x00C8, 0x00, 0x01, 0x06, 0x16 }, // ride_shell
+	/* 0x105 */ { 0x7A, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // ride_shell_wait
+	/* 0x106 */ { 0x7B, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_start
+	/* 0x107 */ { 0x7C, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_wait
+	/* 0x108 */ { 0x7D, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // wait_to_swim
+	/* 0x109 */ { 0x7E, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim
+	/* 0x10A */ { 0x7F, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_to_wait
+	/* 0x10B */ { 0x80, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_damage
+	/* 0x10C */ { 0x81, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_down
+	/* 0x10D */ { 0x83, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // demo_gate_in
+	/* 0x10E */ { 0x84, 0x00C8, 0x0C, 0x00, 0x00, 0x16 }, // demo_gate_out
+	/* 0x10F */ { 0x85, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // roll_jump
+	/* 0x110 */ { 0x86, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // get_fail
+	/* 0x111 */ { 0x87, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // tree_move_l
+	/* 0x112 */ { 0x88, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // tree_move_r
+	/* 0x113 */ { 0x89, 0x00C8, 0x0D, 0x00, 0x06, 0x16 }, // die
+	/* 0x114 */ { 0x8A, 0x00C8, 0x00, 0x02, 0x06, 0x16 }, // monteman_wait
+	/* 0x115 */ { 0x8B, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_start
+	/* 0x116 */ { 0x8C, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim_wait
+	/* 0x117 */ { 0x8D, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // wait_to_paddle
+	/* 0x118 */ { 0x8E, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // paddle_start
+	/* 0x119 */ { 0x8F, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // swim
+	/* 0x11A */ { 0x90, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // paddle_end
+	/* 0x11B */ { 0x91, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // paddle_to_wait
+	/* 0x11C */ { 0x92, 0x0095, 0x00, 0x00, 0x06, 0x16 }, // float
+	/* 0x11D */ { 0x93, 0x0044, 0x0E, 0x00, 0x06, 0x16 }, // damage_wait
+	/* 0x11E */ { 0x94, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // fepmp
+	/* 0x11F */ { 0x95, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // swpmp
+	/* 0x120 */ { 0x96, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // thrown
+	/* 0x121 */ { 0x97, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // thrown_end
+	/* 0x122 */ { 0x98, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // bottle_in
+	/* 0x123 */ { 0x99, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sand_fill_head
+	/* 0x124 */ { 0x9A, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sand_fill_head_end
+	/* 0x125 */ { 0x9B, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sandfill_leg
+	/* 0x126 */ { 0x9C, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // sandfill_leg_end
+	/* 0x127 */ { 0x9D, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // damage_wait_start
+	/* 0x128 */ { 0x9E, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // swim_dive
+	/* 0x129 */ { 0x9F, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // draw
+	/* 0x12A */ { 0xA0, 0x00C8, 0x0F, 0x00, 0x06, 0x16 }, // swim_p_damage
+	/* 0x12B */ { 0xA1, 0x00C8, 0x10, 0x00, 0x06, 0x16 }, // swim_p_down
+	/* 0x12C */ { 0xA2, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // pivot
+	/* 0x12D */ { 0xA3, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // demo_gate_out_get2
+	/* 0x12E */ { 0xA4, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // demo_gate_out_appear
+	/* 0x12F */ { 0xA5, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // belt_up
+	/* 0x130 */ { 0xA6, 0x00C8, 0x11, 0x00, 0x06, 0x16 }, // yawn
+	/* 0x131 */ { 0xA7, 0x00C8, 0x12, 0x00, 0x06, 0x16 }, // sit
+	/* 0x132 */ { 0xA8, 0x00C8, 0x13, 0x00, 0x06, 0x16 }, // sit_wait
+	/* 0x133 */ { 0xA9, 0x00C8, 0x14, 0x00, 0x06, 0x16 }, // sit_end
+	/* 0x134 */ { 0xAA, 0x00C8, 0x15, 0x00, 0x06, 0x16 }, // sleep
+	/* 0x135 */ { 0xAB, 0x00C8, 0x16, 0x00, 0x06, 0x16 }, // sleep_wait
+	/* 0x136 */ { 0xAC, 0x00C8, 0x17, 0x00, 0x06, 0x16 }, // sleep_end
+	/* 0x137 */ { 0xAD, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // dive_wait
+	/* 0x138 */ { 0xAE, 0x0044, 0x00, 0x00, 0x06, 0x16 }, // dive_land
+	/* 0x139 */ { 0xAF, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // door_gacha_l
+	/* 0x13A */ { 0xB0, 0x00C8, 0x00, 0x00, 0x00, 0x16 }, // door_gacha_r
+	/* 0x13B */ { 0xB2, 0x00C8, 0x00, 0x02, 0x06, 0x16 }, // demo_gate_out_appear_get
+	/* 0x13C */ { 0xB3, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // demo_gate_out_rolling_get
+	/* 0x13D */ { 0xB4, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // demo_gate_out_rolling
+	/* 0x13E */ { 0xB5, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // fall_down_wait
+	/* 0x13F */ { 0xB6, 0x00C8, 0x00, 0x00, 0x06, 0x16 }, // yo_wait
+	/* 0x140 */ { 0xB7, 0x00C8, 0x00, 0x00, 0x06, 0x18 }, // yo_walk
+	/* 0x141 */ { 0xB8, 0x00C8, 0x00, 0x00, 0x06, 0x0F }, // yo_run
+	/* 0x142 */ { 0xB9, 0x00C8, 0x00, 0x00, 0x06, 0x03 }, // yo_eat
+	/* 0x143 */ { 0xBA, 0x00C8, 0x00, 0x00, 0x06, 0x04 }, // yo_eat_end
+	/* 0x144 */ { 0xBB, 0x00C8, 0x00, 0x00, 0x06, 0x0A }, // yo_jump
+	/* 0x145 */ { 0xBC, 0x00C8, 0x00, 0x00, 0x06, 0x0C }, // yo_jump_fall
+	/* 0x146 */ { 0xBD, 0x00C8, 0x00, 0x00, 0x06, 0x0B }, // yo_jump_end
+	/* 0x147 */ { 0xBE, 0x00C8, 0x00, 0x00, 0x06, 0x09 }, // yo_hold_jump
+	/* 0x148 */ { 0xBF, 0x00C8, 0x00, 0x00, 0x06, 0x0E }, // yo_ride
+	/* 0x149 */ { 0xC0, 0x00C8, 0x00, 0x00, 0x06, 0x08 }, // yo_hip_start
+	/* 0x14A */ { 0xC1, 0x00C8, 0x00, 0x00, 0x06, 0x07 }, // yo_hip_pose
+	/* 0x14B */ { 0xC2, 0x00C8, 0x00, 0x00, 0x06, 0x06 }, // yo_hip_end
+	/* 0x14C */ { 0xC3, 0x00C8, 0x00, 0x00, 0x06, 0x01 }, // yo_damage
+	/* 0x14D */ { 0xC4, 0x00C8, 0x00, 0x00, 0x06, 0x02 }, // demo_shine_get_yo
+	/* 0x14E */ { 0xC5, 0x00C8, 0x00, 0x00, 0x06, 0x13 }, // yo_slide_pose
+	/* 0x14F */ { 0xC6, 0x00C8, 0x00, 0x00, 0x06, 0x12 }, // yo_slide_end
+};
+// clang-format on
+
+char* marioAnimeTexPatternFilenames[24] = {
+	"/mario/btp/ma_wink_tx.btp",        "/mario/btp/ma_bdwn_tx.btp",
+	"/mario/btp/ma_bkdwn_tx.btp",       "/mario/btp/ma_sdwnf_tx.btp",
+	"/mario/btp/ma_jfdwn_tx.btp",       "/mario/btp/ma_sdown_tx.btp",
+	"/mario/btp/ma_sldwn_tx.btp",       "/mario/btp/ma_dgrun_tx.btp",
+	"/mario/btp/ma_hot_wait_tx.btp",    "/mario/btp/ma_firejmp_tx.btp",
+	"/mario/btp/ma_fjpend_tx.btp",      "/mario/btp/ma_shock_tx.btp",
+	"/mario/btp/ma_gate_out_tx.btp",    "/mario/btp/ma_die_tx.btp",
+	"/mario/btp/ma_d_wait_tx.btp",      "/mario/btp/ma_swim_p_damage_tx.btp",
+	"/mario/btp/ma_swim_p_down_tx.btp", "/mario/btp/ma_yawn_tx.btp",
+	"/mario/btp/ma_sit_tx.btp",         "/mario/btp/ma_sit_wait_tx.btp",
+	"/mario/btp/ma_sit_end_tx.btp",     "/mario/btp/ma_sleep_tx.btp",
+	"/mario/btp/ma_sleep_wait_tx.btp",  "/mario/btp/ma_sleep_end_tx.btp"
+};
+
+BOOL TMarioAnimeData::isPumpOK() const
+{
+	if (unk2 == 200) {
+		return FALSE;
+	}
+	return TRUE;
+}
+
+// TODO: 99.0%, frame 0x60 short. The default branch's head-rot block,
+// moved into a TMario member (`f32 headRot` picked by fabricatedIsPumping,
+// `-unkFC[2] * headRot`) and called here, closes every instruction (99.6),
+// but getHeadRot must stay 0x7c per the map and that body is 0xbc, so the
+// inlined helper is some other TMario member not yet identified.
+static int MarioHeadCtrl(J3DNode* param_1, int param_2)
+{
+	// volatile u32 padding[34];
+	Mtx transform;
+	if (param_2 == 0) {
+		if (gpMarioForCallBack->getStatus() == MARIO_STATUS_READ_BILLBOARD) {
+			TBaseNPC* npc = gpMarDirector->getTalkingNPC();
+			if (npc == nullptr)
+				return 0;
+
+			const JGeometry::TVec3<f32>& npcFocus = npc->getFocalPoint();
+			JGeometry::TVec3<f32> pos = gpMarioForCallBack->mPosition;
+			pos.y += 112.0f;
+			JGeometry::TVec3<f32> other = npcFocus - pos;
+
+			f32 x    = other.x;
+			f32 z    = other.z;
+			f32 mult = std::sqrtf(x * x + z * z);
+
+			s16 angle = -matan(mult, other.y);
+			MsMtxSetRotRPH(transform, 0.0f, 0.0f, SHORTANGLE2DEG(angle));
+		} else if (gpMarioForCallBack->getStatus() == MARIO_STATUS_ROCKET
+		           && gpMarioForCallBack->mWaterGun->isEmitting() == true) {
+			s16 headAngle
+			    = gpMarioForCallBack->mUpperBodyParams.mHoverHeadAngle.get();
+			MsMtxSetRotRPH(transform, 0.0f, 0.0f, SHORTANGLE2DEG(headAngle));
+		} else if (gpMarioForCallBack->getStatus() == MARIO_STATUS_WAIT
+		           && (gpMarioForCallBack->unk370
+		                       > gpMarioForCallBack->mDeParams.mFeelDeep.get()
+		                   ? true
+		                   : false)) {
+			s16 headAngle
+			    = gpMarioForCallBack->mUpperBodyParams.mFeelDeepHeadAngle.get();
+			MsMtxSetRotRPH(transform, 0.0f, 0.0f, SHORTANGLE2DEG(headAngle));
+		} else if (gpMarioForCallBack->getStatus() == MARIO_STATUS_WAIT
+		           && gpMarioForCallBack->isWallInFront()) {
+			// TODO: retail tests the WAIT status once for both arms (any
+			// other status jumps straight to the default); ours re-tests it.
+
+			s16 headAngle = gpMarioForCallBack->mUpperBodyParams
+			                    .mFrontWallHeadAngle.get();
+			MsMtxSetRotRPH(transform, 0.0f, 0.0f, SHORTANGLE2DEG(headAngle));
+		} else {
+
+			TMario* mario = gpMarioForCallBack;
+			s16* bodyAngle = mario->unkFC;
+			f32 headRot;
+			if (mario->fabricatedIsPumping()) {
+				headRot = mario->mBodyAngleParamsWaterGun.mHeadRot.get();
+			} else {
+				headRot = mario->mBodyAngleParamsFree.mHeadRot.get();
+			}
+
+			s16 headAngle = -bodyAngle[2] * headRot;
+			MsMtxSetRotRPH(transform, 0.0f, SHORTANGLE2DEG(headAngle), 0.0f);
+			const TWaterGun* gun = gpMarioForCallBack->mWaterGun;
+			s16 gunAngle         = gun->getCurrentNozzle()->getGunAngle() / 2;
+			if (gunAngle < 0) {
+				Mtx gunMtx;
+				MsMtxSetRotRPH(gunMtx, 0.0f, 0.0f, SHORTANGLE2DEG(gunAngle));
+				MTXConcat(transform, gunMtx, transform);
+			}
+		}
+
+		MTXConcat(J3DSys::mCurrentMtx, transform, J3DSys::mCurrentMtx);
+	}
+	return 1;
+}
+
+// Roll/pitch rotation with no yaw. Taking the angles as f32 parameters is
+// what makes retail convert the last argument first.
+static inline void MarioSetRotXZ(MtxPtr m, f32 x, f32 z)
+{
+	MsMtxSetRotRPH(m, x, 0.0f, z);
+}
+
+static int MarioWaistCtrl(J3DNode* param_1, int param_2)
+{
+	if (param_2 == 0) {
+		TMario* mario = gpMarioForCallBack;
+		s16* bodyAngle = mario->unkFC;
+		if (mario == gpMarioOriginal
+		    && SMSGetCamera()->isLButtonCamera() == true
+		    && gpMarioForCallBack->canBendBody() != 0
+		    && SMSGetCamera()->mCurrentTarget.mPitch > 0) {
+			bodyAngle[0] = gpCamera->mCurrentTarget.mPitch;
+			Mtx transform;
+			MarioSetRotXZ(transform, SHORTANGLE2DEG((s16)-bodyAngle[2]),
+			              SHORTANGLE2DEG(bodyAngle[0]));
+			MTXConcat(J3DSys::mCurrentMtx, transform, J3DSys::mCurrentMtx);
+			return 1;
+		} else if (gpMarioForCallBack->checkStatusType(MARIO_FLAG_HAS_FLUDD)
+		           && !gpMarioForCallBack->onYoshi()) {
+			const TWaterGun* gun       = gpMarioForCallBack->mWaterGun;
+			TNozzleBase* currentNozzle = gun->getCurrentNozzle();
+			s16 gunAngle               = currentNozzle->getGunAngle();
+			if (gunAngle > 0) {
+				Mtx gunMtx;
+				MsMtxSetRotRPH(gunMtx, 0.0f, 0.0f, SHORTANGLE2DEG(gunAngle));
+				MTXConcat(J3DSys::mCurrentMtx, gunMtx, J3DSys::mCurrentMtx);
+				return 1;
+			}
+		}
+
+		if ((gpMarioForCallBack->mAnimationId == TMario::ANIM_RUN1
+		     || gpMarioForCallBack->mAnimationId == TMario::ANIM_RUN2
+		     || gpMarioForCallBack->mAnimationId == TMario::ANIM_RIDE_SHELL)
+		    && !gpMarioForCallBack->checkFlag(MARIO_FLAG_FLUDD_EMITTING)) {
+
+			// TODO: retail shares one Mtx slot (0x88) across all three
+			// MsMtxSetRotRPH sites; hoisting a function-scope Mtx unifies
+			// the slot but drops the frame 0xe0 -> 0x80 (the 0x60 below
+			// 0x88 is still unaccounted; MarioHeadCtrl is 0x60 short too).
+			// The argument conversion order closed through MarioSetRotXZ.
+			Mtx transform;
+			MarioSetRotXZ(transform, SHORTANGLE2DEG((s16)gpMarioForCallBack->mWaistRoll),
+			              SHORTANGLE2DEG((s16)gpMarioForCallBack->mWaistPitch));
+			MTXConcat(J3DSys::mCurrentMtx, transform, J3DSys::mCurrentMtx);
+			return 1;
+		} else {
+			bodyAngle[0] = 0;
+			bodyAngle[2] = 0;
+		}
+	}
+	return 1;
+}
+
+// Parking spot: include/Player/Mario.hpp declares no accessors for the foot
+// joint ids, and the four foot callbacks read them one level deeper than a
+// raw member chain reaches (shared-header need).
+static inline u8 MarioChnFootRJointId(const TMario* p)
+{
+	return p->mJointIdChnFootR;
+}
+
+static inline u8 MarioChnFootLJointId(const TMario* p)
+{
+	return p->mJointIdChnFootL;
+}
+
+// UNUSED (0x80 -- CheckMarioFootPosCtrl). Dead: all four foot callbacks carry
+// this guard written out.
+static BOOL CheckMarioFootPosCtrl()
+{
+	if ((gpMarioForCallBack->getStatus() & MARIO_STATUS_TYPE_MASK)
+	        == MARIO_STATUS_TYPE_WAITING
+	    && gpMarioForCallBack->getStatus() != MARIO_STATUS_BRAKE_END
+	    && !gpMarioForCallBack->onYoshi()
+	    && !gpMarioForCallBack->isSleeping())
+		return TRUE;
+	return FALSE;
+}
+
+static int MarioFootPosRCtrl(J3DNode* param_1, int param_2)
+{
+	// volatile u32 padding[9];
+	if (param_2 == 0) {
+
+		if (CheckMarioFootPosCtrl()) {
+
+			MtxPtr footMtx = gpMarioForCallBack->getM3UModel()->getModel()->getAnmMtx(
+			    MarioChnFootRJointId(gpMarioForCallBack));
+			const TBGCheckData* checkData;
+			f32 dist = gpMap->checkGround(footMtx[0][3], footMtx[1][3],
+			                              footMtx[2][3], &checkData);
+
+			if (!checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
+
+				f32 footMovement = dist - footMtx[1][3] + 10.0f;
+				if (footMovement > 15.0f) {
+					footMovement = 15.0f;
+				}
+				if (footMovement < -15.0f) {
+					footMovement = -15.0f;
+				}
+				J3DSys::mCurrentMtx[1][3] += footMovement;
+			}
+		}
+	}
+	return 1;
+}
+
+static inline TMario* MarioDrawCallBackMario()
+{
+	TMario* r = gpMarioForCallBack;
+	return r;
+}
+
+static int MarioFootDirRCtrl(J3DNode* param_1, int param_2)
+{
+	if (param_2 == 0) {
+
+		if (CheckMarioFootPosCtrl()) {
+
+			MtxPtr footMtx = MarioDrawCallBackMario()->getM3UModel()->getModel()->getAnmMtx(
+			    gpMarioForCallBack->mJointIdFootR);
+			const TBGCheckData* checkData;
+			f32 dist = gpMap->checkGround(footMtx[0][3], footMtx[1][3],
+			                              footMtx[2][3], &checkData);
+			// The vectors are C99 compound literals copied into the named
+			// Vecs: the ROM fills a temporary (0xa4/0x8c) and word-copies it,
+			// and each literal consumes a second `@NNNN` id (the ROM's
+			// templates are numbered two apart).
+			// TODO: instruction-exact; every stack slot sits 0xc low and the
+			// frame is 0x10 short (0xf8 vs 0x108), i.e. a 12-byte named
+			// object above checkData is still missing.
+			if (!checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
+
+				Vec currentMtxDir = (Vec){ J3DSys::mCurrentMtx[0][0],
+					                       J3DSys::mCurrentMtx[1][0],
+					                       J3DSys::mCurrentMtx[2][0] };
+				// Dead: its all-zero 12-byte .rodata template is emitted
+				// (@3170/@3195) but nothing reads it.
+				Vec currentMtxUp  = (Vec){ J3DSys::mCurrentMtx[0][1],
+					                       J3DSys::mCurrentMtx[1][1],
+					                       J3DSys::mCurrentMtx[2][1] };
+				Vec normalDir     = (Vec){ -checkData->getNormal().x,
+					                       -checkData->getNormal().y,
+					                       -checkData->getNormal().z };
+				Vec currentNormalCross2;
+				Vec currentNormalCross1;
+				PSVECCrossProduct(&currentMtxDir, &normalDir,
+				                  &currentNormalCross1);
+				PSVECCrossProduct(&normalDir, &currentNormalCross1,
+				                  &currentNormalCross2);
+				PSVECNormalize(&currentNormalCross1, &currentNormalCross1);
+				PSVECNormalize(&currentNormalCross2, &currentNormalCross2);
+
+				J3DSys::mCurrentMtx[0][0] = currentNormalCross2.x;
+				J3DSys::mCurrentMtx[1][0] = currentNormalCross2.y;
+				J3DSys::mCurrentMtx[2][0] = currentNormalCross2.z;
+
+				J3DSys::mCurrentMtx[0][1] = normalDir.x;
+				J3DSys::mCurrentMtx[1][1] = normalDir.y;
+				J3DSys::mCurrentMtx[2][1] = normalDir.z;
+
+				J3DSys::mCurrentMtx[0][2] = currentNormalCross1.x;
+				J3DSys::mCurrentMtx[1][2] = currentNormalCross1.y;
+				J3DSys::mCurrentMtx[2][2] = currentNormalCross1.z;
+
+				footMtx[0][0] = currentNormalCross2.x;
+				footMtx[1][0] = currentNormalCross2.y;
+				footMtx[2][0] = currentNormalCross2.z;
+
+				footMtx[0][1] = normalDir.x;
+				footMtx[1][1] = normalDir.y;
+				// The ROM really stores the third component at [2][2], one
+				// row over, so footMtx[2][1] is never written and the
+				// [2][2] store below overwrites this one.
+				footMtx[2][2] = normalDir.z;
+
+				footMtx[0][2] = currentNormalCross1.x;
+				footMtx[1][2] = currentNormalCross1.y;
+				footMtx[2][2] = currentNormalCross1.z;
+			}
+		}
+	}
+
+	return 1;
+}
+
+static int MarioFootPosLCtrl(J3DNode* param_1, int param_2)
+{
+	// volatile u32 padding[9];
+	if (param_2 == 0) {
+
+		if (CheckMarioFootPosCtrl()) {
+
+			MtxPtr footMtx = gpMarioForCallBack->getM3UModel()->getModel()->getAnmMtx(
+			    MarioChnFootLJointId(gpMarioForCallBack));
+			const TBGCheckData* checkData;
+			f32 dist = gpMap->checkGround(footMtx[0][3], footMtx[1][3],
+			                              footMtx[2][3], &checkData);
+
+			if (!checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
+
+				f32 footMovement = dist - footMtx[1][3] + 10.0f;
+				if (footMovement > 15.0f) {
+					footMovement = 15.0f;
+				}
+				if (footMovement < -15.0f) {
+					footMovement = -15.0f;
+				}
+				J3DSys::mCurrentMtx[1][3] += footMovement;
+			}
+		}
+	}
+	return 1;
+}
+
+static int MarioFootDirLCtrl(J3DNode* param_1, int param_2)
+{
+	if (param_2 == 0) {
+
+		if (CheckMarioFootPosCtrl()) {
+
+			MtxPtr footMtx = MarioDrawCallBackMario()->getM3UModel()->getModel()->getAnmMtx(
+			    gpMarioForCallBack->mJointIdFootL);
+			const TBGCheckData* checkData;
+			f32 dist = gpMap->checkGround(footMtx[0][3], footMtx[1][3],
+			                              footMtx[2][3], &checkData);
+			// The vectors are C99 compound literals copied into the named
+			// Vecs: the ROM fills a temporary (0xa4/0x8c) and word-copies it,
+			// and each literal consumes a second `@NNNN` id (the ROM's
+			// templates are numbered two apart).
+			// TODO: instruction-exact; every stack slot sits 0xc low and the
+			// frame is 0x10 short (0xf8 vs 0x108), i.e. a 12-byte named
+			// object above checkData is still missing.
+			if (!checkData->checkFlag(BG_CHECK_FLAG_ILLEGAL)) {
+
+				Vec currentMtxDir = (Vec){ J3DSys::mCurrentMtx[0][0],
+					                       J3DSys::mCurrentMtx[1][0],
+					                       J3DSys::mCurrentMtx[2][0] };
+				// Dead: its all-zero 12-byte .rodata template is emitted
+				// (@3170/@3195) but nothing reads it.
+				Vec currentMtxUp  = (Vec){ J3DSys::mCurrentMtx[0][1],
+					                       J3DSys::mCurrentMtx[1][1],
+					                       J3DSys::mCurrentMtx[2][1] };
+				Vec normalDir     = (Vec){ -checkData->getNormal().x,
+					                       -checkData->getNormal().y,
+					                       -checkData->getNormal().z };
+				Vec currentNormalCross2;
+				Vec currentNormalCross1;
+				PSVECCrossProduct(&currentMtxDir, &normalDir,
+				                  &currentNormalCross1);
+				PSVECCrossProduct(&normalDir, &currentNormalCross1,
+				                  &currentNormalCross2);
+				PSVECNormalize(&currentNormalCross1, &currentNormalCross1);
+				PSVECNormalize(&currentNormalCross2, &currentNormalCross2);
+
+				J3DSys::mCurrentMtx[0][0] = currentNormalCross2.x;
+				J3DSys::mCurrentMtx[1][0] = currentNormalCross2.y;
+				J3DSys::mCurrentMtx[2][0] = currentNormalCross2.z;
+
+				J3DSys::mCurrentMtx[0][1] = normalDir.x;
+				J3DSys::mCurrentMtx[1][1] = normalDir.y;
+				J3DSys::mCurrentMtx[2][1] = normalDir.z;
+
+				J3DSys::mCurrentMtx[0][2] = currentNormalCross1.x;
+				J3DSys::mCurrentMtx[1][2] = currentNormalCross1.y;
+				J3DSys::mCurrentMtx[2][2] = currentNormalCross1.z;
+
+				footMtx[0][0] = currentNormalCross2.x;
+				footMtx[1][0] = currentNormalCross2.y;
+				footMtx[2][0] = currentNormalCross2.z;
+
+				footMtx[0][1] = normalDir.x;
+				footMtx[1][1] = normalDir.y;
+				// The ROM really stores the third component at [2][2], one
+				// row over, so footMtx[2][1] is never written and the
+				// [2][2] store below overwrites this one.
+				footMtx[2][2] = normalDir.z;
+
+				footMtx[0][2] = currentNormalCross1.x;
+				footMtx[1][2] = currentNormalCross1.y;
+				footMtx[2][2] = currentNormalCross1.z;
+			}
+		}
+	}
+
+	return 1;
+}
+
+// UNUSED (0x24). TODO: incorrect size (4 vs 0x24). It is almost certainly
+// `return mMarioEffect->getJumpIntoWaterModelData();` (TMarioEffect's own
+// UNUSED copy is 0x10, i.e. one member chain), but writing it needs
+// <Player/MarioEffect.hpp> in this TU, and adding an include here moves the
+// unit's .bss and __sinit. Left as a stub rather than risk that.
+void TMario::getJumpIntoWaterModelData() { }
+
+// UNUSED (0x7c). Dead: MarioHeadCtrl's default branch carries the same block
+// written out. Size-exact only when the params *struct* is the local and the
+// member is read at the use site.
+s16 TMario::getHeadRot()
+{
+	s16* bodyAngle = unkFC;
+	TBodyAngleParams* params;
+	if (isUpperPumpingStyle()) {
+		params = &mBodyAngleParamsWaterGun;
+	} else {
+		params = &mBodyAngleParamsFree;
+	}
+	return -bodyAngle[2] * params->mHeadRot.get();
+}
+
+Mtx* TMario::getRootAnmMtx() { return (Mtx*)getM3UModel()->getModel()->getAnmMtx(0); }
+
+MtxPtr TMario::getCenterAnmMtx()
+{
+	return getM3UModel()->getModel()->getAnmMtx(mJointIdCenter);
+}
+
+f32 TMario::getPumpFrame() const { return getM3UModel()->getFrameCtrl(1).getFrame(); }
+
+s16 TMario::getWallAngle() const
+{
+	return matan(mWallPlane->getNormal().z, mWallPlane->getNormal().x);
+}
+
+void TMario::setDivHelm()
+{
+	if (mCap == nullptr)
+		return;
+	emitGetEffect();
+	startSoundActor(MSD_SE_MA_HELMET);
+	mCap->setModelActive(TMarioCap::E_CAP_MODEL_HELMET);
+}
+
+bool TMario::isWearingCap()
+{
+	if (mCap == nullptr)
+		return true;
+	return mCap->isModelActive(TMarioCap::E_CAP_MODEL_HAT);
+}
+
+bool TMario::isWearingHelm()
+{
+	if (mCap == nullptr)
+		return false;
+	return mCap->isModelActive(TMarioCap::E_CAP_MODEL_HELMET);
+}
+
+void TMario::wearGlass()
+{
+	if (mCap == nullptr)
+		return;
+
+	emitGetEffect();
+	mCap->setModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+}
+
+void TMario::takeOffGlass()
+{
+	if (mCap == nullptr)
+		return;
+
+	emitGetEffect();
+	mCap->setModelInactive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
+}
+
+void TMario::setPositions()
+{
+	MtxPtr root = getM3UModel()->getModel()->getAnmMtx(1);
+	unk160.x    = root[0][3];
+	unk160.y    = root[1][3];
+	unk160.z    = root[2][3];
+
+	mHeadPos.x = mHeadMtx[0][3];
+	mHeadPos.y = mHeadMtx[1][3];
+	mHeadPos.z = mHeadMtx[2][3];
+
+	MtxPtr centerMtx = getM3UModel()->getModel()->getAnmMtx(mJointIdCenter);
+	mCenterPos.x     = centerMtx[0][3];
+	mCenterPos.y     = centerMtx[1][3];
+	mCenterPos.z     = centerMtx[2][3];
+
+	MtxPtr rightHandMtx = getM3UModel()->getModel()->getAnmMtx(mJointIdHandR);
+	mRightHandPos.x     = rightHandMtx[0][3];
+	mRightHandPos.y     = rightHandMtx[1][3];
+	mRightHandPos.z     = rightHandMtx[2][3];
+}
+
+u32 TMario::getTrampleCt()
+{
+	switch (mAnimationId) {
+	case ANIM_STEP1:
+		return 1;
+	case ANIM_STEP2:
+		return 2;
+	case ANIM_STEP3:
+		return 3;
+	}
+	return 0;
+}
+
+// UNUSED (0x2c -- calcBodyPos). Dead. Size-exact with a constant joint index;
+// TODO: the index itself is a guess (1 is the root's first child, i.e. the
+// body), since no call site survives to name it.
+void TMario::calcBodyPos(JGeometry::TVec3<f32>* param_1)
+{
+	MtxPtr mtx = getRootAnmMtx()[1];
+	param_1->set(mtx[0][3], mtx[1][3], mtx[2][3]);
+}
+
+MtxPtr TMario::getTakingMtx() { return getRootAnmMtx()[mJointIdHandR]; }
+
+MtxPtr TMario::getTakenMtx() { return getM3UModel()->unk8->getBaseTRMtx(); }
+
+// UNUSED (0x10 -- getRailMtx). Dead; four instructions, so it is a single
+// member chain. TODO: the cart's base matrix is the rail's own output (see
+// calcBaseMtxTorocco), but `mPinaRail->getModel()->getAnmMtx(0)` is the same
+// size and cannot be ruled out.
+MtxPtr TMario::getRailMtx() const
+{
+	return mTorocco->getModel()->getBaseTRMtx();
+}
+
+f32 TMario::getCurrentFrame(int idx)
+{
+	return getM3UModel()->getFrameCtrl(idx).getFrame();
+}
+
+J3DFrameCtrl& TMario::getMotionFrameCtrl() { return getM3UModel()->getFrameCtrl(0); }
+
+BOOL TMario::isLast1AnimeFrame()
+{
+	J3DFrameCtrl& frameCtrl = getMotionFrameCtrl();
+	return frameCtrl.getFrame() >= frameCtrl.getEnd() - 1.0f;
+}
+
+BOOL TMario::isAnimeLoopOrStop()
+{
+	if (getMotionFrameCtrl().getState()
+	    & (J3DFrameCtrl::STATE_COMPLETED_ONCE
+	       | J3DFrameCtrl::STATE_LOOPED_ONCE)) {
+		return TRUE;
+	}
+	return FALSE;
+}
+
+// Fabricated - Probably somewhere else; absent from the whole map, so it was
+// inlined into every caller: `static` keeps our object from emitting a copy.
+static inline void flagOnAllShapes(J3DModelData* modelData, u32 flag)
+{
+	for (u16 i = 0; i < modelData->getShapeNum(); ++i)
+		modelData->getShapeNodePointer(i)->onFlag(flag);
+}
+
+// Fabricated - Probably somewhere else
+static inline void flagOffAllShapes(J3DModelData* modelData, u32 flag)
+{
+	for (u16 i = 0; i < modelData->getShapeNum(); ++i) {
+		modelData->getShapeNodePointer(i)->offFlag(flag);
+	}
+}
+
+void TMario::changeHand(int idx)
+{
+	if (mHandModels[0][0] == nullptr)
+		return;
+	switch (idx) {
+	default:
+	case 0:
+		// 100% an inline
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(5)->offFlag(
+		    J3DShpFlag_Visible);
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(6)->offFlag(
+		    J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][0]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][1]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[1][0]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[1][1]->getModelData(), J3DShpFlag_Visible);
+		break;
+	case 1:
+		// 100% an inline
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(5)->onFlag(
+		    J3DShpFlag_Visible);
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(6)->onFlag(
+		    J3DShpFlag_Visible);
+		flagOffAllShapes(mHandModels[0][0]->getModelData(), J3DShpFlag_Visible);
+		flagOffAllShapes(mHandModels[0][1]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[1][0]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[1][1]->getModelData(), J3DShpFlag_Visible);
+		break;
+	case 2:
+		// 100% an inline
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(5)->onFlag(
+		    J3DShpFlag_Visible);
+		getM3UModel()->unk8->getModelData()->getShapeNodePointer(6)->onFlag(
+		    J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][0]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][1]->getModelData(), J3DShpFlag_Visible);
+		flagOffAllShapes(mHandModels[1][0]->getModelData(), J3DShpFlag_Visible);
+		flagOffAllShapes(mHandModels[1][1]->getModelData(), J3DShpFlag_Visible);
+		break;
+	}
+
+	flagOnAllShapes(mRHand4ndModel->getModelData(), J3DShpFlag_Visible);
+}
+
+// UNUSED (0x90 -- changeHandByRate); `calcAnim` inlines it.
+void TMario::changeHandByRate(f32 rate)
+{
+	if (rate < 0.3f) {
+		changeHand(2);
+	}
+	if (0.3f <= rate && rate <= 0.7f) {
+		changeHand(1);
+	}
+	if (0.7f < rate) {
+		changeHand(0);
+	}
+}
+
+f32 TMario::setAnimation(int anm_id, f32 rate)
+{
+	// TODO: instruction-identical apart from register numbering. 88 bytes of
+	// locals are missing (frame 0xc8 vs 0x108 as of bb28; validated with padding), and
+	// separately the ROM reuses one callee-saved register for anm_id and for
+	// the gMarioAnimeData element pointer, so it saves r28-r31 individually
+	// where we save r27-r31 with stmw. The padding alone does not merge them.
+	if (onYoshi()) {
+		if (anm_id == ANIM_LOST) {
+			mYoshi->changeAnimation(0x12);
+		}
+
+		switch (mYoshi->mActor->getCurAnmIdx(ANM_TYPE_BCK)) {
+		case 22:
+			anm_id = 0xB6;
+			break;
+		case 24:
+			anm_id = 0xB7;
+			break;
+		case 15:
+			anm_id = 0xB8;
+			break;
+		case 3:
+			anm_id = 0xB9;
+			break;
+		case 14:
+			anm_id = 0xBF;
+			break;
+		case 4:
+			anm_id = 0xBA;
+			break;
+		case 10:
+			anm_id = 0xBB;
+			break;
+		case 12:
+			anm_id = 0xBC;
+			break;
+		case 11:
+			anm_id = 0xBD;
+			break;
+		case 9:
+			anm_id = 0xBE;
+			break;
+		case 16:
+		case 17:
+			anm_id = 0xB8;
+			break;
+		case 8:
+			anm_id = 0xC0;
+			break;
+		case 7:
+			anm_id = 0xC1;
+			break;
+		case 6:
+			anm_id = 0xC2;
+			break;
+		case 2:
+			anm_id = 0xC4;
+			break;
+		case 19:
+			anm_id = 0xC5;
+			break;
+		case 18:
+			anm_id = 0xC6;
+			break;
+		default:
+			anm_id = 0xB6;
+			break;
+		}
+
+		bool check = false;
+		if (checkFlag(MARIO_FLAG_HAS_FLUDD) && mWaterGun->isEmitting()) {
+			check = true;
+		}
+
+		if (getStatus() == MARIO_STATUS_READ_BILLBOARD) {
+			check = true;
+		}
+
+		if (check == true) {
+			anm_id = 0xB8;
+		}
+	}
+
+	if (anm_id != mAnimationId) {
+		mAnimationId = anm_id;
+
+		if (onYoshi()) {
+			getM3UModel()->changeMtxCalcSIAnmBQAnmTransform(0, 0, anm_id);
+			getM3UModel()->unk20->unk18->mMotionBlendRatio = 0.0f;
+			getMotionFrameCtrl().setAttribute(
+			    getM3UModel()->unk4->unk4[anm_id]->getAttribute());
+			changeHand(0);
+			mAnmSound->stop();
+		} else {
+			getM3UModel()->changeMtxCalcSIAnmBQAnmTransform(
+			    0, 0, gMarioAnimeData[anm_id].unk0);
+			getM3UModel()->unk20->unk18->mMotionBlendRatio = 0.0f;
+			getMotionFrameCtrl().setAttribute(
+			    getM3UModel()->unk4->unk4[gMarioAnimeData[anm_id].unk0]
+			        ->getAttribute());
+
+			int unk1 = gMarioAnimeData[anm_id].unk4;
+			if (mTrembleModelEffect != nullptr
+			    && mTrembleModelEffect->checkUnk8(1))
+				unk1 = 8;
+
+			if (unk1 < 0x18)
+				getM3UModel()->changeAnmTexPattern(0, unk1);
+
+			u16 r0 = gMarioAnimeData[anm_id].unk0;
+			u32 unk; // SoundId?
+			if (rate >= 0.0f)
+				unk = 1;
+			else
+				unk = -1;
+
+			mAnmSound->initAnmSound(mAnmSoundTbl[r0], unk, 0.0f);
+
+			changeHand(gMarioAnimeData[anm_id].unk5);
+		}
+	}
+	getMotionFrameCtrl().setRate(rate * 0.5f);
+	getM3UModel()->getFrameCtrl(2).setRate(rate * 0.5f);
+	return getCurrentFrame(0);
+}
+
+// Binding level over a raw member read, worth +8 of low region in
+// TMario::setReverseAnimation (batch 127).
+static inline u16 MarioDrawAnimationId(const TMario* p)
+{
+	u16 animationId = p->mAnimationId;
+	return animationId;
+}
+
+f32 TMario::setReverseAnimation(int anm_id, f32 rate)
+{
+	// volatile u32 padding[4];
+	if (anm_id != MarioDrawAnimationId(this)) {
+		setAnimation(anm_id, rate);
+		// Tried using existing functions, but couldn make it match
+		// I suspect there might be another inline?
+		// Maybe a reset FrameCtrl or something
+		J3DFrameCtrl* frameCtrl       = getM3UModel()->unkC;
+		J3DFrameCtrl& motionFrameCtrl = frameCtrl[0];
+		motionFrameCtrl.setRate(rate * -0.5f);
+		motionFrameCtrl.setFrame(motionFrameCtrl.getEnd() - 0.1f);
+
+		J3DFrameCtrl& otherFrameCtrl = frameCtrl[2];
+		otherFrameCtrl.setRate(rate * -0.5f);
+		otherFrameCtrl.setFrame(otherFrameCtrl.getEnd() - 0.1f);
+	}
+	return getCurrentFrame(0);
+}
+
+void TMario::loadAnm(J3DAnmTransform** param_1, const char* param_2)
+{
+	void* data = JKRFileLoader::getGlbResource(param_2);
+	if (data != nullptr) {
+		*param_1 = (J3DAnmTransform*)J3DAnmLoaderDataBase::load(data);
+	}
+}
+
+void TMario::loadBas(void** param_1, const char* param_2)
+{
+	if (param_2 != nullptr) {
+		*param_1 = JKRFileLoader::getGlbResource(param_2);
+	} else {
+		*param_1 = nullptr;
+	}
+}
+
+void TMario::loadAnmTexPattern(J3DAnmTexPattern** param_1, char* param_2,
+                               J3DModelData* param_3)
+{
+	void* data = JKRFileLoader::getGlbResource(param_2);
+	if (data == nullptr) {
+		*param_1 = nullptr;
+		return;
+	}
+
+	*param_1 = (J3DAnmTexPattern*)J3DAnmLoaderDataBase::load(data);
+	(*param_1)->searchUpdateMaterialID(param_3);
+}
+
+// TODO: frame 0x5c0 retail, 0x538 here (the named Mtx sits above transformInfo
+// in retail, plus 0x94 more low temporaries; c-hs7's getModel() and
+// getCurrentStage() at every read took it from 0x4f0). Every non-stack difference is
+// one allocation: retail colours anmTransform r22 (below the texture-loop
+// temporaries and sharing r22 with eyeIdxL), ours r27, which shifts the loop,
+// frameCtrl and marioCommon registers by one. Top declarations of
+// anmTransform or i, unnamed trans, u32/i++ loop spellings and a named file
+// name are all inert.
+void TMario::initModel()
+{
+	unk394         = new J3DDrawBuffer(0x20);
+	unk398         = new J3DDrawBuffer(0x20);
+	unk39C         = 0;
+	unk3A0         = 0;
+	mBodyModelData = J3DModelLoaderDataBase::load(
+	    JKRFileLoader::getGlbResource("/mario/bmd/ma_mdl1.bmd"),
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+	mJointIdCenter   = mBodyModelData->getJointName()->getIndex("center");
+	mJointIdChnChest = mBodyModelData->getJointName()->getIndex("chn_chest");
+	mJointIdChest    = mBodyModelData->getJointName()->getIndex("jnt_chest");
+	mJointIdArmR1    = mBodyModelData->getJointName()->getIndex("jnt_arm_R1");
+	mJointIdArmL1    = mBodyModelData->getJointName()->getIndex("jnt_arm_L1");
+	mJointIdHandR    = mBodyModelData->getJointName()->getIndex("jnt_hand_R");
+	mJointIdHandL    = mBodyModelData->getJointName()->getIndex("jnt_hand_L");
+	mJointIdChnFootR = mBodyModelData->getJointName()->getIndex("chn_foot_R");
+	mJointIdFootR    = mBodyModelData->getJointName()->getIndex("jnt_foot_R");
+	mJointIdChnFootL = mBodyModelData->getJointName()->getIndex("chn_foot_L");
+	mJointIdFootL    = mBodyModelData->getJointName()->getIndex("jnt_foot_L");
+	mJointIdHead     = mBodyModelData->getJointName()->getIndex("jnt_head");
+	mJointIdMHead    = mBodyModelData->getJointName()->getIndex("M_head");
+
+	mBodyPollutionTex = (ResTIMG*)JKRFileLoader::getGlbResource(cDirtyFileName);
+	if (mBodyPollutionTex != nullptr) {
+		SMS_ChangeTextureAll(mBodyModelData, cDirtyTexName, *mBodyPollutionTex);
+	}
+
+	J3DModel* bodyModel = new J3DModel(mBodyModelData, 0, 1);
+
+	mHandModels[0][0] = SMS_CreatePartsModel(
+	    "/mario/bmd/ma_hnd2r.bmd",
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+	mHandModels[0][1] = SMS_CreatePartsModel(
+	    "/mario/bmd/ma_hnd2l.bmd",
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+	mHandModels[1][0] = SMS_CreatePartsModel(
+	    "/mario/bmd/ma_hnd3r.bmd",
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+	mHandModels[1][1] = SMS_CreatePartsModel(
+	    "/mario/bmd/ma_hnd3l.bmd",
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+	mRHand4ndModel = SMS_CreatePartsModel(
+	    "/mario/bmd/ma_hnd4r.bmd",
+	    J3DMLF_MaterialPEFull | (16 << J3DMLF_TevStageNumShift));
+
+	// Retail loads mBodyModelData (the setResTIMG argument) before each
+	// hand model. Naming the hand data first reversed that pair.
+	const ResTIMG* bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	J3DModelData* handData  = mHandModels[0][0]->getModelData();
+	handData->getTexture()->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
+
+	bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	handData = mHandModels[0][1]->getModelData();
+	handData->getTexture()->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
+
+	bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	handData = mHandModels[1][0]->getModelData();
+	handData->getTexture()->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
+
+	bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	handData = mHandModels[1][1]->getModelData();
+	handData->getTexture()->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
+
+	bodyTimg = mBodyModelData->getTexture()->getResTIMG(0);
+	handData = mRHand4ndModel->getModelData();
+	handData->getTexture()->setResTIMG(0, *bodyTimg);
+	DCFlushRange(handData->getTexture()->getResTIMG(0), 0x20);
+
+	mBodyModelData->getShapeNodePointer(4)->onFlag(J3DShpFlag_Visible);
+
+	if (mBodyPollutionTex != nullptr) {
+		for (int handIdx = 0; handIdx < 2; ++handIdx) {
+			for (int modelIdx = 0; modelIdx < 2; ++modelIdx) {
+				SMS_ChangeTextureAll(
+				    mHandModels[handIdx][modelIdx]->getModelData(),
+				    cDirtyTexName, *mBodyPollutionTex);
+			}
+		}
+	}
+
+	J3DAnmTransform** anmTransform = new J3DAnmTransform*[199];
+	mAnmSoundTbl                   = new JAIAnimeSound*[199];
+
+	char buffer[0x10C];
+	for (int i = 0; i < 199; ++i) {
+		snprintf(buffer, 0xff, "/mario/bck/ma_%s.bck", marioAnimeFiles[i].unk4);
+		J3DAnmTransform** trans = &anmTransform[i];
+		loadAnm(trans, buffer);
+
+		snprintf(buffer, 0xff, "/mario/bas/ma_%s.bas", marioAnimeFiles[i].unk4);
+		loadBas((void**)&mAnmSoundTbl[i], buffer);
+	}
+
+	J3DAnmTexPattern** anmTexPattern = new J3DAnmTexPattern*[0x18];
+	J3DTexNoAnm** anmTexNoAnm        = new J3DTexNoAnm*[0x18];
+
+	for (int i = 0; i < 0x18; ++i) {
+		loadAnmTexPattern(&anmTexPattern[i], marioAnimeTexPatternFilenames[i],
+		                  mBodyModelData);
+		anmTexNoAnm[i]
+		    = new J3DTexNoAnm[anmTexPattern[i]->getUpdateMaterialNum()];
+
+		// The count is re-read every iteration, so it was never a local.
+		for (int j = 0; j < anmTexPattern[i]->getUpdateMaterialNum(); ++j) {
+			anmTexNoAnm[i][j].setAnmIndex(j);
+			anmTexNoAnm[i][j].setAnmTexPattern(anmTexPattern[i]);
+		}
+	}
+
+	M3UMtxCalcSIAnmBlendQuat* anmBlendQuat = new M3UMtxCalcSIAnmBlendQuat[2];
+	anmBlendQuat[0].mMotionBlendRatio      = 0.0f;
+	J3DFrameCtrl* frameCtrl                = new J3DFrameCtrl[3];
+
+	M3UModelCommonMario* marioCommon = new M3UModelCommonMario();
+
+	marioCommon->unk4  = anmTransform;
+	marioCommon->unk18 = anmBlendQuat;
+	marioCommon->unk8  = anmTexPattern;
+	marioCommon->unkC  = anmTexNoAnm;
+
+	u16 eyeIdxL = mBodyModelData->getMaterialName()->getIndex("_mat_eye_L");
+	u16 eyeIdxR = mBodyModelData->getMaterialName()->getIndex("_mat_eye_R");
+
+	mBodyModelData->getMaterialNodePointer(eyeIdxL)->change();
+	mBodyModelData->getMaterialNodePointer(eyeIdxL)->setMaterialAnm(
+	    new J3DMaterialAnm());
+	mBodyModelData->getMaterialNodePointer(eyeIdxR)->change();
+	mBodyModelData->getMaterialNodePointer(eyeIdxR)->setMaterialAnm(
+	    new J3DMaterialAnm());
+
+	mMaterialIdEyeL = eyeIdxL;
+	mMaterialIdEyeR = eyeIdxR;
+
+	M3UModelMario* modelMario = new M3UModelMario();
+	modelMario->unk8          = bodyModel;
+	modelMario->unk4          = marioCommon;
+	modelMario->unk20         = marioCommon;
+	modelMario->unkC          = frameCtrl;
+
+	frameCtrl[2].setRate(SMSGetAnmFrameRate());
+
+	SomeModelMarioStruct* setInfo = new SomeModelMarioStruct[2];
+	setInfo[0]        = (SomeModelMarioStruct) { 0, 2, 0, 0x14, 0x41, 0 };
+	setInfo[1]        = (SomeModelMarioStruct) { mJointIdChest, 2, 1, 0, 0, 1 };
+	modelMario->unk10 = 2;
+	modelMario->unk24 = setInfo;
+
+	M3UModel::Unk1CStruct* unk = new M3UModel::Unk1CStruct;
+	*unk                       = (M3UModel::Unk1CStruct) { 0, 2 };
+	modelMario->unk1C          = unk;
+
+	modelMario->changeMtxCalcSIAnmBQAnmTransform(0, 0, 0x3e);
+	modelMario->changeMtxCalcSIAnmBQAnmTransform(1, 0, 0x41);
+
+	modelMario->unkC[1].setRate(0.0f);
+	marioCommon->unk18[1].mMotionBlendRatio = 0.0f;
+	mModel                                  = modelMario;
+
+	setAnimation(ANIM_WAIT, 1.0f);
+
+	J3DTransformInfo transformInfo;
+	transformInfo.mScale.x     = 1.0f;
+	transformInfo.mScale.y     = 1.0f;
+	transformInfo.mScale.z     = 1.0f;
+	transformInfo.mRotation.x  = mFaceAngle.x;
+	transformInfo.mRotation.y  = mModelFaceAngle;
+	transformInfo.mRotation.z  = mFaceAngle.z;
+	transformInfo.mTranslate.x = mPosition.x;
+	transformInfo.mTranslate.y = mPosition.y;
+	transformInfo.mTranslate.z = mPosition.z;
+	Mtx transform;
+	J3DGetTranslateRotateMtx(transformInfo, transform);
+	getM3UModel()->getModel()->setBaseTRMtx(transform);
+
+	getM3UModel()->updateInMotion();
+
+	getM3UModel()->getModel()->calc();
+
+	calcAnimHands();
+
+	mSurfGesso = nullptr;
+	if (gpMarDirector->getCurrentMap() == 58
+	    && (gpMarDirector->getCurrentStage() == 0 || gpMarDirector->getCurrentStage() == 1)) {
+		MActorAnmData* anmData = new MActorAnmData();
+		anmData->init("/scene/map/map/Torocco", nullptr);
+		mTorocco = new MActor(anmData);
+
+		void* toroccoRes = JKRFileLoader::getGlbResource(
+		    "/scene/map/map/Torocco/Torocco.bmd");
+		mTorocco->setModel(
+		    new J3DModel(
+		        J3DModelLoaderDataBase::load(
+		            toroccoRes,
+		            J3DMLF_MaterialPEFull | (4 << J3DMLF_TevStageNumShift)),
+		        0, 1),
+		    0);
+		if (gpMarDirector->getCurrentStage() == 0) {
+			mRailType              = 0;
+			MActorAnmData* anmData = new MActorAnmData();
+			anmData->init("/scene/map/map/Pinna_rail", nullptr);
+			mPinaRail = new MActor(anmData);
+
+			void* pinaRailRes = JKRFileLoader::getGlbResource(
+			    "/scene/map/map/Pinna_rail/Pinna_rail.bmd");
+			mPinaRail->setModel(
+			    new J3DModel(
+			        J3DModelLoaderDataBase::load(
+			            pinaRailRes, J3DMLF_MaterialPEFull
+			                             | (4 << J3DMLF_TevStageNumShift)),
+			        0, 1),
+			    0);
+
+			mPinaRail->getFrameCtrl(ANM_TYPE_BCK)->setRate(0.5f);
+
+			Mtx pinnaMtx;
+			MTXIdentity(pinnaMtx);
+			mPinaRail->getModel()->setBaseTRMtx(pinnaMtx);
+			mPinaRail->calcAnm();
+			mTorocco->getModel()->setBaseTRMtx(
+			    mPinaRail->getModel()->getAnmMtx(0));
+		}
+		if (gpMarDirector->getCurrentStage() == 1) {
+			mRailType              = 1;
+			MActorAnmData* anmData = new MActorAnmData();
+			anmData->init("/scene/map/map/Koopa_rail", nullptr);
+			mKoopaRail = new MActor(anmData);
+
+			void* koopaRailRes = JKRFileLoader::getGlbResource(
+			    "/scene/map/map/Koopa_rail/Koopa_rail.bmd");
+			mKoopaRail->setModel(
+			    new J3DModel(
+			        J3DModelLoaderDataBase::load(
+			            koopaRailRes, J3DMLF_MaterialPEFull
+			                              | (4 << J3DMLF_TevStageNumShift)),
+			        0, 1),
+			    0);
+
+			mKoopaRail->getFrameCtrl(ANM_TYPE_BCK)->setRate(0.5f);
+
+			Mtx koopaMtx;
+			MTXIdentity(koopaMtx);
+			mKoopaRail->getModel()->setBaseTRMtx(koopaMtx);
+			mKoopaRail->calcAnm();
+			mTorocco->getModel()->setBaseTRMtx(
+			    mKoopaRail->getModel()->getAnmMtx(0));
+		}
+		onFlag(MARIO_FLAG_HAS_FLUDD);
+		mTorocco->calcAnm();
+		MtxPtr toroccoMtx = mTorocco->getModel()->getAnmMtx(2);
+		mPosition.x       = toroccoMtx[0][3];
+		mPosition.y       = toroccoMtx[1][3];
+		mPosition.z       = toroccoMtx[2][3];
+		mToroccoAngle     = mFaceAngle.y;
+	} else {
+		mTorocco   = nullptr;
+		mPinaRail  = nullptr;
+		mKoopaRail = nullptr;
+	}
+
+	mMultiMtxEffect                 = new TMultiMtxEffect;
+	mMultiMtxEffect->mNumBones      = 3;
+	u16* boneIds                    = new u16[3];
+	boneIds[0]                      = mJointIdChest;
+	boneIds[1]                      = mJointIdArmR1;
+	boneIds[2]                      = mJointIdArmL1;
+	mMultiMtxEffect->mBoneIDs       = boneIds;
+	u8* mtxTypes                    = new u8[3];
+	mtxTypes[0]                     = 0;
+	mtxTypes[1]                     = 0;
+	mtxTypes[2]                     = 0;
+	mMultiMtxEffect->mMtxEffectType = mtxTypes;
+	mMultiMtxEffect->setup(getM3UModel()->getModel(), "Mario");
+
+	mTrembleModelEffect = new TTrembleModelEffect();
+	mTrembleModelEffect->init(getM3UModel()->getModel());
+
+	unk3A4 = new SampleCtrlModelData(mBodyModelData);
+}
+
+void TMario::initMirrorModel()
+{
+	if (mPlayerType != PLAYER_TYPE_MARIO)
+		return;
+
+	if (mCap != nullptr)
+		mCap->createMirrorCap();
+
+	TMirrorActor* mirrorActor = new TMirrorActor("マリオin鏡");
+	mirrorActor->init(getM3UModel()->getModel(), 4);
+
+	for (int handIdx = 0; handIdx < 2; ++handIdx) {
+		for (int modelIdx = 0; modelIdx < 2; ++modelIdx) {
+			TMirrorActor* handMirrorActor = new TMirrorActor("マリオ手in鏡");
+			handMirrorActor->init(mHandModels[handIdx][modelIdx], 4);
+		}
+	}
+
+	if (mTorocco != nullptr) {
+		TMirrorActor* toroccoMirrorActor = new TMirrorActor("トロッコin鏡");
+		toroccoMirrorActor->init(mTorocco->getModel(), 2);
+	}
+}
+
+// The three mModel reads here stay raw: routing them through getM3UModel()
+// costs this exact function (100 -> 99.87). Same for setUpperDamageRun and
+// entryModels below, and for all four sites in TMarioCap::TMarioCap. The
+// accessor level is a per-site lever, and in this file the sites that want it
+// are setAnimation (94.8 -> 96.0), setReverseAnimation, calcAnim (frame 0x2a0
+// -> 0x2e0 against retail's 0x328), initModel, addUpper, addDamageFog,
+// calcAnimBody/calcAnimHands and MarioFoot*Ctrl.
+void TMario::finalDrawInitialize()
+{
+	changeHand(0);
+	SMS_MakeDLAndLock(mModel->getModel());
+
+	for (int i = 0; i < mBodyModelData->getMaterialNum(); ++i)
+		if (i == mMaterialIdEyeL || i == mMaterialIdEyeR)
+			mModel->getModel()->getMatPacketArray()[i].offFlag(0x1);
+
+	for (int i = 0; i < mBodyModelData->getMaterialNum(); ++i)
+		SMS_InitPacket_OneTevKColorAndFog(mModel->getModel(), i, GX_KCOLOR0,
+		                                  nullptr);
+}
+
+static inline f32 MarioDrawForwardVel(TMario* self)
+{
+	f32 r = self->getForwardVel();
+	return r;
+}
+
+// TODO: instructions match; frame is 0x90 against retail's 0xa8, a uniform
+// 0x18 shift of the low region (the int-to-float slot). A symmetric clamp
+// inline for either block was tried and costs instructions.
+void TMario::considerWaist()
+{
+	f32 maxPitch;
+	f32 angleChangeRate;
+	f32 targetPitch;
+
+	// Possibly unused get params function?
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		if (mGroundPlane->isWaterSurface()) {
+			maxPitch    = mSurfingParamsWaterRed.mWaistPitchMax.get();
+			targetPitch = mSurfingParamsWaterRed.mWaistPitch.get();
+			angleChangeRate
+			    = mSurfingParamsWaterRed.mWaistAngleChangeRate.get();
+		} else {
+			maxPitch    = mSurfingParamsGroundRed.mWaistPitchMax.get();
+			targetPitch = mSurfingParamsGroundRed.mWaistPitch.get();
+			angleChangeRate
+			    = mSurfingParamsGroundRed.mWaistAngleChangeRate.get();
+		}
+	} else {
+		if (fabricatedIsPumping() || isHolding()) {
+			maxPitch    = mBodyAngleParamsWaterGun.mWaistPitchMax.get();
+			targetPitch = mBodyAngleParamsWaterGun.mWaistPitch.get();
+			angleChangeRate
+			    = mBodyAngleParamsWaterGun.mWaistAngleChangeRate.get();
+		} else {
+			maxPitch        = mBodyAngleParamsFree.mWaistPitchMax.get();
+			targetPitch     = mBodyAngleParamsFree.mWaistPitch.get();
+			angleChangeRate = mBodyAngleParamsFree.mWaistAngleChangeRate.get();
+		}
+	}
+
+	// Likely clamp inline, but i couldn't find an existing that worked
+	f32 targetPitchCopy = targetPitch * MarioDrawForwardVel(this);
+	if (targetPitchCopy > maxPitch) {
+		targetPitchCopy = maxPitch;
+	}
+	if (targetPitchCopy < -maxPitch) {
+		targetPitchCopy = -maxPitch;
+	}
+	targetPitch = targetPitchCopy;
+	mWaistPitch += angleChangeRate * (targetPitch - mWaistPitch);
+
+	f32 targetRoll;
+	f32 rollMax;
+	s16 diffAngle = mFaceAngle.y - getUnk9C();
+	// Possibly unused get params function?
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		if (mGroundPlane->isWaterSurface()) {
+			rollMax    = mSurfingParamsWaterRed.mWaistRollMax.get();
+			targetRoll = mSurfingParamsWaterRed.mWaistRoll.get();
+			angleChangeRate
+			    = mSurfingParamsWaterRed.mWaistAngleChangeRate.get();
+		} else {
+			rollMax    = mSurfingParamsGroundRed.mWaistRollMax.get();
+			targetRoll = mSurfingParamsGroundRed.mWaistRoll.get();
+			angleChangeRate
+			    = mSurfingParamsGroundRed.mWaistAngleChangeRate.get();
+		}
+	} else {
+		if (fabricatedIsPumping()) {
+			rollMax    = mBodyAngleParamsWaterGun.mWaistRollMax.get();
+			targetRoll = mBodyAngleParamsWaterGun.mWaistRoll.get();
+			angleChangeRate
+			    = mBodyAngleParamsWaterGun.mWaistAngleChangeRate.get();
+		} else {
+			rollMax         = mBodyAngleParamsFree.mWaistRollMax.get();
+			targetRoll      = mBodyAngleParamsFree.mWaistRoll.get();
+			angleChangeRate = mBodyAngleParamsFree.mWaistAngleChangeRate.get();
+		}
+	}
+
+	// Likely clamp inline, but i couldn't find an existing that worked
+	f32 targetRollCopy = targetRoll * (diffAngle * getForwardVel());
+	if (targetRollCopy > rollMax) {
+		targetRollCopy = rollMax;
+	}
+	if (targetRollCopy < -rollMax) {
+		targetRollCopy = -rollMax;
+	}
+	targetRoll = targetRollCopy;
+
+	mWaistRoll += angleChangeRate * (targetRoll - mWaistRoll);
+}
+
+// UNUSED (0x120). Dead: `calcBaseMtx` carries the same block written out.
+void TMario::calcBaseMtxTorocco(MtxPtr mtx)
+{
+	if (mRailType == 0) {
+		mPinaRail->calcAnm();
+		mTorocco->getModel()->setBaseTRMtx(mPinaRail->getModel()->getAnmMtx(0));
+	}
+	if (mRailType == 1) {
+		mKoopaRail->calcAnm();
+		mTorocco->getModel()->setBaseTRMtx(mKoopaRail->getModel()->getAnmMtx(0));
+	}
+
+	mTorocco->calcAnm();
+	Mtx transform;
+	MsMtxSetRotRPH(transform, 0.0f, SHORTANGLE2DEG(mToroccoAngle), 0.0f);
+	MTXConcat(mTorocco->getModel()->getAnmMtx(2), transform, mtx);
+
+	mToroccoPos = mPosition;
+	mPosition.x = mtx[0][3];
+	mPosition.y = mtx[1][3];
+	mPosition.z = mtx[2][3];
+}
+
+// UNUSED (0xc8). Dead: `calcBaseMtx` carries the same block written out.
+void TMario::calcBaseMtxPole(MtxPtr mtx)
+{
+	J3DTransformInfo ti;
+	ti.mScale.x     = 1.0f;
+	ti.mScale.y     = 1.0f;
+	ti.mScale.z     = 1.0f;
+	ti.mRotation.x  = 0;
+	ti.mRotation.y  = mModelFaceAngle;
+	ti.mRotation.z  = 0;
+	f32 radiusAtY   = mHolder->getRadiusAtY(mPosition.y);
+	ti.mTranslate.x = mPosition.x - (radiusAtY * JMASSin(mModelFaceAngle));
+	ti.mTranslate.y = mPosition.y;
+	ti.mTranslate.z = mPosition.z - radiusAtY * JMASCos(mModelFaceAngle);
+	J3DGetTranslateRotateMtx(ti, mtx);
+}
+
+// UNUSED (0xa4). Dead: `calcBaseMtx` carries the same block written out.
+void TMario::calcBaseMtxSwim(MtxPtr mtx)
+{
+	J3DTransformInfo ti;
+	ti.mScale.x     = 1.0f;
+	ti.mScale.y     = 1.0f;
+	ti.mScale.z     = 1.0f;
+	ti.mRotation.x  = 0;
+	ti.mRotation.y  = mModelFaceAngle;
+	ti.mRotation.z  = 0;
+	ti.mTranslate.x = mPosition.x;
+	ti.mTranslate.y = mPosition.y;
+	ti.mTranslate.z = mPosition.z;
+	f32 height
+	    = gpMapObjWave->getHeight(mPosition.x, mFloorPosition.z, mPosition.z);
+	ti.mTranslate.y += height - mFloorPosition.z;
+	J3DGetTranslateRotateMtx(ti, mtx);
+}
+
+// The ground triangle's plane: retail keeps the normal and the distance
+// together in one 16-byte stack object (the dead distance store lands right
+// after the normal), and calls `TVec3::set<f>` and `setLength` out of line
+// from inside it, i.e. at inline depth 4 below calcBaseMtx.
+struct MarioGroundPlane {
+	MarioGroundPlane(const JGeometry::TVec3<f32>& a,
+	                 const JGeometry::TVec3<f32>& b,
+	                 const JGeometry::TVec3<f32>& c)
+	{
+		set(a, b, c);
+	}
+
+	void set(const JGeometry::TVec3<f32>& a, const JGeometry::TVec3<f32>& b,
+	         const JGeometry::TVec3<f32>& c)
+	{
+		JGeometry::TVec3<f32> v1;
+		v1.sub(b, a);
+		JGeometry::TVec3<f32> v2;
+		v2.sub(c, b);
+		mNormal.cross2(v2, v1);
+		mNormal.normalize();
+		mD = mNormal.dot(a);
+	}
+
+	/* 0x0 */ JGeometry::TVec3<f32> mNormal;
+	/* 0xC */ f32 mD;
+};
+
+void TMario::calcBaseMtx(MtxPtr mtx)
+{
+	// TODO: instruction-exact apart from register numbering in the ground
+	// plane's f28/f30 cross products and the sink-offset divide; the frame is
+	// 0x40 short (0x2b0 vs 0x2f0). The unk414 fctiwz order before
+	// MsMtxSetRotRPH closed through MarioSetRotXZ's f32 parameters.
+	if (mStatus == MARIO_STATUS_TOROCCO) {
+		calcBaseMtxTorocco(mtx);
+		return;
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK100000)) {
+		calcBaseMtxPole(mtx);
+		return;
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_SWIMMING)) {
+		calcBaseMtxSwim(mtx);
+		return;
+	}
+
+	if (mHolder != nullptr && mHolder->getTakingMtx() != nullptr) {
+		MTXCopy(mHolder->getTakingMtx(), mtx);
+		return;
+	}
+
+	if (mStatus != MARIO_STATUS_JUMP_CATCH
+	    && mStatus != MARIO_STATUS_WIRE_ROLLING) {
+		mFaceAngle.x = 0;
+	}
+
+	if (checkUnk114(UNK114_FLAG_UNK8)) {
+		// Sample ground heights at three points around mario to form a
+		// triangle, then build a rotation matrix oriented to its normal.
+		JGeometry::TVec3<f32> p1, p2, p3;
+		p1.x = JMASSin(mFaceAngle.y + 0x2AAA) * 40.0f + mPosition.x;
+		p1.z = JMASCos(mFaceAngle.y + 0x2AAA) * 40.0f + mPosition.z;
+		p2.x = JMASSin(mFaceAngle.y + 0x8000) * 40.0f + mPosition.x;
+		p2.z = JMASCos(mFaceAngle.y + 0x8000) * 40.0f + mPosition.z;
+		p3.x = JMASSin(mFaceAngle.y + 0xD555) * 40.0f + mPosition.x;
+		p3.z = JMASCos(mFaceAngle.y + 0xD555) * 40.0f + mPosition.z;
+
+		const TBGCheckData* groundData;
+		checkGroundPlane(p1.x, mPosition.y + 160.0f, p1.z, &p1.y, &groundData);
+		checkGroundPlane(p2.x, mPosition.y + 160.0f, p2.z, &p2.y, &groundData);
+		checkGroundPlane(p3.x, mPosition.y + 160.0f, p3.z, &p3.y, &groundData);
+
+		if (p1.y - mPosition.y < -120.0f)
+			p1.y = mPosition.y;
+		if (p2.y - mPosition.y < -120.0f)
+			p2.y = mPosition.y;
+		if (p3.y - mPosition.y < -120.0f)
+			p3.y = mPosition.y;
+
+		f32 avgY = (p1.y + p2.y + p3.y) / 3.0f;
+
+		JGeometry::TVec3<f32> forward;
+		forward.x = JMASSin(mFaceAngle.y);
+		forward.y = 0.0f;
+		forward.z = JMASCos(mFaceAngle.y);
+
+		MarioGroundPlane plane(p1, p2, p3);
+
+		JGeometry::TVec3<f32> ncross;
+		ncross.x = -plane.mNormal.x;
+		ncross.y = -plane.mNormal.y;
+		ncross.z = -plane.mNormal.z;
+
+		JGeometry::TVec3<f32> axis;
+		axis.cross(ncross, forward);
+		MsVECNormalize(&axis, &axis);
+
+		// The ROM crosses with the *unnormalised* up vector and normalises
+		// it only afterwards: `bin` never has its address taken, so it stays
+		// in f30/f31/f28, while `ncross` is the one that goes to memory.
+		JGeometry::TVec3<f32> bin;
+		bin.cross(axis, ncross);
+		MsVECNormalize(&ncross, &ncross);
+
+		mtx[0][0] = axis.x;
+		mtx[0][1] = ncross.x;
+		mtx[0][2] = bin.x;
+		mtx[0][3] = mPosition.x;
+		mtx[1][0] = axis.y;
+		mtx[1][1] = ncross.y;
+		mtx[1][2] = bin.y;
+		mtx[1][3] = (avgY < mPosition.y) ? mPosition.y : avgY;
+		mtx[2][0] = axis.z;
+		mtx[2][1] = ncross.z;
+		mtx[2][2] = bin.z;
+		mtx[2][3] = mPosition.z;
+	} else {
+		J3DTransformInfo ti;
+		ti.mScale.x     = 1.0f;
+		ti.mScale.y     = 1.0f;
+		ti.mScale.z     = 1.0f;
+		ti.mRotation.x  = mFaceAngle.x;
+		ti.mRotation.y  = mModelFaceAngle;
+		ti.mRotation.z  = mFaceAngle.z;
+		ti.mTranslate.x = mPosition.x;
+		ti.mTranslate.y = mPosition.y;
+		ti.mTranslate.z = mPosition.z;
+		J3DGetTranslateRotateMtx(ti, mtx);
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		if (mGroundPlane->isWaterSurface()) {
+			// Use water-side surf params
+			s16 pitchMax  = mSurfingParamsWaterRed.mPitchMax.get();
+			f32 pitchRate = mSurfingParamsWaterRed.mPitch.get();
+
+			s16 pitch = (s16)(mForwardVel * pitchRate);
+			s16 delta = mFaceAngle.y - unk9C;
+			s16 roll    = (s16)((f32)delta * mForwardVel
+			              * mSurfingParamsWaterRed.mRoll.get());
+			s16 rollMax = mSurfingParamsWaterRed.mRollMax.get();
+			if (pitch > pitchMax)
+				pitch = pitchMax;
+			if (pitch < (s16)-pitchMax)
+				pitch = -pitchMax;
+
+			if (roll > rollMax)
+				roll = rollMax;
+			if (roll < (s16)-rollMax)
+				roll = -rollMax;
+
+			unk414.y = ((f32)pitch - unk414.y)
+			               * mSurfingParamsWaterRed.mAngleChangeRate.get()
+			           + unk414.y;
+			unk414.x = ((f32)roll - unk414.x)
+			               * mSurfingParamsWaterRed.mAngleChangeRate.get()
+			           + unk414.x;
+		} else {
+			// Use ground-side surf params
+			s16 pitchMax  = mSurfingParamsGroundRed.mPitchMax.get();
+			f32 pitchRate = mSurfingParamsGroundRed.mPitch.get();
+
+			s16 pitch = (s16)(mForwardVel * pitchRate);
+			s16 delta = mFaceAngle.y - unk9C;
+			s16 roll    = (s16)((f32)delta * mForwardVel
+			              * mSurfingParamsGroundRed.mRoll.get());
+			s16 rollMax = mSurfingParamsGroundRed.mRollMax.get();
+			if (pitch > pitchMax)
+				pitch = pitchMax;
+			if (pitch < (s16)-pitchMax)
+				pitch = -pitchMax;
+
+			if (roll > rollMax)
+				roll = rollMax;
+			if (roll < (s16)-rollMax)
+				roll = -rollMax;
+
+			unk414.y = ((f32)pitch - unk414.y)
+			               * mSurfingParamsGroundRed.mAngleChangeRate.get()
+			           + unk414.y;
+			unk414.x = ((f32)roll - unk414.x)
+			               * mSurfingParamsGroundRed.mAngleChangeRate.get()
+			           + unk414.x;
+		}
+
+		Mtx rot;
+		MarioSetRotXZ(rot, SHORTANGLE2DEG((s16)unk414.y), SHORTANGLE2DEG((s16)unk414.x));
+		MTXConcat(mtx, rot, mtx);
+	}
+
+	MTXIdentity(unk318);
+	if (isSinking()) {
+		MTXTrans(unk318, 0.0f,
+		         -(mSinkTimer / mGraffitoParams.mSinkTime.value)
+		             * mGraffitoParams.mSinkHeight.value,
+		         0.0f);
+	}
+
+	if (unk378 < 0.0f ? TRUE : FALSE)
+		MTXTrans(unk318, 0.0f, unk378, 0.0f);
+
+	if (mStatus == MARIO_STATUS_SURF) {
+		const TBGCheckData* gp;
+		gpMap->checkGround(mPosition.x, mPosition.y + 160.0f, mPosition.z, &gp);
+		if (gp->isWaterSurface()) {
+			f32 height = gpMapObjWave->getHeight(mPosition.x, mPosition.y,
+			                                     mPosition.z);
+			MTXTrans(unk318, 0.0f, height, 0.0f);
+		}
+	}
+	MTXConcat(mtx, unk318, mtx);
+}
+
+// UNUSED (0x74); inlined into `calcAnim`.
+void TMario::calcAnimBody(u32 param_1, JDrama::TGraphics* graphics)
+{
+	Mtx baseMtx;
+	calcBaseMtx(baseMtx);
+	considerWaist();
+	MTXCopy(baseMtx, getM3UModel()->unk8->getBaseTRMtx());
+	getM3UModel()->perform(param_1, graphics);
+}
+
+// UNUSED (0x148); inlined into `calcAnim`.
+void TMario::calcAnimHands()
+{
+	if (mHandModels[0][0] != nullptr) {
+		mHandModels[0][0]->setBaseTRMtx(getM3UModel()->unk8->getAnmMtx(mJointIdHandR));
+		mHandModels[0][1]->setBaseTRMtx(getM3UModel()->unk8->getAnmMtx(mJointIdHandL));
+		mHandModels[1][0]->setBaseTRMtx(getM3UModel()->unk8->getAnmMtx(mJointIdHandR));
+		mHandModels[1][1]->setBaseTRMtx(getM3UModel()->unk8->getAnmMtx(mJointIdHandL));
+		mRHand4ndModel->setBaseTRMtx(getM3UModel()->unk8->getAnmMtx(mJointIdHandR));
+
+		mHandModels[0][0]->calc();
+		mHandModels[0][1]->calc();
+		mHandModels[1][0]->calc();
+		mHandModels[1][1]->calc();
+		mRHand4ndModel->calc();
+	}
+}
+
+// Binding level worth +8 of low region per site; all ten joint reads in
+// TMario::addCallBack carry it.
+static inline J3DJoint* MarioCBJoint(J3DModelData* d, u16 i)
+{
+	J3DJoint* joint = d->getJointNodePointer(i);
+	return joint;
+}
+
+// By-value read of the animation table's flag byte, +8 of low region.
+static inline u8 MarioCBAnimeUnk6(const TMario* p)
+{
+	return gMarioAnimeData[p->mAnimationId].unk6;
+}
+
+void TMario::addCallBack(JDrama::TGraphics* graphics)
+{
+	gpMarioForCallBack      = this;
+	J3DModelData* modelData = getM3UModel()->unk8->getModelData();
+	if (isMario()) {
+		MarioCBJoint(modelData, mJointIdHead)
+		    ->setCallBack(MarioHeadCtrl);
+	}
+
+	MarioCBJoint(modelData, mJointIdChnChest)->setCallBack(MarioWaistCtrl);
+
+	if (0x4B0 > gpMarDirector->unk58 || isUpperPumpingStyle()) {
+		if (mMultiMtxEffect != nullptr) {
+			mMultiMtxEffect->flagOff(0x1);
+		}
+
+		if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+			mWaterGun->unk1CDC->mMtxEffectTbl[1]->mFlags &= ~1;
+		}
+
+		if (mCap != nullptr) {
+			mCap->mtxEffectHide();
+		}
+	} else {
+		if ((MarioCBAnimeUnk6(this) & 2) != 0
+		    && mUpperState == UPPER_STATE_IDLE) {
+			if (mMultiMtxEffect != nullptr) {
+				mMultiMtxEffect->flagOn(0x1);
+			}
+		} else {
+			if (mMultiMtxEffect != nullptr) {
+				mMultiMtxEffect->flagOff(0x1);
+			}
+		}
+
+		if (mCap != nullptr) {
+			mCap->mtxEffectShow();
+		}
+	}
+
+	if ((MarioCBAnimeUnk6(this) & 4) != 0
+	    && mUpperState == UPPER_STATE_IDLE) {
+		if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+			mWaterGun->unk1CDC->mMtxEffectTbl[1]->mFlags |= 1;
+		}
+	} else if (checkFlag(MARIO_FLAG_HAS_FLUDD)) {
+		mWaterGun->unk1CDC->mMtxEffectTbl[1]->mFlags &= ~1;
+	}
+
+	if ((graphics->unk0 & 2) != 0) {
+		MarioCBJoint(modelData, mJointIdChnFootR)
+		    ->setCallBack(MarioFootPosRCtrl);
+		MarioCBJoint(modelData, mJointIdFootR)
+		    ->setCallBack(MarioFootDirRCtrl);
+		MarioCBJoint(modelData, mJointIdChnFootL)
+		    ->setCallBack(MarioFootPosLCtrl);
+		MarioCBJoint(modelData, mJointIdFootL)
+		    ->setCallBack(MarioFootDirLCtrl);
+	} else {
+		MarioCBJoint(modelData, mJointIdChnFootR)->setCallBack(nullptr);
+		MarioCBJoint(modelData, mJointIdFootR)->setCallBack(nullptr);
+		MarioCBJoint(modelData, mJointIdChnFootL)->setCallBack(nullptr);
+		MarioCBJoint(modelData, mJointIdFootL)->setCallBack(nullptr);
+	}
+}
+
+// Raw reads: the accessor costs this exact function (see
+// finalDrawInitialize).
+void TMario::setUpperDamageRun()
+{
+	J3DFrameCtrl& frameCtrl = mModel->getFrameCtrl(1);
+	mModel->unk24[1].unk3   = 1;
+	mModel->changeMtxCalcSIAnmBQAnmTransform(1, 0, 0x4a);
+	frameCtrl.setFrame(frameCtrl.getStart());
+	frameCtrl.setRate(1.0f);
+	frameCtrl.setRate(0.5f);
+	mUpperState = UPPER_STATE_FIXED_ANIMATION;
+}
+
+// Binding level worth +8 of low region per site; four of the seven
+// getM3UModel() reads in TMario::addUpper carry it, landing the frame at 0x70.
+static inline M3UModelMario* MarioAddUpperM3UModel(const TMario* p)
+{
+	M3UModelMario* m3UModel = p->getM3UModel();
+	return m3UModel;
+}
+
+void TMario::addUpper()
+{
+	J3DFrameCtrl& frameCtrl = MarioAddUpperM3UModel(this)->getFrameCtrl(1);
+	if (mUpperState != UPPER_STATE_FIXED_ANIMATION) {
+		switch (mUpperState) {
+		case UPPER_STATE_PUMPING:
+		case UPPER_STATE_HOLDING_PUMP:
+			if (onYoshi()) {
+				MarioAddUpperM3UModel(this)->unk24[1].unk3 = -1;
+				return;
+			}
+			if (gMarioAnimeData[mAnimationId].unk2 != 0xC8) {
+				MarioAddUpperM3UModel(this)->unk24[1].unk3 = 1;
+				MarioAddUpperM3UModel(this)->changeMtxCalcSIAnmBQAnmTransform(
+				    1, 0, gMarioAnimeData[mAnimationId].unk2);
+			}
+			break;
+		case UPPER_STATE_HOLDING_OBJECT:
+			getM3UModel()->unk24[1].unk3 = 1;
+			getM3UModel()->changeMtxCalcSIAnmBQAnmTransform(1, 0, 0x4b);
+			break;
+		case UPPER_STATE_IDLE:
+			getM3UModel()->unk24[1].unk3 = -1;
+			break;
+		}
+
+		if (mUpperState == UPPER_STATE_PUMPING) {
+			frameCtrl.setAttribute(J3DFrameCtrl::ATTR_PING_PONG_LOOP);
+			mPumpAnmRate
+			    = mGamePad->mCompSPos[3] * mUpperBodyParams.mPumpAnmSpeed.get();
+			if (mWaterGun->mCurrentWater <= 0) {
+				if (frameCtrl.getRate() >= 0.0f) {
+					frameCtrl.setRate(mPumpAnmRate);
+					if (frameCtrl.checkPass(8.0f)) {
+						startSoundActor(MSD_SE_PO_POMPING1);
+					}
+				} else {
+					frameCtrl.setRate(-mPumpAnmRate);
+					if (frameCtrl.checkPass(13.0f)) {
+						startSoundActor(MSD_SE_PO_POMPING2);
+					}
+				}
+			}
+		}
+	}
+}
+
+// UNUSED (0x90 -- removeCallBack); `calcAnim` inlines it.
+void TMario::removeCallBack()
+{
+	gpMarioForCallBack      = nullptr;
+	J3DModelData* modelData = getM3UModel()->unk8->getModelData();
+	modelData->getJointNodePointer(mJointIdHead)->setCallBack(nullptr);
+	modelData->getJointNodePointer(mJointIdChnChest)->setCallBack(nullptr);
+	modelData->getJointNodePointer(mJointIdChnFootR)->setCallBack(nullptr);
+	modelData->getJointNodePointer(mJointIdFootR)->setCallBack(nullptr);
+	modelData->getJointNodePointer(mJointIdChnFootL)->setCallBack(nullptr);
+	modelData->getJointNodePointer(mJointIdFootL)->setCallBack(nullptr);
+}
+
+// TODO: 99.4%. The frame is exact (0x328) with the body model read as
+// `mModel->getModel()` and the surf gesso's as its raw mModel (through
+// getM3UModel()->unk8 it was 0x28 short, and getM3UModel()->getModel()
+// overshoots to 0x348); calling calcAnimBody/calcAnimHands is code- and
+// frame-identical to the written-out blocks. Left: both Yoshi
+// setMotionBlendRatioForBck sites test mAnmBck in r0 and reload it for the
+// call; ours caches it (raw mAnmBck / getAnmBck() spellings are worse).
+void TMario::calcAnim(u32 param_1, JDrama::TGraphics* graphics)
+{
+	addCallBack(graphics);
+	addUpper();
+	calcAnimBody(param_1, graphics);
+	removeCallBack();
+	calcAnimHands();
+
+	if (mCap != nullptr) {
+		mCap->unkC->setBaseTRMtx(mModel->getModel()->getAnmMtx(mJointIdMHead));
+		mCap->unk10[2]->setBaseTRMtx(mModel->getModel()->getAnmMtx(mJointIdHead));
+		mCap->unk10[3]->setBaseTRMtx(mModel->getModel()->getAnmMtx(mJointIdMHead));
+		mCap->perform(CUE_CALC_ANIM, graphics);
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		mSurfGesso->mModel->setBaseTRMtx(mModel->getModel()->getBaseTRMtx());
+		mSurfGesso->perform(CUE_CALC_ANIM, graphics);
+	}
+
+	if (mStatus == MARIO_STATUS_TOROCCO) {
+		mTorocco->perform(CUE_CALC_ANIM, graphics);
+	}
+
+	if (mYoshi != nullptr) {
+		MActor* yoshiActor = mYoshi->mActor;
+		if (yoshiActor->getCurAnmIdx(ANM_TYPE_BCK) == 0xf) {
+			yoshiActor->initNormalMotionBlend();
+			yoshiActor->setMotionBlendRatioForBck(unk414.z);
+			yoshiActor->getFrameCtrl(ANM_TYPE_BCK)
+			    ->setRate(getMotionFrameCtrl().getRate());
+		} else {
+			yoshiActor->initNormalMotionBlend();
+			yoshiActor->setMotionBlendRatioForBck(0.0f);
+			yoshiActor->getFrameCtrl(ANM_TYPE_BCK)->setRate(0.5f);
+		}
+	}
+
+	if (mStatus == MARIO_STATUS_RUN && mAnimationId != ANIM_SSTEP) {
+		changeHandByRate(unk414.z);
+	}
+
+	if (mAnimationId == ANIM_DEMO_GATE_OUT_GET2) {
+		mModel->getModel()->getModelData()->getShapeNodePointer(5)->onFlag(
+		    J3DShpFlag_Visible);
+		mModel->getModel()->getModelData()->getShapeNodePointer(6)->onFlag(
+		    J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][0]->getModelData(), J3DShpFlag_Visible);
+		flagOnAllShapes(mHandModels[0][1]->getModelData(), J3DShpFlag_Visible);
+		flagOffAllShapes(mHandModels[1][1]->getModelData(), J3DShpFlag_Visible);
+
+		if (getMotionFrameCtrl().getFrame() < 158.0f) {
+			flagOnAllShapes(mHandModels[1][0]->getModelData(),
+			                J3DShpFlag_Visible);
+			flagOffAllShapes(mRHand4ndModel->getModelData(),
+			                 J3DShpFlag_Visible);
+		} else {
+			flagOffAllShapes(mHandModels[1][0]->getModelData(),
+			                 J3DShpFlag_Visible);
+			flagOnAllShapes(mRHand4ndModel->getModelData(), J3DShpFlag_Visible);
+		}
+	}
+}
+
+// Binding level worth +16 of low region, landing TMario::calcView's frame at
+// 0x28 (batch 121).
+static inline M3UModelMario* MarioDrawGetM3UModel(const TMario* p)
+{
+	M3UModelMario* m3UModel = p->getM3UModel();
+	return m3UModel;
+}
+
+void TMario::calcView(JDrama::TGraphics* graphics)
+{
+	// volatile u32 padding[4];
+	MTXCopy(graphics->mViewMtx, j3dSys.mViewMtx);
+	MarioDrawGetM3UModel(this)->unk8->viewCalc();
+	if (mHandModels[0][0] != nullptr) {
+		mHandModels[0][0]->viewCalc();
+		mHandModels[0][1]->viewCalc();
+		mHandModels[1][0]->viewCalc();
+		mHandModels[1][1]->viewCalc();
+		mRHand4ndModel->viewCalc();
+	}
+
+	if (mCap != nullptr) {
+		mCap->perform(CUE_CALC_VIEW, graphics);
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		mSurfGesso->perform(CUE_CALC_VIEW, graphics);
+	}
+
+	if (mStatus == MARIO_STATUS_TOROCCO) {
+		mTorocco->perform(CUE_CALC_VIEW, graphics);
+	}
+}
+
+// Raw read: the accessor costs this exact function (see
+// finalDrawInitialize).
+void TMario::entryModels(JDrama::TGraphics* graphics)
+{
+	mModel->perform(CUE_ENTRY, graphics);
+	if (mHandModels[0][0] != nullptr) {
+		mHandModels[0][0]->entry();
+		mHandModels[0][1]->entry();
+		mHandModels[1][0]->entry();
+		mHandModels[1][1]->entry();
+		mRHand4ndModel->entry();
+	}
+
+	if (mCap != nullptr) {
+		mCap->perform(CUE_ENTRY, graphics);
+	}
+
+	if (checkStatusType(MARIO_STATUS_FLAG_UNK10000)) {
+		mSurfGesso->setLightData(mGroundPlane, mPosition);
+		mSurfGesso->perform(CUE_ENTRY, graphics);
+	}
+
+	if (mStatus == MARIO_STATUS_TOROCCO)
+		mTorocco->perform(CUE_ENTRY, graphics);
+}
+
+void TMario::drawSpecial(JDrama::TGraphics* graphics)
+{
+	if (mStatus == MARIO_STATUS_ELECTRIC_DAMAGE) {
+		unk4EC = 1;
+		onUnk114(UNK114_FLAG_UNK20);
+	} else {
+		unk4EC = 0;
+		offUnk114(UNK114_FLAG_UNK20);
+	}
+	// Probably some enum? I see no reason why this is a switch...
+	switch (unk4EC) {
+	case 1:
+		drawLogic();
+		break;
+	}
+}
+
+// Binding level over the raw flag test: it keeps TMario::drawLogic's frame at
+// 0x28 and its GXColor literal/copy at retail's 0x14/0x18 (the checkUnk114
+// accessor inside the binder costs 4 more bytes of low region).
+static inline bool MarioDrawCheckUnk114(const TMario* p, u32 i)
+{
+	bool unk114 = p->unk114 & i ? true : false;
+	return unk114;
+}
+
+void TMario::drawLogic()
+{
+	// volatile u32 padding[2];
+	j3dSys.mFlags |= 2;
+	j3dSys.unk4C = 7;
+	SMS_DrawInit();
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanMatColor(GX_COLOR0A0, (GXColor) { 0xff, 0xff, 0xff, 0xff });
+	GXSetNumTexGens(0);
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetBlendMode(GX_BM_LOGIC, GX_BL_ONE, GX_BL_ZERO,
+	               (GXLogicOp)mBlendLogicOp);
+	GXSetZCompLoc(TRUE);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_TRUE);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+	GXSetColorUpdate(GX_FALSE);
+	GXSetAlphaUpdate(GX_FALSE);
+	unk394->draw();
+	unk398->draw();
+	GXSetColorUpdate(GX_TRUE);
+	GXSetAlphaUpdate(GX_FALSE);
+	if (MarioDrawCheckUnk114(this, UNK114_FLAG_UNK20)) {
+		unk394->draw();
+		unk398->draw();
+	}
+
+	j3dSys.mFlags &= ~2;
+}
+
+void TMario::boxDrawPrepare(MtxPtr mtx)
+{
+	f32 psave[7];
+	GXGetProjectionv(psave);
+
+	f32 wpsave[6];
+	GXGetViewportv(wpsave);
+
+	JGeometry::TVec3<f32> pos = mPosition;
+	pos.y += 80.0f;
+	// The ROM parks these two in f31/f30 across every GX call and reuses them
+	// for the matrix translation, which only a named local does.
+	f32 boxY = pos.y;
+	f32 boxZ = pos.z;
+	GXProject(pos.x, boxY, boxZ, mtx, psave, wpsave, &mMarioScreenPos.x,
+	          &mMarioScreenPos.y, &mMarioScreenPos.z);
+
+	GXClearVtxDesc();
+	GXSetVtxDesc(GX_VA_POS, GX_DIRECT);
+	GXSetVtxAttrFmt(GX_VTXFMT0, GX_VA_POS, GX_CLR_RGBA, GX_F32, 0);
+	GXSetCurrentMtx(GX_PNMTX0);
+
+	Mtx stackMtx;
+	MTXScale(stackMtx, 200.0f, 200.0f, 200.0f);
+	stackMtx[0][3] = pos.x;
+	stackMtx[1][3] = boxY;
+	stackMtx[2][3] = boxZ;
+
+	MTXConcat(mtx, stackMtx, stackMtx);
+
+	GXLoadPosMtxImm(stackMtx, GX_PNMTX0);
+	GXSetCullMode(GX_CULL_BACK);
+	GXSetNumChans(1);
+	GXSetChanCtrl(GX_COLOR0A0, FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+	GXSetChanCtrl(GX_COLOR1A1, FALSE, GX_SRC_REG, GX_SRC_REG, 0, GX_DF_NONE,
+	              GX_AF_NONE);
+
+	GXSetChanMatColor(GX_COLOR0A0, (GXColor) { 0xff, 0xff, 0xff, 0xff });
+	GXSetNumTexGens(0);
+	GXSetNumTevStages(1);
+	GXSetTevOrder(GX_TEVSTAGE0, GX_TEXCOORD_NULL, GX_TEXMAP_NULL, GX_COLOR0A0);
+	GXSetTevOp(GX_TEVSTAGE0, GX_PASSCLR);
+	GXSetBlendMode(GX_BM_BLEND, GX_BL_ONE, GX_BL_ZERO, GX_LO_NOOP);
+	GXSetZCompLoc(TRUE);
+	GXSetZMode(GX_TRUE, GX_LEQUAL, GX_FALSE);
+	GXSetAlphaCompare(GX_ALWAYS, 0, GX_AOP_OR, GX_ALWAYS, 0);
+}
+
+void TMario::addDirty()
+{
+	u16 i; // why...
+
+	for (i = 0; i < mBodyModelData->getMaterialNum(); ++i) {
+		J3DGXColor* konstColor = mBodyModelData->getMaterialNodePointer(i)
+		                             ->getTevBlock()
+		                             ->getTevKColor(0);
+		konstColor->color.a = mDirty;
+	}
+
+	if (mHandModels[0][0] != nullptr) {
+		for (int handIdx = 0; handIdx < 2; ++handIdx) {
+			for (int modelIdx = 0; modelIdx < 2; ++modelIdx) {
+				J3DModelData* mHandModelData
+				    = mHandModels[handIdx][modelIdx]->getModelData();
+				for (i = 0; i < mHandModelData->getMaterialNum(); ++i) {
+					J3DGXColor* konstColor
+					    = mHandModelData->getMaterialNodePointer(i)
+					          ->getTevBlock()
+					          ->getTevKColor(0);
+					konstColor->color.a = mDirty;
+				}
+			}
+		}
+	}
+}
+
+static inline M3UModelMario* MarioFogM3UModel(const TMario* p)
+{
+	M3UModelMario* m3UModel = p->getM3UModel();
+	return m3UModel;
+}
+
+static inline u16 MarioFogMatNum(J3DModelData* d)
+{
+	u16 n = d->getMaterialNum();
+	return n;
+}
+
+void TMario::addDamageFog(JDrama::TGraphics* graphics)
+{
+	// volatile u32 padding[30];
+	bool check       = true;
+	GXColor fogColor = (GXColor) { 0xff, 0x00, 0x80, 0xff };
+
+	// One `modelData` reused for the body, cap and hand loops, and a named
+	// PE block in the first loop, give retail's slots.
+	if (mInvincibilityFrames == 0)
+		check = false;
+
+	if (checkFlag(MARIO_FLAG_DIRTY) && mPollutionTypeStandingOn == 2) {
+		check = true;
+		if (mStandingOnGraffitoTimer > mDirtyParams.mFogTimeYellow.get()) {
+			fogColor = (GXColor) { 0x82, 0x96, 0x00, 0xff };
+		} else {
+			fogColor = (GXColor) { 0xff, 0x00, 0x80, 0xff };
+		}
+	}
+
+	if (checkFlag(MARIO_FLAG_NPC_TALKING)) {
+		check = false;
+	}
+
+	if (check == true) {
+		// Very likely an inline since it is duplicated
+		J3DModelData* modelData = MarioFogM3UModel(this)->getModel()->getModelData();
+		for (u16 i = 0; i < MarioFogMatNum(modelData); ++i) {
+			J3DPEBlock* peBlock = modelData->getMaterialNodePointer(i)->getPEBlock();
+			J3DFog* fog         = peBlock->getFog();
+			fog->mColor = fogColor;
+		}
+
+		SMS_AddDamageFogEffect(MarioFogM3UModel(this)->getModel()->getModelData(), mPosition,
+		                       graphics);
+
+		if (mCap != nullptr) {
+			modelData = mCap->unkC->getModelData();
+			for (u16 i = 0; i < MarioFogMatNum(modelData); ++i) {
+				J3DFog* fog = modelData->getMaterialNodePointer(i)
+				                  ->getPEBlock()
+				                  ->getFog();
+				fog->mColor = fogColor;
+			}
+			SMS_AddDamageFogEffect(mCap->unkC->getModelData(), mPosition,
+			                       graphics);
+		}
+
+		if (mHandModels[0][0] != nullptr) {
+			for (int handIdx = 0; handIdx < 2; ++handIdx) {
+				for (int modelIdx = 0; modelIdx < 2; ++modelIdx) {
+					modelData = mHandModels[handIdx][modelIdx]->getModelData();
+					for (u16 i = 0; i < MarioFogMatNum(modelData); ++i) {
+						J3DFog* fog = modelData->getMaterialNodePointer(i)
+						                  ->getPEBlock()
+						                  ->getFog();
+						fog->mColor = fogColor;
+					}
+					SMS_AddDamageFogEffect(
+					    mHandModels[handIdx][modelIdx]->getModelData(),
+					    mPosition, graphics);
+				}
+			}
+			SMS_AddDamageFogEffect(mRHand4ndModel->getModelData(), mPosition,
+			                       graphics);
+		}
+
+	} else {
+		SMS_ResetDamageFogEffect(MarioFogM3UModel(this)->unk8->getModelData());
+		if (mCap != nullptr) {
+			SMS_ResetDamageFogEffect(mCap->unkC->getModelData());
+		}
+		if (mHandModels[0][0] != nullptr) {
+			for (int handIdx = 0; handIdx < 2; ++handIdx) {
+				for (int modelIdx = 0; modelIdx < 2; ++modelIdx) {
+					SMS_ResetDamageFogEffect(
+					    mHandModels[handIdx][modelIdx]->getModelData());
+				}
+			}
+			SMS_ResetDamageFogEffect(mRHand4ndModel->getModelData());
+		}
+	}
+}
+
+// UNUSED (0xfc). TODO: incorrect size (4 vs 0xfc) -- a stub, not a
+// reconstruction. Evidence for the body, for whoever picks it up:
+// `TMario::mEffectParams` (TEffectParams: mDashInc 1/30, mDashDec 1/60,
+// mDashMaxBlendInBlur 0xb4, mDashMaxBlendInIris, mDashBlendScale 0.2f) is
+// read by nothing else in the tree, and `TAfterEffect` (MarioUtil/ScreenUtil)
+// has exactly the matching sinks: unk15 (mode 2 == dash blur), unk1B/unk1C
+// (the blur and iris blend targets that setBlurDefaultValue resets from
+// unk19/unk1A), unk50 (the blur amount calcDashBlurValue decays) and unk54
+// (the decay step). So this almost certainly ramps a 0..1 blend on
+// mDashInc/mDashDec while the turbo nozzle is spraying and writes it into
+// gpAfterEffect scaled by those three params. What is missing is the TMario
+// member that holds the blend: no existing field fits, and inventing one in
+// Mario.hpp on this evidence alone is not justified. 63 instructions.
+void TMario::thinkDashEffect() { }

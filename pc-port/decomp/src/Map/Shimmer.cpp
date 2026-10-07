@@ -1,0 +1,135 @@
+#include <Map/Shimmer.hpp>
+#include <Map/MapData.hpp>
+#include <System/MarDirector.hpp>
+#include <MarioUtil/ScreenUtil.hpp>
+#include <MarioUtil/MtxUtil.hpp>
+#include <Player/Mario.hpp>
+#include <Camera/Camera.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTransform.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DTexture.hpp>
+#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DAnimation.hpp>
+#include <JSystem/J3D/J3DGraphAnimator/J3DMaterialAnm.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
+#include <JSystem/J3D/J3DGraphLoader/J3DAnmLoader.hpp>
+#include <JSystem/JUtility/JUTTexture.hpp>
+#include <JSystem/JKernel/JKRFileLoader.hpp>
+#include <JSystem/JDrama/JDRNameRefGen.hpp>
+#include <stdio.h>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+
+void TShimmer::near() { mPosition.set(0.0f, 0.0f, 9600.0f); }
+
+void TShimmer::far() { mPosition.set(0.0f, 0.0f, 0.0f); }
+
+void TShimmer::perform(u32 cue, JDrama::TGraphics* graphics)
+{
+	if (gpMarioOriginal->checkFlag(MARIO_FLAG_FLUDD_EMITTING))
+		return;
+
+	if (cue & CUE_MOVE) {
+		unk54->setFrame(unk58->getFrame());
+		unk58->update();
+	}
+
+	if (cue & CUE_CALC_VIEW) {
+		if (!gpMarioOriginal->isWearingCap()
+		    && !gpMarioOriginal->getGroundPlane()->isShadow()
+		    && !gpMarioOriginal->getGroundPlane()->isIndoors()
+		    && !gpMarioOriginal->getGroundPlane()->isPool()) {
+			near();
+		} else {
+			far();
+		}
+
+		Mtx44 effectMtx;
+		SMS_GetLightPerspectiveForEffectMtx(effectMtx);
+
+		getModel()->getModelData()
+		    ->getMaterialNodePointer(0)
+		    ->getTexGenBlock()
+		    ->getTexMtx(1)
+		    ->setEffectMtx(effectMtx);
+
+		MtxPtr viewMtx = graphics->getViewMtx();
+
+		Mtx inverseView;
+		Mtx translation;
+		Mtx scale;
+		J3DTransformInfo info;
+		info.mScale.x     = 1.0f;
+		info.mScale.y     = 1.0f;
+		info.mScale.z     = 1.0f;
+		info.mRotation.x  = 0.0f;
+		info.mRotation.y  = 0.0f;
+		info.mRotation.z  = 0.0f;
+		info.mTranslate.x = mPosition.x;
+		info.mTranslate.y = mPosition.y;
+		info.mTranslate.z = mPosition.z;
+		J3DGetTranslateRotateMtx(info, translation);
+		MTXScale(scale, mScaling.x, mScaling.y, mScaling.z);
+		MTXInverse(viewMtx, inverseView);
+		MTXConcat(inverseView, translation, inverseView);
+		MTXConcat(inverseView, scale, inverseView);
+		getModel()->setBaseTRMtx(inverseView);
+		getModel()->calc();
+		getModel()->viewCalc();
+	}
+
+	if (cue & CUE_ENTRY) {
+		if (gpMarDirector->getCurrentMap() == 2 || !(gpCamera->getUnk124().y < 0.0f))
+			getModel()->entry();
+	}
+}
+
+void TShimmer::loadAfter()
+{
+	JDrama::TActor::loadAfter();
+	TScreenTexture* ref
+	    = JDrama::TNameRefGen::search<TScreenTexture>("スクリーンテクスチャ");
+	unk44->getTexture()->setResTIMG(1, *ref->getTexture()->getTexInfo());
+}
+
+void TShimmer::load(JSUMemoryInputStream& stream)
+{
+	JDrama::TActor::load(stream);
+	char modelName[32];
+	stream.readString(modelName, 32);
+	char buffer[64];
+	snprintf(buffer, 64, "/scene/mapObj/%s.bmd", modelName);
+	unk44 = J3DModelLoaderDataBase::load(JKRGetResource(buffer),
+	                                     J3DMLF_MaterialPEFull
+	                                         | J3DMLF_MaterialUseIndirect
+	                                         | (1 << J3DMLF_TevStageNumShift));
+	unk48 = new J3DModel(unk44, 0, 1);
+	snprintf(buffer, 64, "/scene/mapObj/%s.btk", modelName);
+	unk54 = (J3DAnmTextureSRTKey*)J3DAnmLoaderDataBase::load(
+	    JKRGetResource(buffer));
+
+	unk54->searchUpdateMaterialID(unk44);
+
+	for (u16 i = 0; i < unk44->getMaterialNum(); ++i) {
+		J3DMaterialAnm* anm = new J3DMaterialAnm;
+		unk44->getMaterialNodePointer(i)->change();
+		unk44->getMaterialNodePointer(i)->setMaterialAnm(anm);
+	}
+	unk44->entryTexMtxAnimator(unk54);
+	for (u16 i = 0; i < unk44->getMaterialNum(); ++i) {
+		unk44->getMaterialNodePointer(i)->setSomeFlag();
+	}
+	unk58->init(unk54->getFrameMax());
+	unk58->setAttribute(J3DFrameCtrl::ATTR_LOOP);
+}
+
+TShimmer::TShimmer(const char* name)
+    : JDrama::TActor(name)
+    , unk44(nullptr)
+    , unk48(nullptr)
+    , unk54(nullptr)
+    , unk58(new J3DFrameCtrl)
+    , unk7C(0)
+{
+}

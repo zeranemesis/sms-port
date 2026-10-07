@@ -1,0 +1,27 @@
+name: lint
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  format:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Check formatting in all tracked sources
+      shell: bash
+      run: |
+        git ls-files -z -- '*.c' '*.C' '*.cc' '*.cpp' '*.cxx' '*.c++' \
+          '*.h' '*.H' '*.hh' '*.hpp' '*.hxx' '*.h++' \
+          '*.ino' '*.pde' '*.proto' '*.cu' |
+          docker run --rm -i \
+            --volume "$GITHUB_WORKSPACE:/work:ro" --workdir /work \
+            --entrypoint /usr/bin/xargs ghcr.io/jidicula/clang-format:21 \
+            -0 -r /usr/bin/clang-format --dry-run --Werror \
+            --style=file --fallback-style=none --
+
+    # clang-tidy is not currently configured. This check never edits files.

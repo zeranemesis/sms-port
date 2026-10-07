@@ -1,0 +1,362 @@
+#include <Enemy/WalkerEnemy.hpp>
+#include <Enemy/Walker.hpp>
+#include <Enemy/Graph.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Map/MapData.hpp>
+#include <Strategic/Spine.hpp>
+#include <System/MarDirector.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <JSystem/JMath.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+
+TWalkerEnemyParams::TWalkerEnemyParams(const char* path)
+    : TSmallEnemyParams(path)
+    , PARAM_INIT(mSLZigzagCycle, 1000.0f)
+    , PARAM_INIT(mSLZigzagAngle, 30.0f)
+    , PARAM_INIT(mSLMarchSpeedLow, 0.8f)
+    , PARAM_INIT(mSLMarchSpeedHigh, 1.5f)
+    , unk324(0.0f, 1.0f)
+{
+	TParams::load(mPrmPath);
+	unk324.mMin = mSLMarchSpeedLow.get();
+	unk324.mMax = mSLMarchSpeedHigh.get();
+}
+
+TWalkerEnemy::TWalkerEnemy(const char* name)
+    : TSmallEnemy(name)
+{
+}
+
+void TWalkerEnemy::init(TLiveManager* param_1)
+{
+	TSmallEnemy::init(param_1);
+	mBinder = new TWalker;
+	getWalker()->reset();
+	getWalker()->unk18 = 150.0f;
+
+	mMarchSpeed = getSaveParam2()->unk324.rand();
+	getSpine()->initWith(&TNerveWalkerGenerate::theNerve());
+}
+
+// TODO: fake
+static inline JGeometry::TVec3<f32> polarXZ(f32 theta, f32 radius)
+{
+	f32 c = radius * JMACos(theta);
+	f32 s = radius * JMASin(theta);
+	return JGeometry::TVec3<f32>(s, 0.0f, c);
+}
+
+// Retail keeps a virtual `getSaveParam()` call whose result is dead after the
+// polar temp. It is spelled here as a dead named read of a walker parameter
+// (which member it read is unobservable); the named `f32` from the reference
+// `get()` gives the vector slots their 16-byte stride, and the accessor reads
+// (`getGroundPlane`, `getSpine`, `getRotation`) carry the rest of the pool.
+void TWalkerEnemy::moveObject()
+{
+	if (!getGroundPlane()->checkFlag(BG_CHECK_FLAG_ILLEGAL)
+	    && (mInstanceIndex & 0xF) == (gpMarDirector->unk58 & 0xF)) {
+		doShortCut();
+	}
+
+	TSmallEnemy::moveObject();
+
+	if (getWalker()->getUnk1C()
+	    && getSpine()->getCurrentNerve() != &TNerveSmallEnemyJump::theNerve()) {
+
+		// TODO: some order of inlines should be used instead of tmps
+		f32 yAngle = getRotation().y;
+		f32 f      = getSaveParam2()->unk324.mMax;
+
+		JGeometry::TVec3<f32> local = polarXZ(yAngle, f);
+
+		f32 cycle = getSaveParam2()->mSLZigzagCycle.get();
+		mVelocity.x = local.x;
+		mVelocity.z = local.z;
+		getSpine()->pushNerve(&TNerveSmallEnemyJump::theNerve());
+		onLiveFlag(LIVE_FLAG_AIRBORNE);
+		mPosition.y += 5.0f;
+	}
+}
+
+void TWalkerEnemy::attackToMario()
+{
+	sendAttackMsgToMario();
+	if (mSpine->getCurrentNerve() != &TNerveSmallEnemyJump::theNerve()
+	    && mSpine->getCurrentNerve() != &TNerveSmallEnemyDie::theNerve()
+	    && mSpine->getCurrentNerve() != &TNerveWalkerGenerate::theNerve()) {
+		mSpine->pushNerve(&TNerveWalkerPostAttack::theNerve());
+		mSpine->pushNerve(&TNerveSmallEnemyJump::theNerve());
+	}
+}
+
+void TWalkerEnemy::reset()
+{
+	unk124->reset2();
+	unk124->reset();
+	TSmallEnemy::reset();
+
+	mMarchSpeed = getSaveParam2()->unk324.rand();
+
+	getWalker()->reset();
+	getSpine()->reset();
+	mSpine->setNext(mSpine->getDefault());
+
+	// The node is a named local and the `getSpine()` above carries the +4 of
+	// pool that puts it at 0x38: `setGoalPathMario()` lands the temp at 0x20,
+	// the named node alone at 0x34, and routing `setNext` through `getSpine()`
+	// as well overshoots the frame to 0x68.
+	TPathNode node((THitActor*)gpMarioAddress);
+	setGoalPath(node);
+}
+
+void TWalkerEnemy::walkBehavior(int param_1, float param_2)
+{
+	f32 fVar1 = param_2 * unk158;
+	switch (param_1) {
+	case 0:
+		zigzagToCurPathNode(mMarchSpeed * fVar1, mTurnSpeed * fVar1,
+		                    getSaveParam2()->mSLZigzagCycle.get(),
+		                    getSaveParam2()->mSLZigzagAngle.get());
+		break;
+
+	case 1:
+	case 2:
+		walkToCurPathNode(mMarchSpeed * fVar1, mTurnSpeed * fVar1, 0.0f);
+		break;
+
+	case 3:
+		walkToCurPathNode(0.0f, mTurnSpeed * fVar1, 0.0f);
+		break;
+
+	case 4:
+		walkToCurPathNode(mMarchSpeed * fVar1, 0.0f, 0.0f);
+		break;
+
+	case 5:
+		break;
+	}
+}
+
+// TU-local fork of the Mario global, worth +4 of low region (the "global fork
+// is +4 per read" rung).  `setGoalPathMario()` and the spelled-out
+// `setGoalPath((THitActor*)gpMarioAddress)` bracket retail here without ever
+// hitting it: measured against retail's TPathNode temp at 0x34 / frame 0x50,
+// the direct call is 0x30/0x48, the header's `setGoalPathMario()` (which binds
+// its own `THitActor* mario`) is 0x2c/0x50, and a TU-local binder over
+// `checkUnk150` is a uniform +8/+8 on either, so every combination lands on
+// the 8-byte grid 4 away from retail.  Forking the global read out of the
+// argument is the missing 4 and closes the function.
+static inline THitActor* WalkerEnemyMario() { return (THitActor*)gpMarioAddress; }
+
+void TWalkerEnemy::behaveToFindMario()
+{
+	if (checkUnk150(2)) {
+		mSpine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+		mSpine->pushAfterCurrent(&TNerveWalkerEscape::theNerve());
+		mSpine->pushAfterCurrent(&TNerveSmallEnemyJump::theNerve());
+	} else {
+		setGoalPath(WalkerEnemyMario());
+		mSpine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+		mSpine->pushAfterCurrent(&TNerveWalkerAttack::theNerve());
+		mSpine->pushAfterCurrent(&TNerveSmallEnemyJump::theNerve());
+	}
+}
+
+void TWalkerEnemy::initAttacker(THitActor* param_1)
+{
+	mRotation = param_1->getRotation();
+	unk184    = 1;
+}
+
+
+bool TWalkerEnemy::isResignationAttack()
+{
+	f32 fVar1 = getSaveParam2()->mSLGiveUpLength.get();
+
+	if (MsDistance(unk104.getPointRaw(), mPosition) > fVar1)
+		return true;
+	else
+		return false;
+}
+
+bool TWalkerEnemy::isReachedToGoalXZ()
+{
+	JGeometry::TVec3<f32> tmp = getUnk104().getPointRaw();
+	tmp -= mPosition;
+	tmp.y = 0.0f;
+
+	if (tmp.x == 0.0f && tmp.z == 0.0f)
+		return true;
+
+	if (MsVECMag2(&tmp) < 100.0f)
+		return true;
+	else
+		return false;
+}
+
+void TWalkerEnemy::initialGraphNode()
+{
+	unk124->reset();
+	goToShortestNextGraphNode();
+}
+
+DEFINE_NERVE(TNerveWalkerGenerate, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		self->setGenerateAnm();
+	} else {
+		if (self->checkCurAnmEnd(0)) {
+			spine->pushAfterCurrent(&TNerveWalkerGraphWander::theNerve());
+			return true;
+		}
+	}
+
+	return false;
+}
+
+DEFINE_NERVE(TNerveWalkerGraphWander, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+
+	if (spine->getTime() == 0) {
+		self->setWalkAnm();
+		self->initialGraphNode();
+	}
+
+	if (self->isReachedToGoal())
+		self->goToRandomNextGraphNode();
+
+	if (self->isFindMario(1.0f)) {
+		self->behaveToFindMario();
+		return true;
+	} else {
+		self->walkBehavior(0, 1.0f);
+		return false;
+	}
+}
+
+// Binding level worth +16 of low region, landing
+// TNerveWalkerAttack::execute's frame at 0x50 (batch 121).
+static inline const JGeometry::TVec3<f32>&
+WalkerEnemyGetPosition(const TWalkerEnemy* p)
+{
+	const JGeometry::TVec3<f32>& position = p->getPosition();
+	return position;
+}
+
+DEFINE_NERVE(TNerveWalkerAttack, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+
+	if (spine->getTime() == 0)
+		self->setRunAnm();
+
+	// TODO: what is the inlines play here?
+	if (self->unkF4.unk0 == (THitActor*)gpMarioAddress) {
+		if (SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)
+		    || SMS_CheckMarioFlag(MARIO_FLAG_IN_SHALLOW_WATER)
+		    || SMS_GetMarioGroundPlane()->isWaterSurface()
+		    || SMS_CheckMarioFlag(MARIO_FLAG_IN_WATER))
+			return true;
+
+		f32 giveUpHeight = self->getSaveParam2()->mSLGiveUpHeight.get();
+		if (abs(SMS_GetMarioPos().y - WalkerEnemyGetPosition(self).y)
+		    > giveUpHeight)
+			return true;
+	}
+
+	self->walkBehavior(2, 3.0f);
+	if (self->isResignationAttack())
+		return true;
+	return false;
+}
+
+DEFINE_NERVE(TNerveWalkerPostAttack, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+	if (spine->getTime() == 0)
+		self->setWaitAnm();
+
+	s32 delay = self->getSaveParam2()->getSLAttackWait();
+	if (spine->getTime() >= delay && self->checkCurAnmEnd(0)) {
+		return true;
+	}
+
+	return false;
+}
+
+// The two dead `getSaveParam()` calls are two dead named parameter reads, as
+// in TWalkerEnemy::moveObject; with them, `switchNextGoalPath()` spelled out
+// (rather than called) puts the `pop()` temp at retail's slot.
+DEFINE_NERVE(TNerveWalkerEscape, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+	if (spine->getTime() == 0) {
+		self->goToRandomEscapeGraphNode();
+		self->setWalkAnm();
+	}
+
+	if (self->isReachedToGoal())
+		self->goToRandomEscapeGraphNode();
+
+	f32 cycle = self->getSaveParam2()->mSLZigzagCycle.get();
+	f32 angle = self->getSaveParam2()->mSLZigzagAngle.get();
+	if (SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)) {
+		if (!self->unk114.empty())
+			self->unkF4 = self->unk114.pop();
+		return true;
+	}
+
+	f32 giveUpLength2 = self->getSaveParam2()->mSLGiveUpLength.get();
+	giveUpLength2 *= giveUpLength2;
+
+	self->updateSquareToMario();
+
+	if (self->mDistToMarioSquared > giveUpLength2)
+		return true;
+
+	self->walkBehavior(1, 2.0f);
+	return false;
+}
+
+DEFINE_NERVE(TNerveWalkerTraceMario, TLiveActor)
+{
+	TWalkerEnemy* self = (TWalkerEnemy*)spine->getBody();
+	if (spine->getTime() == 0) {
+		self->setRunAnm();
+		self->setGoalPathMario();
+	}
+
+	if (spine->getTime() == 10)
+		self->offLiveFlag(LIVE_FLAG_HIDDEN);
+
+	if (SMS_CheckMarioFlag(MARIO_FLAG_VISIBLE)
+	    || SMS_CheckMarioFlag(MARIO_FLAG_IN_SHALLOW_WATER)
+	    || SMS_GetMarioGroundPlane()->isWaterSurface()
+	    || SMS_CheckMarioFlag(MARIO_FLAG_IN_WATER)) {
+
+		spine->pushAfterCurrent(&TNerveWalkerTraceMario::theNerve());
+		spine->pushAfterCurrent(&TNerveSmallEnemyWait::theNerve());
+		return true;
+	}
+
+	f32 giveUpHeight = self->getSaveParam2()->mSLGiveUpHeight.get();
+	// Raw `mPosition`, not `getPosition()`: the accessor is worth 4 bytes of
+	// pool here, which this function no longer needs now that
+	// `setGoalPathMario()` carries its own pointer binding. Frame 0x60, exact.
+	if (abs(SMS_GetMarioPos().y - self->mPosition.y) > giveUpHeight)
+		return true;
+
+	self->walkBehavior(2, 3.0f);
+	if (self->isResignationAttack())
+		return true;
+
+	return false;
+}

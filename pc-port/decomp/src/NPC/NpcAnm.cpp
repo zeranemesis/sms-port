@@ -1,0 +1,1142 @@
+#include <NPC/NpcBase.hpp>
+#include <MSound/MSound.hpp>
+#include <MarioUtil/RandomUtil.hpp>
+#include <MarioUtil/MathUtil.hpp>
+#include <System/MarDirector.hpp>
+#include <Strategic/Spine.hpp>
+#include <M3DUtil/LodAnm.hpp>
+#include <M3DUtil/MActor.hpp>
+#include <Player/MarioAccess.hpp>
+#include <Enemy/Graph.hpp>
+#include <Camera/cameralib.hpp>
+#include <NPC/NpcThrow.hpp>
+#include <NPC/NpcSave.hpp>
+#include <NPC/NpcCoin.hpp>
+#include <NPC/NpcInbetween.hpp>
+#include <NPC/NpcParts.hpp>
+#include <NPC/NpcNerve.hpp>
+
+// rogue includes needed for matching sinit & bss
+#include <MSound/MSSetSound.hpp>
+#include <MSound/MSoundBGM.hpp>
+#include <M3DUtil/InfectiousStrings.hpp>
+
+// TODO: should be in a header and violate ODR
+// Defined in both NpcAnm and NpcParts, as retail keeps the string in both; the
+// linker keeps the first. A PC build must give it internal or weak linkage.
+const char* cNpcPartsNameRootJoint = "__ROOT_JOINT__";
+
+f32 CalcJumpVelocityY(f32 height, f32 gravity)
+{
+	f32 velocity = 0.0f;
+	if (gravity > 0.0f) {
+		velocity = gravity * 0.5f
+		           * (MsSqrtf(height * (1.0f / gravity) * 8.0f + 1.0f) + 1.0f);
+	}
+	return velocity;
+}
+
+bool TBaseNPC::isNowMotionBlend() const
+{
+	bool result = false;
+	if (!(mActorType < 0x400001E && mActorType >= 0x400001C)) {
+		if (mInbetweenCtrl->isMotionBlending())
+			result = true;
+	}
+	return result;
+}
+
+void TBaseNPC::offStopMotionBlend() { mInbetweenCtrl->stopMotionBlend(); }
+
+void TBaseNPC::onStopMotionBlend() { mInbetweenCtrl->startMotionBlend(); }
+
+// TODO: 0x20 short; this in r29 vs retail r31, blend param inverted.
+// c-k11 tells: the 0x4000015 case's two zeroed indices share one zero
+// (`li r26, 0; addi r28, r26, 0`), the c-k5 inliner-object shape, so that
+// case body was an inline level in retail; the other four parts sites test
+// getPartsMActor's result in r3 (`cmplwi r3, 0`) and copy it to a saved
+// register only after the index switch, so there the part actor is an
+// inline temporary, not a named local. A pass-through level over
+// `getPartsMActor(i, 0)` gives retail's `this` in r31 and the cmplwi, but
+// the copy is scheduled early and the frame is 0x58; the three case bodies
+// as TU-local inline levels (every subset) keep the 0x40 frame. MActor::setBck
+// and on/offStopMotionBlend are inert.
+void TBaseNPC::setNpcAnm_(EnumNpcAnmKind param_1,
+                          EnumNpcStopMotionBlendOnOff param_2)
+{
+	if (mActorType < 0x400001E && mActorType >= 0x400001C)
+		return;
+
+	mKeepAnmCtrl->reset();
+
+	if (param_1 == unkD0->getCurrentAnmKind())
+		return;
+
+	if (!unkD0->setBckAndBtpAnm(param_1))
+		return;
+
+	if (param_1 == NPC_ANM_KIND_HAPPY) {
+		switch (unk1D9) {
+		case 0:
+		case 1:
+		case 2:
+			emitHappyEffect_();
+			if (SMSGetMSound()->gateCheck(MSD_SE_NPC_MONTE_C_CLEANUP))
+				MSoundSESystem::MSoundSE::startSoundNpcActor(
+				    MSD_SE_NPC_MONTE_C_CLEANUP, &mPosition, 0, nullptr, 0, 4);
+			break;
+		}
+	}
+
+	if (isSunflower()) {
+		J3DFrameCtrl* ctrl = mMActor->getFrameCtrl(ANM_TYPE_BRK);
+		if (checkUnk1D8(UNK1D8_FLAG_UNK1)) {
+			if (param_1 == NPC_ANM_KIND_UNK5) {
+				mMActor->setBrkFromIndex(mActorType == 0x400001A ? 1 : 1);
+				ctrl->setAttribute(J3DFrameCtrl::ATTR_ONCE);
+			} else {
+				mMActor->setBrkFromIndex(mActorType == 0x400001A ? 0 : 0);
+				ctrl->setRate(0.0f);
+			}
+		} else if (checkUnk1D8(UNK1D8_FLAG_UNK2)) {
+			if (param_1 == NPC_ANM_KIND_UNK1A) {
+				mMActor->setBrkFromIndex(mActorType == 0x400001A ? 0 : 0);
+				ctrl->setAttribute(J3DFrameCtrl::ATTR_ONCE);
+			}
+		}
+	}
+
+	if (unk168 != nullptr && isPartsAnmNpc()) {
+		switch (mActorType) {
+		case 0x4000018: {
+			bool bVar8 = checkUnk1D8(UNK1D8_FLAG_UNK1);
+			MActor* mactor = unk168->getPartsMActor(0, 0);
+			if (mactor != nullptr) {
+				int iVar7;
+				switch (param_1) {
+				case NPC_ANM_KIND_UNK5:
+					if (bVar8)
+						iVar7 = 4;
+					else
+						iVar7 = 6;
+					break;
+
+				default:
+					if (bVar8)
+						iVar7 = 3;
+					else
+						iVar7 = 5;
+					break;
+				}
+				if (!mactor->checkCurBckFromIndex(iVar7))
+					mactor->setBckFromIndex(iVar7);
+			}
+
+			mactor = unk168->getPartsMActor(3, 0);
+			if (mactor != nullptr) {
+				int iVar7;
+
+				switch (param_1) {
+				case NPC_ANM_KIND_TAKEN:
+					iVar7 = 7;
+					break;
+
+				case NPC_ANM_KIND_UNK10:
+					iVar7 = 14;
+					break;
+
+				case NPC_ANM_KIND_UNK1A:
+					iVar7 = 13;
+					break;
+
+				case NPC_ANM_KIND_UNK5:
+				default:
+					if (bVar8)
+						iVar7 = 11;
+					else if (checkUnk1D8(UNK1D8_FLAG_UNK4))
+						iVar7 = 9;
+					else
+						iVar7 = 8;
+					break;
+				}
+
+				if (!mactor->checkCurBckFromIndex(iVar7))
+					mactor->setBckFromIndex(iVar7);
+			}
+
+			mactor = unk168->getPartsMActor(4, 0);
+			if (mactor != nullptr) {
+				int iVar7;
+				switch (param_1) {
+				case NPC_ANM_KIND_UNK5:
+					iVar7 = -1;
+					break;
+				default:
+					iVar7 = 17;
+					break;
+				}
+				if (!mactor->checkCurBckFromIndex(iVar7))
+					mactor->setBckFromIndex(iVar7);
+			}
+		} break;
+
+		case 0x4000010: {
+			int iVar7 = 1;
+			switch (param_1) {
+			case NPC_ANM_KIND_UNK6:
+				iVar7 = 2;
+				break;
+			case NPC_ANM_KIND_UNK5:
+				iVar7 = 3;
+				break;
+			}
+			MActor* mactor = unk168->getPartsMActor(9, 0);
+			if (mactor != nullptr) {
+				if (!mactor->checkCurBckFromIndex(iVar7))
+					mactor->setBckFromIndex(iVar7);
+			}
+		} break;
+
+		case 0x4000015: {
+			int iVar7 = 0;
+			int iVar3 = 0;
+			switch (param_1) {
+			case NPC_ANM_KIND_UNK5:
+				iVar7 = 2;
+				iVar3 = 1;
+				break;
+			case NPC_ANM_KIND_UNK6:
+				iVar7 = 1;
+				break;
+			}
+			MActor* mactor = unk168->getPartsMActor(10, 0);
+			if (mactor != nullptr) {
+				if (!mactor->checkCurBckFromIndex(iVar7))
+					mactor->setBckFromIndex(iVar7);
+				mactor->setBtpFromIndex(iVar3);
+			}
+		} break;
+		}
+	}
+
+	if (param_2 == NPC_STOP_MOTION_BLEND_ON)
+		mInbetweenCtrl->startMotionBlend();
+	else
+		mInbetweenCtrl->stopMotionBlend();
+
+	setCurAnmSound();
+}
+
+// TODO: keep() puts mKeepAnmCtrl in r6 and converts blend in r3; retail
+// reuses dead `this` (lwz r3, 0x190(r3); neg r5, r5). A TU-local keep
+// wrapper is inert. Closed by `mBlendOn = blend;` (implicit conversion) in
+// TNpcKeepAnm::keep in the shared NpcBase.hpp, parked for its owner.
+void TBaseNPC::requestNpcAnm_(EnumNpcAnmKind param_1,
+                              EnumNpcStopMotionBlendOnOff param_2)
+{
+	if (mActorType < 0x400001E && mActorType >= 0x400001C)
+		return;
+
+	if (mInbetweenCtrl->isMotionBlending()) {
+		if (param_1 == unkD0->getCurrentAnmKind()) {
+			mKeepAnmCtrl->reset();
+		} else {
+			mKeepAnmCtrl->keep(param_1, param_2);
+		}
+	} else {
+		setNpcAnm_(param_1, param_2);
+	}
+}
+
+void TBaseNPC::setKeepAnm_()
+{
+	EnumNpcAnmKind tmp               = mKeepAnmCtrl->getKind();
+	EnumNpcStopMotionBlendOnOff tmp2 = mKeepAnmCtrl->getBlend();
+	mKeepAnmCtrl->reset();
+	if (tmp != NPC_ANM_KIND_INVALID) {
+		if (tmp == unkD0->getCurrentAnmKind())
+			mKeepAnmCtrl->reset();
+		else
+			setNpcAnm_(tmp, tmp2);
+	}
+}
+
+void TBaseNPC::requestTalkAnm_()
+{
+	EnumNpcAnmKind kind;
+	if (checkActionFlag(NPC_ACTION_UNK400))
+		kind = NPC_ANM_KIND_UNK1;
+	else if (checkActionFlag(NPC_ACTION_UNK1)
+	         && !checkActionFlag(NPC_ACTION_DANCE))
+		kind = NPC_ANM_KIND_UNK13;
+	else
+		kind = NPC_ANM_KIND_UNK6;
+
+	requestNpcAnm_(kind, NPC_STOP_MOTION_BLEND_ON);
+}
+
+void TBaseNPC::randomizeBckAndBtpFrame_()
+{
+	s16 bckEnd            = 0;
+	s16 bckFrame          = 0;
+	J3DFrameCtrl* bckCtrl = mMActor->getFrameCtrl(ANM_TYPE_BCK);
+	if (bckCtrl != nullptr) {
+		bckEnd   = bckCtrl->getEnd();
+		bckFrame = bckEnd * MsRandF();
+		bckCtrl->setFrame(bckFrame);
+	}
+	J3DFrameCtrl* btpCtrl = mMActor->getFrameCtrl(ANM_TYPE_BTP);
+	if (btpCtrl != nullptr) {
+		s16 btpEnd   = btpCtrl->getEnd();
+		s16 btpFrame = btpEnd == bckEnd ? bckFrame : (s16)(btpEnd * MsRandF());
+		btpCtrl->setFrame(btpFrame);
+	}
+}
+
+// Two inline levels the frame and registers ask for (c-k9, MWCC debugger):
+// retail's MsSqrtf volatile sits at 0x7c, below the depth-1 parameter
+// bindings, so the square root is expanded one level down; and retail's
+// blend flag shares the `1` of isMotionBlending's result (`mr r0, r3`), which
+// only an inliner-object flag gives. `getColNum()` as a bare test drops the
+// u16 forced load that `!= 0` leaves (the last word below the volatile).
+static inline bool NpcAnmIsBlending(const TBaseNPC* npc)
+{
+	bool result = true;
+	if (!npc->mInbetweenCtrl->isMotionBlending()
+	    && !npc->mInbetweenCtrl->isForcedBlendRatio())
+		result = false;
+	return result;
+}
+
+static inline f32 NpcAnmSpeedXZ(const JGeometry::TVec3<f32>& v)
+{
+	return MsSqrtf(v.x * v.x + v.z * v.z);
+}
+
+void TBaseNPC::walkAnmRateChange_()
+{
+	f32 dVar13 = NpcAnmSpeedXZ(mLinearVelocity);
+	if (dVar13 < 0.001f) {
+		switch (unkD0->getCurrentAnmKind()) {
+		case NPC_ANM_KIND_WALK:
+		case NPC_ANM_KIND_RUN: {
+			int iVar5
+			    = CLBPalFrame(mPtrSaveNormal->mStopWalkAnmRateFrame.get());
+			BOOL bVar7 = CLBChaseDecrease(
+			    &unk1D0, 0.0f, mPtrSaveNormal->mStopWalkAnmRateChase.get(),
+			    0.001f);
+
+			if (unk1CC < iVar5)
+				unk1CC += 1;
+
+			if (unk1CC >= iVar5 || !bVar7) {
+				unk1CC = 0;
+				unk1D0 = 0.0f;
+
+				if (!NpcAnmIsBlending(this))
+					npcWaitIn();
+				else if (!mInbetweenCtrl->isMotionBlending())
+					mMActor->setFrameRate(unk1D0, ANM_TYPE_BCK);
+			} else {
+				mMActor->setFrameRate(unk1D0, ANM_TYPE_BCK);
+			}
+		} break;
+
+		default:
+			npcWaitIn();
+			break;
+		}
+	} else {
+		unk1CC = 0;
+		switch (unkD0->getCurrentAnmKind()) {
+		case NPC_ANM_KIND_WALK:
+		case NPC_ANM_KIND_RUN: {
+			f32 fVar1 = mIndividualParams->mSLMinWalkAnmRate.get()
+			            * SMSGetAnmFrameRate();
+
+			f32 dVar10;
+			f32 dVar12;
+			if (unkD0->getCurrentAnmKind() == NPC_ANM_KIND_RUN) {
+				dVar12 = mIndividualParams->mSLMaxRunAnmRate.get()
+				         * SMSGetAnmFrameRate();
+				dVar10 = mIndividualParams->mSLMaxRunSpeed.get();
+				if (checkActionFlag(NPC_ACTION_BURNING)) {
+					f32 dVar9 = mPtrSaveNormal->mSLSmokeRunMagnif.get();
+					dVar12 *= dVar9;
+					dVar10 *= dVar9;
+				}
+			} else {
+				dVar12 = mIndividualParams->mSLMaxWalkAnmRate.get()
+				         * SMSGetAnmFrameRate();
+				dVar10 = mIndividualParams->mMaxMarchSpeed.get();
+			}
+
+			if (dVar13 > dVar10)
+				dVar13 = dVar10;
+
+			f32 dVar131 = MsClamp(
+			    CLBCalcRatio(mIndividualParams->mSLMinMarchSpeed.get(), dVar10,
+			                 dVar13),
+			    0.0f, 1.0f);
+
+			f32 dVar132 = CLBLinearInbetween(fVar1, dVar12, dVar131);
+
+			if (getColNum())
+				dVar132 = dVar12;
+
+			CLBChaseDecrease(&unk1D0, dVar132,
+			                 mPtrSaveNormal->mMoveWalkAnmRateChase.get(), 0.0f);
+			mMActor->setFrameRate(unk1D0, ANM_TYPE_BCK);
+		} break;
+
+		default:
+			unk1D0 = 0.0f;
+			if (checkActionFlag(NPC_ACTION_RUN))
+				requestNpcAnm_(NPC_ANM_KIND_RUN, NPC_STOP_MOTION_BLEND_ON);
+			else
+				requestNpcAnm_(NPC_ANM_KIND_WALK, NPC_STOP_MOTION_BLEND_ON);
+			break;
+		}
+	}
+}
+
+EnumNpcAnmKind TBaseNPC::getNpcWaitAnmBase_()
+{
+	EnumNpcAnmKind result = NPC_ANM_KIND_UNK1;
+	if (mWalkForbidCount == 0) {
+		if (checkActionFlag(NPC_ACTION_UNK2))
+			result = NPC_ANM_KIND_UNKC;
+		else if (checkActionFlag(NPC_ACTION_UNK10))
+			result = NPC_ANM_KIND_UNK15;
+		else if (checkActionFlag(NPC_ACTION_UNK20))
+			result = NPC_ANM_KIND_UNK6;
+		else if (checkActionFlag(NPC_ACTION_UNK40))
+			result = NPC_ANM_KIND_UNK17;
+		else if (checkActionFlag(NPC_ACTION_DANCE))
+			result = NPC_ANM_KIND_DANCE;
+	}
+	return result;
+}
+
+static inline TGraphTracer* NpcAnmWaitTracer(const TBaseNPC* p)
+{
+	TGraphTracer* tracer = p->unk124;
+	return tracer;
+}
+
+void TBaseNPC::npcWaitIn()
+{
+	EnumNpcAnmKind kind = NPC_ANM_KIND_UNK1;
+
+	if (!checkActionFlag(NPC_ACTION_UNK400)) {
+		if (!isClean()) {
+			kind = NPC_ANM_KIND_DIRTY;
+		} else if (checkActionFlag(NPC_ACTION_HAPPY)) {
+			kind = NPC_ANM_KIND_HAPPY;
+		} else if (checkActionFlag(NPC_ACTION_UNK1)
+		           && !checkActionFlag(NPC_ACTION_DANCE)) {
+			if (checkActionFlag(NPC_ACTION_UNK20)) {
+				kind = NPC_ANM_KIND_UNK13;
+			} else {
+				kind = NPC_ANM_KIND_UNK12;
+			}
+		} else {
+			if (!NpcAnmWaitTracer(this)->getGraph()->isDummy()) {
+				if (getSpine()->getLatestNerve()
+				    == &TNerveNPCGraphWait::theNerve()) {
+					if (!gpMarDirector->isThing())
+						kind = getNpcWaitAnmBase_();
+				}
+			} else {
+				kind = getNpcWaitAnmBase_();
+			}
+		}
+	}
+
+	requestNpcAnm_(kind, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+void TBaseNPC::npcFallIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_UNK2, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+bool TBaseNPC::npcRecoverFromSinking()
+{
+	bool result = false;
+
+	if (!checkLiveFlag(LIVE_FLAG_UNK8000000)) {
+		if (getMActor()->getFrameCtrl(ANM_TYPE_BCK)->checkPass(32.0f)) {
+			onLiveFlag(LIVE_FLAG_UNK8000000);
+			mVelocity.y = CalcJumpVelocityY(unk1C4 - getPosition().y + 150.0f,
+			                                getGravityY());
+			if (mVelocity.y < 5.0f)
+				mVelocity.y = 5.0f;
+		}
+	}
+
+	if (getMActor()->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+		result = true;
+		offLiveFlag(LIVE_FLAG_AIRBORNE);
+		mVelocity.set(0.0f, 0.0f, 0.0f);
+		mPosition.y = unk1C4;
+		offLiveFlag(LIVE_FLAG_UNK10 | LIVE_FLAG_UNK400000
+		            | LIVE_FLAG_UNK8000000);
+	} else {
+		if (checkLiveFlag(LIVE_FLAG_UNK8000000)) {
+			mVelocity.y -= getGravityY();
+			if (mVelocity.y < mVelocityMinY)
+				mVelocity.y = mVelocityMinY;
+			mPosition.y += mVelocity.y;
+			if (mVelocity.y <= 0.0f && mPosition.y < unk1C4)
+				mPosition.y = unk1C4;
+		}
+	}
+
+	return result;
+}
+
+void TBaseNPC::npcRecoverAfterIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_UNK3, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+void TBaseNPC::npcStepIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+static inline int NpcAnmActorType(const TBaseNPC* p)
+{
+	int actorType = p->mActorType;
+	return actorType;
+}
+
+void TBaseNPC::npcTalkIn()
+{
+	onLiveFlag(LIVE_FLAG_UNK80000);
+	if (NpcAnmActorType(this) != 0x400001C
+	    && NpcAnmActorType(this) != 0x400001D) {
+		if (!isSunflowerReviving()) {
+			bool tired = isPeachTired();
+			if (tired) {
+				requestNpcAnm_(NPC_ANM_KIND_UNK1A, NPC_STOP_MOTION_BLEND_ON);
+			} else {
+				requestTalkAnm_();
+			}
+		}
+	}
+
+	resetToWait_();
+}
+
+// Binding level worth +16 of low region, landing TBaseNPC::npcTalking's
+// frame at 0x50 (batch 121).
+static inline int NpcAnmGetCurrentAnmKind(const TLodAnm* p)
+{
+	int currentAnmKind = p->getCurrentAnmKind();
+	return currentAnmKind;
+}
+
+// Binding level worth +16 of low region, landing TBaseNPC::npcTalking's
+// frame at 0x50 (batch 121).
+static inline const TGraphWeb* NpcAnmGetGraph(const TGraphTracer* p)
+{
+	const TGraphWeb* graph = p->getGraph();
+	return graph;
+}
+
+void TBaseNPC::npcTalking()
+{
+	if (isSunflowerReviving()) {
+		sunflowerReviving();
+		return;
+	}
+
+	if (isTurnToMarioWhenTalk()) {
+		SMS_GoRotate(mPosition, SMS_GetMarioPos(), getTurnSpeed(),
+		             &mRotation.y);
+		if (!NpcAnmGetGraph(unk124)->isDummy())
+			onUnk1DA(UNK1DA_FLAG_UNK1);
+	}
+
+	bool bVar1 = false;
+	if (mActorType == 0x4000018 && checkUnk1D8(UNK1D8_FLAG_UNK2))
+		bVar1 = true;
+
+	if (bVar1 && NpcAnmGetCurrentAnmKind(unkD0) == NPC_ANM_KIND_UNK1A
+	    && mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+		peachTiredOut_();
+	}
+}
+
+// Binding level over a raw member read, worth +16 of low region in
+// TBaseNPC::npcTalkOut (batch 127).
+static inline TNpcThrow* NpcAnmThrowCtrl(const TBaseNPC* p)
+{
+	TNpcThrow* throwCtrl = p->mThrowCtrl;
+	return throwCtrl;
+}
+
+void TBaseNPC::npcTalkOut()
+{
+	mTalkForbidCount = 60;
+
+	if (checkLiveFlag(LIVE_FLAG_UNK80000)) {
+		mWalkForbidCount = 120;
+		if (isPeachTired())
+			peachTiredOut_();
+
+		if (checkActionFlag(NPC_ACTION_HAPPY)) {
+			offActionFlag(NPC_ACTION_HAPPY);
+			if (mCoinCtrl) {
+				mCoinCtrl->requestAppearCoin(getCursorPos(), mRotation.y, 40);
+				mTalkForbidCount = 360;
+				mWalkForbidCount = 360;
+			}
+		}
+
+		offLiveFlag(LIVE_FLAG_UNK80000);
+		changeNerveFromTalk_();
+		if (NpcAnmThrowCtrl(this) == nullptr && getActorTypeID() == 0x4000006)
+			requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_ON);
+	}
+}
+
+void TBaseNPC::npcTakenIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_TAKEN, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+void TBaseNPC::npcDanceIn()
+{
+	onActionFlag(NPC_ACTION_DANCE);
+	requestNpcAnm_(NPC_ANM_KIND_DANCE, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+void TBaseNPC::npcHappyIn(u8 param_1)
+{
+	unk1D9 = param_1;
+	onActionFlag(NPC_ACTION_HAPPY);
+	requestNpcAnm_(NPC_ANM_KIND_HAPPY, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+void TBaseNPC::npcWetIn()
+{
+	if (!isSunflowerReviving()) {
+		EnumNpcAnmKind EVar7              = NPC_ANM_KIND_UNK5;
+		EnumNpcStopMotionBlendOnOff EVar6 = NPC_STOP_MOTION_BLEND_ON;
+		if (!isClean()) {
+			EVar7 = NPC_ANM_KIND_WASH;
+		} else {
+			if (checkActionFlag(NPC_ACTION_UNK1)) {
+				EVar7 = NPC_ANM_KIND_UNK14;
+
+				if (isNormalMonte())
+					EVar6 = NPC_STOP_MOTION_BLEND_OFF;
+			} else {
+				if (isNormalMonte() || getActorType() == 0x400000D) {
+					if (!checkLiveFlag(LIVE_FLAG_UNK4000000)
+					    && MsRandF() < 0.5f)
+						EVar7 = NPC_ANM_KIND_UNKB;
+					else
+						EVar6 = NPC_STOP_MOTION_BLEND_OFF;
+				} else {
+					if (isNormalMare() || mActorType == 0x4000011) {
+						if (MsRandF() < 0.5f)
+							EVar7 = NPC_ANM_KIND_UNKB;
+					} else if (!(getActorTypeID() < 0x4000018
+					             && mActorType >= 0x4000016)) {
+						(void)mActorType; // TODO: uh, inlining maybe?
+					} else if (!checkLiveFlag(LIVE_FLAG_UNK4000000)) {
+						if (MsRandF() < 0.5f)
+							EVar7 = NPC_ANM_KIND_UNKB;
+					}
+				}
+			}
+		}
+
+		requestNpcAnm_(EVar7, EVar6);
+	}
+
+	resetToTurn_();
+}
+
+// TODO: frame exact (0x160) since npcWetOut reads its spine and actor type
+// through the header accessors (+0x50 over its nine expansions) and the
+// default arm names its animation kind (+0x10). Remaining: the sunflower
+// predicate's bool is r29 vs retail r28, and the 0x4000016 switch's kind is r4
+// vs retail r3. A named int kind there (+8 frame), `(int)` on the switch value
+// and hoisting the default arm's kind out of its if are inert or worse.
+bool TBaseNPC::npcWetting()
+{
+	bool result = false;
+
+	if (checkUnk1DA(UNK1DA_FLAG_UNK2)) {
+		offUnk1DA(UNK1DA_FLAG_UNK2);
+
+		npcHappyIn(0);
+		npcWetOut();
+		result = true;
+	} else if (unkD0->getCurrentAnmKind() == NPC_ANM_KIND_WASH) {
+		if (isClean()) {
+			npcHappyIn(0);
+			npcWetOut();
+			result = true;
+		} else if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+			npcWetOut();
+			result = true;
+		}
+	} else {
+		if (isNormalMare() || mActorType == 0x4000011) {
+			switch (unkD0->getCurrentAnmKind()) {
+			case NPC_ANM_KIND_UNK5:
+			case NPC_ANM_KIND_UNKB:
+			case NPC_ANM_KIND_UNK14:
+				if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+					unk22C->doThing3(240, 480);
+					if (unk22C->doThing2()) {
+						EnumNpcAnmKind EVar12 = NPC_ANM_KIND_UNK7;
+						if (MsRandF() < 0.5f)
+							EVar12 = NPC_ANM_KIND_UNK1B;
+						requestNpcAnm_(EVar12, NPC_STOP_MOTION_BLEND_OFF);
+					}
+				}
+				break;
+
+			case NPC_ANM_KIND_UNK7:
+			case NPC_ANM_KIND_UNK1B:
+				if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+					npcWetOut();
+					result = true;
+				}
+				break;
+			}
+		} else {
+			if (isMonte() && isMadNpc() && mActorType != 0x4000006) {
+				switch (unkD0->getCurrentAnmKind()) {
+				case NPC_ANM_KIND_UNK5:
+				case NPC_ANM_KIND_UNK14:
+					if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+						if (isStateGoToMad_()) {
+							npcMadIn();
+						} else {
+							npcWetOut();
+							result = true;
+						}
+					}
+					break;
+
+				case NPC_ANM_KIND_UNK4:
+					if (checkLiveFlag(LIVE_FLAG_UNK2000000))
+						npcMadding();
+					break;
+
+				case NPC_ANM_KIND_MAD:
+				case NPC_ANM_KIND_UNKB:
+					if (checkLiveFlag(LIVE_FLAG_UNK2000000)) {
+						if (npcMadding()) {
+							npcWetOut();
+							result = true;
+						}
+					} else {
+						if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+							npcWetOut();
+							result = true;
+						}
+					}
+				}
+			} else {
+				if (isSunflowerReviving()) {
+					if (sunflowerReviving()) {
+						npcWetOut();
+						result = true;
+					}
+				} else {
+					switch (mActorType) {
+					case 0x4000016:
+					case 0x4000017:
+						if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+							switch (unkD0->getCurrentAnmKind()) {
+							case NPC_ANM_KIND_UNK5:
+								requestNpcAnm_(NPC_ANM_KIND_UNK7,
+								               NPC_STOP_MOTION_BLEND_OFF);
+								break;
+
+							case NPC_ANM_KIND_UNKB:
+								requestNpcAnm_(NPC_ANM_KIND_MAD,
+								               NPC_STOP_MOTION_BLEND_ON);
+								break;
+
+							case NPC_ANM_KIND_UNK14:
+								requestNpcAnm_(NPC_ANM_KIND_UNK18,
+								               NPC_STOP_MOTION_BLEND_ON);
+								break;
+
+							case NPC_ANM_KIND_UNK7:
+							case NPC_ANM_KIND_MAD:
+							case NPC_ANM_KIND_UNK18:
+								npcWetOut();
+								result = true;
+								break;
+							}
+						}
+						break;
+
+					default:
+						if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+							int kind = unkD0->getCurrentAnmKind();
+							switch (kind) {
+							case NPC_ANM_KIND_UNK5:
+							case NPC_ANM_KIND_UNKB:
+							case NPC_ANM_KIND_UNK14:
+							case NPC_ANM_KIND_WASH:
+								npcWetOut();
+								result = true;
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return result;
+}
+
+void TBaseNPC::npcWetOut()
+{
+	offLiveFlag(LIVE_FLAG_UNK2000000);
+	offLiveFlag(LIVE_FLAG_UNK4000000);
+	if (getSpine()->getTop() == &TNerveNPCTalk::theNerve())
+		requestTalkAnm_();
+	else if (getActorType() == 0x4000006)
+		requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_ON);
+}
+
+void TBaseNPC::npcSinking()
+{
+	f32 dVar6 = unk1C4 - mIndividualParams->mSinkHeight.get();
+	if (mPosition.y != dVar6) {
+		f32 dVar7 = mIndividualParams->mSinkSpeed.get();
+		if (isPollutionNpc()) {
+			CLBChaseConstantSpecifyFrame(&mPollutionAmount, 1.0f,
+			                             (1.0f / dVar7)
+			                                 * (mPosition.y - dVar6));
+		}
+
+		if (!CLBChaseGeneralConstantSpecifySpeed(&mPosition.y, dVar6, dVar7)) {
+			onLiveFlag(LIVE_FLAG_SINK_BOTTOM);
+			onHitFlag(HIT_FLAG_NO_COLLISION);
+			requestNpcAnm_(NPC_ANM_KIND_UNK10, NPC_STOP_MOTION_BLEND_ON);
+		}
+	}
+}
+
+void TBaseNPC::npcThrowIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_THROW, NPC_STOP_MOTION_BLEND_ON);
+	resetToWait_();
+}
+
+bool TBaseNPC::npcThrowing()
+{
+	bool result = false;
+	int uVar4   = mPtrSaveNormal->mSLThrowStartFrame.get();
+	int uVar1   = mSpine->getTime();
+	if ((uVar1 == 0 && uVar4 < 20) || uVar1 == uVar4 - 20) {
+		onHitFlag(HIT_FLAG_NO_COLLISION);
+		unk1DC = CLBPalFrame(30);
+	} else if (uVar1 == uVar4) {
+		mThrowCtrl->throwMario(this);
+	} else if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+		result = true;
+	}
+
+	return result;
+}
+
+void TBaseNPC::npcMadIn()
+{
+	onLiveFlag(LIVE_FLAG_UNK2000000);
+
+	if (mActorType == 0x4000007 || checkActionFlag(NPC_ACTION_UNK1)) {
+		requestNpcAnm_(NPC_ANM_KIND_MAD, NPC_STOP_MOTION_BLEND_ON);
+		return;
+	}
+
+	npcStepIn();
+}
+
+static inline TNpcSaveIndividual* NpcAnmMadParams(const TBaseNPC* p)
+{
+	TNpcSaveIndividual* params = p->mIndividualParams;
+	return params;
+}
+
+bool TBaseNPC::npcMadding()
+{
+	bool result = false;
+
+	if (!checkLiveFlag(LIVE_FLAG_UNK2000000)) {
+		result = true;
+	} else {
+		switch (NpcAnmGetCurrentAnmKind(unkD0)) {
+		case NPC_ANM_KIND_UNK4: {
+			SMS_GoRotate(mPosition, SMS_GetMarioPos(),
+			             NpcAnmMadParams(this)->mMadTurnSpeed.get(), &mRotation.y);
+			// TODO: frame exact, but retail ranks the three vectors the
+			// other way round (axis lowest at 0x68, copy 0x88, copy2 0x98),
+			// so retail's `axis` is an inlined callee's object, not a local
+			// of this body. The named marioPos reference (c-t5's lever)
+			// only lands copy on retail's 0x88 (c-t6, 23 -> 17 markers).
+			const JGeometry::TVec3<f32>& marioPos = SMS_GetMarioPos();
+			JGeometry::TVec3<f32> axis = marioPos;
+			axis -= getPosition();
+			JGeometry::TVec3<f32> copy;
+			copy = axis;
+			JGeometry::TVec3<f32> copy2 = copy;
+			JGeometry::TVec3<f32> copy3;
+			copy3.set(copy2);
+			f32 rotZ  = MsGetRotFromZaxisY(copy3);
+			f32 fVar1 = MsWrap(abs(mRotation.y - rotZ), 0.0f, 360.0f);
+			if (fVar1 < 0.001f)
+				requestNpcAnm_(NPC_ANM_KIND_MAD, NPC_STOP_MOTION_BLEND_OFF);
+			if (!NpcAnmWaitTracer(this)->getGraph()->isDummy())
+				onUnk1DA(UNK1DA_FLAG_UNK1);
+		} break;
+
+		case NPC_ANM_KIND_MAD:
+		case NPC_ANM_KIND_UNKB:
+			if (getMActor()->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+				result = true;
+				offLiveFlag(LIVE_FLAG_UNK2000000);
+			}
+			break;
+		}
+	}
+
+	return result;
+}
+
+void TBaseNPC::npcBlownIn()
+{
+	requestNpcAnm_(NPC_ANM_KIND_UNKE, NPC_STOP_MOTION_BLEND_ON);
+	resetToTurn_();
+}
+
+bool TBaseNPC::npcBlowning()
+{
+	bool result = false;
+
+	if (!isAirborne())
+		result = true;
+
+	return result;
+}
+
+static inline int NpcAnmMareStandKind(const TLodAnm* p)
+{
+	int currentAnmKind = p->getCurrentAnmKind();
+	return currentAnmKind;
+}
+
+void TBaseNPC::npcMareStandIn()
+{
+	switch (NpcAnmMareStandKind(unkD0)) {
+	case NPC_ANM_KIND_UNKE:
+	case NPC_ANM_KIND_UNK5:
+		unk22C->doThing3(240, 360);
+		break;
+
+	default:
+		requestNpcAnm_(NPC_ANM_KIND_UNK7, NPC_STOP_MOTION_BLEND_ON);
+		break;
+	}
+
+	resetToWait_();
+}
+
+bool TBaseNPC::npcMareStanding()
+{
+	bool result = false;
+	switch (unkD0->getCurrentAnmKind()) {
+	case NPC_ANM_KIND_UNK5:
+	case NPC_ANM_KIND_UNKE:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK) && unk22C->doThing2())
+			requestNpcAnm_(NPC_ANM_KIND_UNK7, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+
+	case NPC_ANM_KIND_UNK7:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK))
+			result = true;
+		break;
+
+	default:
+		result = true;
+		break;
+	}
+
+	return result;
+}
+
+void TBaseNPC::peachParasolIn_()
+{
+	static const TAnmBckMapping sIndividualPeachBck[] = {
+		{ 21, 16 },
+		{ 22, 18 },
+		{ -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualPeachBtp[] = {
+		{ 4, 2 },
+		{ -1, -1 },
+	};
+
+	onUnk1D8(UNK1D8_FLAG_UNK1);
+	unkD0->unk18 = sIndividualPeachBck;
+	unkD0->unk1C = sIndividualPeachBtp;
+}
+
+void TBaseNPC::peachParasolOut_()
+{
+	if (!checkUnk1D8(UNK1D8_FLAG_UNK1))
+		return;
+
+	offUnk1D8(UNK1D8_FLAG_UNK1);
+	unkD0->unk18 = nullptr;
+	unkD0->unk1C = nullptr;
+}
+
+void TBaseNPC::peachTiredIn_()
+{
+	if (checkUnk1D8(UNK1D8_FLAG_UNK2))
+		return;
+
+	onUnk1D8(UNK1D8_FLAG_UNK2);
+	requestNpcAnm_(NPC_ANM_KIND_UNK10, NPC_STOP_MOTION_BLEND_ON);
+}
+
+void TBaseNPC::peachTiredOut_()
+{
+	if (!checkUnk1D8(UNK1D8_FLAG_UNK2))
+		return;
+
+	offUnk1D8(UNK1D8_FLAG_UNK2);
+	onUnk1D8(UNK1D8_FLAG_UNK4);
+
+	static const TAnmBckMapping sIndividualPeachBck[] = {
+		{ 21, 0 },
+		{ -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualPeachBtp[] = {
+		{ 5, 0 },
+		{ -1, -1 },
+	};
+
+	unkD0->unk18 = sIndividualPeachBck;
+	unkD0->unk1C = sIndividualPeachBtp;
+	requestNpcAnm_(NPC_ANM_KIND_UNK6, NPC_STOP_MOTION_BLEND_OFF);
+}
+
+void TBaseNPC::sunflowerDownIn_()
+{
+	static const TAnmBckMapping sIndividualSunflowerBck[] = {
+		{ 2, 0 },
+		{ 3, 4 },
+		{ -1, -1 },
+	};
+	static const TAnmBtpMapping sIndividualSunflowerBtp[] = {
+		{ 3, 0 },
+		{ 2, 0 },
+		{ -1, -1 },
+	};
+
+	onUnk1D8(UNK1D8_FLAG_UNK1);
+	offUnk1D8(UNK1D8_FLAG_UNK2);
+	unkD0->unk18 = sIndividualSunflowerBck;
+	unkD0->unk1C = sIndividualSunflowerBtp;
+}
+
+void TBaseNPC::sunflowerReviveIn()
+{
+	if (checkUnk1D8(UNK1D8_FLAG_UNK1)) {
+		offUnk1D8(UNK1D8_FLAG_UNK1);
+		onUnk1D8(UNK1D8_FLAG_UNK2);
+		unkD0->unk18 = nullptr;
+		unkD0->unk1C = nullptr;
+		requestNpcAnm_(NPC_ANM_KIND_UNK1A, NPC_STOP_MOTION_BLEND_ON);
+	}
+}
+
+bool TBaseNPC::sunflowerReviving()
+{
+	bool result = false;
+	if (checkUnk1D8(UNK1D8_FLAG_UNK2)) {
+		int kind = unkD0->getCurrentAnmKind();
+		if (kind == NPC_ANM_KIND_UNK1A) {
+			if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK)) {
+				offUnk1D8(UNK1D8_FLAG_UNK2);
+				if (checkLiveFlag(LIVE_FLAG_UNK80000)) {
+					requestTalkAnm_();
+				} else {
+					npcWaitIn();
+				}
+				result = true;
+			}
+		}
+	}
+	return result;
+}
+
+void TBaseNPC::monteMESetAnmWhenFar()
+{
+	switch (unkD0->getCurrentAnmKind()) {
+	case NPC_ANM_KIND_UNK1:
+		break;
+
+	case NPC_ANM_KIND_UNK2:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK))
+			requestNpcAnm_(NPC_ANM_KIND_UNK1, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+
+	case NPC_ANM_KIND_UNK3:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK))
+			requestNpcAnm_(NPC_ANM_KIND_UNK2, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+
+	default:
+		requestNpcAnm_(NPC_ANM_KIND_UNK2, NPC_STOP_MOTION_BLEND_ON);
+		break;
+	}
+}
+
+void TBaseNPC::monteMESetAnmWhenNear()
+{
+	switch (unkD0->getCurrentAnmKind()) {
+	case NPC_ANM_KIND_UNK4:
+		break;
+
+	case NPC_ANM_KIND_UNK3:
+	case NPC_ANM_KIND_MAD:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK))
+			requestNpcAnm_(NPC_ANM_KIND_UNK4, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+
+	case NPC_ANM_KIND_UNK2:
+		if (mMActor->isCurAnmAlreadyEnd(ANM_TYPE_BCK))
+			requestNpcAnm_(NPC_ANM_KIND_UNK3, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+
+	default:
+		requestNpcAnm_(NPC_ANM_KIND_UNK3, NPC_STOP_MOTION_BLEND_OFF);
+		break;
+	}
+}
