@@ -5,6 +5,8 @@
 #include <sstream>
 #include <filesystem>
 #include <stdexcept>
+#include <cctype>
+#include <algorithm>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -37,7 +39,7 @@ std::string quote(const std::filesystem::path& p) {
 const char* script=R"PS(
 $ErrorActionPreference='Stop'
 [Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12
-function H($s){[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes([string]$s)).Replace('-','')}
+function EncodeBananaText($s){[BitConverter]::ToString([Text.Encoding]::UTF8.GetBytes([string]$s)).Replace('-','')}
 function Emit($line){[IO.File]::AppendAllText($result,$line+"`n",[Text.Encoding]::UTF8)}
 function Api($url){Invoke-RestMethod -Uri $url -TimeoutSec 35 -UserAgent 'SMS-PAL-Frontend/1'}
 function SafeParents($path){
@@ -48,16 +50,16 @@ try {
  if($action -eq 'catalogue') {
   $data=Api ('https://gamebanana.com/apiv11/Mod/Index?_aFilters[Generic_Game]=5798&_nPerpage=20&_nPage='+$page)
   Emit ("COUNT`t"+$data._aMetadata._nRecordCount)
-  foreach($m in $data._aRecords){if($m._aGame._idRow -eq 5798){Emit ("MOD`t"+$m._idRow+"`t"+(H $m._sName)+"`t"+(H $m._aSubmitter._sName)+"`t"+(H $m._aRootCategory._sName))}}
+  foreach($m in $data._aRecords){if($m._aGame._idRow -eq 5798){Emit ("MOD`t"+$m._idRow+"`t"+(EncodeBananaText $m._sName)+"`t"+(EncodeBananaText $m._aSubmitter._sName)+"`t"+(EncodeBananaText $m._aRootCategory._sName))}}
  } else {
   $m=Api ('https://gamebanana.com/apiv11/Mod/'+$mod+'?_csvProperties=_idRow,_sName,_aGame,_aFiles')
   if($m._aGame._idRow -ne 5798){throw 'Ce mod ne concerne pas Super Mario Sunshine.'}
   if($action -eq 'files') {
-   foreach($f in $m._aFiles){Emit ("FILE`t"+$f._idRow+"`t"+(H $f._sFile)+"`t"+$f._nFilesize)}
+   foreach($f in $m._aFiles){Emit ("FILE`t"+$f._idRow+"`t"+(EncodeBananaText $f._sFile)+"`t"+$f._nFilesize)}
   } else {
    $f=@($m._aFiles|Where-Object {$_._idRow -eq $file})
    if($f.Count -ne 1){throw 'Fichier absent du catalogue.'}; $f=$f[0]
-   if([IO.Path]::GetExtension($f._sFile).ToLowerInvariant() -ne '.zip'){Emit ("UNSUPPORTED`t"+(H 'Archive non ZIP : installation native non prise en charge.'));exit}
+   if([IO.Path]::GetExtension($f._sFile).ToLowerInvariant() -ne '.zip'){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Archive non ZIP : installation native non prise en charge.'));exit}
    if($f._nFilesize -gt 536870912){throw 'Archive trop grande (limite 512 Mio).'}
    $url=[Uri]$f._sDownloadUrl
    if($url.Scheme -ne 'https' -or $url.Host -ne 'gamebanana.com' -or $url.AbsolutePath -ne ('/dl/'+$file)){throw 'Adresse de téléchargement non valide.'}
@@ -85,24 +87,39 @@ try {
      if((($e.ExternalAttributes -shr 16) -band 0xF000) -eq 0xA000){throw 'Lien symbolique interdit.'}
      if($name.EndsWith('/')){continue};$total+=$e.Length;if($total -gt 2147483648 -or $e.Length -gt 536870912){throw 'Archive décompressée trop grande.'}
      $ext=[IO.Path]::GetExtension($name).ToLowerInvariant()
-     if($ext -in @('.exe','.dll','.bat','.cmd','.ps1','.com','.dol','.elf','.rel','.iso','.gcm','.rvz','.xdelta','.ips','.bps','.ppf','.gct')){Emit ("UNSUPPORTED`t"+(H 'Ce mod contient du code ou un patch console incompatible avec le port natif.'));exit}
+     if($ext -in @('.exe','.dll','.bat','.cmd','.ps1','.com','.dol','.elf','.rel','.iso','.gcm','.rvz','.xdelta','.ips','.bps','.ppf','.gct')){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Ce mod contient du code ou un patch console incompatible avec le port natif.'));exit}
      $files.Add(@{entry=$e;name=$name})
     }
-    $payload=@($files|Where-Object {[IO.Path]::GetExtension($_.name).ToLowerInvariant() -notin @('.txt','.md','.pdf','.jpg','.jpeg')})
-    if(!$payload.Count){Emit ("UNSUPPORTED`t"+(H 'Aucun fichier de jeu ou pack de textures installable.'));exit}
+    # Ignore documentation and named preview files, not arbitrary game assets.
+    $payload=@($files|Where-Object {
+     $n=$_.name;$base=[IO.Path]::GetFileName($n);$ext=[IO.Path]::GetExtension($n).ToLowerInvariant()
+     $n -notmatch '(?:^|/)__MACOSX/' -and $base -ne '.DS_Store' -and
+     $base -notmatch '^(LICENSE|COPYING|CHANGELOG|README)(\..*)?$' -and
+     $ext -notin @('.txt','.md','.pdf','.jpg','.jpeg') -and
+     $n -notmatch '(?i)(?:^|/)(?:previews?|screenshots?)/' -and
+     $base -notmatch '(?i)^(preview|screenshot|thumbnail|cover)([-_0-9].*)?\.png$'
+    })
+    if(!$payload.Count){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Aucun fichier de jeu ou pack de textures installable.'));exit}
     $textures=@($payload|Where-Object {[IO.Path]::GetFileName($_.name) -match '^tex1_.+\.(png|dds)$'})
     $key='gamebanana-'+$mod+'-'+$file
     if($textures.Count -eq $payload.Count){$dest=Join-Path $root ('mods/textures/'+$key);$mode='textures'}
+    elseif($textures.Count){$dest=Join-Path $root ('mods/'+$key);$mode='mixed'}
     else {$dest=Join-Path $root ('mods/'+$key);$mode='files'}
     SafeParents $dest
     if([IO.Directory]::Exists($dest) -or [IO.File]::Exists($dest)){throw 'Installation déjà présente : aucun fichier remplacé.'}
     $stage=Join-Path $work 'staged';[IO.Directory]::CreateDirectory($stage)|Out-Null
     $seen=New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
     foreach($item in $payload){
-     if($mode -eq 'textures'){$relative=$item.name}
-     else {
-      $match=[regex]::Match($item.name,'(?:^|/)files/(.+)$');if($match.Success){$relative=$match.Groups[1].Value}else{$relative=$item.name}
-      if($relative -notmatch '^(data|scene|sound|movie|card)/' -or [IO.Path]::GetExtension($relative).ToLowerInvariant() -notin @('.szs','.arc','.bin','.bti','.bmd','.bdl','.bck','.btk','.brk','.bpk','.bva','.bas','.thp','.ast','.aw','.bnk')){Emit ("UNSUPPORTED`t"+(H 'Disposition non compatible : attend files/data, files/scene, files/sound, files/movie, files/card ou tex1_*.png/dds.'));exit}
+     $isTexture=[IO.Path]::GetFileName($item.name) -match '^tex1_.+\.(png|dds)$'
+     if($isTexture){
+      $relative=[IO.Path]::GetFileName($item.name)
+      if($mode -eq 'mixed'){$relative='textures/'+$relative}
+     } else {
+      if($item.name -match '(?i)(?:^|/)(GMSE01|GMSJ01)(?:/|$)'){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Fichiers explicitement USA/Japon : ce port est PAL GMSP01.'));exit}
+      $match=[regex]::Match($item.name,'(?i)(?:^|/)((?:data|scene|sound|movie|card)/.+)$')
+      if(!$match.Success){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Chemin de remplacement absent : conservez la structure files/data, scene, sound, movie ou card du disque.'));exit}
+      $relative=$match.Groups[1].Value
+      if([IO.Path]::GetExtension($relative).ToLowerInvariant() -notin @('.szs','.arc','.bin','.bti','.bmd','.bdl','.bck','.btk','.brk','.bpk','.bva','.bas','.thp','.ast','.aw','.bnk')){Emit ("UNSUPPORTED`t"+(EncodeBananaText 'Format de fichier du jeu non pris en charge.'));exit}
       $relative='files/'+$relative
      }
      if(!$seen.Add($relative)){throw 'Chemins dupliqués dans cette archive.'}
@@ -111,14 +128,14 @@ try {
      [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))|Out-Null
      $source=$item.entry.Open();$output=[IO.File]::Create($target);try{$source.CopyTo($output)}finally{$source.Dispose();$output.Dispose()}
     }
-    [IO.File]::WriteAllText((Join-Path $stage 'gamebanana-source.txt'),('https://gamebanana.com/mods/'+$mod+"`nfile="+$file))
+    [IO.File]::WriteAllText((Join-Path $stage 'gamebanana-source.txt'),('https://gamebanana.com/mods/'+$mod+"`nfile="+$file+"`nname="+$m._sName))
     [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($dest))|Out-Null
     [IO.Directory]::Move($stage,$dest)
-    Emit ("INSTALLED`t"+(H $key)+"`t"+(H $dest)+"`t"+(H $mode))
+    Emit ("INSTALLED`t"+(EncodeBananaText $key)+"`t"+(EncodeBananaText $dest)+"`t"+(EncodeBananaText $mode))
    } finally {$zip.Dispose()}
   }
  }
-} catch {Emit ("ERROR`t"+(H $_.Exception.Message))}
+} catch {Emit ("ERROR`t"+(EncodeBananaText $_.Exception.Message))}
 )PS";
 #endif
 void start(const std::string& action,int page,int mod,int file) {
@@ -148,9 +165,9 @@ void start(const std::string& action,int page,int mod,int file) {
         std::string line;while(std::getline(in,line)){if(line.size()>=3 && (unsigned char)line[0]==0xef)line.erase(0,3);if(!line.empty()&&line.back()=='\r')line.pop_back();auto v=split(line);if(v.empty())continue;
           if(v[0]=="COUNT"&&v.size()>1)updated.total=std::stoi(v[1]);
           if(v[0]=="MOD"&&v.size()>4){BananaMod m;m.id=std::stoi(v[1]);m.name=decode(v[2]);m.author=decode(v[3]);m.category=decode(v[4]);m.url="https://gamebanana.com/mods/"+v[1];updated.mods.push_back(m);}
-          if(v[0]=="FILE"&&v.size()>3){BananaFile f;f.id=std::stoi(v[1]);f.name=decode(v[2]);f.bytes=std::stoull(v[3]);f.zip=std::filesystem::path(f.name).extension()==".zip";updated.files.push_back(f);}
+          if(v[0]=="FILE"&&v.size()>3){BananaFile f;f.id=std::stoi(v[1]);f.name=decode(v[2]);f.bytes=std::stoull(v[3]);std::string ext=std::filesystem::path(f.name).extension().string();for(char& c:ext)c=(char)std::tolower((unsigned char)c);f.zip=ext==".zip";updated.files.push_back(f);}
           if((v[0]=="ERROR"||v[0]=="UNSUPPORTED")&&v.size()>1){updated.state=v[0]=="ERROR"?BananaState::Failed:BananaState::Unsupported;updated.message=decode(v[1]);}
-          if(v[0]=="INSTALLED"&&v.size()>3){updated.state=BananaState::Installed;updated.installed_mod=decode(v[1]);updated.installed_path=decode(v[2]);updated.message=decode(v[3])=="textures"?"Textures installées. Activez les textures HD.":"Mod installé. Activez-le dans les mods de fichiers.";}
+          if(v[0]=="INSTALLED"&&v.size()>3){updated.state=BananaState::Installed;updated.installed_mod=decode(v[1]);updated.installed_path=decode(v[2]);const std::string mode=decode(v[3]);updated.message=mode=="textures"?"Textures install\u00e9es. Activez les textures HD.":mode=="mixed"?"Mod et textures install\u00e9s. S\u00e9lectionnez le mod et activez les textures HD.":"Mod install\u00e9. Activez-le dans les mods de fichiers.";}
         }
         {std::lock_guard<std::mutex> lock(mutex);status=updated;busy=false;}
 #else
@@ -163,5 +180,46 @@ void start(const std::string& action,int page,int mod,int file) {
 void gamebanana_catalogue(int page){start("catalogue",page<1?1:page,0,0);}
 void gamebanana_files(int id){if(id>0)start("files",1,id,0);}
 void gamebanana_install(int mod,int file){if(mod>0&&file>0)start("install",1,mod,file);}
+std::vector<InstalledMod> gamebanana_installed() {
+    namespace fs=std::filesystem;
+    std::vector<InstalledMod> mods;
+    const fs::path root=fs::current_path()/"mods";
+    const auto collect=[&](const fs::path& base,bool texture) {
+        std::error_code ec;
+        for(fs::directory_iterator it(base,ec),end;!ec&&it!=end;it.increment(ec)) {
+            if(!it->is_directory(ec)||it->is_symlink(ec))continue;
+            const std::string name=it->path().filename().u8string();
+            if(name.empty()||name[0]=='.')continue;
+            if(!texture&&!fs::is_directory(it->path()/"files",ec))continue;
+            InstalledMod m;m.id=(texture?"textures/":"")+name;m.name=name;m.textures=texture;
+            m.enabled=!fs::exists(it->path()/".sms-disabled",ec);
+            m.mixed=!texture&&fs::is_directory(it->path()/"textures",ec);
+            std::ifstream source(it->path()/"gamebanana-source.txt");std::string line;
+            while(std::getline(source,line))if(line.compare(0,5,"name=")==0){m.name=line.substr(5);if(!m.name.empty()&&m.name.back()=='\r')m.name.pop_back();}
+            mods.push_back(m);
+        }
+    };
+    collect(root,false);collect(root/"textures",true);
+    std::sort(mods.begin(),mods.end(),[](const InstalledMod& a,const InstalledMod& b){return a.name<b.name;});
+    return mods;
+}
+bool gamebanana_enable_texture(const std::string& id,bool enabled) {
+    // Accept only entries discovered under the local texture directory.
+    for(const auto& m:gamebanana_installed())if(m.textures&&m.id==id) {
+        const auto directory=std::filesystem::current_path()/"mods"/std::filesystem::u8path(id);
+#ifdef _WIN32
+        for(auto p=directory;!p.empty();p=p.parent_path()) {
+            const DWORD attributes=GetFileAttributesW(p.c_str());
+            if(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT))return false;
+            if(p==p.parent_path())break;
+        }
+#endif
+        const auto marker=directory/".sms-disabled";std::error_code ec;
+        if(enabled){std::filesystem::remove(marker,ec);return !ec;}
+        std::ofstream file(marker);file<<"Disabled by the native mod manager\n";return file.good();
+    }
+    return false;
+}
+
 BananaStatus gamebanana_status(){std::lock_guard<std::mutex> lock(mutex);return status;}
 }

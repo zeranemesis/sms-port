@@ -139,12 +139,15 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             add_info("restore","Restaurer une sauvegarde","Prépare une nouvelle carte pour le prochain démarrage. La carte actuelle reste intacte.");
             add_info("card-path","Dossier de sauvegarde","La carte active utilise le dossier ci-dessous.");backups=save_backups();break;
         case 5:{
-            add_info("gamebanana","Catalogue GameBanana","Parcourir, télécharger et installer les archives de mods compatibles avec le port natif. Les patches de ROM et exécutables GameCube ne sont pas pris en charge.");
-            Row mods("mod","Mod du jeu","Les mods de fichiers installés dans mods/<nom>/files sont appliqués au prochain chargement de niveau, sans relancer le jeu.","none",{{"none","Aucun"}});
-            for(const std::string& m:bindings.availableMods)mods.choices.push_back({m,m});rows.push_back(mods);
-            rows.push_back(toggle("texture_packs","Textures HD","Utilise les packs déjà installés dans mods/textures. Cette option ne télécharge aucun pack.",true));
-            rows.push_back(toggle("hd_cutscenes","Cinématiques HD","Utilise les films HD déjà installés dans mods/hd-cutscenes.",true));
-            break;}
+            if (std::getenv("SMS_CUBESHELF") && std::string(std::getenv("SMS_CUBESHELF"))=="1") {
+                add_info("cubeshelf-mods","Mods gérés par CubeShelf","Téléchargez, activez et organisez vos mods dans CubeShelf. Les choix sont chargés au lancement du jeu. Les réglages graphiques, audio et manettes restent disponibles ici.");
+                rows.push_back(toggle("texture_packs","Textures HD","Autorise les textures des mods sélectionnés dans CubeShelf.",true));
+                break;
+            }
+            add_info("installed-mods","Mods installés","Activez ou désactivez vos mods. Les fichiers changent au prochain chargement de niveau ; les textures se rechargent en direct.");
+            add_info("gamebanana","Télécharger des mods","Catalogue GameBanana : choisissez un mod puis une archive à télécharger et installer.");
+            rows.push_back(toggle("texture_packs","Textures HD","Autorise les packs de textures actifs.",true));
+            rows.push_back(toggle("hd_cutscenes","Cinématiques HD","Utilise les films HD installés.",true));break;}
         case 6:
             add_info("ra-login","Compte RetroAchievements","Connexion au compte RetroAchievements. Le mot de passe est envoyé au service et n’est jamais enregistré.");
             add_info("achievements","Succès RetroAchievements","Liste officielle du jeu 6049. Le déblocage nécessite une traduction validée de la mémoire GameCube du jeu vers le port natif.");break;
@@ -163,6 +166,15 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
     }
     std::string button(const std::string& action,const std::string& label,const std::string& value="") {
         return "<button data-action='"+escape(action)+"' data-value='"+escape(value)+"'>"+escape(label)+"</button>";
+    }
+    std::vector<std::string> active_mods() const {
+        std::vector<std::string> result;std::string item;
+        const std::string setting=bindings.getSetting?bindings.getSetting("mod","none"):"none";
+        for(char c:setting+";"){if(c==';'||c==','){if(!item.empty()&&item!="none"&&item!="0")result.push_back(item);item.clear();}else item+=c;}return result;
+    }
+    std::string installed_card(const InstalledMod& m) {
+        const auto active=active_mods();const bool on=m.textures?m.enabled:std::find(active.begin(),active.end(),m.id)!=active.end();
+        return "<div class='mod-card'><div class='mod-title'>"+escape(m.name)+"</div><div class='help'>"+(m.textures?"Textures":m.mixed?"Fichiers et textures":"Fichiers du jeu")+" · Installé · "+(on?"Activé":"Désactivé")+"</div>"+button("mod-toggle",on?"Désactiver":"Activer",m.id)+"</div>";
     }
     void render_detail() {
         if(selected<0||selected>=(int)rows.size())return;
@@ -191,16 +203,39 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         }else if(row.key=="achievements"){
             html+="<div>"+escape(ra::status())+"</div>";
             for(const ra::Achievement& a:ra::achievements())html+="<div class='achievement "+std::string(a.unlocked?"unlocked":"locked")+"'><div>"+escape(a.title)+" · "+(a.unlocked?"Débloqué":"Verrouillé")+"</div><div class='help'>"+escape(a.description)+"</div></div>";
+        }else if(row.key=="installed-mods"){
+            html+=button("mods-refresh","Actualiser les mods installés");
+            const auto mods=gamebanana_installed();
+            if(mods.empty())html+="<div>Aucun mod installé. Ouvrez Télécharger des mods.</div>";
+            for(const auto& m:mods)html+=installed_card(m);
         }else if(row.key=="gamebanana"){
-            const BananaStatus state=gamebanana_status();
-            html+="<div>"+escape(state.message)+"</div>";
-            if(state.state!=BananaState::Loading && state.state!=BananaState::Downloading){
+            const BananaStatus state=gamebanana_status();const auto installed=gamebanana_installed();
+            html+="<div class='mod-status'>"+escape(state.message)+"</div>";
+            if(state.state==BananaState::Loading||state.state==BananaState::Downloading)html+="<div>Opération en cours...</div>";
+            else{
                 html+=button("banana-refresh","Actualiser le catalogue");
-                if(state.page>1)html+=button("banana-page","Page précédente",std::to_string(state.page-1));
-                if(state.page*20<state.total)html+=button("banana-page","Page suivante",std::to_string(state.page+1));
-                if(!state.files.empty()){
-                    for(const auto& file:state.files)html+=button("banana-install",file.name+" · "+std::to_string(file.bytes/1024)+" Ko"+(file.zip?"":" · format non pris en charge"),std::to_string(file.id));
-                }else for(const auto& mod:state.mods)html+=button("banana-files",mod.name+" · "+mod.author,std::to_string(mod.id));
+                if(state.selected_mod){
+                    html+=button("banana-page","Retour au catalogue",std::to_string(state.page));
+                    if(state.files.empty()&&state.state==BananaState::Ready)html+="<div>Aucune archive disponible.</div>";
+                    for(const auto& file:state.files){
+                        const std::string key="gamebanana-"+std::to_string(state.selected_mod)+"-"+std::to_string(file.id);
+                        const auto found=std::find_if(installed.begin(),installed.end(),[&](const InstalledMod& m){return m.id==key||m.id=="textures/"+key;});
+                        if(found!=installed.end()){html+=installed_card(*found);continue;}
+                        html+="<div class='mod-card'><div class='mod-title'>"+escape(file.name)+"</div><div class='help'>Non installé · "+std::to_string(file.bytes/1024)+" Ko</div>";
+                        if(file.zip)html+=button("banana-install","Télécharger et installer",std::to_string(file.id));
+                        else html+="<div>Format nécessitant une prise en charge spécifique.</div>";
+                        html+="</div>";
+                    }
+                }else{
+                    html+="<div class='help'>Page "+std::to_string(state.page)+" · "+std::to_string(state.total)+" mods</div><div class='button-row'>";
+                    if(state.page>1)html+=button("banana-page","Précédente",std::to_string(state.page-1));
+                    if(state.page*20<state.total)html+=button("banana-page","Suivante",std::to_string(state.page+1));html+="</div>";
+                    for(const auto& mod:state.mods){
+                        const std::string prefix="gamebanana-"+std::to_string(mod.id)+"-";
+                        const bool present=std::any_of(installed.begin(),installed.end(),[&](const InstalledMod& m){return m.id.compare(0,prefix.size(),prefix)==0||m.id.compare(0,9+prefix.size(),"textures/"+prefix)==0;});
+                        html+="<div class='mod-card'><div class='mod-title'>"+escape(mod.name)+"</div><div class='help'>"+escape(mod.author)+" · "+escape(mod.category)+" · "+(present?"Installé":"Non installé")+"</div>"+button("banana-files",present?"Gérer / voir les fichiers":"Voir les téléchargements",std::to_string(mod.id))+"</div>";
+                    }
+                }
             }
         }else if(row.key=="updates"){
             UpdateStatus u=update_status();html+="<div>"+escape(u.message)+"</div>";
@@ -221,6 +256,7 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         if(rows.empty())return;
         selected=(next+(int)rows.size())%(int)rows.size();capture=-1;
         for(size_t i=0;i<rows.size();++i)if(auto* e=element(("row-"+std::to_string(i)).c_str()))e->SetPseudoClass("selected",(int)i==selected);
+        if(rows[selected].key=="gamebanana"&&gamebanana_status().state==BananaState::Idle)gamebanana_catalogue();
         render_detail();if(focus)if(auto* e=element(("row-"+std::to_string(selected)).c_str())){e->Focus();e->ScrollIntoView();}
     }
     void write_value(const std::string& v,const std::string& focus_action="") {
@@ -257,6 +293,20 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             return;
         }
         if(action=="ra-logout"){ra::logout();render_detail();return;}
+        if(action=="mods-refresh"){render_detail();return;}
+        if(action=="mod-toggle"){
+            for(const auto& m:gamebanana_installed())if(m.id==val){
+                bool saved=false;
+                if(m.textures){saved=gamebanana_enable_texture(m.id,!m.enabled);if(saved&&bindings.onModsInstalled)bindings.onModsInstalled();}
+                else if(bindings.setSetting){
+                    auto active=active_mods();const auto found=std::find(active.begin(),active.end(),m.id);
+                    if(found==active.end())active.push_back(m.id);else active.erase(found);
+                    std::string setting;for(const auto& id:active){if(!setting.empty())setting+=';';setting+=id;}
+                    bindings.setSetting("mod",setting.empty()?"none":setting);saved=bindings.onSave&&bindings.onSave();
+                }
+                status_text(saved?(m.textures?"Textures mises à jour.":"Sélection enregistrée pour le prochain chargement de niveau."):"Modification du mod impossible.");render_detail();break;
+            }return;
+        }
         if(action=="banana-refresh"||action=="banana-page"){gamebanana_catalogue(action=="banana-page"?std::atoi(val.c_str()):1);render_detail();return;}
         if(action=="banana-files"){gamebanana_files(std::atoi(val.c_str()));render_detail();return;}
         if(action=="banana-install"){gamebanana_install(gamebanana_status().selected_mod,std::atoi(val.c_str()));render_detail();return;}
@@ -344,6 +394,7 @@ void PartyBoardMenu::update(){
         impl->last_install=installed.installed_mod;
         if(impl->bindings.onModsInstalled)impl->bindings.onModsInstalled();
         if(impl->bindings.refreshMods)impl->bindings.availableMods=impl->bindings.refreshMods();
+        if(impl->page==5)impl->render_detail();
     }
     if(impl->page==6){
         if(auto* e=impl->element("ra-status"))e->SetInnerRML(escape(ra::status()));

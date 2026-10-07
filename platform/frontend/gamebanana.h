@@ -19,5 +19,8 @@ void gamebanana_files(int mod_id);
 // Fresh API metadata is checked before download. Installs into mods only;
 // never overwrites assets, saves, existing installations or executable code.
 void gamebanana_install(int mod_id, int file_id);
+struct InstalledMod { std::string id,name; bool textures=false,mixed=false,enabled=true; };
+std::vector<InstalledMod> gamebanana_installed();
+bool gamebanana_enable_texture(const std::string& id,bool enabled);
 BananaStatus gamebanana_status();
 }

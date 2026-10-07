@@ -9,6 +9,8 @@
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
 #include <functional>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -410,10 +412,31 @@ static void apply_user_mods()
 	}
 }
 
+// CubeShelf supplies already-normalized content roots in priority order.
+// This path only overlays recognized asset directories, not executables or saves.
+static void apply_cubeshelf_mods() {
+    const char* list = getenv("SMS_CUBESHELF_MOD_LIST");
+    if (!list || !*list) return;
+    std::ifstream input(list);std::string root;
+    while (std::getline(input,root)) {
+        if (!root.empty() && root.back()=='\r') root.pop_back();
+        if (root.empty()) continue;
+        int replaced=0,added=0;
+        for (const char* folder : {"data","scene","sound","movie","card"})
+            overlay_dir(root+"/"+folder,folder,&replaced,&added);
+        port_log("[dvd] CubeShelf mod: %d replaced, %d added (%s)\n",replaced,added,root.c_str());
+    }
+}
+
 static std::string overlay_signature() {
     const char* mod=getenv("SMS_MOD");
     const char* movie=getenv("SMS_HD_CUTSCENES");
-    return std::string(mod?mod:"")+"\n"+(movie?movie:"");
+    std::string signature=std::string(mod?mod:"")+"\n"+(movie?movie:"");
+    if (const char* path=getenv("SMS_CUBESHELF_MOD_LIST")) {
+        std::ifstream list(path);std::ostringstream contents;contents<<list.rdbuf();
+        signature+="\nCubeShelf:"+std::string(path)+"\n"+contents.str();
+    }
+    return signature;
 }
 static void apply_mods()
 {
@@ -425,6 +448,7 @@ static void apply_mods()
 	}
 	// Explicit mods may provide their own story movies or other assets.
 	apply_user_mods();
+    apply_cubeshelf_mods();
 	g_overlaySignature=overlay_signature();
 }
 

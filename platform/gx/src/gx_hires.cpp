@@ -175,14 +175,40 @@ static void scan() {
     } else {
         dirs = {"mods/textures", "../../mods/textures"};
     }
+    // Selected mixed mods take precedence over global texture packs.
+    // Reverse order: the index retains the first matching texture filename.
+    const char* mods = getenv("SMS_MOD");
+    if (mods && *mods) {
+        std::vector<std::string> selected;
+        std::string name;
+        for (char c : std::string(mods) + ";") {
+            if (c == ';' || c == ',') {
+                if (!name.empty() && name != "none" && name != "0") selected.push_back(name);
+                name.clear();
+            } else name += c;
+        }
+        std::vector<std::string> modDirs;
+        for (auto it = selected.rbegin(); it != selected.rend(); ++it) {
+            modDirs.push_back(*it + "/textures");
+            modDirs.push_back("mods/" + *it + "/textures");
+            modDirs.push_back("../../mods/" + *it + "/textures");
+        }
+        dirs.insert(dirs.begin(), modDirs.begin(), modDirs.end());
+    }
     namespace fs = std::filesystem;
     for (const std::string& d : dirs) {
         std::error_code ec;
-        if (!fs::is_directory(d, ec)) continue;
+        if (!fs::is_directory(d, ec) || fs::exists(fs::path(d)/".sms-disabled",ec)) continue;
         size_t before = s_index.size();
         for (auto it = fs::recursive_directory_iterator(d, fs::directory_options::follow_directory_symlink, ec);
              !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
-            if (it->is_regular_file(ec)) indexFile(it->path());
+            {
+                if (it->is_directory(ec) && fs::exists(it->path()/".sms-disabled",ec)) {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (it->is_regular_file(ec)) indexFile(it->path());
+            }
         logmsg("texture pack: %zu textures under %s", s_index.size() - before, d.c_str());
     }
     for (auto it = s_index.begin(); it != s_index.end();)  // mips without a level 0
@@ -191,17 +217,21 @@ static void scan() {
     if (s_state) queryFormats();
 }
 
+static void resetReplacementCache();
+
 void hiresRefreshIndex() {
     // New installations become available without restarting the decode worker.
-    // Worker takes a value copy under this lock before reading image files.
+    // Queued decodes own path snapshots; stale results are discarded by generation.
     std::lock_guard<std::mutex> indexLock(s_indexMutex);
+    resetReplacementCache();
+    s_index.clear(); // Remove paths belonging to deactivated mods.
     scan();
 }
 
 void hiresSetEnabled(bool enabled) {
     s_liveEnabled = enabled ? 1 : 0;
     // An empty index has never started the decode worker. Once populated the
-    // index remains immutable, including while replacements are disabled.
+    // index is rebuilt only on the render thread when mod selection changes.
     if (enabled) s_state = s_index.empty() ? -1 : 1;
 }
 
@@ -431,10 +461,30 @@ static std::unordered_map<std::string, Replacement> s_repl;  // render thread on
 // exits, and destroying a condition variable with a waiter blocks forever.
 static std::mutex& s_mu = *new std::mutex;
 static std::condition_variable& s_cv = *new std::condition_variable;
-static std::deque<std::string>& s_queue = *new std::deque<std::string>;  // to decode
+struct DecodeJob { std::string name; PackFile file; uint64_t generation; };
+static uint64_t s_generation = 0; // protected by s_mu
+static std::deque<DecodeJob>& s_queue = *new std::deque<DecodeJob>;
 static std::vector<std::pair<std::string, Loaded*>>& s_decoded =
     *new std::vector<std::pair<std::string, Loaded*>>;  // decoded, to upload
 static bool s_workerStarted = false;
+
+static void resetReplacementCache() {
+    {
+        std::lock_guard<std::mutex> lk(s_mu);
+        ++s_generation;
+        s_queue.clear();
+        for (auto& item : s_decoded) delete item.second;
+        s_decoded.clear();
+    }
+    // Only the GL thread retires uploaded textures.
+    for (auto& item : s_repl) if (item.second.tex) {
+        glcForgetTexture(item.second.tex);
+        glDeleteTextures(1, &item.second.tex);
+    }
+    s_repl.clear();
+    s_bytes = 0;
+}
+
 
 // Completes an RGBA mip chain down to 1x1 with 2x2 box filtering, so every
 // replacement has all its levels (the sampler picks the ones the original
@@ -505,18 +555,17 @@ static Loaded* decode(const PackFile& f) {
 
 static void worker() {
     for (;;) {
-        std::string name;
+        DecodeJob job;
         {
             std::unique_lock<std::mutex> lk(s_mu);
             s_cv.wait(lk, [] { return !s_queue.empty(); });
-            name = s_queue.front();
+            job = std::move(s_queue.front());
             s_queue.pop_front();
         }
-        PackFile file;
-        { std::lock_guard<std::mutex> indexLock(s_indexMutex); file = s_index.at(name); }
-        Loaded* L = decode(file);
+        Loaded* L = decode(job.file);
         std::lock_guard<std::mutex> lk(s_mu);
-        s_decoded.emplace_back(name, L);
+        if (job.generation != s_generation) delete L;
+        else s_decoded.emplace_back(job.name, L);
     }
 }
 
@@ -566,7 +615,7 @@ GLuint hiresTexture(const std::string& name, int unit, uint32_t gxW, uint32_t gx
             delete L;
         } else {
             std::lock_guard<std::mutex> lk(s_mu);
-            s_queue.push_back(name);
+            s_queue.push_back(DecodeJob{name, s_index.at(name), s_generation});
             if (!s_workerStarted) {
                 s_workerStarted = true;
                 std::thread(worker).detach();

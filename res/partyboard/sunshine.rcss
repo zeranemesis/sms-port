@@ -31,3 +31,8 @@ close { focus: auto; }
 }
 
 window input { display: block; width: 90%; margin: 8dp 0 16dp; padding: 8dp; background: #122e40; border: 1dp #00b4fa; color: #ffffff; font-family: Inter; font-size: 18dp; }
+
+window .mod-card { padding: 12dp; margin: 8dp 0; border: 1dp #009dda; border-radius: 12dp; background: #172f63; }
+window .mod-title { font-size: 18dp; margin-bottom: 6dp; }
+window .mod-status { margin: 8dp 0; }
+window .mod-card button { margin-top: 8dp; width: 100%; }

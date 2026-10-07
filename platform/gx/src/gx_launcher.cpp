@@ -2211,6 +2211,11 @@ static bool saveGameMenu() {
     setenv("SMS_HD_CUTSCENES",enabled(menu.settings.get("hd_cutscenes","on"))?"":"0",1);
 #endif
     GXPC_ApplyMenuTexturePacks(enabled(menu.settings.get("texture_packs", "on")));
+    static std::string indexedMod;
+    if (indexedMod != selectedMod) {
+        GXPC_RefreshMenuTexturePacks();
+        indexedMod = selectedMod;
+    }
     if (GXPC_OverlayVisible() != enabled(menu.settings.get("overlay", "off"))) GXPC_OverlayToggle();
     return true;
 }

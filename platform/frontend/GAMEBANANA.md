@@ -46,3 +46,37 @@ the completed directory into place only when all payload files were accepted.
 Downloaded archives and helper/result diagnostics remain in
 `mods/.gamebanana-cache` for troubleshooting. Windows PowerShell and .NET are
 required; no Python or external archive executable is used.
+
+## Compatibility improvements
+
+ZIP payload paths can have wrapper folders before data/scene/sound/movie/card.
+Documentation, macOS metadata and named preview PNGs are ignored. ZIP extensions
+are recognized without case sensitivity. Mixed archives install file replacements
+under mods/<key>/files and Dolphin hash textures under mods/<key>/textures.
+Selecting that file mod makes its textures available when HD textures are enabled;
+deselecting it removes them from the index and retires decoded/uploaded cache data.
+Later selected mods have texture precedence over earlier ones and global packs.
+In-flight texture decodes from a previous selection are discarded by generation.
+
+Explicit USA/Japanese region folders in file payloads are rejected on this PAL port.
+Unlabelled assets are not proof of regional compatibility. Duplicate output paths
+remain rejected, including flattened texture filenames. Unknown file types and
+console code patches still require specific support rather than automatic activation.
+
+Compilation succeeds for the native executable; installation and in-game appearance
+of these additional archive layouts still require validation with actual mods.
+
+## In-game manager
+
+Mods tab now separates installed mods from GameBanana downloads. The catalogue
+loads when opened, has paged results and shows whether an installation exists.
+File details offer download/install or activation controls for installed archives.
+Multiple file mods can be toggled individually; their ordering is retained in the
+mod setting (later mods take precedence). Texture folders have a persistent
+.sms-disabled marker and are skipped by the texture index when disabled.
+The master HD texture setting continues to control all active texture packs.
+
+The PowerShell text-encoding helper was renamed to avoid the built-in H/Get-History
+alias. The actual catalogue request now returns 59 records with names correctly
+encoded. Native compilation succeeds. Actual mod download/install and visual
+menu validation remain outstanding.
