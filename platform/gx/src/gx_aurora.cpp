@@ -20,6 +20,9 @@
 
 #include <dolphin/gx.h>
 
+#include <direct.h>
+#include <string>
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -279,6 +282,52 @@ void convertCopyPixel(uint8_t* c, uint32_t f, bool intensity, bool alphaOne) {
     memcpy(c, o, 4);
 }
 
+// Frame dumps, as the OpenGL port writes them (SMS_GX_DUMP_DIR, SMS_GX_DUMP_EVERY):
+// the displayed EFB is copied and read back like a texture copy, keyed by a marker.
+uint8_t s_dumpMarkers[32];
+struct PendingDump {
+    uint32_t frame;
+    std::string dir;
+};
+std::unordered_map<const void*, PendingDump> s_dumpPending;  // marker -> frame and folder
+// F9: the current frame and the next two seconds go to artifacts/aurora-captures/<time>/.
+std::string s_captureDir;
+uint32_t s_captureUntil = 0;
+uint32_t s_dumpNext = 0;
+
+const char* dumpDir() {
+    static const char* dir = getenv("SMS_GX_DUMP_DIR");
+    return dir && *dir ? dir : nullptr;
+}
+int dumpEvery() {
+    static const int every = getenv("SMS_GX_DUMP_EVERY") ? atoi(getenv("SMS_GX_DUMP_EVERY")) : 1;
+    return every > 0 ? every : 1;
+}
+
+bool writeFrameDump(const void* marker, uint32_t w, uint32_t h, const uint32_t* rgba) {
+    auto it = s_dumpPending.find(marker);
+    if (it == s_dumpPending.end()) return false;
+    char path[1024];
+    snprintf(path, sizeof path, "%s/frame_%06u.ppm", it->second.dir.c_str(), it->second.frame);
+    if (FILE* f = fopen(path, "wb")) {
+        fprintf(f, "P6\n%u %u\n255\n", w, h);
+        std::vector<uint8_t> row(size_t(w) * 3);
+        for (uint32_t y = 0; y < h; y++) {
+            for (uint32_t x = 0; x < w; x++) {
+                const uint32_t c = rgba[size_t(y) * w + x];
+                row[x * 3] = uint8_t(c);
+                row[x * 3 + 1] = uint8_t(c >> 8);
+                row[x * 3 + 2] = uint8_t(c >> 16);
+            }
+            fwrite(row.data(), 1, row.size(), f);
+        }
+        fclose(f);
+    }
+    s_dumpPending.erase(it);
+    sab_destroy_copy_tex(const_cast<void*>(marker));
+    return true;
+}
+
 void storeCopyReadbacks() {
     const void* dest;
     uint32_t w, h;
@@ -286,6 +335,7 @@ void storeCopyReadbacks() {
     const uint32_t* rgba;
     static std::vector<uint8_t> px, enc;
     while (sab_poll_copy_readback(&dest, &w, &h, &frameId, &rgba)) {
+        if (writeFrameDump(dest, w, h, rgba)) continue;
         auto it = s_pendingCopies.find(dest);
         if (it == s_pendingCopies.end()) continue;
         auto& q = it->second;
@@ -853,6 +903,21 @@ void pumpEvents() {
                 continue;
             }
             if (ev.scancode == SC_GRAVE) continue;
+            if (ev.scancode == 66) {  // F9: capture what is on screen for analysis
+                if (fresh) {
+                    time_t now = time(nullptr);
+                    char stamp[32];
+                    strftime(stamp, sizeof stamp, "%Y%m%d-%H%M%S", localtime(&now));
+                    _mkdir("artifacts");
+                    _mkdir("artifacts/aurora-captures");
+                    s_captureDir = std::string("artifacts/aurora-captures/") + stamp;
+                    _mkdir(s_captureDir.c_str());
+                    s_captureUntil = s_frame + 60;
+                    fprintf(stderr, "[gx-aurora] capture F9 at frame %u -> %s\n", s_frame, s_captureDir.c_str());
+                    fflush(stderr);
+                }
+                continue;
+            }
             out.key.state = down ? 1 : 0;
             out.key.repeat = ev.repeat;
             out.key.scancode = ev.scancode;
@@ -1016,6 +1081,16 @@ void executeCopy(uint32_t ctrl) {
             sab_set_efb_size(w, h);
         }
         s_frame++;
+        static const uint32_t dumpFrom = getenv("SMS_GX_DUMP_FROM") ? uint32_t(atoi(getenv("SMS_GX_DUMP_FROM"))) : 0;
+        const bool dumpThis = dumpDir() && s_frame >= dumpFrom && s_frame % uint32_t(dumpEvery()) == 0;
+        const bool captureThis = s_frame <= s_captureUntil && s_frame % 2 == 0;
+        if (s_inFrame && (dumpThis || captureThis)) {
+            void* marker = &s_dumpMarkers[s_dumpNext++ % sizeof s_dumpMarkers];
+            if (!s_dumpPending.count(marker)) {
+                s_dumpPending[marker] = PendingDump{s_frame, captureThis ? s_captureDir : std::string(dumpDir())};
+                sab_copy_tex(marker, x, y, w, h, w, h, GX_TF_RGBA8, 0, 1);
+            }
+        }
         if (g_displayCopyHook) g_displayCopyHook(dest);
         present();
         return;
@@ -1175,6 +1250,13 @@ int GXPC_InitAuto(int) {
 #ifdef SMS_PARTYBOARD_UI
     GXPC_MenuInit(nullptr, nullptr);
 #endif
+    // The game quits through exit() (Escape, the window's close button): stop the
+    // menu and Aurora's threads first, or the DLL unloads with them running (terminate).
+    static bool atExitSet = false;
+    if (!atExitSet) {
+        atExitSet = true;
+        atexit([] { GXPC_Shutdown(); });
+    }
     return 1;
 }
 
