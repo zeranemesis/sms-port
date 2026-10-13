@@ -453,6 +453,12 @@ else()
   endif()
 endif()
 
+if(SMS_GX_BACKEND STREQUAL "aurora")
+  # The PartyBoard menu draws with OpenGL: not available on the Aurora back end yet.
+  set(SMS_PARTYBOARD_UI OFF CACHE BOOL "" FORCE)
+  add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    ${SMS_AURORA_RUNTIME_DLLS} "$<TARGET_FILE_DIR:sms>")
+endif()
 option(SMS_PARTYBOARD_UI "Use the PartyBoard RmlUi menu for the native game" ON)
 if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND NOT TARGET SDL2::SDL2)
   find_package(SDL2 QUIET CONFIG)

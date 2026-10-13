@@ -7,6 +7,13 @@ set(SMS_DECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../decomp" CACHE PATH "Path t
 set(SMS_GX_DECOMP_INCLUDE ${SMS_DECOMP_DIR}/include ${SMS_DECOMP_DIR}/libs/dolphin/include)
 option(SMS_GX_BUILD_TESTS "Build the headless self-test" ON)
 
+# SMS_GX_BACKEND=aurora renders through sms_aurora.dll (aurora-bridge/, Aurora
+# on WebGPU, built with MSVC) instead of OpenGL: the GX front end is shared.
+set(SMS_GX_BACKEND "opengl" CACHE STRING "GX renderer: opengl or aurora")
+set_property(CACHE SMS_GX_BACKEND PROPERTY STRINGS opengl aurora)
+set(SMS_AURORA_BRIDGE_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/../../build/aurora-bridge" CACHE PATH
+    "Build directory of aurora-bridge (sms_aurora.dll, sms_aurora.lib and the DLLs they need)")
+
 set(SMS_GX_SOURCES
     src/gl_loader.cpp
     src/gx_api.cpp
@@ -54,6 +61,10 @@ set(SMS_GX_IMGUI_SOURCES
     ${SMS_GX_IMGUI_DIR}/imgui_impl_sdl2.cpp
     ${SMS_GX_IMGUI_DIR}/imgui_impl_opengl3.cpp)
 
+if(SMS_GX_BACKEND STREQUAL "aurora")
+    set(SMS_GX_SOURCES src/gx_api.cpp src/gx_aurora.cpp src/gx_fifo.cpp src/gx_trace.cpp src/gx_vert.cpp)
+    set(SMS_GX_BUILD_TESTS OFF)
+endif()
 add_library(sms_gx STATIC ${SMS_GX_SOURCES} ${SMS_GX_GD_SOURCES})
 target_include_directories(sms_gx
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -71,6 +82,14 @@ target_compile_features(sms_gx PRIVATE cxx_std_17)
 # without -mfma never fuse, so their code does not change).
 target_compile_options(sms_gx PRIVATE -ffp-contract=off)
 set_target_properties(sms_gx PROPERTIES POSITION_INDEPENDENT_CODE ON)
+if(SMS_GX_BACKEND STREQUAL "aurora")
+    target_compile_definitions(sms_gx PRIVATE SMS_GX_AURORA=1)
+    target_include_directories(sms_gx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../aurora-bridge)
+    target_link_libraries(sms_gx PUBLIC ${SMS_AURORA_BRIDGE_BUILD}/sms_aurora.lib)
+    file(GLOB SMS_AURORA_RUNTIME_DLLS ${SMS_AURORA_BRIDGE_BUILD}/*.dll)
+    set(SMS_AURORA_RUNTIME_DLLS "${SMS_AURORA_RUNTIME_DLLS}" CACHE INTERNAL "")
+    message(STATUS "sms_gx: Aurora back end (${SMS_AURORA_BRIDGE_BUILD})")
+endif()
 # Window (SDL2) and headless (EGL) context creation; both optional so the
 # library still builds where only a host-supplied context is used.
 # On macOS x86_64, prefer a universal SDL2.framework — Homebrew's bottle is
@@ -104,7 +123,9 @@ if(NOT TARGET SDL2::SDL2)
 endif()
 find_library(SMS_GX_EGL_LIB EGL)
 find_path(SMS_GX_EGL_INCLUDE EGL/egl.h)
-if(TARGET SDL2::SDL2)
+if(SMS_GX_BACKEND STREQUAL "aurora")
+    # Aurora owns the window (SDL3) and the GPU.
+elseif(TARGET SDL2::SDL2)
     target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_SDL2=1)
     target_link_libraries(sms_gx PUBLIC SDL2::SDL2)
     target_sources(sms_gx PRIVATE ${SMS_GX_IMGUI_SOURCES})
@@ -114,7 +135,8 @@ if(TARGET SDL2::SDL2)
 else()
     message(STATUS "sms_gx: SDL2 not found - no window support")
 endif()
-if(SMS_GX_EGL_LIB AND SMS_GX_EGL_INCLUDE)
+if(SMS_GX_BACKEND STREQUAL "aurora")
+elseif(SMS_GX_EGL_LIB AND SMS_GX_EGL_INCLUDE)
     target_compile_definitions(sms_gx PRIVATE SMS_GX_HAVE_EGL=1)
     target_link_libraries(sms_gx PUBLIC ${SMS_GX_EGL_LIB})
     message(STATUS "sms_gx: EGL headless support")

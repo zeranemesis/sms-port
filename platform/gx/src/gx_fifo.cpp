@@ -148,6 +148,7 @@ void writeBP(uint32_t value) {
         data = (g.bp[reg] & ~g.bpMask) | (data & g.bpMask);
         g.bpMask = 0xFFFFFF;
     }
+    GX_SINK(sinkBP(reg, data));
     if (reg >= BP_TEV_REG && reg < BP_TEV_REG + 8 && (data & 0x800000)) {
         if (g.kreg[reg & 7] != data) {
             onStateChange();
@@ -212,6 +213,7 @@ void writeBP(uint32_t value) {
 }
 
 void writeCP(uint8_t reg, uint32_t value) {
+    GX_SINK(sinkCP(reg, value));
     switch (reg & 0xF0) {
     case CP_MATIDX_A: g.cpMatA = value; break;
     case CP_MATIDX_B: g.cpMatB = value; break;
@@ -234,6 +236,7 @@ void writeCP(uint8_t reg, uint32_t value) {
 }
 
 void writeXF(uint16_t addr, uint32_t count, const uint32_t* words) {
+    GX_SINK(sinkXF(addr, count, words));
     for (uint32_t i = 0; i < count; i++, addr++) {
         uint32_t v = words[i];
         if (addr < XF_MEM_WORDS) {

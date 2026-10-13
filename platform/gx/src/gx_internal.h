@@ -109,6 +109,17 @@ inline void writeXF1(uint16_t addr, uint32_t v) { writeXF(addr, 1, &v); }
 void writeXFf(uint16_t addr, uint32_t count, const float* f);
 void resetState();
 
+// The Aurora back end (gx_aurora.cpp) receives every register write as well:
+// it rebuilds the command stream for Aurora's command processor.
+#ifdef SMS_GX_AURORA
+void sinkBP(uint32_t reg, uint32_t data);
+void sinkCP(uint8_t reg, uint32_t value);
+void sinkXF(uint16_t addr, uint32_t count, const uint32_t* words);
+#define GX_SINK(call) call
+#else
+#define GX_SINK(call) ((void)0)
+#endif
+
 // Command-stream parsing.  Big-endian bytes.
 void runCommands(const uint8_t* data, uint32_t size);
 void pipeWrite(const uint8_t* bytes, uint32_t n);

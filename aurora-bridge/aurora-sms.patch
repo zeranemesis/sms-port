@@ -1,0 +1,269 @@
+From 65b5f262b947276fddf54703ea86f40d4fc1facb Mon Sep 17 00:00:00 2001
+From: Valentin Samson <valentin_samson@nps-bea.fr>
+Date: Tue, 13 Oct 2026 14:34:01 +0200
+Subject: [PATCH] Hardware-accurate fixes for Super Mario Sunshine's command
+ streams
+
+- Channel control: decode (and encode) the attenuation bits as the SDK
+  and the hardware use them (bit 9 = attenuation on, bit 10 = not
+  specular); NONE and SPEC were swapped.
+- Colour texgens (SRTG, XF texgen types 2/3) read the lit colour channel,
+  which is now computed for them.
+- Spot and specular attenuation: 0/0 from a light without coefficients
+  gives no light instead of NaN.
+- Alpha R8/GR16/BGR24 comparisons compare the colour combiner's inputs.
+- A disabled texture map reads as zero instead of throwing.
+- Larger per-frame vertex, index and storage buffers.
+- AURORA_SHADER_DEBUG=srtg|all prints shader configurations.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/dolphin/gx/GXLighting.cpp |  7 +++--
+ lib/gfx/common.hpp            |  6 ++--
+ lib/gx/command_processor.cpp  | 11 ++++---
+ lib/gx/shader.cpp             | 54 +++++++++++++++++++++++++++++------
+ lib/gx/shader_info.cpp        | 18 +++++++++---
+ 5 files changed, 74 insertions(+), 22 deletions(-)
+
+diff --git a/lib/dolphin/gx/GXLighting.cpp b/lib/dolphin/gx/GXLighting.cpp
+index 254d87c..138d1ef 100644
+--- a/lib/dolphin/gx/GXLighting.cpp
++++ b/lib/dolphin/gx/GXLighting.cpp
+@@ -279,9 +279,10 @@ void GXSetChanCtrl(GXChannelID id, bool lightingEnabled, GXColorSrc ambSrc, GXCo
+   SET_REG_FIELD(0, reg, 1, 1, lightingEnabled);
+   SET_REG_FIELD(0, reg, 4, 2, lightState & 0xF); // lights 0-3
+   SET_REG_FIELD(0, reg, 1, 6, ambSrc);
+-  SET_REG_FIELD(0, reg, 2, 7, (attnFn == GX_AF_NONE) ? 0 : diffFn);
+-  SET_REG_FIELD(0, reg, 1, 9, (attnFn != GX_AF_SPEC));   // attn enable
+-  SET_REG_FIELD(0, reg, 1, 10, (attnFn != GX_AF_NONE));  // attn select
++  // As the SDK encodes it (and the hardware reads it): bit 9 = attenuation on, bit 10 = not specular.
++  SET_REG_FIELD(0, reg, 2, 7, (attnFn == GX_AF_SPEC) ? 0 : diffFn);
++  SET_REG_FIELD(0, reg, 1, 9, (attnFn != GX_AF_NONE));
++  SET_REG_FIELD(0, reg, 1, 10, (attnFn != GX_AF_SPEC));
+   SET_REG_FIELD(0, reg, 4, 11, (lightState >> 4) & 0xF); // lights 4-7
+ 
+   // XF channel control registers: 0x100E-0x1011
+diff --git a/lib/gfx/common.hpp b/lib/gfx/common.hpp
+index db245d0..44d94c3 100644
+--- a/lib/gfx/common.hpp
++++ b/lib/gfx/common.hpp
+@@ -173,9 +173,9 @@ private:
+ namespace aurora::gfx {
+ inline constexpr bool UseTextureBuffer = true;
+ inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
+-inline constexpr uint64_t VertexBufferSize = 3145728;    // 3mb
+-inline constexpr uint64_t IndexBufferSize = 1048576;     // 1mb
+-inline constexpr uint64_t StorageBufferSize = 8388608;   // 8mb
++inline constexpr uint64_t VertexBufferSize = 25165824;   // 24mb (Sunshine: decoded f32 vertices)
++inline constexpr uint64_t IndexBufferSize = 6291456;     // 6mb
++inline constexpr uint64_t StorageBufferSize = 16777216;  // 16mb
+ inline constexpr uint64_t TextureUploadSize = 25165824;  // 24mb
+ 
+ extern AuroraStats g_stats;
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index 9748556..d6072ac 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -1334,13 +1334,13 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+           u32 lightsLo = bp_get(val, 4, 2);
+           chan.ambSrc = static_cast<GXColorSrc>(bp_get(val, 1, 6));
+           chan.diffFn = static_cast<GXDiffuseFn>(bp_get(val, 2, 7));
+-          // Encoding: bit 9 = (attnFn != GX_AF_SPEC), bit 10 = (attnFn != GX_AF_NONE)
++          // SDK/hardware encoding: bit 9 = (attnFn != GX_AF_NONE), bit 10 = (attnFn != GX_AF_SPEC)
+           bool bit9 = bp_get(val, 1, 9) != 0;
+           bool bit10 = bp_get(val, 1, 10) != 0;
+           u32 lightsHi = bp_get(val, 4, 11);
+-          if (!bit10) {
++          if (!bit9) {
+             chan.attnFn = GX_AF_NONE;
+-          } else if (!bit9) {
++          } else if (!bit10) {
+             chan.attnFn = GX_AF_SPEC;
+           } else {
+             chan.attnFn = GX_AF_SPOT;
+@@ -1467,7 +1467,10 @@ static void handle_xf(const u8* data, u32& pos, u32 size, bool bigEndian) {
+             static const GXTexGenSrc rowToSrc[] = {GX_TG_POS,  GX_TG_NRM,  GX_TG_COLOR0, GX_TG_BINRM, GX_TG_TANGENT,
+                                                    GX_TG_TEX0, GX_TG_TEX1, GX_TG_TEX2,   GX_TG_TEX3,  GX_TG_TEX4,
+                                                    GX_TG_TEX5, GX_TG_TEX6, GX_TG_TEX7};
+-            if (srcRow < 13) {
++            if (tgType == 2 || tgType == 3) {
++              // XF_TEXGEN_COLOR_STRGB0/1: the source is the lit colour channel.
++              tcg.src = tgType == 2 ? GX_TG_COLOR0 : GX_TG_COLOR1;
++            } else if (srcRow < 13) {
+               tcg.src = rowToSrc[srcRow];
+             }
+             g_gxState.stateDirty = true;
+diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
+index 3671ed5..9fb7d7a 100644
+--- a/lib/gx/shader.cpp
++++ b/lib/gx/shader.cpp
+@@ -9,6 +9,8 @@
+ #include <dolphin/gx/GXEnum.h>
+ 
+ #include <absl/container/flat_hash_set.h>
++#include <cstdlib>
++#include <cstring>
+ #include <mutex>
+ #include <string_view>
+ #include <utility>
+@@ -386,6 +388,16 @@ static std::string tev_alpha_op(GXTevOp op, std::string_view bias, std::string_v
+   return clamp ? fmt::format("clamp({}, 0.0, 1.0)", expr) : fmt::format("clamp({}, -4.0, 4.0)", expr);
+ }
+ 
++// Alpha R8/GR16/BGR24 comparisons: the inputs are the colour combiner's A and
++// B (captured as cmp<stage>_a/_b), the result selects the alpha C.
++static std::string tev_alpha_compare_color_op(GXTevOp op, bool clamp, u32 stageIdx, std::string_view c,
++                                              std::string_view d) {
++  const auto a = fmt::format("cmp{}_a", stageIdx);
++  const auto b = fmt::format("cmp{}_b", stageIdx);
++  std::string expr = tev_op(op, ""sv, ""sv, a, b, fmt::format("tev_overflow_f32({})", c), d, "0.0"sv);
++  return clamp ? fmt::format("clamp({}, 0.0, 1.0)", expr) : fmt::format("clamp({}, -4.0, 4.0)", expr);
++}
++
+ static std::string_view tev_bias(GXTevBias bias) {
+   switch (bias) {
+     DEFAULT_FATAL("invalid tev bias {}", underlying(bias));
+@@ -785,7 +797,8 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8
+           var cosine = max(0.0, dot(ldir, light.dir));
+           var cos_attn = dot(light.cos_att, vec3f(1.0, cosine, cosine * cosine));
+           var dist_attn = dot(light.dist_att, vec3f(1.0, dist, dist2));
+-          attn = max(0.0, cos_attn / dist_attn);)""");
++          // A light without attenuation coefficients gives 0/0: the hardware yields no light, not NaN.
++          attn = select(0.0, max(0.0, cos_attn / dist_attn), dist_attn != 0.0);)""");
+   } else if (cc.attnFn == GX_AF_SPEC) {
+     std::string_view normal = UsePerPixelLighting ? "in.mv_nrm"sv : "mv_nrm"sv;
+     std::string dist_attn = diffFn != GX_DF_NONE
+@@ -795,7 +808,7 @@ auto lighting_func(const ShaderConfig& config, const ColorChannelConfig& cc, u8
+           attn = select(0.0, max(0.0, dot({0}, light.dir)), dot({0}, ldir) >= 0.0);
+           var cos_attn = dot(light.cos_att, vec3f(1.0, attn, attn * attn));
+           var dist_attn = {1};
+-          attn = max(0.0, cos_attn / dist_attn);)""",
++          attn = select(0.0, max(0.0, cos_attn / dist_attn), dist_attn != 0.0);)""",
+                               normal, dist_attn);
+   }
+   std::string_view lightDiffFn;
+@@ -838,7 +851,15 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+   ZoneScoped;
+   const auto hash = xxh3_hash(config);
+   const auto info = build_shader_info(config);
+-  if (EnableDebugPrints && !g_seenShaders.contains(hash)) {
++  // AURORA_SHADER_DEBUG=srtg prints the configurations with colour texgens, =all every one.
++  static const char* const shaderDebug = std::getenv("AURORA_SHADER_DEBUG");
++  bool debugThis = EnableDebugPrints;
++  if (shaderDebug && !g_seenShaders.contains(hash)) {
++    debugThis = std::strcmp(shaderDebug, "all") == 0;
++    for (const auto& tcg : config.tcgs)
++      if (tcg.type == GX_TG_SRTG && tcg.src != GX_MAX_TEXGENSRC) debugThis = true;
++  }
++  if (debugThis && !g_seenShaders.contains(hash)) {
+     g_seenShaders.insert(hash);
+ 
+     Log.info("Shader config (hash {:x}):", hash);
+@@ -1042,6 +1063,15 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+   static std::array regName{"prev"sv, "tevreg0"sv, "tevreg1"sv, "tevreg2"sv};
+   for (u32 idx = 0; idx < config.tevStageCount; ++idx) {
+     const auto& stage = config.tevStages[idx];
++    // The alpha combiner's R8, GR16 and BGR24 comparisons compare the colour
++    // combiner's A and B inputs, read before this stage writes its output.
++    const bool alphaComparesColor =
++        stage.alphaOp.op >= GX_TEV_COMP_R8_GT && stage.alphaOp.op <= GX_TEV_COMP_BGR24_EQ;
++    if (alphaComparesColor) {
++      fragmentFn += fmt::format("\n    let cmp{0}_a = tev_overflow_vec3f({1});\n    let cmp{0}_b = tev_overflow_vec3f({2});",
++                                idx, color_arg_reg(stage.colorPass.a, idx, config, stage),
++                                color_arg_reg(stage.colorPass.b, idx, config, stage));
++    }
+     {
+       std::string_view outReg = regName[stage.colorOp.outReg];
+       std::string op = tev_color_op(
+@@ -1052,7 +1082,9 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+     }
+     {
+       std::string_view outReg = regName[stage.alphaOp.outReg];
+-      std::string op = tev_alpha_op(
++      std::string op = alphaComparesColor ? tev_alpha_compare_color_op(stage.alphaOp.op, stage.alphaOp.clamp, idx,
++          alpha_arg_reg(stage.alphaPass.c, idx, config, stage), alpha_arg_reg(stage.alphaPass.d, idx, config, stage)) :
++          tev_alpha_op(
+           stage.alphaOp.op, tev_bias(stage.alphaOp.bias), tev_scale(stage.alphaOp.scale), stage.alphaOp.clamp,
+           alpha_arg_reg(stage.alphaPass.a, idx, config, stage), alpha_arg_reg(stage.alphaPass.b, idx, config, stage),
+           alpha_arg_reg(stage.alphaPass.c, idx, config, stage), alpha_arg_reg(stage.alphaPass.d, idx, config, stage));
+@@ -1179,7 +1211,10 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+       fragmentFnPre += fmt::format("\n    var tex{0}_uv = in.tex{0}_uv.xy;", i);
+       continue;
+     }
+-    if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
++    if (tcg.type == GX_TG_SRTG && !UsePerPixelLighting) {
++      // The hardware feeds the colour channel's lit output (computed above), not the vertex colour.
++      vtxXfrAttrs += fmt::format("\n    var tc{} = out.cc{};", i, tcg.src == GX_TG_COLOR1 ? 1 : 0);
++    } else if (tcg.src >= GX_TG_TEX0 && tcg.src <= GX_TG_TEX7) {
+       vtxXfrAttrs += fmt::format("\n    var tc{} = vec4f({}, 1.0, 1.0);", i,
+                                  vtx_attr(config, GXAttr(GX_VA_TEX0 + (tcg.src - GX_TG_TEX0))));
+     } else if (tcg.src == GX_TG_POS) {
+@@ -1460,8 +1495,11 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+       continue;
+     }
+ 
+-    CHECK(stage.texMapId != GX_TEXMAP_NULL, "unmapped texture for stage {}", i);
+-    CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "unmapped texcoord for stage {}", i);
++    if (stage.texMapId == GX_TEXMAP_NULL || stage.texCoordId == GX_TEXCOORD_NULL) {
++      // The hardware reads a disabled texture map as zero.
++      fragmentFnPre += fmt::format("\n    var sampled{0} = vec4f(0.0);", i);
++      continue;
++    }
+     if (uvIn.empty()) {
+       // No indirect texturing
+       uvIn = fmt::format("tex{0}_uv", underlying(stage.texCoordId));
+@@ -1927,7 +1965,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {{{6}{5}
+ )""",
+                                         uniBufAttrs, texBindings, vtxOutAttrs, vtxInAttrs, vtxXfrAttrs, fragmentFn,
+                                         fragmentFnPre, vtxXfrAttrsPre, uniformPre);
+-  if (EnableDebugPrints) {
++  if (debugThis) {
+     Log.info("Generated shader: {}", shaderSource);
+   }
+ 
+diff --git a/lib/gx/shader_info.cpp b/lib/gx/shader_info.cpp
+index bb9ddec..fadc382 100644
+--- a/lib/gx/shader_info.cpp
++++ b/lib/gx/shader_info.cpp
+@@ -57,8 +57,11 @@ void color_arg_reg_info(GXTevColorArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CC_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    // A disabled texture map reads as zero (shader.cpp): nothing to sample.
++    if (stage.texMapId != GX_TEXMAP_NULL && stage.texCoordId != GX_TEXCOORD_NULL) {
++      info.sampledTexCoords.set(stage.texCoordId);
++      info.sampledTextures.set(stage.texMapId);
++    }
+     break;
+   case GX_CC_RASC:
+   case GX_CC_RASA:
+@@ -131,8 +134,11 @@ void alpha_arg_reg_info(GXTevAlphaArg arg, const TevStage& stage, ShaderInfo& in
+   case GX_CA_TEXA:
+     CHECK(stage.texCoordId != GX_TEXCOORD_NULL, "tex coord not bound");
+     CHECK(stage.texMapId != GX_TEXMAP_NULL, "tex map not bound");
+-    info.sampledTexCoords.set(stage.texCoordId);
+-    info.sampledTextures.set(stage.texMapId);
++    // A disabled texture map reads as zero (shader.cpp): nothing to sample.
++    if (stage.texMapId != GX_TEXMAP_NULL && stage.texCoordId != GX_TEXCOORD_NULL) {
++      info.sampledTexCoords.set(stage.texCoordId);
++      info.sampledTextures.set(stage.texMapId);
++    }
+     break;
+   case GX_CA_RASA:
+     if (stage.channelId != GX_COLOR_NULL && stage.channelId != GX_COLOR_ZERO &&
+@@ -267,6 +273,10 @@ ShaderInfo build_shader_info(const ShaderConfig& config) noexcept {
+       info.sampledTexCoords.set(tcg.embossSrc);
+       info.lightingEnabled = true;
+     }
++    // Colour texgens (SRTG) read the lit colour channel: compute it.
++    if (tcg.type == GX_TG_SRTG) {
++      info.sampledColorChannels.set(tcg.src == GX_TG_COLOR1 ? 1 : 0);
++    }
+   }
+ 
+   info.uniformSize += info.loadsTevReg.count() * sizeof(Vec4<float>);
+-- 
+2.55.0.windows.5
+

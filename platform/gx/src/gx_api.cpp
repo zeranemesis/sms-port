@@ -20,6 +20,7 @@ void traceNoteBegin();  // gx_trace.cpp (SMS_GX_TRACE_BT)
 void traceNoteProjection(const float* p);
 extern void (*drawSyncCallback)(uint16_t);
 bool rendererReady();
+uint32_t g_texCopyFmt = GX_TF_RGBA8;  // GXSetTexCopyDst's format, for back ends that copy by GXTexFmt
 }
 
 // ------------------------------------------------------------------ helpers
@@ -1128,6 +1129,7 @@ void GXSetTexCopySrc(u16 left, u16 top, u16 wd, u16 ht) {
 }
 void GXSetDispCopyDst(u16 wd, u16) { s_dispStride = uint32_t(wd) * 2 / 32; }
 void GXSetTexCopyDst(u16 wd, u16 ht, GXTexFmt fmt, GXBool mipmap) {
+    gx::g_texCopyFmt = uint32_t(fmt);
     uint32_t f = uint32_t(fmt) & 0xF;
     if (fmt == GX_TF_Z16) f = 0xB;
     bool intensity = fmt == GX_TF_I4 || fmt == GX_TF_I8 || fmt == GX_TF_IA4 || fmt == GX_TF_IA8 || fmt == GX_CTF_YUVA8;
