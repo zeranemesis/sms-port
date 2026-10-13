@@ -12,7 +12,7 @@ With `-DSMS_GX_BACKEND=aurora`, `platform/gx/src/gx_aurora.cpp` replaces the Ope
 
 ## Building
 
-1. Aurora: `third_party/aurora`, a clone of encounter/aurora at 5143394 plus `aurora-sms.patch`, a `git am` series: the hardware-accurate fixes the game needs, then the menu rendering, pixel metrics, EFB copy read-back and the SDK viewport offset.
+1. Aurora: `third_party/aurora`, a clone of encounter/aurora at 5143394 plus `aurora-sms.patch`, a `git am` series: the hardware-accurate fixes the game needs, then the menu rendering, pixel metrics, EFB copy read-back and the SDK viewport offset, then Mailbox presentation with vsync (the game paces its own frames; `SMS_PRESENT_FIFO=1` brings FIFO back).
    The local checkout already includes them (branch `sms-port`).
 2. The DLL, with MSVC and Ninja.
    The dependency sources are taken from an existing Aurora build (`SMS_AURORA_DEPS`, by default the Mario Party 4 build), so nothing is downloaded:

@@ -223,6 +223,7 @@ int sab_init(const SabConfig* c) {
     cfg.mem2Size = 0;
     char arg0[] = "sms";
     char* argv[] = {arg0, nullptr};
+    sab_configure_present();
     AuroraInfo info = aurora_initialize(1, argv, &cfg);
     s_backend = info.backend;
     s_fifo.resize(256 * 1024);

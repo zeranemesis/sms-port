@@ -369,6 +369,10 @@ struct Stats {
 int s_statsEvery = 0;
 std::vector<double> s_frameTimes;
 double s_lastFrameEnd = 0, s_presentAccum = 0;
+// Time spent getting the next swapchain image (the display's vsync wait), and how
+// many frames waited long enough to make the game miss a retrace.
+double s_acquireAccum = 0;
+int s_acquireLong = 0;
 
 // ------------------------------------------------------------------ vertex format 0
 uint32_t s_curFmt = ~0u;  // the VF_* format the CP registers of Aurora hold
@@ -780,7 +784,11 @@ void emitDraw(uint8_t opcode, uint32_t count) {
 
 // ------------------------------------------------------------------ frames
 void beginFrame() {
+    const double t0 = nowSeconds();
     s_inFrame = sab_begin_frame() != 0;
+    const double waited = nowSeconds() - t0;
+    s_acquireAccum += waited;
+    s_acquireLong += waited > 0.004;
     s_frameId = s_inFrame ? sab_frame_id() : 0;
     // Aurora starts each frame with fresh state: send the vertex format again
     // and every texture before its next use.
@@ -805,12 +813,15 @@ void reportStats() {
     lastIdle = idleNow;
     fprintf(stderr,
             "[gx-aurora] t=%.0fs %s: frame median %.1f ms, p90 %.1f ms, worst %.1f ms, %d hitches; per frame: "
-            "VI idle %.2f ms, Aurora submit %.2f ms, present %.2f ms, %.0f draws, %.0f vertices, %.1f texture loads, "
-            "%.1f rehashes, %.1f copies\n",
+            "VI idle %.2f ms, Aurora submit %.2f ms, present %.2f ms, acquire %.2f ms (%d over 4 ms), %.0f draws, "
+            "%.0f vertices, %.1f texture loads, %.1f rehashes, %.1f copies\n",
             nowSeconds() - start, sab_backend_name(), med, p90, worst, hitches, idle / n * 1000,
-            s_submitSeconds / n * 1000, s_presentAccum / n * 1000, s_stats.draws / n, s_stats.vertices / n,
-            s_stats.texLoads / n, s_stats.texRehash / n, s_stats.copies / n);
+            s_submitSeconds / n * 1000, s_presentAccum / n * 1000, s_acquireAccum / n * 1000, s_acquireLong,
+            s_stats.draws / n, s_stats.vertices / n, s_stats.texLoads / n, s_stats.texRehash / n,
+            s_stats.copies / n);
     s_submitSeconds = 0;
+    s_acquireAccum = 0;
+    s_acquireLong = 0;
     if (!s_tokenValues.empty() || s_writeBackCount) {
         fprintf(stderr, "[gx-aurora] copy write-backs %u; pixel metrics:", s_writeBackCount);
         for (const auto& [token, value] : s_tokenValues) fprintf(stderr, " %u=%u", unsigned(token), value);

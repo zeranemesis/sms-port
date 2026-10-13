@@ -1,7 +1,7 @@
 From 65b5f262b947276fddf54703ea86f40d4fc1facb Mon Sep 17 00:00:00 2001
 From: Valentin Samson <valentin_samson@nps-bea.fr>
 Date: Tue, 13 Oct 2026 14:34:01 +0200
-Subject: [PATCH 1/2] Hardware-accurate fixes for Super Mario Sunshine's
+Subject: [PATCH 1/3] Hardware-accurate fixes for Super Mario Sunshine's
  command streams
 
 - Channel control: decode (and encode) the attenuation bits as the SDK
@@ -271,7 +271,7 @@ index bb9ddec..fadc382 100644
 From 4b37ac6a2d8550adb396c95f880923db233f39b0 Mon Sep 17 00:00:00 2001
 From: Valentin Samson <valentin_samson@nps-bea.fr>
 Date: Tue, 13 Oct 2026 18:02:34 +0200
-Subject: [PATCH 2/2] Sunshine port: menu rendering, pixel metrics, copy
+Subject: [PATCH 2/3] Sunshine port: menu rendering, pixel metrics, copy
  read-back, viewport offset
 
 - Viewport origin decoded and encoded with the SDK's 342 offset (was 340):
@@ -1626,6 +1626,83 @@ index 51257ea..5361995 100644
 +void set_frame_buffer_content_aspect(float aspect);
  void set_background_input(bool value);
  }; // namespace aurora::window
+-- 
+2.55.0.windows.5
+
+
+From e2b6057d1584832ea8b05ce7103d0ec3654db863 Mon Sep 17 00:00:00 2001
+From: Valentin SAMSON <BEAVSN@BEA.local>
+Date: Tue, 13 Oct 2026 20:02:25 +0200
+Subject: [PATCH 3/3] Present in Mailbox mode with vsync when the game paces
+ itself
+
+Super Mario Sunshine paces its frames on its own retrace clock. With a FIFO
+swapchain each frame also waited for the display, and the two clocks beat:
+up to a third of the frames missed a retrace. set_prefer_mailbox() makes
+vsync pick Mailbox when the surface offers it (still no tearing, no wait).
+The surface's present modes are now logged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/webgpu/gpu.cpp | 8 ++++++++
+ lib/webgpu/gpu.hpp | 4 ++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index ab9dd29..4792aab 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -49,6 +49,7 @@ wgpu::BindGroup g_CopyBindGroup;
+ static AuroraSampler g_Resampler = SAMPLER_BILINEAR;
+ static int g_presentMode = 0;
+ static bool g_adaptiveVsync = false;
++static bool g_preferMailbox = false;
+ static uint32_t g_integerWidth = 640, g_integerHeight = 480;
+ static wgpu::BindGroupLayout g_ResampleBindGroupLayout;
+ static wgpu::RenderPipeline g_ResamplePipeline;
+@@ -179,6 +180,9 @@ wgpu::PresentMode best_present_mode(bool vsync) {
+     return false;
+   };
+   if (vsync) {
++    if (g_preferMailbox && g_backendType != wgpu::BackendType::Metal && supports(wgpu::PresentMode::Mailbox)) {
++      return wgpu::PresentMode::Mailbox;
++    }
+     if (g_adaptiveVsync && supports(wgpu::PresentMode::FifoRelaxed)) {
+       return wgpu::PresentMode::FifoRelaxed;
+     }
+@@ -296,6 +300,7 @@ const TextureWithSampler& present_source() noexcept {
+ }
+ 
+ void set_adaptive_vsync(bool adaptive) noexcept { g_adaptiveVsync = adaptive; }
++void set_prefer_mailbox(bool prefer) noexcept { g_preferMailbox = prefer; }
+ 
+ void set_resampler(AuroraSampler sampler) noexcept {
+   switch (sampler) {
+@@ -956,6 +961,9 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+     return false;
+   }
+   auto surfaceFormat = best_surface_format();
++  for (size_t i = 0; i < g_surfaceCapabilities.presentModeCount; ++i) {
++    Log.info("Surface supports present mode {}", magic_enum::enum_name(g_surfaceCapabilities.presentModes[i]));
++  }
+   auto presentMode = best_present_mode(g_config.vsync);
+   Log.info("Using surface format {}, present mode {}", magic_enum::enum_name(surfaceFormat),
+            magic_enum::enum_name(presentMode));
+diff --git a/lib/webgpu/gpu.hpp b/lib/webgpu/gpu.hpp
+index 422853f..3b905cf 100644
+--- a/lib/webgpu/gpu.hpp
++++ b/lib/webgpu/gpu.hpp
+@@ -65,6 +65,10 @@ const TextureWithSampler& present_source() noexcept;
+ wgpu::BindGroup create_copy_bind_group(const TextureWithSampler& source);
+ void set_presentation_mode(int mode, uint32_t baseWidth, uint32_t baseHeight) noexcept;
+ void set_adaptive_vsync(bool adaptive) noexcept;
++// With vsync on, present in Mailbox mode when the surface offers it: no tearing, and
++// acquiring the next image never waits for the display, for a game that paces its
++// own frames.
++void set_prefer_mailbox(bool prefer) noexcept;
+ void set_resampler(AuroraSampler sampler) noexcept;
+ AuroraSampler get_resampler() noexcept;
+ Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
 -- 
 2.55.0.windows.5
 

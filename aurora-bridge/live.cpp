@@ -11,6 +11,8 @@
 #include "dolphin/vi/vi_internal.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -110,6 +112,14 @@ void sab_apply_pending_settings() {
         std::fprintf(stderr,"[aurora-menu] texture packs: %zu registrations (%s)\n",
                      packs.registrations.size(),packsEnabled?"enabled":"disabled");
     }
+}
+
+// The game paces its frames on its own retrace clock; a FIFO swapchain makes it wait
+// for the display too, and the two clocks beat, so frames miss a retrace. Mailbox
+// keeps vsync (no tearing) without the wait. SMS_PRESENT_FIFO=1 restores FIFO.
+void sab_configure_present() {
+    const char* fifo=std::getenv("SMS_PRESENT_FIFO");
+    aurora::webgpu::set_prefer_mailbox(!(fifo&&*fifo&&std::strcmp(fifo,"0")!=0));
 }
 
 extern "C" {
