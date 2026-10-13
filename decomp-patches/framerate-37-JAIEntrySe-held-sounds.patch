@@ -1,0 +1,82 @@
+Reason: port: with frame_rate = 60 held sounds (FLUDD's spray, the goop under Mario) no longer restart 30 times a second: JAI's frame work runs every other frame at 60, and a second request for a held sound before the next frame work restarted it from the start; at 60 a repeat request by the same actor before the next frame work keeps the sound playing, as one request per frame work did at 30
+--- a/libs/JSystem/src/JAudio/JAInterface/JAIEntrySe.cpp
++++ b/libs/JSystem/src/JAudio/JAInterface/JAIEntrySe.cpp
+@@ -3,6 +3,49 @@
+ #include <JSystem/JAudio/JAInterface/JAIBasic.hpp>
+ #include <JSystem/JAudio/JAInterface/JAIConst.hpp>
+ 
++#ifdef TARGET_PC
++// Port: a sound that has no 0xC00 bits in its ID only keeps playing while
++// the game asks for it again before each frame work, which marks it
++// Stopping; a request finds it Stopping and turns it back to Playing. A
++// second request before the next frame work finds it Playing and restarts it
++// from the start. With frame_rate = 60, MSound::mainLoop does the frame work
++// every other frame (the 30 fps timing), while FLUDD's spray, the goop under
++// Mario and other held sounds still ask every frame: the second request cut
++// them 30 times a second. At 60, a sound asked for again by the same actor
++// before the next frame work keeps playing, as one request per frame work
++// did at 30.
++extern "C" int port_fps60_active;
++static JAISound* sPortRequested[128];
++static u32 sPortRequestedCount;
++static u32 sPortRequestedFrame;
++
++static bool JAISePortRequestedThisFrame(JAISound* sound, u32 frame)
++{
++	if (!port_fps60_active)
++		return false;
++	if (frame != sPortRequestedFrame) {
++		sPortRequestedFrame = frame;
++		sPortRequestedCount = 0;
++	}
++	for (u32 i = 0; i < sPortRequestedCount; ++i)
++		if (sPortRequested[i] == sound)
++			return true;
++	return false;
++}
++
++static void JAISePortMarkRequested(JAISound* sound, u32 frame)
++{
++	if (!port_fps60_active || !sound)
++		return;
++	if (frame != sPortRequestedFrame) {
++		sPortRequestedFrame = frame;
++		sPortRequestedCount = 0;
++	}
++	if (sPortRequestedCount < 128)
++		sPortRequested[sPortRequestedCount++] = sound;
++}
++#endif
++
+ void JAISeEntry::storeBuffer(JAISoundHandle* out_handle, JAIActor* actor,
+                              u32 sound_id, u32 fade, u8 camera_idx, void* info)
+ {
+@@ -34,6 +77,18 @@
+ 		if (it->mActor == uVar14) {
+ 			if (it->mSoundID == sound_id
+ 			    && (unk0->getSoundSwBit(info) & JAISeSwBit_Multi) == 0) {
++#ifdef TARGET_PC
++				if (JAISePortRequestedThisFrame(it, unk0->unk20)) {
++					if (out_handle != nullptr && *out_handle == nullptr) {
++						it->mMainSoundPPointer = out_handle;
++						*out_handle            = it;
++					}
++					return;
++				}
++				if ((sound_id & 0x800) == 0
++				    && it->mState == SOUNDSTATE_Stopping)
++					JAISePortMarkRequested(it, unk0->unk20);
++#endif
+ 				if ((sound_id & 0x800) == 0
+ 				    && it->mState == SOUNDSTATE_Stopping) {
+ 					it->mState = SOUNDSTATE_Playing;
+@@ -91,6 +146,9 @@
+ 			controller->mState = SOUNDSTATE_Stored;
+ 			initSoundParameter(controller, out_handle, actualActor, sound_id,
+ 			                   fade, camera_idx, info);
++#ifdef TARGET_PC
++			JAISePortMarkRequested(controller, unk0->unk20);
++#endif
+ 		}
+ 	}
+ }
