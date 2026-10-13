@@ -566,6 +566,45 @@ void syncTextures() {
     }
 }
 
+// Texture-coordinate scale (SU_SSIZE/SU_TSIZE, BP 0x30-0x3F). The SDK writes them
+// before every draw for each coordinate a TEV or indirect stage uses, from the
+// size and wrap of the texture bound with it (__GXSetSUTexRegs), unless the
+// coordinate is scaled manually. The port's front end only writes manual ones,
+// as its OpenGL renderer reads the texture sizes itself; Aurora computes its
+// indirect texturing in texel space from these registers, so they are rebuilt
+// here (FLUDD's water, the goop's swirl).
+uint32_t s_suSent[16];
+bool s_suValid[16];
+
+void suFor(uint32_t map, uint32_t coord) {
+    if (map > 7 || coord > 7 || g.tcManual[coord]) return;
+    const uint32_t image0 = g.bp[bpTexReg(BP_TX_IMAGE0, int(map))];
+    const uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, int(map))];
+    const uint32_t w = image0 & 0x3FF, h = (image0 >> 10) & 0x3FF;
+    const uint32_t sBias = (mode0 & 3) == 1, tBias = ((mode0 >> 2) & 3) == 1;
+    const uint32_t regS = BP_SU_SSIZE + 2 * coord, regT = regS + 1;
+    const uint32_t valS = (g.bp[regS] & ~0x1FFFFu) | w | sBias << 16;
+    const uint32_t valT = (g.bp[regT] & ~0x1FFFFu) | h | tBias << 16;
+    for (const auto& [reg, val] : {std::pair{regS, valS}, std::pair{regT, valT}}) {
+        const uint32_t slot = reg - BP_SU_SSIZE;
+        if (s_suValid[slot] && s_suSent[slot] == val) continue;
+        putBP(reg, val);
+        s_suSent[slot] = val;
+        s_suValid[slot] = true;
+    }
+}
+
+void syncTexCoordScales() {
+    const uint32_t gen = g.bp[BP_GENMODE];
+    const uint32_t stages = ((gen >> 10) & 0xF) + 1, ind = (gen >> 16) & 7;
+    const uint32_t iref = g.bp[BP_RAS1_IREF];
+    for (uint32_t i = 0; i < ind; i++) suFor((iref >> (i * 6)) & 7, (iref >> (i * 6 + 3)) & 7);
+    for (uint32_t i = 0; i < stages; i++) {
+        const uint32_t order = (g.bp[BP_TREF + i / 2] >> ((i & 1) * 12)) & 0xFFF;
+        if (order & 0x40) suFor(order & 7, (order >> 3) & 7);  // texture enabled
+    }
+}
+
 // ------------------------------------------------------------------ primitives
 std::vector<uint8_t> s_prim;
 uint32_t s_primFmt = 0, s_primStride = 0;
@@ -676,6 +715,7 @@ void emitDraw(uint8_t opcode, uint32_t count) {
         if (fmt & (VF_TEX0 << t)) outStride += 8;
     setVertexFormat(fmt);
     syncTextures();
+    syncTexCoordScales();
     const auto mapping=drawMapping(count);
     const bool mapped=mapping.scale!=1.f||mapping.offset!=0.f;
     const uint32_t tl=g.bp[BP_SCISSOR_TL],br=g.bp[BP_SCISSOR_BR];
@@ -746,6 +786,7 @@ void beginFrame() {
     // and every texture before its next use.
     s_curFmt = ~0u;
     for (auto& m : s_maps) m.regsDirty = true;
+    for (bool& v : s_suValid) v = false;
 }
 
 void reportStats() {
@@ -993,6 +1034,7 @@ void sinkBP(uint32_t reg, uint32_t data) {
         return;  // host pointers travel in GX_LOAD_AURORA_TEXOBJ
     if ((reg >= BP_TX_IMAGE0 && reg < BP_TX_IMAGE0 + 4) || (reg >= BP_TX_IMAGE0 + 0x20 && reg < BP_TX_IMAGE0 + 0x24))
         s_maps[(reg & 3) + ((reg & 0x20) ? 4 : 0)].regsDirty = true;  // Aurora forgets the texture's size
+    if (reg >= BP_SU_SSIZE && reg < BP_SU_SSIZE + 16) s_suValid[reg - BP_SU_SSIZE] = false;
     static const char* dbg = getenv("SMS_AURORA_XFDBG");  // c = log TEV colour registers
     if (dbg && strchr(dbg, 'c') && reg >= 0xE0 && reg <= 0xE7) {
         static std::map<uint32_t, int> seen;
