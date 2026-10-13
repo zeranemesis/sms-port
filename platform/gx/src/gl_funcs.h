@@ -19,6 +19,7 @@
     X(PFNGLCLEARDEPTHPROC, glClearDepth) X(PFNGLCLEARPROC, glClear)                 \
     X(PFNGLDEPTHRANGEPROC, glDepthRange) X(PFNGLLINEWIDTHPROC, glLineWidth)         \
     X(PFNGLPOINTSIZEPROC, glPointSize) X(PFNGLFINISHPROC, glFinish)                 \
+    X(PFNGLFLUSHPROC, glFlush)                                                      \
     X(PFNGLGENBUFFERSPROC, glGenBuffers) X(PFNGLBINDBUFFERPROC, glBindBuffer)       \
     X(PFNGLBUFFERDATAPROC, glBufferData) X(PFNGLBUFFERSUBDATAPROC, glBufferSubData) \
     X(PFNGLBINDBUFFERBASEPROC, glBindBufferBase)                                    \
@@ -120,6 +121,7 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glLineWidth gx_glLineWidth
 #define glPointSize gx_glPointSize
 #define glFinish gx_glFinish
+#define glFlush gx_glFlush
 #define glGenBuffers gx_glGenBuffers
 #define glBindBuffer gx_glBindBuffer
 #define glBufferData gx_glBufferData

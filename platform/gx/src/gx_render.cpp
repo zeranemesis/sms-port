@@ -1224,7 +1224,10 @@ void pixMetricClear() {
     s_pixActive = true;
 }
 
+static bool pixDeferredRead(uint32_t* value);  // below, with the deferred counts
 uint32_t pixMetricRead() {
+    uint32_t deferred;
+    if (pixDeferredRead(&deferred)) return deferred;  // inside a deferred token callback
     flushBatch();
     if (!s_ready || !s_pixActive) return 0;
     uint64_t samples = s_pixSamples;
@@ -1251,6 +1254,123 @@ static void pixMetricPause() {
         s_pixPending.push_back(s_pixCur);
         s_pixCur = 0;
     }
+}
+
+// Deferred pixel metrics. On the console the pollution count is asynchronous:
+// the game draws a layer, sets a draw-sync token, and the token interrupt
+// (whenever the GPU gets there) calls back into the game, which reads the
+// metric and stores it for later use. Reading it synchronously here stalled
+// the CPU on the whole frame's GPU work, every frame, in Delfino.
+// So a token that ends a count hands its queries to a per-token queue and the
+// callback receives the newest finished count for that same token (layer),
+// normally the previous frame's. Only the first count of a token, with no
+// finished value yet, still waits. SMS_GX_SYNC_PIXMETRIC=1 restores the
+// synchronous read.
+struct PixCount {
+    std::vector<GLuint> queries;
+    uint64_t samples;  // already counted before these queries
+    uint32_t tris;
+    uint32_t scale;
+};
+struct PixToken {
+    std::vector<PixCount> queue;  // oldest first
+    bool hasValue = false;
+    uint32_t value = 0;
+};
+static std::unordered_map<uint16_t, PixToken> s_pixTokens;
+static int s_pixReadToken = -1;  // set while a deferred callback runs
+
+bool pixMetricDeferred() {
+    static const bool sync = [] {
+        const char* e = getenv("SMS_GX_SYNC_PIXMETRIC");
+        return e && e[0] == '1';
+    }();
+    return !sync && s_ready && s_pixActive;
+}
+
+static uint32_t pixCountValue(const PixCount& c, uint64_t samples) {
+    uint64_t S2 = uint64_t(c.scale) * uint64_t(c.scale);
+    uint64_t v = samples / S2 + uint64_t(c.tris) * 4;
+    return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
+}
+
+// Resolves the oldest counts of a token whose queries have all finished;
+// with `wait`, resolves the oldest one even if the GPU must be waited for.
+static void pixTokenResolve(PixToken& t, bool wait) {
+    while (!t.queue.empty()) {
+        PixCount& c = t.queue.front();
+        bool ready = true;
+        if (!wait) {
+            for (GLuint q : c.queries) {
+                GLuint available = GL_FALSE;
+                glGetQueryObjectuiv(q, GL_QUERY_RESULT_AVAILABLE, &available);
+                if (!available) {
+                    ready = false;
+                    break;
+                }
+            }
+        }
+        if (!ready) return;
+        uint64_t samples = c.samples;
+        for (GLuint q : c.queries) {
+            if (wait) {
+                s_syncReads++;
+                samples += queryResult(q);  // blocking path (fence, bounded)
+                continue;
+            }
+            // already available: read it without draining the GPU
+            GLuint n = 0;
+            glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
+            if (seedPixelQueries()) {
+                if (!n) fatal("pixel query seed was not counted (deferred, query %u)", q);
+                --n;
+            }
+            samples += n;
+        }
+        if (!c.queries.empty()) glDeleteQueries(GLsizei(c.queries.size()), c.queries.data());
+        t.value = pixCountValue(c, samples);
+        t.hasValue = true;
+        t.queue.erase(t.queue.begin());
+        wait = false;  // only ever block for one count
+    }
+}
+
+// Called at a token interrupt that ends a count: moves the count to its
+// token's queue and selects the value the game's callback will read.
+void pixMetricDeferForToken(uint16_t token) {
+    flushBatch();
+    PixCount c;
+    c.samples = s_pixSamples;
+    c.tris = s_pixTris;
+    c.scale = s_scale;
+    if (s_pixCur) {
+        glEndQuery(GL_SAMPLES_PASSED);
+        c.queries.push_back(s_pixCur);
+        s_pixCur = 0;
+    }
+    for (GLuint q : s_pixPending) c.queries.push_back(q);
+    s_pixPending.clear();
+    s_pixActive = false;
+    s_pixSamples = 0;
+    s_pixTris = 0;
+    glFlush();  // let the GPU start on it while the CPU carries on
+
+    PixToken& t = s_pixTokens[token];
+    t.queue.push_back(std::move(c));
+    pixTokenResolve(t, false);
+    // first count of this token, or the GPU is more than three counts behind:
+    // wait, so the game never reads a made-up number and latency stays bounded
+    if (!t.hasValue || t.queue.size() > 3) pixTokenResolve(t, true);
+    s_pixReadToken = token;
+}
+
+void pixMetricDeferDone() { s_pixReadToken = -1; }
+
+static bool pixDeferredRead(uint32_t* value) {
+    if (s_pixReadToken < 0) return false;
+    auto it = s_pixTokens.find(uint16_t(s_pixReadToken));
+    *value = it != s_pixTokens.end() && it->second.hasValue ? it->second.value : 0;
+    return true;
 }
 
 // A batch's horizontal extent on screen (game coordinates), from its

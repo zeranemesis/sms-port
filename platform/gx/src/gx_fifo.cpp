@@ -162,14 +162,20 @@ void writeBP(uint32_t value) {
         executeCopy(data);
         return;
     case BP_PE_TOKEN_INT:
-    case BP_PE_TOKEN:
-        synchronizeReadbacks();
+    case BP_PE_TOKEN: {
+        // A token that ends a pixel-metric count (Delfino's pollution) does not
+        // wait for the GPU: see pixMetricDeferForToken (gx_render.cpp).
+        bool deferMetric = reg == BP_PE_TOKEN_INT && drawSyncCallback && pixMetricDeferred();
+        if (!deferMetric) synchronizeReadbacks();
         g.bp[reg] = data;
         g.drawSyncToken = uint16_t(data & 0xFFFF);
         if (reg == BP_PE_TOKEN_INT && drawSyncCallback) {
+            if (deferMetric) pixMetricDeferForToken(g.drawSyncToken);
             drawSyncCallback(g.drawSyncToken);
+            if (deferMetric) pixMetricDeferDone();
         }
         return;
+    }
     case BP_DRAWDONE:
         g.bp[reg] = data;
         if (data & 2) {
