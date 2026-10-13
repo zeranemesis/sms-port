@@ -1,7 +1,7 @@
 Reason: port: with frame_rate = 60 a held cursor in the pause menu and the talk choices auto-repeats at its 30 fps timing; the repeat delay and interval are counted in pad reads and set at boot from the 30 fps rate, and the pads are read once per displayed frame, so the cursor repeated twice as fast
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
-@@ -83,12 +83,48 @@ extern "C" int port_frame_rate;
+@@ -83,13 +83,49 @@ extern "C" int port_frame_rate;
  extern "C" int port_fps60_active;
  int port_fps60_active;
  f32 SMSGetVSyncTimesPerSec();
@@ -40,6 +40,7 @@ Reason: port: with frame_rate = 60 a held cursor in the pause menu and the talk 
 +
  static void portSetGameplayFrameRate(TApplication* app, bool gameplay)
  {
+ 	port_gameplay_director_active = gameplay;
 +	int was             = port_fps60_active;
  	port_fps60_active   = gameplay && port_frame_rate == 60;
  	app->mDisplay->unk4C = port_fps60_active ? 1 : 2;

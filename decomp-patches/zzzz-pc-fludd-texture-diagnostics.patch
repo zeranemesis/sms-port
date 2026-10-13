@@ -1,0 +1,53 @@
+Reason: PC diagnostics, disabled unless SMS_FLUDD_TEXTURE_TRACE=1; log FLUDD texture replacement and material references.
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -39,3 +39,29 @@
++
++#ifdef TARGET_PC
++#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
++#include <stdio.h>
++#include <stdlib.h>
++static void portTraceFluddTextures(J3DModelData* data, const char* path)
++{
++	const char* enabled = getenv("SMS_FLUDD_TEXTURE_TRACE");
++	if (!enabled || !*enabled || *enabled == '0')
++		return;
++	J3DTexture* textures = data->getTexture();
++	for (u16 i = 0; i < textures->getNum(); ++i) {
++		const ResTIMG* image = textures->getResTIMG(i);
++		u32 address = (u32)(uintptr_t)image + image->imageDataOffset;
++		fprintf(stderr, "[fludd-texture] %s index=%u name=%s header=%p image=%08x format=%u size=%ux%u offset=%08x\n",
++		        path, i, data->getTextureName()->getName(i), (const void*)image,
++		        address, image->format, image->width, image->height, image->imageDataOffset);
++	}
++	for (u16 i = 0; i < data->getMaterialNum(); ++i) {
++		J3DMaterial* material = data->getMaterialNodePointer(i);
++		fprintf(stderr, "[fludd-material] %s material=%s textures=%u,%u texgens=%u\n",
++		        path, data->getMaterialName()->getName(i), material->getTexNo(0), material->getTexNo(1),
++		        material->getTexGenBlock()->getTexGenNum());
++	}
++}
++#endif
+ 
+ TNozzleBmdData nozzleBmdData = {
+ 	{
+@@ -1286,6 +1311,9 @@
+ 	unk1CD2 = 0;
+ 
+ 	createGunBody();
++#ifdef TARGET_PC
++	portTraceFluddTextures(mFluddModel->getModel()->getModelData(), "body/wg_mdl1.bmd");
++#endif
+ 
+ 	mFluddModel->getModel()->setBaseTRMtx(
+ 	    getMario()->mModel->getModel()->getAnmMtx(getMario()->mJointIdChest));
+@@ -1346,6 +1374,9 @@
+ 			                          ->getTexture()
+ 			                          ->getResTIMG(1));
+ 
++#ifdef TARGET_PC
++			portTraceFluddTextures(modelData, nozzleBmdData.getBmdPath(i));
++#endif
+ 			mNozzleList[i]->unk380->initDL();
+ 
+ 			// Definitely inline potential

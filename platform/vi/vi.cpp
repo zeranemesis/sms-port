@@ -23,6 +23,8 @@
 extern "C" __attribute__((weak)) int GXPC_ReadXFB(const void* xfb, void* rgba, int* w, int* h);
 extern "C" __attribute__((weak)) u32 GXPC_FrameCount(void);
 extern "C" __attribute__((weak)) void GXPC_SetIdleClock(double (*idleSeconds)(void));
+extern "C" __attribute__((weak)) void GXPC_SetVIScanoutCallback(int (*readScanout)(const void**, int*));
+extern "C" __attribute__((weak)) void GXPC_PollVI(void);
 extern "C" double port_idle_seconds(void);
 extern "C" void port_pad_autopress_field(u32 field);
 extern "C" __attribute__((weak)) void port_trace_on_retrace(uint32_t retrace_count);
@@ -36,6 +38,18 @@ VIRetraceCallback g_pre, g_post;
 void* g_next_fb;
 void* g_cur_fb;
 bool g_black = true;
+// VIFlush stages the requested registers; the next retrace makes them live.
+void* g_flushed_fb;
+bool g_flushed_black = true;
+bool g_flush_pending;
+bool g_scanout_black = true;
+
+int read_scanout(const void** xfb, int* black)
+{
+	*xfb = g_cur_fb;
+	*black = g_scanout_black;
+	return 1;
+}
 
 // SMS_VI_DETERMINISTIC=1: no wall clock. A retrace happens only when every
 // game thread is blocked (the CPU would idle until the next retrace), or when
@@ -153,12 +167,14 @@ void retrace_irq()
 		port_pad_autopress_field(game_field());
 		if (g_pre)
 			g_pre(g_retrace_count);
-		if (g_next_fb) {
-			g_cur_fb = g_next_fb;
+		if (g_flush_pending) {
+			g_cur_fb = g_flushed_fb;
+			g_scanout_black = g_flushed_black;
+			g_flush_pending = false;
 		}
-		OSWakeupThread(&g_retrace_queue);
 		if (g_post)
 			g_post(g_retrace_count);
+		OSWakeupThread(&g_retrace_queue);
 	}
 }
 } // namespace
@@ -167,6 +183,8 @@ extern "C" void port_vi_init(void)
 {
 	OSInitThreadQueue(&g_retrace_queue);
 	shots_init();
+	if (GXPC_SetVIScanoutCallback)
+		GXPC_SetVIScanoutCallback(read_scanout);
 	if (GXPC_SetIdleClock)
 		GXPC_SetIdleClock(port_idle_seconds); // the overlay's frame breakdown
 	port_irq_add_source(retrace_irq);
@@ -219,10 +237,28 @@ extern "C" s64 port_vi_virtual_ticks(void)
 extern "C" void VIInit(void) {}
 extern "C" void VIConfigure(GXRenderModeObj* rm) {}
 extern "C" void VIConfigurePan(u16, u16, u16, u16) {}
-extern "C" void VIFlush(void) { shots_poll(game_field(), g_next_fb); }
-extern "C" void VISetNextFrameBuffer(void* fb) { g_next_fb = fb; }
+extern "C" void VIFlush(void)
+{
+	BOOL lvl = OSDisableInterrupts();
+	g_flushed_fb = g_next_fb;
+	g_flushed_black = g_black;
+	g_flush_pending = true;
+	OSRestoreInterrupts(lvl);
+	shots_poll(game_field(), g_next_fb);
+}
+extern "C" void VISetNextFrameBuffer(void* fb)
+{
+	BOOL lvl = OSDisableInterrupts();
+	g_next_fb = fb;
+	OSRestoreInterrupts(lvl);
+}
 extern "C" void VISetNextRightFrameBuffer(void*) {}
-extern "C" void VISetBlack(BOOL black) { g_black = black != 0; }
+extern "C" void VISetBlack(BOOL black)
+{
+	BOOL lvl = OSDisableInterrupts();
+	g_black = black != 0;
+	OSRestoreInterrupts(lvl);
+}
 extern "C" void VISet3D(BOOL) {}
 extern "C" u32 VIGetRetraceCount(void)
 {
@@ -258,5 +294,9 @@ extern "C" void VIWaitForRetrace(void)
 	while (cnt == g_retrace_count)
 		OSSleepThread(&g_retrace_queue);
 	OSRestoreInterrupts(lvl);
+	// The interrupt only latches VI state. Presentation must run with the GX
+	// context current, after the waiting game thread has resumed.
+	if (GXPC_PollVI)
+		GXPC_PollVI();
 }
 extern "C" void* port_vi_current_fb(void) { return g_cur_fb; }

@@ -33,10 +33,8 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector shine-get camera and 
  	}
  	return result;
  }
-@@ -166,6 +182,24 @@
- 	// non-zero unk190 still selects Inside.
- 	// The default-constructed flag (its ctor's defaulted argument is one more
- 	// inline level) puts the temporary at the top of the frame as retail's.
+@@ -169,4 +185,22 @@
+ 	// A non-zero unk190 selects the inside camera.
 +#ifdef TARGET_PC
 +	// BetterSunshineEngine (thinkCloseCamera, retail 0x8029A590, over the
 +	// unk190 load; its word at 0x8029A594 is the same `cmplwi r0, 0`): the

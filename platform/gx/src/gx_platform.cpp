@@ -3,7 +3,7 @@
 // Default: an SDL2 window with an OpenGL 3.3 core context whenever a display
 // is available.  Headless (tests, CI, no display): an EGL context without a
 // surface.  GXInit brings this up automatically if the host has not called
-// GXPC_Init itself, and every GXCopyDisp presents the XFB to the window.
+// GXPC_Init itself. A registered VI callback selects which XFB is displayed.
 #include "gx_internal.h"
 #include "gx_window_layout.h"
 #include "gx_live_settings.h"
@@ -16,6 +16,7 @@ extern "C" void GXPC_MenuShutdown(void);
 #include <time.h>
 #include <string>
 #include <vector>
+#include <map>
 
 #ifdef SMS_GX_HAVE_SDL2
 #include <SDL.h>
@@ -40,6 +41,13 @@ int s_forceHeadless = -1;  // -1: decide from the environment
 bool s_autoPresent = true;
 int s_vsync = 0;
 uint32_t s_frame = 0;
+GXPCVIScanoutFn s_viScanout = nullptr;
+std::map<const void*, uint64_t> s_copySerials;
+uint64_t s_copySerial = 0;
+const void* s_presentedXfb = nullptr;
+uint64_t s_presentedSerial = 0;
+bool s_havePresented = false, s_presentedBlack = true;
+int s_presentedW = 0, s_presentedH = 0;
 
 #ifdef SMS_GX_HAVE_SDL2
 SDL_Window* s_window = nullptr;
@@ -338,10 +346,56 @@ void dumpFrame(const void* xfb) {
     fclose(f);
 }
 
+bool presentWindow(const void* xfb, bool black) {
+#ifdef SMS_GX_HAVE_SDL2
+    // VIWaitForRetrace can also be called by threads without the GL context.
+    if (s_mode != MODE_WINDOW || !s_window || !s_glctx ||
+        SDL_GL_GetCurrentContext() != s_glctx || !rendererReady()) return false;
+    int w = 0, h = 0;
+    SDL_GL_GetDrawableSize(s_window, &w, &h);
+    if (w <= 0 || h <= 0 || (SDL_GetWindowFlags(s_window) & SDL_WINDOW_MINIMIZED)) {
+        sms_gx_pump_events();
+        return false;
+    }
+    double t0 = nowSeconds();
+    if (black || !GXPC_PresentXFB(xfb, w, h)) GXPC_PresentBlack(w, h);
+    GXPC_OverlayDraw(w, h);
+    GXPC_MenuDraw(w, h);
+    syncMenuInput();
+    double t1 = nowSeconds();
+    SDL_GL_SwapWindow(s_window);
+    double t2 = nowSeconds();
+    g_presentSeconds += t1 - t0;
+    g_swapSeconds += t2 - t1;
+    GXPC_EndPresent();
+    sms_gx_pump_events();
+    // Keep the game paused on its presentation boundary. VI black must not
+    // reveal a previously copied game image behind the frontend menu.
+    while (GXPC_MenuVisible()) {
+        SDL_GL_GetDrawableSize(s_window, &w, &h);
+        if (w > 0 && h > 0 && !(SDL_GetWindowFlags(s_window) & SDL_WINDOW_MINIMIZED)) {
+            if (black || !GXPC_PresentXFB(xfb, w, h)) GXPC_PresentBlack(w, h);
+            GXPC_MenuDraw(w, h);
+            syncMenuInput();
+            SDL_GL_SwapWindow(s_window);
+            GXPC_EndPresent();
+        }
+        sms_gx_pump_events();
+        SDL_Delay(16);
+    }
+    return true;
+#else
+    (void)xfb; (void)black;
+    return false;
+#endif
+}
+
 void onDisplayCopy(const void* xfb) {
     s_frame++;
+    s_copySerials[xfb] = ++s_copySerial;
     dumpFrame(xfb);
-    if (s_autoPresent) GXPC_Present(xfb);
+    if (s_viScanout) GXPC_PollVI();
+    else if (s_autoPresent) GXPC_Present(xfb);
 }
 }  // namespace
 
@@ -448,6 +502,40 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
 #endif
 }
 void GXPC_SetAutoPresent(int enable) { s_autoPresent = enable != 0; }
+void GXPC_SetVIScanoutCallback(GXPCVIScanoutFn readScanout) {
+    s_viScanout = readScanout;
+    s_havePresented = false;
+}
+
+void GXPC_PollVI(void) {
+#ifdef SMS_GX_HAVE_SDL2
+    if (!s_autoPresent || !s_viScanout || s_mode != MODE_WINDOW || !s_window ||
+        !s_glctx || SDL_GL_GetCurrentContext() != s_glctx || !rendererReady()) return;
+    sms_gx_pump_events();
+    const void* xfb = nullptr;
+    int viBlack = 1;
+    if (!s_viScanout(&xfb, &viBlack)) return;
+    auto copy = s_copySerials.find(xfb);
+    const uint64_t serial = copy == s_copySerials.end() ? 0 : copy->second;
+    const bool black = viBlack != 0 || !xfb || serial == 0;
+    int w = 0, h = 0;
+    SDL_GL_GetDrawableSize(s_window, &w, &h);
+    const bool changed = !s_havePresented || black != s_presentedBlack ||
+        (!black && (xfb != s_presentedXfb || serial != s_presentedSerial)) ||
+        w != s_presentedW || h != s_presentedH;
+    // Double buffering copies the next XFB before selecting it at retrace.
+    // Single buffering copies the current XFB after the wait. A copy serial
+    // handles both without swapping an unchanged image again at every wait.
+    if ((changed || GXPC_MenuVisible()) && presentWindow(xfb, black)) {
+        s_presentedXfb = xfb;
+        s_presentedSerial = serial;
+        s_presentedBlack = black;
+        s_presentedW = w;
+        s_presentedH = h;
+        s_havePresented = true;
+    }
+#endif
+}
 int GXPC_MouseCaptured(void) {
 #ifdef SMS_GX_HAVE_SDL2
     return s_mouseCaptured;
@@ -496,39 +584,7 @@ int GXPC_InitAuto(int efbScale) {
 }
 
 void GXPC_Present(const void* xfb) {
-#ifdef SMS_GX_HAVE_SDL2
-    if (s_mode == MODE_WINDOW && s_window) {
-        int w = 0, h = 0;
-        SDL_GL_GetDrawableSize(s_window, &w, &h);
-        double t0 = nowSeconds();
-        GXPC_PresentXFB(xfb, w, h);
-        GXPC_OverlayDraw(w, h);
-        GXPC_MenuDraw(w, h);
-        syncMenuInput();
-        double t1 = nowSeconds();
-        SDL_GL_SwapWindow(s_window);
-        double t2 = nowSeconds();
-        g_presentSeconds += t1 - t0;
-        g_swapSeconds += t2 - t1;
-        GXPC_EndPresent();
-        sms_gx_pump_events();
-        // Stop at the presentation boundary: the game cannot mutate its state
-        // while the menu is open. Reuse the copied XFB rather than drawing game
-        // actors again, and keep pumping events so the menu remains responsive.
-        while (GXPC_MenuVisible()) {
-            SDL_GL_GetDrawableSize(s_window, &w, &h);
-            GXPC_PresentXFB(xfb, w, h);
-            GXPC_MenuDraw(w, h);
-            syncMenuInput();
-            SDL_GL_SwapWindow(s_window);
-            GXPC_EndPresent();
-            sms_gx_pump_events();
-            SDL_Delay(16);
-        }
-    }
-#else
-    (void)xfb;
-#endif
+    presentWindow(xfb, false);
 }
 
 void sms_gx_set_event_callback(void (*cb)(const union SDL_Event*)) {

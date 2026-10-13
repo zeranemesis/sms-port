@@ -41,9 +41,9 @@ Reason: port: code-mod hooks (sms_modhook.h): BSE free-fly camera and draw dista
  
  	calcExternalData_();
 @@ -1102,6 +1119,34 @@
- void CPolarSubCamera::perform(u32 cue, JDrama::TGraphics* graphics)
- {
- 	if (cue & CUE_MOVE) {
+ 	void CPolarSubCamera::perform(u32 cue, JDrama::TGraphics* graphics)
+ 	{
+ 		if (cue & CUE_MOVE) {
 +#ifdef TARGET_PC
 +		// BetterSunshineEngine free-fly camera: shouldDebugPassThroughCameraPerform
 +		// at retail 0x80023034 (in place of the `lhz` of graphics->unk0; it
@@ -72,19 +72,19 @@ Reason: port: code-mod hooks (sms_modhook.h): BSE free-fly camera and draw dista
 +			}
 +		} else {
 +#endif
- 		if (graphics->unk0 & 1) {
- 			unk13C.set(unk124);
- 			unk160.set(unk148);
+ 			if (graphics->unk0 & 1) {
+ 				unk13C.set(unk124);
+ 				unk160.set(unk148);
 @@ -1111,6 +1156,9 @@
- 			MTXCopy(unk1EC, unk21C);
- 		}
- 		mUp.set(CLBConstUpVec);
+ 				MTXCopy(unk1EC, unk21C);
+ 			}
+ 			mUp.set(CLBConstUpVec);
 +#ifdef TARGET_PC
 +		}
 +#endif
- 		unk254 = 0;
- 		if (getCamMode() != CAMERA_MODE_REPRODUCE_DEMO) {
- 			ctrlCamera_();
+ 			unk254 = 0;
+ 			if (getCamMode() != CAMERA_MODE_REPRODUCE_DEMO) {
+ 				ctrlCamera_();
 @@ -1143,6 +1191,9 @@
  	}
  

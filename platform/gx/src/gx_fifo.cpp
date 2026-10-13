@@ -163,16 +163,19 @@ void writeBP(uint32_t value) {
         return;
     case BP_PE_TOKEN_INT:
     case BP_PE_TOKEN:
+        synchronizeReadbacks();
         g.bp[reg] = data;
         g.drawSyncToken = uint16_t(data & 0xFFFF);
         if (reg == BP_PE_TOKEN_INT && drawSyncCallback) {
-            flushBatch();
             drawSyncCallback(g.drawSyncToken);
         }
         return;
     case BP_DRAWDONE:
-        flushBatch();
         g.bp[reg] = data;
+        if (data & 2) {
+            finishDraws();
+            deliverDrawDone();
+        }
         return;
     case BP_LOADTLUT1: {
         g.bp[reg] = data;

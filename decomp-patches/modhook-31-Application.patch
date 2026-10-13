@@ -1,7 +1,7 @@
 Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state change and mario archive
 --- a/src/System/Application.cpp
 +++ b/src/System/Application.cpp
-@@ -78,6 +78,9 @@
+@@ -86,6 +86,9 @@
  #ifdef TARGET_PC
  extern "C" void sms_mod_start(void);
  #endif
@@ -11,7 +11,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
  extern "C" void ReInitializeGX();
  
  #ifdef TARGET_PC
-@@ -340,8 +343,22 @@
+@@ -468,6 +471,21 @@
  	while (!gpMSound->checkWaveOnAram(MS_WAVE_UNK210))
  		OSYieldThread();
  
@@ -20,6 +20,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
 +	// SMSLoadArchive, `beq` after the .szs lookup becomes `b 0x802A71A0`, so
 +	// neither archive is loaded and r29 takes the lookup's entry number;
 +	// the store of the result to arcBufMario is a nop.
++	void* arc;
 +	unsigned int sms_mod_w_;
 +	if (sms_mod_word(0x802A7148, &sms_mod_w_) && sms_mod_w_ == 0x48000058)
 +		arc = (void*)(intptr_t)DVDConvertPathToEntrynum("/data/mario.szs");
@@ -28,13 +29,11 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
 +	if (SMS_MOD_WORD(0x802A71A8, 0) != 0x60000000)
 +		arcBufMario = arc;
 +#else
- 	arc = SMSLoadArchive("/data/mario.arc", nullptr, 0, JKRGetRootHeap());
- 	arcBufMario = arc;
+ 	arcBufMario = SMSLoadArchive("/data/mario.arc", nullptr, 0, JKRGetRootHeap());
 +#endif
  
- 	arc = SMSLoadArchive("/data/common.arc", nullptr, 0, JKRGetRootHeap());
- 	arcBufCmn = arc;
-@@ -441,7 +458,17 @@
+ 	arcBufCmn = SMSLoadArchive("/data/common.arc", nullptr, 0, JKRGetRootHeap());
+@@ -595,7 +613,17 @@
  	// release the backing block; retail vcalls slot 0x10 (free).
  	JKRGetRootHeap()->free(spGameHeapBlock);
  
@@ -52,7 +51,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
  	gpCardManager->mIcons
  	    = (ResTIMG*)piVar2->getResource("/card/mario_icon.bti") + 1;
  	gpCardManager->mBanner
-@@ -676,10 +703,27 @@
+@@ -844,10 +872,27 @@
  				nextState = APP_STATE_QUIT;
  			} else if (nextState != APP_STATE_QUIT) {
  				nextState = APP_STATE_DONE;
@@ -80,7 +79,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
  		mAppState = nextState;
  		mPrevArea = mCurrArea;
  		mCurrArea = mNextArea;
-@@ -762,6 +806,15 @@
+@@ -931,6 +976,15 @@
  				if (sGameInit == 3)
  					nextState = APP_STATE_DONE;
  			} else {
@@ -96,7 +95,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TApplication game loop, state chan
  				nextState = mDirector->direct();
  			}
  
-@@ -804,6 +857,13 @@
+@@ -973,6 +1027,13 @@
  		}
  	}
  

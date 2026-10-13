@@ -38,10 +38,11 @@ Reason: port: code-mod hooks (sms_modhook.h): BetterSunshineEngine's extended Ma
  // clang-format off
  TMarioAnimeData gMarioAnimeData[336] = {
  	/* 0x00 */ { 0x00, 0x00C8, 0x00, 0x01, 0x04, 0x16 }, // hgup
-@@ -1094,14 +1124,35 @@
+@@ -1094,15 +1124,36 @@
  			changeHand(0);
  			mAnmSound->stop();
  		} else {
+ 			const TMarioAnimeData* animation = &gMarioAnimeData[anm_id];
 +#ifdef TARGET_PC
 +			// BetterSunshineEngine points these reads at sPlayerAnimeDatas:
 +			// the animation id (getExtendedPlayerAnimData, retail 0x8024786C;
@@ -55,14 +56,14 @@ Reason: port: code-mod hooks (sms_modhook.h): BetterSunshineEngine's extended Ma
 +#ifdef TARGET_PC
 +			    0, 0, sms_mod_d0_[anm_id].unk0);
 +#else
- 			    0, 0, gMarioAnimeData[anm_id].unk0);
+ 			    0, 0, animation->unk0);
 +#endif
  			getM3UModel()->unk20->unk18->mMotionBlendRatio = 0.0f;
  			getMotionFrameCtrl().setAttribute(
 +#ifdef TARGET_PC
 +			    getM3UModel()->unk4->unk4[sms_mod_d0_[anm_id].unk0]
 +#else
- 			    getM3UModel()->unk4->unk4[gMarioAnimeData[anm_id].unk0]
+ 			    getM3UModel()->unk4->unk4[animation->unk0]
 +#endif
  			        ->getAttribute());
  
@@ -81,7 +82,7 @@ Reason: port: code-mod hooks (sms_modhook.h): BetterSunshineEngine's extended Ma
 +#ifdef TARGET_PC
 +			u16 r0 = sms_mod_d0_[anm_id].unk0;
 +#else
- 			u16 r0 = gMarioAnimeData[anm_id].unk0;
+ 			u16 r0 = animation->unk0;
 +#endif
  			u32 unk; // SoundId?
  			if (rate >= 0.0f)

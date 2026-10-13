@@ -44,10 +44,10 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector direct, changeState, 
  			switch (mState) {
  			case STATE_PAUSE_MENU:
  			case STATE_CARD_SAVE:
-@@ -204,7 +233,13 @@
- // +0x10). Spelling the copy as `gpApplication.mNextArea = local_3C` or a
- // direct three-argument `set` is worse (84%) and breaks the expanded copies
- // in changeState/updateGameMode.
+@@ -221,7 +250,13 @@
+ // args already set the frame (see GameSequence.hpp:9-14, tuned 99.65->99.88),
+ // so the remaining 8 bytes is header/ABI-locked (outgoing-arg / ctor-temp
+ // placement). Header edit rejected this session.
 +#ifdef TARGET_PC
 +// sms_mod_standalone_ is false where retail expands this function into its
 +// caller: the code mods patch those copies at their own addresses.
@@ -176,7 +176,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector direct, changeState, 
  		++i;
  	} while (i < 7);
  
-@@ -249,13 +383,37 @@
+@@ -249,5 +383,24 @@
  // `li r3, 0` hoisted above the first branch and the separate final zero.
  // Inert: TFlagManager::getInstance()/SMSGetFlagManager() receivers at every
  // site (call receivers keep their register), a compared shadow-Mario result.
@@ -201,6 +201,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TMarDirector direct, changeState, 
 +
  static int decideNextScenario(u8 param_1)
  {
+@@ -267,8 +425,13 @@
  	int scenario = 0;
  	switch (param_1) {
  	case 1:

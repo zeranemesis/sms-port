@@ -75,8 +75,11 @@ The renderer reads its state only from that register file, so API calls, GD disp
 6. **Window and present.**
    No code change is needed.
    `GXInit` calls `GXPC_InitAuto(1)`: an SDL2 window with a GL 3.3 core context opens when `DISPLAY` or `WAYLAND_DISPLAY` is set, otherwise the library falls back to headless EGL.
-   Every `GXCopyDisp` draws the XFB into the window, letterboxed to 4:3, swaps, and pumps events.
-   If VI should own presentation, call `GXPC_SetAutoPresent(0)` and then `GXPC_Present(xfb)` on retrace.
+   Without a VI callback, every `GXCopyDisp` draws its XFB into the window, swaps, and pumps events.
+   The native port registers `GXPC_SetVIScanoutCallback` to select the framebuffer and black-screen state latched by VI.
+   `GXPC_PollVI` runs after a retrace wait or display copy, only with the graphics context current.
+   This supports both single and double buffering and avoids presenting unchanged copies again on every wait.
+   `GXPC_SetAutoPresent(0)` disables automatic presentation; `GXPC_Present(xfb)` remains available for explicit host presentation on the graphics thread.
    - Command line: `GXPC_ParseArgs(&argc, argv)` strips `--headless`, `--window` and `--vsync`.
    - Environment: `SMS_HEADLESS=1`, `SMS_GX_SCALE=n` (internal resolution), `SMS_WINDOW_SCALE=n`, `SMS_VSYNC=1`.
    - Windows start centered on the pointer's monitor, with a default size of up to 1280×720. The window and its borders fit within 80% of the usable desktop, leaving its title bar and resize edges accessible. Internal resolution does not enlarge the window; `SMS_WINDOW_SCALE` requests a different starting size, still fitted to the screen.
@@ -103,6 +106,17 @@ The renderer reads its state only from that register file, so API calls, GD disp
 - `GXPC_GetTimes` gives the same breakdown as totals for the overlay; see `gx_pc.h`.
   On this machine the 32-bit build renders with Mesa llvmpipe (no 32-bit NVIDIA GL is installed), so GPU work shows up as CPU time at the first sync point, usually the EFB copy.
 
+## CPU-visible GPU results
+
+Texture copies keep their asynchronous write-back path until the next display frame or an explicit GX synchronization point.
+Before a draw-sync token is published or its callback runs, queued copies are resolved into game memory.
+Pixel metrics read after that point use the current count, including when the previous frame drew the same number of polygons.
+Finish commands wait for the GPU and resolve copies before delivering the draw-done callback.
+The native decoder delivers callbacks inline while processing commands; it does not reproduce hardware interrupt scheduling.
+`GXFlush` continues to submit drawing without forcing a GPU completion.
+`SMS_GX_SYNC_READS=1` also makes reads outside these explicit synchronization points synchronous.
+`SMS_GX_COPY_WRITEBACK=0` disables texture-copy write-backs for diagnostics and therefore bypasses their CPU visibility.
+
 ## Coverage against `api-surface.tsv`
 
 All **181** GX (149) and GD (32) functions the game, JSystem and THPPlayer call are provided.
@@ -128,7 +142,8 @@ The following are accepted, and their state is stored, but they have no or only 
 | `GXSetFogRangeAdj` | registers written; range adjustment not rendered |
 | `GXSetLineWidth` | lines are 1 px, because core GL has no wide lines |
 | `GXEnableTexOffsets`, `GXSetTexCoordCylWrap` | not rendered |
-| `GXPixModeSync`, `GXSetDrawDone`, `GXWaitDrawDone`, `GXDrawDone` | the pipeline is synchronous; callbacks fire immediately |
+| `GXPixModeSync` | no-op; texture-copy order follows the GL command stream |
+| `GXSetDrawDone`, `GXWaitDrawDone`, `GXDrawDone` | finish commands complete GPU work; callbacks are delivered inline by the command decoder |
 | `GXGetCPUFifo`, `GXGetFifoPtrs` | report a static FIFO object |
 
 ## Tests

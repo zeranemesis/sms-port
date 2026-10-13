@@ -12,14 +12,14 @@ Reason: port: code-mod hooks (sms_modhook.h): Eclipse's green Yoshi (juice, colo
  #ifdef TARGET_PC
  // Writable: code mods recolour Yoshi through it (retail map name bodyColor).
 @@ -113,7 +116,12 @@
- 	unk2   = unk6;
- 	unk4   = 7200;
- 	unk6   = 7200;
+ 	unk2  = unk6;
+ 	unk4  = 7200;
+ 	unk6  = 7200;
 +#ifdef TARGET_PC
 +	// Eclipse rewrites the `li r4, 0x5334` at 0x80270B3C (the juice supply).
 +	unk8 = (s16)SMS_MOD_WORD(0x80270B3C, 0x38805334);
 +#else
- 	unk8   = 21300;
+ 	unk8  = 21300;
 +#endif
  	unkC   = unk8;
  	mTranslation.set(0.0f, 0.0f, 0.0f);

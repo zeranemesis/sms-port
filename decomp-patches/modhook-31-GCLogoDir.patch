@@ -1,16 +1,14 @@
 Reason: port: code-mod hooks (sms_modhook.h): TGCLogoDir::direct debug cheat tail call
 --- a/src/System/GCLogoDir.cpp
 +++ b/src/System/GCLogoDir.cpp
-@@ -14,6 +14,9 @@
+@@ -14,4 +14,7 @@
  #include <MSound/MSoundSE.hpp>
  #include <GC2D/ScrnFader.hpp>
  #include <GC2D/ProgSelect.hpp>
 +#ifdef TARGET_PC
 +#include <sms_modhook.h>
 +#endif
- 
- // rogue includes needed for matching sinit & bss
- #include <MSound/MSSetSound.hpp>
+ #ifdef VERSION_GMSP01
 @@ -167,6 +170,13 @@
  		mState        = 0;
  	}

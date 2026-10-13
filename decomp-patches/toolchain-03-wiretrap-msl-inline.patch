@@ -1,0 +1,18 @@
+Reason: port: the recovered PAL wireTrap unit defines the MWCC std::fmodf inline locally; port_compat.h already redirects calls to the host MSL-compatible sms_msl_fmodf, so exclude only this duplicate definition from native compilation
+--- a/src/Enemy/wireTrap.cpp
++++ b/src/Enemy/wireTrap.cpp
+@@ -331,5 +331,6 @@
+ }
+ // The PAL map places the weak std::fmodf implementation in this unit.
+ // Other translation units call this copy through math.h's declaration.
++#ifndef TARGET_PC
+ inline float std::fmodf(float value, float modulus)
+ {
+@@ -341,6 +342,7 @@
+ 	u64 quotient = (u64)(value / modulus);
+ 	return value - modulus * (f32)(s64)quotient;
+ }
++#endif
+ 
+ void TWireTrap::moveObject()
+ {

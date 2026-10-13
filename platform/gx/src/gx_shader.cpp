@@ -448,7 +448,10 @@ static std::string genFS(const ShaderKey& k) {
         s += "  }\n";
     }
     (void)lastAlphaDest;
-    snprintf(buf, sizeof buf, "  ivec4 outc = clamp(ivec4(%s.rgb, %s.a), 0, 255);\n", kRegName[lastDest], kRegName[lastA]);
+    // TEV's unclamped results remain signed in the registers, but only their
+    // low eight bits reach alpha testing and blending. Saturating here makes
+    // FLUDD's tank opaque (its final alpha can be 255 + vertex alpha).
+    snprintf(buf, sizeof buf, "  ivec4 outc = ivec4(%s.rgb, %s.a) & 255;\n", kRegName[lastDest], kRegName[lastA]);
     s += buf;
 
     // alpha compare

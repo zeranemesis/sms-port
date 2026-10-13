@@ -31,13 +31,19 @@ typedef void* (*GXPCGetProcFn)(const char* name);
  * SMS_VSYNC=1 or --vsync (swap interval 1),
  * SMS_OVERLAY=1 (open the debug overlay at start),
  * SMS_GX_DUMP_EVERY=n + SMS_GX_DUMP_DIR=dir (write every n-th XFB as PPM).
- * Every GXCopyDisp presents the copied XFB to the window and swaps (disable
- * with GXPC_SetAutoPresent(0) if the VI layer calls GXPC_Present itself). */
+ * Without a VI callback every GXCopyDisp presents the copied XFB. With one,
+ * copies and GXPC_PollVI present only the latched VI buffer or a black screen.
+ * GXPC_SetAutoPresent(0) disables automatic presentation in both cases. */
 int GXPC_ParseArgs(int* argc, char** argv);  /* strips the options above; returns count removed */
 void GXPC_SetHeadless(int headless);
 int GXPC_InitAuto(int efbScale);             /* 1 on success */
 int GXPC_IsHeadless(void);
 void GXPC_SetAutoPresent(int enable);
+/* Read the latched VI state (return 1 when available). The callback runs on
+ * the graphics thread; never call OpenGL from a retrace interrupt or timer. */
+typedef int (*GXPCVIScanoutFn)(const void** xfb, int* black);
+void GXPC_SetVIScanoutCallback(GXPCVIScanoutFn readScanout);
+void GXPC_PollVI(void);                       /* graphics thread: apply latched VI state */
 void GXPC_Present(const void* xfb);          /* window mode: draw XFB, swap, pump events */
 uint32_t GXPC_FrameCount(void);              /* display copies so far */
 /* Window (taskbar / Dock) icon: w x h RGBA8 pixels, copied. Applied to the
@@ -137,6 +143,8 @@ void GXPC_WriteF32(float v);
  * on retrace for the buffer given to VISetNextFrameBuffer, then swaps.
  * xfb == NULL presents the most recent display copy.  Returns 0 if unknown. */
 int GXPC_PresentXFB(const void* xfb, int winW, int winH);
+/* Clear the window to opaque black without changing the game's EFB/XFBs. */
+void GXPC_PresentBlack(int winW, int winH);
 void GXPC_EndPresent(void);  /* after the swap: rebind the EFB (PresentXFB leaves framebuffer 0 bound) */
 
 /* Debug/test access: read back the EFB (RGBA8, top row first) or the XFB

@@ -56,6 +56,7 @@
     X(PFNGLBLITFRAMEBUFFERPROC, glBlitFramebuffer) X(PFNGLREADPIXELSPROC, glReadPixels) \
     X(PFNGLPIXELSTOREIPROC, glPixelStorei)                                          \
     X(PFNGLGENQUERIESPROC, glGenQueries) X(PFNGLBEGINQUERYPROC, glBeginQuery)       \
+    X(PFNGLGETQUERYIVPROC, glGetQueryiv)                                         \
     X(PFNGLENDQUERYPROC, glEndQuery) X(PFNGLGETQUERYOBJECTUIVPROC, glGetQueryObjectuiv) \
     X(PFNGLDELETEQUERIESPROC, glDeleteQueries) X(PFNGLDELETEBUFFERSPROC, glDeleteBuffers) \
     X(PFNGLMAPBUFFERRANGEPROC, glMapBufferRange) X(PFNGLUNMAPBUFFERPROC, glUnmapBuffer) \
@@ -174,6 +175,7 @@ SMS_GX_GL_FUNCS(SMS_GX_ALIAS)
 #define glPixelStorei gx_glPixelStorei
 #define glGenQueries gx_glGenQueries
 #define glBeginQuery gx_glBeginQuery
+#define glGetQueryiv gx_glGetQueryiv
 #define glEndQuery gx_glEndQuery
 #define glGetQueryObjectuiv gx_glGetQueryObjectuiv
 #define glDeleteQueries gx_glDeleteQueries

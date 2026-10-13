@@ -111,7 +111,11 @@ if [[ -n "$disc" ]]; then
   fi
 fi
 
-git submodule update --init decomp
+# Prefer the local matching sources when this workspace already contains them.
+# Reinitialising the historical submodule would replace the current snapshot.
+if [[ ! -f decomp/configure.py || ! -d decomp/src ]]; then
+  git submodule update --init decomp
+fi
 cmake -S . -B "$bdir" ${cmake_args[@]+"${cmake_args[@]}"} \
   -DSMS_ARCH="$sms_arch" -DSMS_GX_BUILD_TESTS=OFF -DSMS_BUNDLE_DISC="$disc"
 cmake --build "$bdir" --target sms --parallel "$(sms_jobs)"

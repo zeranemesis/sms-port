@@ -158,6 +158,10 @@ uint8_t* primitiveBegin(uint8_t opcode, uint32_t count, uint32_t fmt, uint32_t s
 void primitiveEnd(uint8_t opcode, uint32_t count);
 void onStateChange();  // called before any register write that changes state
 void executeCopy(uint32_t execReg);
+// CPU-visible copies and metrics must be current before a GX token/completion.
+void synchronizeReadbacks();
+void finishDraws();
+void deliverDrawDone();
 void markXfMemDirty();
 uint32_t peekColor(int x, int y);  // A<<24|R<<16|G<<8|B
 uint32_t peekZ(int x, int y);      // 24-bit

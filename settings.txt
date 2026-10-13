@@ -12,7 +12,7 @@ texture_packs = on
 
 # Widescreen: off, 16:9, 21:9, 16:10 (or on for 16:9). The game sees a wider
 # view; the HUD and menus stay at 4:3 in the middle.
-widescreen = on
+widescreen = 16:9
 # With widescreen, where the gameplay HUD goes: centre (with the menus), or
 # edges (counters to the left edge, the water gauge to the right one).
 # widescreen_hud = centre
@@ -34,6 +34,7 @@ frame_rate = 60
 # The launcher (a settings menu shown before the game) edits this file.
 # Turn it off to start the game directly; hold Shift at start to show it anyway.
 # launcher = on
+launcher = off
 
 # Window: windowed, borderless (fullscreen at desktop resolution) or fullscreen
 # (exclusive). F11 or Alt+Enter toggles fullscreen while playing.
@@ -50,27 +51,27 @@ frame_rate = 60
 
 # Anti-aliasing: MSAA samples (0, 2, 4 or 8) and the FXAA post-process.
 # msaa = 0
-# fxaa = off
+fxaa = off
 # Anisotropic texture filtering: 0 (off), 2, 4, 8 or 16.
 # anisotropic = 0
 # Contrast-adaptive sharpening, 0 to 100.
-# sharpen = 0
+sharpen = 0
 # Brightness curve: 1.0 is the original picture.
 # brightness = 1.0
 
-# skip_movies = off
-# audio = on
+skip_movies = on
+audio = on
 # Master volume, 0 to 100.
 # volume = 100
 
 # Camera: invert either axis (C-stick, right stick, camera keys and mouse),
 # a free camera that stays where you point it (L recentres it), rotation speed
 # in percent, and mouse look (F10 releases the mouse) with its sensitivity.
-# camera_invert_x = off
-# camera_invert_y = off
-# free_camera = off
+camera_invert_x = off
+camera_invert_y = off
+free_camera = off
 # camera_speed = 100
-# mouse_camera = off
+mouse_camera = off
 # mouse_sensitivity = 100
 
 # Online co-op (the launcher's Online page): off, host or join; the host's address
@@ -80,7 +81,8 @@ frame_rate = 60
 # net_port = 27016
 # net_name = Mario
 # Open the debug overlay (frame rate, where the time goes) at start.
-# overlay = off
+overlay = off
 
 # save_dir = /path/to/memory/card/folder
 # disc_image = /path/to/GMSE01.iso
+SMS_DISC_ROOT = rom/GMSP01-extracted/files

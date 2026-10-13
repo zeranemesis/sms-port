@@ -151,7 +151,7 @@ Reason: endian: keep retail's big-endian memory-card layout: TFlagManager writes
  	top = bottom = 0;
  	for (u32 i = 0; i < size / 2; ++i, ++ptr) {
 +#ifdef TARGET_PC
-+		u16 v = port_be16(ptr); // sectors are kept in on-card (big-endian) order
++		u16 v = port_be16(ptr); // sectors retain the on-card byte order
 +		top += v;
 +		bottom += ~v;
 +#else
@@ -161,34 +161,21 @@ Reason: endian: keep retail's big-endian memory-card layout: TFlagManager writes
  	}
  	return (top << 16) | bottom & 0xffff;
  }
-@@ -81,6 +87,18 @@
+@@ -81,8 +87,13 @@
  // costs getWriteStream/getOptionWriteStream ~7.
  void TCardSector::setCheckSum(u32 write_count)
  {
 +#ifdef TARGET_PC
 +	mWriteCount = port_bswap32(write_count);
-+	u16* ptr    = (u16*)this;
-+	u32 top, bottom;
-+	top = bottom = 0;
-+	for (u32 i = 0; i < 0x1FFC / 2; ++i, ++ptr) {
-+		u16 v = port_be16(ptr);
-+		top += v;
-+		bottom += ~v;
-+	}
-+	mCheckSum = port_bswap32((top << 16) | bottom & 0xffff);
++	mCheckSum   = port_bswap32(CalcCheckSum(this, 0x1FFC));
 +#else
  	mWriteCount = write_count;
- 	u16* ptr    = (u16*)this;
- 	u32 top, bottom;
-@@ -90,6 +108,7 @@
- 		bottom += ~ptr[0];
- 	}
- 	mCheckSum = (top << 16) | bottom & 0xffff;
+ 	mCheckSum   = CalcCheckSum(this, 0x1FFC);
 +#endif
  }
  
  // TODO: incorrect
-@@ -104,9 +123,15 @@
+@@ -97,9 +108,15 @@
  	s32 errc = CARDRead(file, this, sizeof(TCardSector),
  	                    index * sizeof(TCardSector));
  	if (errc == CARD_RESULT_READY) {

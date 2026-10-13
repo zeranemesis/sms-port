@@ -7,6 +7,10 @@
 /build-*/
 /build32/
 /third_party/
+/saves/
+/archives/
+/artifacts/consolidation-*/
+/artifacts/pc-fidelity-*/
 .DS_Store
 # Optional mods (texture packs and the like), see mods/README.md.
 /mods/*

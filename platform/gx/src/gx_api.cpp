@@ -136,6 +136,12 @@ static bool s_texCopyZ;
 static const uint8_t kFiltHw[6] = {0, 4, 1, 5, 2, 6};
 static const uint8_t kFiltGx[8] = {GX_NEAR, GX_NEAR_MIP_NEAR, GX_NEAR_MIP_LIN, GX_NEAR, GX_LINEAR, GX_LIN_MIP_NEAR, GX_LIN_MIP_LIN, GX_LINEAR};
 
+namespace gx {
+void deliverDrawDone() {
+    if (s_drawDoneCb) s_drawDoneCb();
+}
+}
+
 extern "C" {
 
 // ================================================================== GXManage / GXInit
@@ -239,12 +245,12 @@ void GXSetDrawSync(u16 token) {
 u16 GXReadDrawSync(void) { return g.drawSyncToken; }
 void GXSetDrawDone(void) {
     apiBP(BP_DRAWDONE, 2);
-    if (s_drawDoneCb) s_drawDoneCb();
 }
-void GXWaitDrawDone(void) { flushBatch(); }
+// The native command decoder completes the finish command before returning.
+void GXWaitDrawDone(void) { synchronizeReadbacks(); }
 void GXDrawDone(void) {
-    flushBatch();
-    if (s_drawDoneCb) s_drawDoneCb();
+    GXSetDrawDone();
+    GXWaitDrawDone();
 }
 void GXPixModeSync(void) {}
 void GXTexModeSync(void) {}

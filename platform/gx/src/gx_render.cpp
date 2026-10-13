@@ -13,6 +13,8 @@
 #include <time.h>
 #include <string.h>
 #include <unordered_map>
+#include <chrono>
+#include <thread>
 
 namespace gx {
 
@@ -1063,8 +1065,9 @@ static void statsFrame() {
 // Asynchronous GPU reads. Every synchronous read (glReadPixels into client
 // memory, a query result) makes the CPU wait for all queued GPU work, which on
 // a real GPU serialises the two. Reads the game makes every frame are answered
-// from the same read one frame earlier instead (as Dolphin does), which the
-// game cannot tell apart; SMS_GX_SYNC_READS=1 goes back to synchronous reads.
+// from the same read one frame earlier instead. Explicit GX synchronization
+// makes copies and metrics current; SMS_GX_SYNC_READS=1 also makes reads
+// outside those barriers synchronous.
 static uint32_t s_frameNo = 0;   // display copies so far
 static uint32_t s_drawGen = 0;   // bumped by anything that changes the EFB
 static bool asyncReads() {
@@ -1081,51 +1084,134 @@ static bool asyncReads() {
 // reached the colour unit; the game subtracts 4 per polygon of what it drew,
 // so the count is the samples that passed plus 4 per triangle. Copy passes
 // in between are left out: they end the running query, which is summed at
-// the read. Each clear/read pair of a frame is a slot; a slot that drew the
-// same number of triangles one frame earlier, in one query, is answered from
-// that frame's query, otherwise the queries are waited for.
-enum { kMetricSlots = 32 };
-static GLuint s_mq[2][kMetricSlots];
-static uint32_t s_mqTris[2][kMetricSlots], s_mqFrame[2][kMetricSlots];
-static bool s_mqUsed[2][kMetricSlots];
+// the read. Each query has a single begin/end lifetime, including segments
+// split by copies. A query is started lazily at an actual draw, so copies and
+// consecutive reads cannot produce empty query segments. Counts belong to the current draw;
+// equal triangle counts do not imply equal pollution coverage.
 static int s_mqSlot = -1;
 static uint32_t s_mqSlotFrame = ~0u;
-static bool s_pixActive = false, s_pixTaint = false;
+static bool s_pixActive = false;
 static uint32_t s_pixTris = 0;
 static uint64_t s_pixSamples = 0;  // counted before the pending queries
 static GLuint s_pixCur = 0;
-static bool s_pixCurPooled = false;
-static std::vector<GLuint> s_queryPool;
-static std::vector<std::pair<GLuint, bool>> s_pixPending;  // ended queries of this count, pooled?
+static std::vector<GLuint> s_pixPending;  // ended queries of this count
+static GLuint s_pixSeedFbo = 0, s_pixSeedColor = 0, s_pixSeedProg = 0;
 
-static GLuint poolQuery() {
-    if (s_queryPool.empty()) {
-        GLuint q;
-        glGenQueries(1, &q);
-        return q;
+static bool seedPixelQueries() {
+    static const bool enabled = [] {
+        const char* e = getenv("SMS_GX_QUERY_SEED");
+        if (e) return e[0] == '1';
+        const char* vendor = reinterpret_cast<const char*>(glGetString(GL_VENDOR));
+        return vendor && strstr(vendor, "Intel");
+    }();
+    return enabled;
+}
+
+static void seedPixelQuery() {
+    GLint framebuffer = 0, viewport[4];
+    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &framebuffer);
+    glGetIntegerv(GL_VIEWPORT, viewport);
+    if (!s_pixSeedFbo) {
+        s_pixSeedProg = compileProgram(
+            "#version 330 core\nvoid main(){vec2 p[3]=vec2[3](vec2(-1,-1),vec2(3,-1),vec2(-1,3));gl_Position=vec4(p[gl_VertexID],0,1);}",
+            "#version 330 core\nout vec4 c;void main(){c=vec4(1);}");
+        glGenFramebuffers(1, &s_pixSeedFbo);
+        glGenRenderbuffers(1, &s_pixSeedColor);
+        glBindRenderbuffer(GL_RENDERBUFFER, s_pixSeedColor);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, 1, 1);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_pixSeedFbo);
+        glFramebufferRenderbuffer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, s_pixSeedColor);
+        if (glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
+            fatal("pixel query seed framebuffer incomplete");
+        logmsg("pixel query seed: private 1x1 framebuffer, one sample subtracted per query");
+    } else {
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, s_pixSeedFbo);
     }
-    GLuint q = s_queryPool.back();
-    s_queryPool.pop_back();
+    glViewport(0, 0, 1, 1);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    glDisable(GL_COLOR_LOGIC_OP);
+    glDisable(GL_CLIP_DISTANCE0);
+    glDisable(GL_CLIP_DISTANCE0 + 1);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glUseProgram(s_pixSeedProg);
+    glBindVertexArray(s_copyVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, GLuint(framebuffer));
+    glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+    glcInvalidate();
+}
+
+static GLuint newPixelQuery() {
+    GLuint q = 0;
+    glGenQueries(1, &q);
     return q;
 }
 static void pixReleasePending() {
-    for (auto& q : s_pixPending)
-        if (q.second) s_queryPool.push_back(q.first);
+    if (!s_pixPending.empty()) glDeleteQueries(GLsizei(s_pixPending.size()), s_pixPending.data());
     s_pixPending.clear();
 }
 static uint64_t queryResult(GLuint q) {
     GxTimer tw(&s_waitSeconds);
+    static const bool trace = [] {
+        const char* e = getenv("SMS_GX_QUERY_TRACE");
+        return e && e[0] == '1';
+    }();
+    glFinish();
+    if (trace) {
+        GLint active = 0;
+        glGetQueryiv(GL_SAMPLES_PASSED, GL_CURRENT_QUERY, &active);
+        logmsg("pixel query begin: frame %u slot %d query %u active %d error 0x%x", s_frameNo, s_mqSlot, q, active, glGetError());
+    }
+
+    // The Intel driver has been observed spinning in blocking QUERY_RESULT.
+    // Submit the end explicitly and wait on a fence instead. Never substitute a previous
+    // frame's count or zero: pollution logic needs the actual result.
+    GLuint available = GL_FALSE;
+    glGetQueryObjectuiv(q, GL_QUERY_RESULT_AVAILABLE, &available);
+    if (!available) {
+        GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (!fence) fatal("pixel query fence creation failed (frame %u, query %u)", s_frameNo, q);
+        GLenum status = GL_TIMEOUT_EXPIRED;
+        for (unsigned attempt = 0; attempt < 100 && status == GL_TIMEOUT_EXPIRED; ++attempt)
+            status = glClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 50000000ull);
+        glDeleteSync(fence);
+        if (status != GL_ALREADY_SIGNALED && status != GL_CONDITION_SATISFIED)
+            fatal("pixel query GPU wait failed: 0x%x (frame %u, query %u)", status, s_frameNo, q);
+        glGetQueryObjectuiv(q, GL_QUERY_RESULT_AVAILABLE, &available);
+        // Query availability can lag the fence's completion in the host driver.
+        // Poll without entering its unbounded blocking result path.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!available && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            glGetQueryObjectuiv(q, GL_QUERY_RESULT_AVAILABLE, &available);
+        }
+        if (!available) {
+            GLint active = 0;
+            glGetQueryiv(GL_SAMPLES_PASSED, GL_CURRENT_QUERY, &active);
+            fatal("pixel query result timed out (frame %u, query %u, active %d, error 0x%x)", s_frameNo, q, active, glGetError());
+        }
+    }
     GLuint n = 0;
     glGetQueryObjectuiv(q, GL_QUERY_RESULT, &n);
+    if (seedPixelQueries()) {
+        if (!n) fatal("pixel query seed was not counted (frame %u, query %u)", s_frameNo, q);
+        --n;
+    }
+    if (trace) logmsg("pixel query end: frame %u slot %d query %u samples %u", s_frameNo, s_mqSlot, q, n);
     return n;
 }
 
 void pixMetricClear() {
     flushBatch();
     if (!s_ready) return;
-    if (s_pixActive) {
+    if (s_pixCur) {
         glEndQuery(GL_SAMPLES_PASSED);
-        if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
+        glDeleteQueries(1, &s_pixCur);
+        s_pixCur = 0;
     }
     pixReleasePending();
     if (s_mqSlotFrame != s_frameNo) {
@@ -1133,70 +1219,37 @@ void pixMetricClear() {
         s_mqSlot = -1;
     }
     s_mqSlot++;
-    int cur = s_frameNo & 1;
-    if (s_mqSlot < kMetricSlots) {
-        if (!s_mq[cur][s_mqSlot]) glGenQueries(1, &s_mq[cur][s_mqSlot]);
-        s_pixCur = s_mq[cur][s_mqSlot];
-        s_pixCurPooled = false;
-    } else {
-        s_pixCur = poolQuery();
-        s_pixCurPooled = true;
-    }
     s_pixSamples = 0;
     s_pixTris = 0;
-    s_pixTaint = !asyncReads() || s_mqSlot >= kMetricSlots;
-    glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
     s_pixActive = true;
 }
 
 uint32_t pixMetricRead() {
     flushBatch();
     if (!s_ready || !s_pixActive) return 0;
-    glEndQuery(GL_SAMPLES_PASSED);
-    uint64_t samples = 0;
-    int cur = s_frameNo & 1, slot = s_mqSlot;
-    bool fromPrev = false;
-    if (!s_pixTaint) {
-        s_mqUsed[cur][slot] = true;
-        s_mqTris[cur][slot] = s_pixTris;
-        s_mqFrame[cur][slot] = s_frameNo;
-        int prev = cur ^ 1;
-        if (s_mqUsed[prev][slot] && s_mqFrame[prev][slot] + 1 == s_frameNo && s_mqTris[prev][slot] == s_pixTris) {
-            samples = queryResult(s_mq[prev][slot]);
-            fromPrev = true;
-        }
-    }
-    if (!fromPrev) {
+    uint64_t samples = s_pixSamples;
+    if (s_pixCur) {
+        glEndQuery(GL_SAMPLES_PASSED);
         s_syncReads++;
-        samples = s_pixSamples + queryResult(s_pixCur);
-        for (auto& q : s_pixPending) samples += queryResult(q.first);
+        samples += queryResult(s_pixCur);
+        glDeleteQueries(1, &s_pixCur);
+        s_pixCur = 0;
     }
+    for (GLuint q : s_pixPending) samples += queryResult(q);
     pixReleasePending();
-    if (s_pixCurPooled) s_queryPool.push_back(s_pixCur);
     // reading does not reset the hardware counter: keep counting (a second
     // read before the next clear waits for its queries)
     s_pixSamples = samples;
-    s_pixTaint = true;
-    s_pixCur = poolQuery();
-    s_pixCurPooled = true;
-    glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
     uint64_t S2 = uint64_t(s_scale) * uint64_t(s_scale);
     uint64_t v = samples / S2 + uint64_t(s_pixTris) * 4;
     return v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
 }
 
 static void pixMetricPause() {
-    if (s_pixActive) {
+    if (s_pixCur) {
         glEndQuery(GL_SAMPLES_PASSED);
-        s_pixPending.emplace_back(s_pixCur, s_pixCurPooled);
-        s_pixTaint = true;  // this count now spans several queries
-    }
-}
-static void pixMetricResume() {
-    if (s_pixActive) {
-        s_pixCur = poolQuery();
-        s_pixCurPooled = true;
-        glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
+        s_pixPending.push_back(s_pixCur);
+        s_pixCur = 0;
     }
 }
 
@@ -1292,6 +1345,11 @@ void flushBatch() {
     }
     GxTimer timer;
     GxTimer tf(&g_flushSeconds);
+    if (s_pixActive && !s_pixCur) {
+        s_pixCur = newPixelQuery();
+        glBeginQuery(GL_SAMPLES_PASSED, s_pixCur);
+        if (seedPixelQueries()) seedPixelQuery();
+    }
     s_xmap = drawXMap();
     const ShaderProgram* sp = shaderForCurrentState();
     glcUseProgram(sp->prog);
@@ -1401,8 +1459,12 @@ static void clearRect(int x, int y, int w, int h) {
     glEnable(GL_SCISSOR_TEST);
     glScissor(x * s_scale, y * s_scale, w * s_scale, h * s_scale);
     bool hasAlpha = (g.bp[BP_PE_CONTROL] & 7) == 1;
-    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
-    glDepthMask(GL_TRUE);
+    // GX copy-clear preserves the colour, alpha and depth update masks.
+    uint32_t cm = g.bp[BP_CMODE0];
+    GLboolean colorUpdate = (cm >> 3) & 1 ? GL_TRUE : GL_FALSE;
+    GLboolean alphaUpdate = ((cm >> 4) & 1) && hasAlpha ? GL_TRUE : GL_FALSE;
+    glColorMask(colorUpdate, colorUpdate, colorUpdate, alphaUpdate);
+    glDepthMask((g.bp[BP_ZMODE] >> 4) & 1 ? GL_TRUE : GL_FALSE);
     glClearColor(float(ar & 255) / 255.0f, float((gb >> 8) & 255) / 255.0f, float(gb & 255) / 255.0f,
                  hasAlpha ? float((ar >> 8) & 255) / 255.0f : 1.0f);
     glClearDepth(double(z & 0xFFFFFF) / 16777215.0);
@@ -1453,8 +1515,8 @@ static void encodeAndStore(const uint8_t* px, const void* dest, int ow, int oh, 
 }
 
 // A texture copy's write-back is read into a pixel buffer and stored one
-// frame later, when the GPU has long finished it (or earlier, when the next
-// copy to the same place comes). It is dropped when a newer copy of the same
+// frame later, or earlier at a GX synchronization point or the next copy to
+// the same place. It is dropped when a newer copy of the same
 // frame supersedes it or when the destination's bytes
 // changed in the meantime (the CPU wrote them, or a stage load reused the
 // memory). A cache flush of the range alone does not drop it: games flush
@@ -1477,12 +1539,17 @@ static void resolveWriteBack(PendingWriteBack& w) {
         const void* px;
         {
             GxTimer tw(&s_waitSeconds);
-            glClientWaitSync(w.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            GLenum status;
+            do {
+                status = glClientWaitSync(w.fence, GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000ull);
+            } while (status == GL_TIMEOUT_EXPIRED);
+            if (status == GL_WAIT_FAILED) fatal("EFB copy read-back fence failed (%p)", w.dest);
             glBindBuffer(GL_PIXEL_PACK_BUFFER, w.pbo);
             px = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, GLsizeiptr(w.ow) * w.oh * 4, GL_MAP_READ_BIT);
         }
-        if (px) encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.tw, w.th, w.layout);
-        glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+        if (!px) fatal("EFB copy read-back mapping failed (%p)", w.dest);
+        encodeAndStore(static_cast<const uint8_t*>(px), w.dest, w.ow, w.oh, w.tw, w.th, w.layout);
+        if (!glUnmapBuffer(GL_PIXEL_PACK_BUFFER)) fatal("EFB copy read-back buffer became invalid (%p)", w.dest);
         glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
     }
     glDeleteSync(w.fence);
@@ -1498,6 +1565,24 @@ static void resolveWriteBacks(bool all) {
         else resolveWriteBack(w);
     }
     s_writeBacks.resize(keep);
+}
+
+void synchronizeReadbacks() {
+    flushBatch();
+    if (!s_ready) return;
+    GxTimer timer;
+    resolveWriteBacks(true);
+}
+
+void finishDraws() {
+    flushBatch();
+    if (!s_ready) return;
+    {
+        GxTimer timer;
+        GxTimer wait(&s_waitSeconds);
+        glFinish();
+    }
+    synchronizeReadbacks();
 }
 
 // tw x th: the copy's size in texels as the game sees it.
@@ -1657,7 +1742,6 @@ void executeCopy(uint32_t ctrl) {
     flushBatch();
     glcInvalidate();  // copies, clears and write-backs set GL state directly
     pixMetricPause();
-    struct Resume { ~Resume() { pixMetricResume(); } } resume;
     const void* dest = g.copyDest;
     bool disp = (ctrl >> 14) & 1;
     copyEfb(ctrl);
@@ -1862,6 +1946,17 @@ int GXPC_PresentXFB(const void* xfb, int winW, int winH) {
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     memset(&s_stats, 0, sizeof(s_stats));
     return 1;
+}
+
+void GXPC_PresentBlack(int winW, int winH) {
+    flushBatch();
+    glcInvalidate();
+    glDisable(GL_SCISSOR_TEST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glViewport(0, 0, winW, winH);
 }
 
 void GXPC_EndPresent(void) {

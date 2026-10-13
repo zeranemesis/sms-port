@@ -23,11 +23,15 @@ extern "C" void sms_frontend_camera_aspect_changed(float ratio)
 #include <JSystem/JDrama/JDRDisplay.hpp>
 extern "C" int port_frame_rate;
 extern "C" int port_fps60_active;
+extern "C" int port_gameplay_director_active;
 extern "C" void sms_frontend_sync_game_rate()
 {
     const int previous = port_fps60_active;
-    port_fps60_active = gpApplication.mAppState == TApplication::APP_STATE_GAMEPLAY && port_frame_rate == 60;
-    if (gpApplication.mDisplay) gpApplication.mDisplay->unk4C = port_fps60_active ? 1 : 2;
+    // APP_STATE_GAMEPLAY also hosts additional movies before a stage starts.
+    // The application records the phase when it selects the actual director.
+    port_fps60_active = port_gameplay_director_active && port_frame_rate == 60;
+    if (gpApplication.mDisplay && port_gameplay_director_active)
+        gpApplication.mDisplay->unk4C = port_fps60_active ? 1 : 2;
     if (gpApplication.mFader) gpApplication.mFader->mRate = SMSGetVSyncTimesPerSec();
     if (previous == port_fps60_active) return;
     const u32 delay = (u32)(20.0f / SMSGetAnmFrameRate());
