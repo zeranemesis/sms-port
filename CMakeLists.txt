@@ -310,7 +310,7 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/game_progress\\.cpp$")
-list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/partyboard_(backend|menu)\\.cpp$")
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/partyboard_(backend(_aurora)?|menu)\\.cpp$")
 # platform/mods/eclipse is built by cmake/eclipse.cmake, and only with SMS_ECLIPSE.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/mods/eclipse/")
 # net_game.cpp is built into the game library (above).
@@ -337,8 +337,13 @@ if(WIN32 AND MINGW)
   endforeach()
 endif()
 if(WIN32 AND SMS_ARCH STREQUAL "64")
+  set(SMS_BUILD_RENDERER "opengl")
+  if(SMS_GX_BACKEND STREQUAL "aurora")
+    set(SMS_BUILD_RENDERER "aurora")
+    set_source_files_properties(platform/frontend/pc_services.cpp PROPERTIES COMPILE_DEFINITIONS SMS_FRONTEND_AURORA=1)
+  endif()
   file(GENERATE OUTPUT "${CMAKE_BINARY_DIR}/sms-build.json"
-    CONTENT "{\"region\":\"${SMS_REGION}\",\"architecture\":\"x64\"}\n")
+    CONTENT "{\"region\":\"${SMS_REGION}\",\"architecture\":\"x64\",\"renderer\":\"${SMS_BUILD_RENDERER}\"}\n")
   add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${CMAKE_BINARY_DIR}/sms-build.json" "$<TARGET_FILE_DIR:sms>/sms-build.json")
 endif()
@@ -454,8 +459,6 @@ else()
 endif()
 
 if(SMS_GX_BACKEND STREQUAL "aurora")
-  # The PartyBoard menu draws with OpenGL: not available on the Aurora back end yet.
-  set(SMS_PARTYBOARD_UI OFF CACHE BOOL "" FORCE)
   add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     ${SMS_AURORA_RUNTIME_DLLS} "$<TARGET_FILE_DIR:sms>")
 endif()
@@ -466,6 +469,9 @@ endif()
 if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND TARGET SDL2::SDL2)
   include(cmake/partyboard_ui.cmake)
   target_sources(sms_partyboard_backend PRIVATE platform/frontend/partyboard_menu.cpp)
+  if(SMS_GX_BACKEND STREQUAL "aurora")
+    target_sources(sms_gx PRIVATE platform/gx/src/gx_aurora_menu.cpp)
+  endif()
   target_link_libraries(sms_gx PRIVATE sms_partyboard_backend sms_retroachievements)
   target_compile_definitions(sms_gx PRIVATE SMS_PARTYBOARD_UI=1)
   add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory

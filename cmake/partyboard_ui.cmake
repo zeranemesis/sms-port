@@ -51,16 +51,25 @@ function(sms_add_partyboard_backend)
     if(NOT TARGET SDL2::SDL2)
         find_package(SDL2 REQUIRED CONFIG)
     endif()
-    add_library(sms_partyboard_backend STATIC
-        "${_sms_partyboard_root}/platform/frontend/partyboard_backend.cpp"
-        "${_rml_source}/Backends/RmlUi_Platform_SDL.cpp"
-        "${_rml_source}/Backends/RmlUi_Renderer_GL3.cpp")
+    if(SMS_GX_BACKEND STREQUAL "aurora")
+        set(_backend "${_sms_partyboard_root}/platform/frontend/partyboard_backend_aurora.cpp")
+        set(_renderer "")
+    else()
+        set(_backend "${_sms_partyboard_root}/platform/frontend/partyboard_backend.cpp")
+        set(_renderer "${_rml_source}/Backends/RmlUi_Renderer_GL3.cpp")
+    endif()
+    add_library(sms_partyboard_backend STATIC ${_backend} ${_renderer}
+        "${_rml_source}/Backends/RmlUi_Platform_SDL.cpp")
     target_compile_features(sms_partyboard_backend PUBLIC cxx_std_17)
     target_compile_definitions(sms_partyboard_backend PRIVATE RMLUI_SDL_VERSION_MAJOR=2)
     target_include_directories(sms_partyboard_backend
         PUBLIC "${_sms_partyboard_root}/platform/frontend"
         PRIVATE "${_rml_source}/Backends"
                 "${_sms_partyboard_root}/platform/gx/src")
+    if(SMS_GX_BACKEND STREQUAL "aurora")
+        target_include_directories(sms_partyboard_backend PRIVATE "${_sms_partyboard_root}/aurora-bridge")
+        target_link_libraries(sms_partyboard_backend PUBLIC "${SMS_AURORA_BRIDGE_BUILD}/sms_aurora.lib")
+    endif()
     target_link_libraries(sms_partyboard_backend PUBLIC RmlUi::Core SDL2::SDL2 PRIVATE ${CMAKE_DL_LIBS})
 endfunction()
 sms_add_partyboard_backend()

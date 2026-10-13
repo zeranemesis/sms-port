@@ -17,6 +17,11 @@
 
 namespace sms_frontend {
 namespace {
+#ifdef SMS_FRONTEND_AURORA
+const char* renderer_name="aurora";
+#else
+const char* renderer_name="opengl";
+#endif
 std::mutex services_mutex;
 UpdateStatus update;
 bool installation_prepared = false;
@@ -265,6 +270,7 @@ bool release_asset(const std::string& json, UpdateStatus& result) {
         std::transform(lower.begin(),lower.end(),lower.begin(),[](unsigned char ch){return (char)std::tolower(ch);});
         if (lower.find("windows")==std::string::npos || lower.find("pal")==std::string::npos
             || lower.find("64")==std::string::npos || lower.size()<4 || lower.substr(lower.size()-4)!=".zip") continue;
+        if ((lower.find("aurora")!=std::string::npos)!=(std::string(renderer_name)=="aurora")) continue;
         std::string url=field(object,"browser_download_url"), digest=field(object,"digest");
         const std::string prefix="https://github.com/zeranemesis/sms-port/releases/download/";
         if (url.compare(0,prefix.size(),prefix)!=0 || digest.size()!=71 || digest.substr(0,7)!="sha256:") continue;
@@ -378,7 +384,7 @@ void check_updates(const std::string& installed_tag) {
         if(ok)ok=release_asset(json,result);
         if(ok){result.state=(!installed_tag.empty()&&result.version==installed_tag)?UpdateState::UpToDate:UpdateState::Available;
             result.message="Release Windows 64 PAL avec SHA-256 publiée par le dépôt.";}
-        else {result.state=UpdateState::Failed;result.message=error.empty()?"No Windows 64 PAL ZIP release with a published SHA-256 digest.":error;}
+        else {result.state=UpdateState::Failed;result.message=error.empty()?std::string("Aucun paquet Windows 64 PAL ")+renderer_name+" avec empreinte SHA-256 publiée.":error;}
 #else
         result.state=UpdateState::Failed;result.message="Update download requires Windows.";
 #endif
@@ -433,6 +439,7 @@ ServiceResult prepare_update_installation(bool restart_after_install) {
     options << "{\"archive\":" << json_quote(update.staged_path)
             << ",\"release\":" << json_quote(update.version)
             << ",\"sha256\":" << json_quote(update.sha256)
+            << ",\"renderer\":" << json_quote(renderer_name)
             << ",\"destination\":" << json_quote(utf8(executable.substr(0,slash)))
             << ",\"exe\":" << json_quote(utf8(executable))
             << ",\"pid\":" << GetCurrentProcessId()
@@ -496,6 +503,13 @@ try {
     $manifestPath = Join-Path $releaseRoot 'sms-build.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
     if ($manifest.region -cne 'GMSP01' -or $manifest.architecture -cne 'x64') { throw 'Release is not Windows 64 PAL GMSP01.' }
+    if ($options.renderer -ceq 'aurora') {
+        if ($manifest.renderer -cne 'aurora' -or !(Test-Path -LiteralPath (Join-Path $releaseRoot 'sms_aurora.dll'))) {
+            throw 'Release does not contain the Aurora renderer and its manifest.'
+        }
+    } elseif ($manifest.renderer -and $manifest.renderer -cne $options.renderer) {
+        throw 'Release uses a different renderer.'
+    }
     $manifest | Add-Member -MemberType NoteProperty -Name release_tag -Value ([string]$options.release) -Force
     [System.IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
     $stream = [System.IO.File]::OpenRead($binaries[0].FullName)

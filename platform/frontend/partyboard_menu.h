@@ -18,6 +18,7 @@ struct MenuBindings {
     std::vector<std::string> availableMods;
     std::function<std::vector<std::string>()> refreshMods;
     std::function<void()> onModsInstalled;
+    bool auroraRenderer = false;
 };
 // RmlUi DOM, original PartyBoard CSS and original font resources; no ImGui.
 class PartyBoardMenu {

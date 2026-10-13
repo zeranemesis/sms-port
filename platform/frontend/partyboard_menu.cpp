@@ -47,6 +47,7 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
     Rml::ElementDocument* document = nullptr;
     MenuBindings bindings;
     bool shown=false;
+    bool closing=false;
     int page=0,selected=0,capture=-1;
     bool add_key=false;
     bool fidelity_menu=false;
@@ -109,6 +110,10 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             rows.push_back(Row("present_filter","Filtre de présentation","Filtrage de l'image finale dans la fenêtre.","bilinear",{{"bilinear","Lisse"},{"nearest","Pixels bruts"}}));
             rows.push_back(Row("resolution","Résolution interne","Multiples de l'image GameCube 640 × 528. Les grandes valeurs sollicitent davantage le GPU.","1",{{"1","1× · 640 × 528"},{"2","2× · 1280 × 1056"},{"3","3× · 1920 × 1584"},{"4","4× · 2560 × 2112"},{"5","5× · 3200 × 2640"},{"6","6× · 3840 × 3168"},{"7","7× · 4480 × 3696"},{"8","8× · 5120 × 4224"}}));
             rows.push_back(Row("msaa","Anticrénelage MSAA","Lisse les contours des polygones.","0",{{"0","Désactivé"},{"2","2×"},{"4","4×"},{"8","8×"}}));
+            if(bindings.auroraRenderer) {
+                rows.back().choices={{"0","Désactivé"},{"4","4×"}};
+                rows.back().help="Lisse les contours des polygones. Aurora / WebGPU prend en charge 4×.";
+            }
             rows.push_back(toggle("fxaa","FXAA","Lissage des contours par post-traitement.",false));
             rows.push_back(Row("anisotropic","Filtrage anisotrope","Améliore les textures vues en biais.","0",{{"0","Désactivé"},{"2","2×"},{"4","4×"},{"8","8×"},{"16","16×"}}));
             rows.push_back(Row("brightness","Luminosité","1,00 correspond à l'image d'origine.","1.0",{{"0.5","0,50"},{"0.75","0,75"},{"1.0","1,00"},{"1.25","1,25"},{"1.5","1,50"},{"2.0","2,00"}}));
@@ -273,7 +278,12 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         const bool saved=bindings.onSave && bindings.onSave();
         status_text(!saved ? "Échec de l’application du réglage." : row.key=="mod" || row.key=="hd_cutscenes" ? "Choix enregistré pour le prochain chargement de niveau, sans redémarrage. Les fichiers de la scène actuelle sont conservés." : row.key=="language" ? "Langue sélectionnée pour le prochain chargement de niveau, sans redémarrage." : "Réglage enregistré et appliqué en direct.");
     }
-    bool resume(){if(bindings.onResume && !bindings.onResume())return false;shown=false;capture=-1;document->Hide();return true;}
+    bool resume(){
+        if(closing || !shown)return false;
+        closing=true;shown=false;
+        if(bindings.onResume && !bindings.onResume()) {shown=true;closing=false;return false;}
+        capture=-1;document->Hide();closing=false;return true;
+    }
     void dispatch(const std::string& action,const std::string& val) {
         if(action=="fidelity-open"||action=="fidelity-back"){
             fidelity_menu=action=="fidelity-open";selected=0;make_rows();render_rows();render_detail();return;

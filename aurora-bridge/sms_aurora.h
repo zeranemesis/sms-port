@@ -88,9 +88,21 @@ SAB_API void sab_end_frame(void);
 SAB_API void sab_process(const void* data, uint32_t size);
 
 /* EFB -> texture copy into a GPU texture keyed by dest; a later texture whose
- * data pointer is dest samples it. fmt is the GXTexFmt of the copy. */
+ * data pointer is dest samples it. fmt is the GXTexFmt of the copy. With
+ * readback, the copied EFB pixels (dstWidth x dstHeight, RGBA8, unconverted)
+ * also come back through sab_poll_copy_readback a frame or two later. */
 SAB_API void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
-                          uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear);
+                          uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear, int readback);
+SAB_API int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
+                                   const uint32_t** rgba);
+
+/* Pixel metrics: the GX_LOAD_AURORA_PIXEL_METRIC command (0x0100, then a u8
+ * slot + 1, or 0 to stop) in the command stream selects the counter. Counts
+ * come back per frame (256 slots), in EFB pixels: divide by
+ * sab_efb_pixel_area_scale() for GX pixels. */
+SAB_API uint64_t sab_frame_id(void);
+SAB_API float sab_efb_pixel_area_scale(void);
+SAB_API int sab_poll_pixel_metrics(uint64_t* frameId, const uint32_t** counts);
 SAB_API void sab_destroy_copy_tex(void* dest);
 
 SAB_API void sab_set_window_icon(const uint8_t* rgba, int width, int height);

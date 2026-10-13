@@ -24,6 +24,7 @@ set(SMS_GX_SOURCES
     src/gx_platform.cpp
     src/gx_render.cpp
     src/gx_shader.cpp
+    src/gx_texenc.cpp
     src/gx_texture.cpp
     src/gx_trace.cpp
     src/gx_vert.cpp)
@@ -62,7 +63,7 @@ set(SMS_GX_IMGUI_SOURCES
     ${SMS_GX_IMGUI_DIR}/imgui_impl_opengl3.cpp)
 
 if(SMS_GX_BACKEND STREQUAL "aurora")
-    set(SMS_GX_SOURCES src/gx_api.cpp src/gx_aurora.cpp src/gx_fifo.cpp src/gx_trace.cpp src/gx_vert.cpp)
+    set(SMS_GX_SOURCES src/gx_api.cpp src/gx_aurora.cpp src/gx_fifo.cpp src/gx_texenc.cpp src/gx_trace.cpp src/gx_vert.cpp)
     set(SMS_GX_BUILD_TESTS OFF)
 endif()
 add_library(sms_gx STATIC ${SMS_GX_SOURCES} ${SMS_GX_GD_SOURCES})

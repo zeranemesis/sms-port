@@ -17,17 +17,25 @@ endforeach()
 
 set(AURORA_ENABLE_DVD OFF CACHE BOOL "" FORCE)
 set(AURORA_ENABLE_CARD OFF CACHE BOOL "" FORCE)
-set(AURORA_ENABLE_RMLUI OFF CACHE BOOL "" FORCE)
+set(AURORA_ENABLE_RMLUI ON CACHE BOOL "" FORCE)
 set(AURORA_DAWN_PROVIDER package CACHE STRING "" FORCE)
 set(AURORA_DAWN_LINKAGE shared CACHE STRING "" FORCE)
 set(AURORA_SDL3_PROVIDER package CACHE STRING "" FORCE)
 set(AURORA_SDL3_LINKAGE shared CACHE STRING "" FORCE)
 if(MSVC)
   add_compile_options(/bigobj)
+  # The host game uses MinGW. Never discover its libraries/CRT headers from
+  # PATH or pkg-config while building this separate MSVC DLL.
+  set(CMAKE_DISABLE_FIND_PACKAGE_SQLite3 TRUE)
+  set(CMAKE_DISABLE_FIND_PACKAGE_zstd TRUE)
+  set(CMAKE_DISABLE_FIND_PACKAGE_PkgConfig TRUE)
 endif()
 add_subdirectory(../third_party/aurora aurora EXCLUDE_FROM_ALL)
 
-add_library(sms_aurora SHARED bridge.cpp sms_aurora.h)
+add_library(sms_aurora SHARED bridge.cpp ui.cpp live.cpp sms_aurora.h sms_aurora_ui.h sms_aurora_settings.h)
+target_include_directories(sms_aurora PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/aurora/lib"
+    "${SMS_AURORA_DEPS}/rmlui-src/Backends")
 target_link_libraries(sms_aurora PRIVATE aurora::core aurora::gx aurora::vi dbghelp)
 # Next to the DLL: the runtime DLLs it needs (Dawn, SDL3).
 include(../third_party/aurora/cmake/AuroraCopyRuntimeDLLs.cmake OPTIONAL RESULT_VARIABLE _copy_dlls)

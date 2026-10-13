@@ -1366,10 +1366,31 @@ void pixMetricDeferForToken(uint16_t token) {
 
 void pixMetricDeferDone() { s_pixReadToken = -1; }
 
+#define METRIC_DUMP_TAG "opengl"
+// SMS_GX_METRIC_DUMP=0xADDR:size writes those bytes at reads 12 and 40 of a token (debugging).
+static void metricDump(int token, int read) {
+    static const char* spec = getenv("SMS_GX_METRIC_DUMP");
+    if (!spec || !((read >= 4 && read <= 12) || read == 40)) return;
+    unsigned long long addr = 0;
+    unsigned size = 0;
+    if (sscanf(spec, "%llx:%u", &addr, &size) != 2) return;
+    char path[256];
+    snprintf(path, sizeof path, "metric_dump_%s_t%d_r%d.bin", METRIC_DUMP_TAG, token, read);
+    if (FILE* f = fopen(path, "wb")) {
+        fwrite(reinterpret_cast<const void*>(uintptr_t(addr)), 1, size, f);
+        fclose(f);
+    }
+}
+
 static bool pixDeferredRead(uint32_t* value) {
     if (s_pixReadToken < 0) return false;
     auto it = s_pixTokens.find(uint16_t(s_pixReadToken));
     *value = it != s_pixTokens.end() && it->second.hasValue ? it->second.value : 0;
+    static const bool metricLog = getenv("SMS_GX_METRIC_LOG") != nullptr;
+    static std::unordered_map<int, int> reads;
+    if (metricLog && reads[s_pixReadToken]++ < 12) logmsg("pixel metric token %d read %d = %u", s_pixReadToken, reads[s_pixReadToken], *value);
+    static std::unordered_map<int, int> dumpReads;
+    metricDump(s_pixReadToken, ++dumpReads[s_pixReadToken]);
     return true;
 }
 

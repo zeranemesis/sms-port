@@ -8,6 +8,9 @@ Les fichiers sources distincts des anciennes copies sont conserves dans `archive
 
 ## Utilisation
 
+- **Aurora / WebGPU : `Jouer-Aurora.cmd`**, executable `build/windows-64-pal-aurora/sms.exe`. Menu PartyBoard avec **F1** ou **Guide** sur la manette. `Construire-Aurora.cmd` recompile la DLL MSVC et le jeu MinGW.
+- Le menu OpenGL et ses huit onglets sont raccordes a Aurora ; compilation reussie. Cette migration reste a observer visuellement en jeu. Rapport : `artifacts/aurora-menu-20261013/RESULTS.md`.
+- Diagnostic suivant : blocage du menu corrige et ouvertures/fermetures observees ; correction du verrou des lectures GPU, essai de 1 700 images avec changements de resolution/MSAA/FXAA et sortie normale. Limites et traces : `artifacts/aurora-menu-20261013/RUNTIME-FIXES.md`. Le lanceur conserve maintenant les journaux dans `artifacts/aurora-runtime`.
 - `Jouer.cmd` lance le port existant avec les donnees, reglages et sauvegardes de ce dossier.
 - `Construire-PC.cmd` recompile le port a partir de la decompilation locale, avec MSYS2 installe dans `C:\msys64` (ou `MSYS2_ROOT`).
 - `Configurer-Decomp.cmd` regenere la configuration de matching PAL dans `decomp`.
@@ -33,6 +36,7 @@ Il n'y a pas de deuxieme copie des sources de jeu a modifier pour le port.
 ## Executables et compilation
 
 `build/windows-64-pal-unified/sms.exe` est le port PAL x64 recompile avec succes le 13 octobre 2026, depuis les sources de ce dossier.
+La version Aurora actuelle est `build/windows-64-pal-aurora/sms.exe`, selectionnee explicitement par `Jouer-Aurora.cmd`. Les paragraphes de diagnostic OpenGL ci-dessous sont conserves comme historique ; ils ne valident pas le rendu Aurora.
 `Construire-PC.cmd` utilise ce repertoire pour eviter les anciens caches CMake qui referencent d'autres dossiers.
 `Jouer.cmd` selectionne automatiquement ce nouvel executable.
 L'ancien executable du 7 octobre reste conserve dans `build/windows-64-pal/sms.exe`.

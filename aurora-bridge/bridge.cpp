@@ -1,9 +1,13 @@
 // sms_aurora.dll: see sms_aurora.h.
 #define SMS_AURORA_BUILD
 #include "sms_aurora.h"
+#include "sms_aurora_ui.h"
+#include "ui_internal.h"
 
 #include <aurora/aurora.h>
 #include <aurora/event.h>
+#include <aurora/gfx.h>
+#include <aurora/sms_ext.h>
 #include <dolphin/gx.h>
 #include <dolphin/gx/GXExtra.h>
 #include <dolphin/vi.h>
@@ -86,6 +90,30 @@ void printStack(const char* why) {
 }
 
 void onAbort(int) { printStack("abort"); }
+
+// Include faults in Dawn too: a render-resource lifetime failure can surface
+// in the graphics DLL after leaving this bridge's stack frame.
+LONG CALLBACK onException(EXCEPTION_POINTERS* info) {
+    static bool printed = false;
+    if (printed || info->ExceptionRecord->ExceptionCode != EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
+    HMODULE self = nullptr, at = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(&onException), &self);
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCSTR>(info->ExceptionRecord->ExceptionAddress), &at);
+    if (at != self) {
+        char module[MAX_PATH]{};
+        if (!at || !GetModuleFileNameA(at,module,MAX_PATH)) return EXCEPTION_CONTINUE_SEARCH;
+        const char* base=std::strrchr(module,'\\');
+        if (_stricmp(base?base+1:module,"webgpu_dawn.dll")) return EXCEPTION_CONTINUE_SEARCH;
+    }
+    printed = true;
+    std::fprintf(stderr, "[sms_aurora] access violation at %p reading/writing %p\n",
+                 info->ExceptionRecord->ExceptionAddress,
+                 reinterpret_cast<void*>(info->ExceptionRecord->ExceptionInformation[1]));
+    printStack("access violation");
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 void onTerminate() {
     const char* what = "terminate";
     try {
@@ -101,6 +129,7 @@ void onTerminate() {
 void push(const SabEvent& ev) { s_pending.push_back(ev); }
 
 void translate(const SDL_Event& e) {
+    if (sab_ui_process_sdl(e)) return;
     SabEvent ev{};
     switch (e.type) {
     case SDL_EVENT_QUIT:
@@ -172,6 +201,7 @@ extern "C" {
 int sab_init(const SabConfig* c) {
     if (s_ready) return 1;
     std::signal(SIGABRT, onAbort);
+    AddVectoredExceptionHandler(1, onException);
     std::set_terminate(onTerminate);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
     AuroraConfig cfg{};
@@ -204,6 +234,7 @@ int sab_init(const SabConfig* c) {
 
 void sab_shutdown(void) {
     if (!s_ready) return;
+    sab_ui_shutdown();
     s_ready = false;
     aurora_shutdown();
 }
@@ -252,16 +283,20 @@ void sab_get_window_size(uint32_t* width, uint32_t* height) {
 
 void sab_set_fullscreen(int on) { VISetWindowFullscreen(on != 0); }
 int sab_is_fullscreen(void) { return VIGetWindowFullscreen() ? 1 : 0; }
-void sab_set_vsync(int on) { (void)on; }
+void sab_set_vsync(int on) { aurora_enable_vsync(on != 0); }
 void sab_set_window_title(const char* title) { VISetWindowTitle(title); }
 
 void sab_set_mouse_relative(int on) {
     if (SDL_Window* w = mainWindow()) SDL_SetWindowRelativeMouseMode(w, on != 0);
 }
 
-int sab_begin_frame(void) { return s_ready && aurora_begin_frame() ? 1 : 0; }
+int sab_begin_frame(void) {
+    if (!s_ready) return 0;
+    sab_apply_pending_settings();
+    return aurora_begin_frame() ? 1 : 0;
+}
 void sab_end_frame(void) {
-    if (s_ready) aurora_end_frame();
+    if (s_ready) { sab_ui_overlay_draw();aurora_end_frame(); }
 }
 
 void sab_process(const void* data, uint32_t size) {
@@ -269,11 +304,23 @@ void sab_process(const void* data, uint32_t size) {
 }
 
 void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
-                  uint16_t dstHeight, uint32_t fmt, int clear) {
+                  uint16_t dstHeight, uint32_t fmt, int clear, int readback) {
     if (!s_ready) return;
+    if (readback) aurora_sms_request_copy_readback(dest, dstWidth, dstHeight);
     GXSetTexCopySrc(left, top, width, height);
     GXSetTexCopyDst(dstWidth, dstHeight, GXTexFmt(fmt), GX_FALSE);
     GXCopyTex(dest, clear ? GX_TRUE : GX_FALSE);
+}
+
+int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
+                           const uint32_t** rgba) {
+    return s_ready ? aurora_sms_poll_copy_readback(dest, width, height, frameId, rgba) : 0;
+}
+
+uint64_t sab_frame_id(void) { return aurora_sms_current_frame_id(); }
+float sab_efb_pixel_area_scale(void) { return aurora_sms_efb_pixel_area_scale(); }
+int sab_poll_pixel_metrics(uint64_t* frameId, const uint32_t** counts) {
+    return s_ready ? aurora_sms_poll_pixel_metrics(frameId, counts) : 0;
 }
 
 void sab_destroy_copy_tex(void* dest) {

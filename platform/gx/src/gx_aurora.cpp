@@ -12,17 +12,28 @@
 #include "gx_internal.h"
 #include "sms_gx/gx_pc.h"
 #include "sms_aurora.h"
+#include "sms_aurora_settings.h"
+#include "gx_live_settings.h"
+#ifdef SMS_PARTYBOARD_UI
+#include "../../frontend/native_menu.h"
+#endif
 
 #include <dolphin/gx.h>
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <filesystem>
+#include <string>
 #include <map>
 #include <memory>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace gx {
@@ -38,9 +49,46 @@ bool s_ready = false;
 bool s_inFrame = false;
 uint32_t s_frame = 0;
 uint32_t s_efbW = 0, s_efbH = 0;
-float s_widescreen = 4.0f / 3.0f;
+float s_widescreen = 1.f;
+bool s_hudEdges=false,s_hud=false,s_stretch2D=false;
+std::vector<std::pair<float,float>> s_hudPanes;
+bool s_texturePacks=true;
+
+std::vector<std::string> texturePackPaths() {
+    std::vector<std::string> paths;
+    const char* e=getenv("SMS_TEXTURE_PACKS");
+    if(e&&*e&&strcmp(e,"0")&&strcmp(e,"1")&&strcmp(e,"on")) {
+        std::string current;
+        for(char c:std::string(e)+";") {
+            if(c==';'||(c==':'&&current.size()!=1)) { if(!current.empty())paths.push_back(current);current.clear(); }
+            else current+=c;
+        }
+    } else paths={"mods/textures","../../mods/textures"};
+    if(const char* selected=getenv("SMS_MOD")) {
+        std::string name;
+        for(char c:std::string(selected)+";") {
+            if(c==';'||c==',') {
+                if(!name.empty()&&name!="none"&&name!="0") {
+                    paths.push_back("../../mods/"+name+"/textures");
+                    paths.push_back("mods/"+name+"/textures");
+                    paths.push_back(name+"/textures");
+                }
+                name.clear();
+            } else name+=c;
+        }
+    }
+    return paths;
+}
+void refreshTexturePacks() {
+    const auto paths=texturePackPaths();
+    std::vector<const char*> raw;
+    for(const auto& path:paths)raw.push_back(path.c_str());
+    sab_set_texture_packs(s_texturePacks,raw.data(),uint32_t(raw.size()));
+}
 int s_speed = 1;
 bool s_mouseCamera = false, s_mouseCaptured = false, s_mouseReleased = false;
+bool s_hasFocus = true;
+bool s_overlay = false;
 GXPCVIScanoutFn s_viScanout = nullptr;
 void (*s_eventCb)(const union SDL_Event*) = nullptr;
 double (*s_idleClock)(void) = nullptr;
@@ -84,10 +132,183 @@ inline void putAurora(uint16_t sub) {
     put16(sub);
 }
 
+double s_submitSeconds = 0;  // statistics: Aurora's command processing on this thread
+
 void submit() {
     if (s_cmd.empty()) return;
-    if (s_inFrame) sab_process(s_cmd.data(), uint32_t(s_cmd.size()));
+    if (s_inFrame) {
+        timespec t0, t1;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        sab_process(s_cmd.data(), uint32_t(s_cmd.size()));
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        s_submitSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+    }
     s_cmd.clear();
+}
+
+// ------------------------------------------------------------------ pixel metrics
+// On the console the pollution count is asynchronous: the game draws a layer,
+// sets a draw-sync token, and the token interrupt calls back into the game,
+// which reads the metric. Here every count of a frame goes to its own counter
+// slot (Aurora's shaders count the fragments that pass the alpha test); the
+// callback gets the newest finished count of the same token, normally one or
+// two frames old. A token never counted yet reads as 0xFFFFFFFF plus the
+// triangles' edge pixels, which the game's own subtraction turns back into its
+// "unknown" value, -1.
+struct MetricSlot {
+    int token = -1;
+    uint32_t tris = 0;
+    float drawScale = 1.f;  // widescreen: the counted draws' horizontal scale (GX pixels per EFB pixel column)
+};
+std::vector<MetricSlot> s_metricSlots;                       // this frame's
+struct MetricFrame {
+    std::vector<MetricSlot> slots;
+    float area;  // EFB pixels per GX pixel, taken while the frame was recorded
+};
+std::map<uint64_t, MetricFrame> s_metricFrames;  // frames waiting for their counts
+std::unordered_map<uint16_t, uint32_t> s_tokenValues;
+bool s_metricActive = false;
+int s_metricReadToken = -1;
+uint64_t s_frameId = 0;
+
+void metricStop() {
+    if (!s_metricActive) return;
+    s_metricActive = false;
+    putAurora(0x0100);  // GX_LOAD_AURORA_PIXEL_METRIC
+    put8(0);
+}
+
+void endFrameMetrics() {
+    metricStop();
+    if (!s_metricSlots.empty() && s_frameId)
+        s_metricFrames[s_frameId] = MetricFrame{std::move(s_metricSlots), sab_efb_pixel_area_scale()};
+    s_metricSlots.clear();
+}
+
+void collectPixelMetrics() {
+    uint64_t frameId;
+    const uint32_t* counts;
+    while (sab_poll_pixel_metrics(&frameId, &counts)) {
+        for (auto it = s_metricFrames.begin(); it != s_metricFrames.end() && it->first <= frameId;) {
+            if (it->first == frameId) {
+                const auto& slots = it->second.slots;
+                const float area = it->second.area;
+                for (size_t i = 0; i < slots.size() && i < 255; i++) {
+                    if (slots[i].token < 0) continue;
+                    const double perPixel = double(area > 0 ? area : 1.0f) * double(slots[i].drawScale);
+                    uint64_t v = uint64_t(double(counts[i]) / perPixel + 0.5) +
+                                 uint64_t(slots[i].tris) * 4;
+                    s_tokenValues[uint16_t(slots[i].token)] = v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
+                }
+            }
+            it = s_metricFrames.erase(it);
+        }
+    }
+}
+
+// ------------------------------------------------------------------ EFB copy write-back
+// Texture copies stay on the GPU for drawing, but the game also reads some of
+// them from RAM: Delfino's pollution layers are drawn into the EFB, copied
+// back into the layer textures, and TPollutionLayer::isPolluted reads those
+// bytes. So each texture copy is read back (a frame or two later), converted
+// as GXCopyTex would (format, intensity) and stored in the game's memory,
+// unless the CPU changed those bytes in the meantime.
+struct PendingCopy {
+    uint64_t frameId;
+    uint64_t hash;  // the destination's bytes when the copy was made (or last written back)
+    uint32_t bytes, fmt, layout;
+    bool intensity, alphaOne;
+};
+std::map<const void*, std::vector<PendingCopy>> s_pendingCopies;
+std::unordered_set<const void*> s_efbCopyDestinations;
+uint32_t s_writeBackCount = 0;  // statistics
+
+bool copyWriteBackEnabled() {
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("SMS_GX_COPY_WRITEBACK");
+        on = !(e && e[0] == '0');
+    }
+    return on != 0;
+}
+
+bool copyWriteBackAll() {
+    static const bool all = [] {
+        const char* e = getenv("SMS_GX_COPY_WRITEBACK");
+        return e && strcmp(e, "all") == 0;
+    }();
+    return all;
+}
+
+inline uint8_t quant(uint8_t v, int bits) {
+    const int m = (1 << bits) - 1;
+    return uint8_t(((v * m + 127) / 255) * 255 / m);
+}
+
+// The GX copy conversion of one RGBA8 pixel (as the OpenGL copy shader in gx_render.cpp does it).
+void convertCopyPixel(uint8_t* c, uint32_t f, bool intensity, bool alphaOne) {
+    if (alphaOne) c[3] = 255;
+    const uint8_t r = c[0], g8 = c[1], b = c[2], a = c[3];
+    uint8_t o[4] = {r, g8, b, a};
+    if (intensity) {
+        float y = 0.257f * r + 0.504f * g8 + 0.098f * b + 16.0f;
+        uint8_t Y = uint8_t(y > 255.0f ? 255.0f : y + 0.5f);
+        if (f == 0) o[0] = o[1] = o[2] = o[3] = quant(Y, 4);
+        else if (f == 1) o[0] = o[1] = o[2] = o[3] = Y;
+        else if (f == 2) { o[0] = o[1] = o[2] = quant(Y, 4); o[3] = quant(a, 4); }
+        else if (f == 3) { o[0] = o[1] = o[2] = Y; o[3] = a; }
+    } else {
+        switch (f) {
+        case 0: o[0] = o[1] = o[2] = o[3] = quant(r, 4); break;
+        case 2: o[0] = o[1] = o[2] = quant(r, 4); o[3] = quant(a, 4); break;
+        case 3: o[0] = o[1] = o[2] = r; o[3] = a; break;
+        case 4: o[0] = quant(r, 5); o[1] = quant(g8, 6); o[2] = quant(b, 5); o[3] = 255; break;
+        case 5:
+            if (a > 252) { o[0] = quant(r, 5); o[1] = quant(g8, 5); o[2] = quant(b, 5); o[3] = 255; }
+            else { o[0] = quant(r, 4); o[1] = quant(g8, 4); o[2] = quant(b, 4); o[3] = quant(a, 3); }
+            break;
+        case 7: o[0] = o[1] = o[2] = o[3] = a; break;
+        case 8: o[0] = o[1] = o[2] = o[3] = r; break;
+        case 9: o[0] = o[1] = o[2] = o[3] = g8; break;
+        case 10: o[0] = o[1] = o[2] = o[3] = b; break;
+        case 11: o[0] = o[1] = o[2] = g8; o[3] = r; break;
+        case 12: o[0] = o[1] = o[2] = b; o[3] = g8; break;
+        default: break;
+        }
+    }
+    memcpy(c, o, 4);
+}
+
+void storeCopyReadbacks() {
+    const void* dest;
+    uint32_t w, h;
+    uint64_t frameId;
+    const uint32_t* rgba;
+    static std::vector<uint8_t> px, enc;
+    while (sab_poll_copy_readback(&dest, &w, &h, &frameId, &rgba)) {
+        auto it = s_pendingCopies.find(dest);
+        if (it == s_pendingCopies.end()) continue;
+        auto& q = it->second;
+        while (!q.empty() && q.front().frameId < frameId) q.erase(q.begin());  // read-backs that never came
+        if (q.empty() || q.front().frameId != frameId) continue;
+        PendingCopy pc = q.front();
+        q.erase(q.begin());
+        if (hashBytes(dest, pc.bytes) == pc.hash) {  // otherwise the CPU wrote them after the copy: it wins
+            px.resize(size_t(w) * h * 4);
+            memcpy(px.data(), rgba, px.size());
+            for (size_t i = 0; i < px.size(); i += 4) convertCopyPixel(&px[i], pc.fmt, pc.intensity, pc.alphaOne);
+            enc.resize(texLevelBytes(pc.layout, w, h));
+            uint32_t n = encodeTexture(px.data(), pc.layout, w, h, enc.data());
+            if (n > pc.bytes) n = pc.bytes;
+            memcpy(const_cast<void*>(dest), enc.data(), n);
+            const uint64_t stored = hashBytes(dest, pc.bytes);
+            for (auto& later : q)  // our own write is not a CPU change for the copies still pending
+                if (later.hash == pc.hash) later.hash = stored;
+            GXPC_InvalidateRange(dest, pc.bytes);
+            s_writeBackCount++;
+        }
+        if (q.empty()) s_pendingCopies.erase(it);
+    }
 }
 
 // ------------------------------------------------------------------ statistics
@@ -310,6 +531,88 @@ inline void copyBE32(uint8_t* out, const uint8_t* in, uint32_t words) {
     }
 }
 
+
+struct DrawMapping { float scale=1.f, offset=0.f; };
+float xfFloat(uint32_t reg) { float value;std::memcpy(&value,&g.xfReg[reg],4);return value; }
+void emitXfFloat(uint32_t reg,float value) {
+    uint32_t bits;std::memcpy(&bits,&value,4);
+    put8(0x10);put32(0x1000+reg);put32(bits);
+}
+// Aurora rebuilds its viewport only from a write of all six XF viewport words.
+void emitViewport(float scaleX, float offsetX) {
+    float vp[6];
+    std::memcpy(vp, &g.xfReg[XFR_VIEWPORT], sizeof vp);
+    vp[0] *= scaleX;
+    vp[3] = (vp[3] - 342.f) * scaleX + offsetX + 342.f;
+    put8(0x10);
+    put32((6 - 1) << 16 | (0x1000 + XFR_VIEWPORT));
+    for (float f : vp) {
+        uint32_t bits;
+        std::memcpy(&bits, &f, 4);
+        put32(bits);
+    }
+}
+// Same per-draw mapping as the OpenGL port, expressed in Aurora's logical
+// EFB coordinates. Its physical render target already has the wide aspect.
+DrawMapping drawMapping(uint32_t count) {
+    DrawMapping result;
+    if(s_widescreen<=1.0001f)return result;
+    const float wide=s_widescreen, margin=320.f*(wide-1.f);
+    const bool ortho=(g.xfReg[XFR_PROJ+6]&1)!=0;
+    if(s_stretch2D&&ortho)return result;
+    const float sx=xfFloat(XFR_VIEWPORT),cx=xfFloat(XFR_VIEWPORT+3)-342.f;
+    const bool full=std::fabs(std::fabs(sx)*2.f-640.f)<2.f&&std::fabs(cx-320.f)<2.f;
+    if(full&&!ortho&&!s_hud) {
+        const float p0=xfFloat(XFR_PROJ),p11=xfFloat(XFR_PROJ+2);
+        const float aspect=p0!=0.f?std::fabs(p11/p0):0.f;
+        constexpr float gameAspect=660.f*.91346145f/448.f;
+        const float scale=aspect<gameAspect*std::sqrt(wide)?1.f/wide:1.f;
+        return {scale,320.f*(1.f-scale)};
+    }
+    const auto& layout=vtxFmtLayout(s_primFmt);
+    float lo=1e30f,hi=-1e30f;
+    for(uint32_t v=0;v<count;++v) {
+        const auto* vertex=s_prim.data()+size_t(v)*s_primStride;
+        float position[3];std::memcpy(position,vertex,12);
+        const uint32_t idx=(s_primFmt&VF_MTX)?(vertex[layout.mtx]&63):(g.xfReg[XFR_MATIDX_A]&63);
+        if(idx*4+12>XF_MEM_WORDS)continue;
+        float matrix[12];std::memcpy(matrix,&g.xfMem[idx*4],48);
+        const float x=matrix[0]*position[0]+matrix[1]*position[1]+matrix[2]*position[2]+matrix[3];
+        float screen;
+        if(ortho)screen=cx+sx*(xfFloat(XFR_PROJ)*x+xfFloat(XFR_PROJ+1));
+        else {
+            const float z=matrix[8]*position[0]+matrix[9]*position[1]+matrix[10]*position[2]+matrix[11];
+            if(z>=-1e-6f)continue;
+            screen=cx+sx*(xfFloat(XFR_PROJ)*x+xfFloat(XFR_PROJ+1)*z)/-z;
+        }
+        lo=std::min(lo,screen);hi=std::max(hi,screen);
+    }
+    auto anchorOffset=[&](float center) {
+        if(!s_hud)return margin;
+        for(const auto& pane:s_hudPanes)if(pane.second-pane.first<480.f) {
+            center=(pane.first+pane.second)*.5f;break;
+        }
+        return center<640.f/3.f?0.f:center>1280.f/3.f?2.f*margin:margin;
+    };
+    if(!full) return {1.f/wide,anchorOffset(cx)/wide};
+    if(!ortho)return {1.f/wide,anchorOffset(lo<=hi?(lo+hi)*.5f:320.f)/wide};
+    bool artwork=false;
+    const bool color=(g.bp[BP_CMODE0]>>3)&1;
+    const uint32_t stages=((g.bp[BP_GENMODE]>>10)&15)+1;
+    for(uint32_t st=0;color&&st<stages&&!artwork;++st) {
+        const uint32_t order=(g.bp[BP_TREF+(st>>1)]>>((st&1)*12))&0x3ff;
+        if(!(order&0x40))continue;
+        const auto map=order&7;
+        const auto image=g.bp[bpTexReg(BP_TX_IMAGE0,map)];
+        const auto* data=g.texImage[map];
+        if(data&&(image&0x3ff)+1>=32&&((image>>10)&0x3ff)+1>=32&&
+           s_efbCopyDestinations.find(data)==s_efbCopyDestinations.end())artwork=true;
+    }
+    const bool spans=lo<=2.f&&hi>=638.f;
+    if(spans&&!artwork)return result;
+    return {1.f/wide,(spans?margin:anchorOffset(lo<=hi?(lo+hi)*.5f:320.f))/wide};
+}
+
 void emitDraw(uint8_t opcode, uint32_t count) {
     const VtxFmtLayout& L = vtxFmtLayout(s_primFmt);
     const uint32_t fmt = s_primFmt;
@@ -323,6 +626,20 @@ void emitDraw(uint8_t opcode, uint32_t count) {
         if (fmt & (VF_TEX0 << t)) outStride += 8;
     setVertexFormat(fmt);
     syncTextures();
+    const auto mapping=drawMapping(count);
+    const bool mapped=mapping.scale!=1.f||mapping.offset!=0.f;
+    const uint32_t tl=g.bp[BP_SCISSOR_TL],br=g.bp[BP_SCISSOR_BR];
+    if (s_metricActive && !s_metricSlots.empty()) s_metricSlots.back().drawScale = mapping.scale;
+    if(mapped) {
+        emitViewport(mapping.scale, mapping.offset);
+        const int left=int((tl>>12)&0x7ff)-342,right=int((br>>12)&0x7ff)-342;
+        if(!(left<=0&&right>=639)) {
+            const int l=std::clamp(int(std::floor(left*mapping.scale+mapping.offset))+342,0,2047);
+            const int r=std::clamp(int(std::ceil((right+1)*mapping.scale+mapping.offset))-1+342,0,2047);
+            putBP(BP_SCISSOR_TL,(tl&~0x7ff000u)|(uint32_t(l)<<12));
+            putBP(BP_SCISSOR_BR,(br&~0x7ff000u)|(uint32_t(r)<<12));
+        }
+    }
     // A draw holds at most 0xFFFF vertices; the loader never makes bigger ones.
     put8(uint8_t(opcode | 0));  // vertex attribute format 0
     put16(uint16_t(count));
@@ -352,14 +669,29 @@ void emitDraw(uint8_t opcode, uint32_t count) {
                 out += 8;
             }
     }
+    if(mapped) {
+        emitViewport(1.f, 0.f);
+        putBP(BP_SCISSOR_TL,tl);putBP(BP_SCISSOR_BR,br);
+    }
     s_stats.draws++;
     s_stats.vertices += count;
+    if (s_metricActive && !s_metricSlots.empty()) {
+        uint32_t tris = 0;
+        switch (opcode & 0xF8) {
+        case 0x80: tris = count / 4 * 2; break;                         // quads
+        case 0x90: tris = count / 3; break;                             // triangles
+        case 0x98: case 0xA0: tris = count > 2 ? count - 2 : 0; break;  // strip, fan
+        default: break;
+        }
+        s_metricSlots.back().tris += tris;
+    }
     if (s_cmd.size() > (4u << 20)) submit();
 }
 
 // ------------------------------------------------------------------ frames
 void beginFrame() {
     s_inFrame = sab_begin_frame() != 0;
+    s_frameId = s_inFrame ? sab_frame_id() : 0;
     // Aurora starts each frame with fresh state: send the vertex format again
     // and every texture before its next use.
     s_curFmt = ~0u;
@@ -370,13 +702,30 @@ void reportStats() {
     if (!s_statsEvery || s_frameTimes.size() < size_t(s_statsEvery)) return;
     std::vector<double> t = s_frameTimes;
     std::sort(t.begin(), t.end());
-    double med = t[t.size() / 2] * 1000, p90 = t[t.size() * 9 / 10] * 1000;
+    double med = t[t.size() / 2] * 1000, p90 = t[t.size() * 9 / 10] * 1000, worst = t.back() * 1000;
     double n = double(s_frameTimes.size());
+    // Hitches: frames well over the target (twice the median, and at least 25 ms).
+    int hitches = 0;
+    for (double f : t) hitches += f * 1000 > std::max(25.0, med * 1.8);
+    static const double start = nowSeconds();
+    // The VI wait (time the game idles until the next retrace): what is left once the frame's work is done.
+    static double lastIdle = 0;
+    const double idleNow = s_idleClock ? s_idleClock() : 0, idle = idleNow - lastIdle;
+    lastIdle = idleNow;
     fprintf(stderr,
-            "[gx-aurora] %s: frame median %.1f ms, p90 %.1f ms; per frame: present %.2f ms, submit %.2f ms, "
-            "%.0f draws, %.0f vertices, %.1f texture loads, %.1f rehashes, %.1f copies\n",
-            sab_backend_name(), med, p90, s_presentAccum / n * 1000, s_stats.submitSeconds / n * 1000,
-            s_stats.draws / n, s_stats.vertices / n, s_stats.texLoads / n, s_stats.texRehash / n, s_stats.copies / n);
+            "[gx-aurora] t=%.0fs %s: frame median %.1f ms, p90 %.1f ms, worst %.1f ms, %d hitches; per frame: "
+            "VI idle %.2f ms, Aurora submit %.2f ms, present %.2f ms, %.0f draws, %.0f vertices, %.1f texture loads, "
+            "%.1f rehashes, %.1f copies\n",
+            nowSeconds() - start, sab_backend_name(), med, p90, worst, hitches, idle / n * 1000,
+            s_submitSeconds / n * 1000, s_presentAccum / n * 1000, s_stats.draws / n, s_stats.vertices / n,
+            s_stats.texLoads / n, s_stats.texRehash / n, s_stats.copies / n);
+    s_submitSeconds = 0;
+    if (!s_tokenValues.empty() || s_writeBackCount) {
+        fprintf(stderr, "[gx-aurora] copy write-backs %u; pixel metrics:", s_writeBackCount);
+        for (const auto& [token, value] : s_tokenValues) fprintf(stderr, " %u=%u", unsigned(token), value);
+        fprintf(stderr, "\n");
+        s_writeBackCount = 0;
+    }
     s_frameTimes.clear();
     s_presentAccum = 0;
     s_stats = Stats();
@@ -386,14 +735,29 @@ void pumpEvents();
 
 void present() {
     double t0 = nowSeconds();
+    endFrameMetrics();
     submit();
     if (s_inFrame) sab_end_frame();
+    s_inFrame = false;
+    collectPixelMetrics();
+    storeCopyReadbacks();
     double t1 = nowSeconds();
     s_presentAccum += t1 - t0;
     if (s_lastFrameEnd > 0) s_frameTimes.push_back(t1 - s_lastFrameEnd);
     s_lastFrameEnd = t1;
     reportStats();
     pumpEvents();
+#ifdef SMS_PARTYBOARD_UI
+    // Keep presenting the retained game image and WebGPU UI while the game
+    // thread is paused. No game update, GX metric or CARD command is issued.
+    while (s_ready && GXPC_MenuVisible()) {
+        if (sab_begin_menu_frame()) sab_end_frame();
+        collectPixelMetrics();
+        storeCopyReadbacks();
+        pumpEvents();
+        sab_delay(8);
+    }
+#endif
     beginFrame();
 }
 
@@ -452,11 +816,14 @@ void pumpEvents() {
         case SAB_EV_QUIT:
             fprintf(stderr, "[gx-aurora] window closed, exiting\n");
             fflush(stderr);
+            GXPC_Shutdown();
             exit(0);
         case SAB_EV_FOCUS_LOST:
+            s_hasFocus = false;
             if (s_mouseCamera) captureMouse(false);
             continue;
         case SAB_EV_FOCUS_GAINED:
+            s_hasFocus = true;
             if (s_mouseCamera && !s_mouseReleased) captureMouse(true);
             continue;
         case SAB_EV_MOUSEBUTTONDOWN:
@@ -512,6 +879,10 @@ void pumpEvents() {
         }
         if (s_eventCb) s_eventCb(reinterpret_cast<const union SDL_Event*>(&out));
     }
+#ifdef SMS_PARTYBOARD_UI
+    const bool wantMouse = s_hasFocus && s_mouseCamera && !s_mouseReleased && !GXPC_MenuVisible();
+    captureMouse(wantMouse);
+#endif
 }
 
 bool envTrue(const char* name) {
@@ -629,6 +1000,7 @@ void primitiveEnd(uint8_t opcode, uint32_t count) {
 
 void executeCopy(uint32_t ctrl) {
     if (!s_ready) return;
+    metricStop();
     submit();
     uint32_t src = g.bp[BP_COPY_SRC_TL], size = g.bp[BP_COPY_SRC_WH];
     uint16_t x = uint16_t(src & 0x3FF), y = uint16_t((src >> 10) & 0x3FF);
@@ -636,6 +1008,7 @@ void executeCopy(uint32_t ctrl) {
     const bool disp = (ctrl >> 14) & 1;
     const bool clear = (ctrl >> 11) & 1;
     void* dest = g.copyDest;
+    if(dest&&!(ctrl&(1u<<14)))s_efbCopyDestinations.insert(dest);
     if (disp) {
         if (w != s_efbW || h != s_efbH) {
             s_efbW = w;
@@ -649,19 +1022,109 @@ void executeCopy(uint32_t ctrl) {
     }
     const bool half = (ctrl >> 9) & 1;
     uint16_t dw = half ? uint16_t(w / 2) : w, dh = half ? uint16_t(h / 2) : h;
-    if (s_inFrame) sab_copy_tex(dest, x, y, w, h, dw ? dw : 1, dh ? dh : 1, g_texCopyFmt, clear ? 1 : 0);
+    if (!dw) dw = 1;
+    if (!dh) dh = 1;
+    // Widescreen: draws that do not span the screen land in the centred 4:3 area
+    // (drawMapping), so a copy of a part of the screen is taken from there too,
+    // as the OpenGL port does. A full-width copy, or one under Stretch2D, takes
+    // the whole width.
+    uint16_t cx = x, cw = w;
+    if (s_widescreen > 1.0001f && !s_stretch2D && !(x == 0 && w >= 640)) {
+        const float wide = s_widescreen, margin = 320.f * (wide - 1.f);
+        const float l = (float(x) + margin) / wide, r = (float(x + w) + margin) / wide;
+        cx = uint16_t(std::lround(l));
+        cw = uint16_t(std::max(1l, std::lround(r) - long(cx)));
+    }
+    const uint32_t f = ((ctrl >> 3) & 1) << 3 | ((ctrl >> 4) & 7);
+    const bool zcopy = (g.bp[BP_PE_CONTROL] & 7) == 3;
+    // Only data copies come back to RAM (Delfino's pollution layers are R8 into I8):
+    // the colour copies are screen effects the CPU does not read.
+    // SMS_GX_COPY_WRITEBACK=all writes every copy back.
+    const uint32_t layout = copyLayout(f, false);
+    const bool readback = s_inFrame && dest && !zcopy && copyWriteBackEnabled() &&
+                          (layout <= 3 || copyWriteBackAll());
+    if (readback) {
+        PendingCopy pc{};
+        pc.frameId = s_frameId;
+        pc.fmt = f;
+        pc.layout = copyLayout(f, false);
+        pc.bytes = texLevelBytes(pc.layout, dw, dh);
+        pc.intensity = ((ctrl >> 15) & 3) == 3;
+        pc.alphaOne = (g.bp[BP_PE_CONTROL] & 7) != 1;  // only RGBA6_Z24 keeps alpha
+        pc.hash = hashBytes(dest, pc.bytes);
+        s_pendingCopies[dest].push_back(pc);
+    }
+    static const bool copyLog = getenv("SMS_GX_COPY_LOG") != nullptr;
+    if (copyLog) {
+        static std::map<std::tuple<const void*, uint32_t, uint32_t, uint32_t>, int> seen;
+        if (seen[{dest, uint32_t(dw) << 16 | dh, f, (((ctrl >> 15) & 3) == 3)}]++ == 0)
+            fprintf(stderr, "[gx-aurora] copy %p %ux%u (src %ux%u at %u,%u) fmt %u intensity %d layout %u, %u bytes\n",
+                    dest, dw, dh, w, h, x, y, f, int((((ctrl >> 15) & 3) == 3)), copyLayout(f, false), texLevelBytes(copyLayout(f, false), dw, dh));
+    }
+    if (s_inFrame) sab_copy_tex(dest, cx, y, cw, h, dw, dh, g_texCopyFmt, clear ? 1 : 0, readback ? 1 : 0);
     s_stats.copies++;
 }
 
 uint32_t peekColor(int, int) { return 0xFF000000u; }
 uint32_t peekZ(int, int) { return 0xFFFFFF; }
 
-// Pixel metrics (Delfino's pollution count) are not implemented on Aurora yet.
-void pixMetricClear() {}
-uint32_t pixMetricRead() { return 0; }
-bool pixMetricDeferred() { return false; }
-void pixMetricDeferForToken(uint16_t) {}
-void pixMetricDeferDone() {}
+#define METRIC_DUMP_TAG "aurora"
+// SMS_GX_METRIC_DUMP=0xADDR:size writes those bytes at reads 12 and 40 of a token (debugging).
+static void metricDump(int token, int read) {
+    static const char* spec = getenv("SMS_GX_METRIC_DUMP");
+    if (!spec || !((read >= 4 && read <= 12) || read == 40)) return;
+    unsigned long long addr = 0;
+    unsigned size = 0;
+    if (sscanf(spec, "%llx:%u", &addr, &size) != 2) return;
+    char path[256];
+    snprintf(path, sizeof path, "metric_dump_%s_t%d_r%d.bin", METRIC_DUMP_TAG, token, read);
+    if (FILE* f = fopen(path, "wb")) {
+        fwrite(reinterpret_cast<const void*>(uintptr_t(addr)), 1, size, f);
+        fclose(f);
+    }
+}
+
+void pixMetricClear() {
+    if (!s_ready || !s_inFrame) return;
+    if (s_metricSlots.size() >= 255) {  // out of counter slots this frame
+        metricStop();
+        return;
+    }
+    s_metricSlots.push_back(MetricSlot{});
+    s_metricActive = true;
+    putAurora(0x0100);  // GX_LOAD_AURORA_PIXEL_METRIC: count into slot size() - 1
+    put8(uint8_t(s_metricSlots.size()));
+}
+bool pixMetricDeferred() { return s_metricActive; }
+void pixMetricDeferForToken(uint16_t token) {
+    static const bool regLog = getenv("SMS_GX_METRIC_REGS") != nullptr;
+    static int regLogged = 0;
+    if (regLog && regLogged++ < 3) {
+        fprintf(stderr, "[gx-aurora] metric token %u: genmode %06x tref %06x %06x tevreg", unsigned(token),
+                g.bp[BP_GENMODE], g.bp[BP_TREF], g.bp[BP_TREF + 1]);
+        for (int i = 0; i < 8; i++) fprintf(stderr, " %06x", g.bp[BP_TEV_REG + i]);
+        fprintf(stderr, " env");
+        for (int i = 0; i < 4; i++) fprintf(stderr, " %06x", g.bp[BP_TEV_COLOR_ENV + i]);
+        fprintf(stderr, " ksel %06x alphacmp %06x\n", g.bp[BP_TEV_KSEL], g.bp[BP_ALPHACOMPARE]);
+    }
+    if (s_metricActive && !s_metricSlots.empty()) s_metricSlots.back().token = token;
+    metricStop();
+    s_metricReadToken = token;
+}
+void pixMetricDeferDone() { s_metricReadToken = -1; }
+uint32_t pixMetricRead() {
+    if (s_metricReadToken < 0) return 0;
+    auto it = s_tokenValues.find(uint16_t(s_metricReadToken));
+    const uint32_t tris = s_metricSlots.empty() ? 0 : s_metricSlots.back().tris;
+    const uint32_t v = it != s_tokenValues.end() ? it->second : 0xFFFFFFFFu + tris * 4;
+    static const bool metricLog = getenv("SMS_GX_METRIC_LOG") != nullptr;
+    static std::unordered_map<int, int> reads;
+    static std::unordered_map<int, int> dumpReads;
+    metricDump(s_metricReadToken, ++dumpReads[s_metricReadToken]);
+    if (metricLog && reads[s_metricReadToken]++ < 12)
+        fprintf(stderr, "[gx-aurora] pixel metric token %d read %d = %u\n", s_metricReadToken, reads[s_metricReadToken], v);
+    return v;
+}
 
 void textureInvalidateAll() { s_texGen++; }
 
@@ -685,10 +1148,13 @@ int GXPC_InitAuto(int) {
     cfg.title = "Super Mario Sunshine";
     cfg.windowWidth = 1280;
     cfg.windowHeight = 960;
+    // Widescreen: the window starts at the wide aspect, as the OpenGL port's does.
+    if (s_widescreen > 1.0001f) cfg.windowWidth = uint32_t(std::lround(960.0 * 4.0 / 3.0 * s_widescreen));
     if (const char* e = getenv("SMS_WINDOW_SIZE")) sscanf(e, "%ux%u", &cfg.windowWidth, &cfg.windowHeight);
     cfg.backend = backendFromEnv();
     const char* vs = getenv("SMS_VSYNC");
     cfg.vsync = !vs || strcmp(vs, "0") != 0;
+    if(vs&&(!strcmp(vs,"off")||!strcmp(vs,"false")))cfg.vsync=0;
     const char* wm = getenv("SMS_WINDOW_MODE");
     cfg.fullscreen = wm && (!strcmp(wm, "fullscreen") || !strcmp(wm, "borderless"));
     cfg.logLevel = envTrue("SMS_AURORA_DEBUG") ? 0 : 1;
@@ -702,12 +1168,21 @@ int GXPC_InitAuto(int) {
     s_efbW = 640;
     s_efbH = 480;
     sab_set_efb_size(s_efbW, s_efbH);
+    const char* tp=getenv("SMS_TEXTURE_PACKS");
+    s_texturePacks=!tp||(strcmp(tp,"0")&&strcmp(tp,"off"));
+    refreshTexturePacks();
     beginFrame();
+#ifdef SMS_PARTYBOARD_UI
+    GXPC_MenuInit(nullptr, nullptr);
+#endif
     return 1;
 }
 
 void GXPC_Shutdown(void) {
     if (!s_ready) return;
+#ifdef SMS_PARTYBOARD_UI
+    GXPC_MenuShutdown();
+#endif
     s_ready = false;
     sab_shutdown();
 }
@@ -725,7 +1200,8 @@ int GXPC_ParseArgs(int* argc, char** argv) {
     return removed;
 }
 void GXPC_SetHeadless(int) {}
-int GXPC_IsHeadless(void) { return 0; }
+// Scripted presses (SMS_AUTOPRESS) set the key state directly: the SDL2 event queue is not pumped here.
+int GXPC_IsHeadless(void) { return getenv("SMS_AUTOPRESS") ? 1 : 0; }
 void GXPC_SetAutoPresent(int) {}
 void GXPC_SetVIScanoutCallback(GXPCVIScanoutFn fn) { s_viScanout = fn; }
 void GXPC_PollVI(void) { pumpEvents(); }
@@ -750,10 +1226,29 @@ void GXPC_InvalidateRange(const void* p, uint32_t size) {
 
 void GXPC_SetWidescreen(float widthOver43) { s_widescreen = widthOver43; }
 float GXPC_GetWidescreen(void) { return s_widescreen; }
-void GXPC_SetStretch2D(int) {}
-void GXPC_SetHud(int) {}
-void GXPC_HudPaneBegin(float, float) {}
-void GXPC_HudPaneEnd(void) {}
+float GXPC_GetMenuWidescreen(void) { return s_widescreen; }
+void GXPC_ApplyMenuWindowSettings(const char* vsync, const char* mode, const char* fullscreenMode,
+                                int display, int scale, int mouseCamera) {
+    sab_apply_window_settings(vsync,mode,fullscreenMode,display,scale);
+    s_mouseCamera=mouseCamera!=0;
+}
+void GXPC_ApplyMenuGraphicsSettings(int scale,int msaa,int fxaa,int aniso,float gamma,
+                                    const char* aspect,const char* filter,float wide,int hudEdges) {
+    s_widescreen=std::max(1.f,wide);
+    s_hudEdges=hudEdges!=0;
+    sab_apply_graphics_settings(scale,msaa,fxaa,aniso,gamma,aspect,filter,s_widescreen);
+}
+void GXPC_ApplyMenuTexturePacks(int enabled) {
+    if(s_texturePacks==(enabled!=0))return;
+    s_texturePacks=enabled!=0;refreshTexturePacks();
+}
+void GXPC_RefreshMenuTexturePacks(void) { refreshTexturePacks(); }
+int GXPC_OverlayVisible(void) { return s_overlay; }
+void GXPC_OverlayToggle(void) { s_overlay=!s_overlay;sab_set_overlay(s_overlay); }
+void GXPC_SetStretch2D(int on) { s_stretch2D=on!=0; }
+void GXPC_SetHud(int on) { s_hud=on!=0&&s_hudEdges;s_hudPanes.clear(); }
+void GXPC_HudPaneBegin(float x1, float x2) { if(s_hud)s_hudPanes.emplace_back(std::min(x1,x2),std::max(x1,x2)); }
+void GXPC_HudPaneEnd(void) { if(s_hud&&!s_hudPanes.empty())s_hudPanes.pop_back(); }
 void GXPC_SetNameTags(const GXPCNameTag*, int) {}
 
 void sms_gx_set_event_callback(void (*cb)(const union SDL_Event* ev)) { s_eventCb = cb; }
