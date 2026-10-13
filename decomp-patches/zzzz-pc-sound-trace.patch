@@ -1,0 +1,51 @@
+Reason: port diagnostics: SMS_SOUND_TRACE=1 logs every JAIBasic::startSoundActor request with its caller, and every animation-sound loop wrap
+--- a/libs/JSystem/src/JAudio/JAInterface/JAIBasic.cpp
++++ b/libs/JSystem/src/JAudio/JAInterface/JAIBasic.cpp
+@@ -707,6 +707,22 @@
+ void JAIBasic::startSoundActor(u32 id, JAISoundHandle* out_handle,
+                                JAIActor* actor, u32 fade, u8 camera_idx)
+ {
++#ifdef TARGET_PC
++	// SMS_SOUND_TRACE=1: every sound request, with the code that made it, to
++	// find sounds a frame-counting caller starts too often at 60 fps.
++	static int trace = -1;
++	if (trace < 0) {
++		const char* e = getenv("SMS_SOUND_TRACE");
++		trace         = e && e[0] == '1';
++		// Unbuffered stderr makes every line a separate file write: buffer it.
++		if (trace)
++			setvbuf(stderr, nullptr, _IOFBF, 1 << 16);
++	}
++	// The CPU counter, not OSGetTick: that one runs pending interrupts.
++	if (trace)
++		fprintf(stderr, "[sound] t=%u id=0x%08x handle=%s from %p\n", (unsigned)(__builtin_ia32_rdtsc() >> 20),
++		        (unsigned)id, out_handle && *out_handle ? "busy" : "free", __builtin_return_address(0));
++#endif
+ 	u32 format = getInfoFormat(getInfoPointerFromID(id), id);
+ 	if (format & 1)
+ 		startSoundIndirectID(id, out_handle, actor, fade, camera_idx);
+--- a/libs/JSystem/src/JAudio/JAInterface/JAIAnimation.cpp
++++ b/libs/JSystem/src/JAudio/JAInterface/JAIAnimation.cpp
+@@ -1,3 +1,5 @@
++#include <stdio.h>
++#include <stdlib.h>
+ #include <JSystem/JAudio/JAInterface/JAIAnimation.hpp>
+ #include <JSystem/JAudio/JAInterface/JAIConst.hpp>
+ #include <JSystem/JUtility/JUTAssert.hpp>
+@@ -83,6 +85,16 @@
+ 
+ 	if (mDataCounterInc == 1) {
+ 		if (mCurrentTime > frame) {
++#ifdef TARGET_PC
++			static int trace = -1;
++			if (trace < 0) {
++				const char* e = getenv("SMS_SOUND_TRACE");
++				trace         = e && e[0] == '1';
++			}
++			if (trace)
++				fprintf(stderr, "[anmsound] wrap %p frame=%.3f prev=%.3f speed=%.3f loops=%d\n",
++				        (void*)this, frame, mCurrentTime, speed, (int)mLoopCount);
++#endif
+ 			while (mDataCounter < count
+ 			       && d->mEntries[mDataCounter].mStartFrame
+ 			              <= mCurrentTime + speed) {

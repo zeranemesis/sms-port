@@ -1,0 +1,100 @@
+Reason: port: with frame_rate = 60 the animation sounds keep their 30 fps tuning: their pitch and volume follow the update's speed, which is half at 60, so they came out lower and quieter, and the sounds that play over a frame range are restarted, with the NPC sounds' random and every-n-loops gates rolled, on every update, so they came back twice as often (Peach's cry when she is carried off)
+--- a/libs/JSystem/src/JAudio/JAInterface/JAIAnimation.cpp
++++ b/libs/JSystem/src/JAudio/JAInterface/JAIAnimation.cpp
+@@ -2,6 +2,27 @@
+ #include <JSystem/JAudio/JAInterface/JAIConst.hpp>
+ #include <JSystem/JUtility/JUTAssert.hpp>
+ 
++#ifdef TARGET_PC
++// Port: an animation's sound data was tuned for 30 fps, where every update
++// advances the animation by twice the frames it does at frame_rate = 60
++// (SMSGetAnmFrameRate). Two things count on that:
++// - the pitch and volume follow the update's speed, (speed - 1) * scale, so at
++//   60 every animation sound came out lower and quieter: they are given the
++//   30 fps speed;
++// - a sound that plays over a frame range is started again on every update
++//   while it is in range, and the NPC sounds' random and every-n-loops gates
++//   are rolled at each of those starts: at 60 they came back twice as often
++//   (Peach's cry when she is carried off). At 60 those restarts are tried on
++//   every other displayed frame, the 30 fps cadence.
++extern "C" int port_fps60_active;
++extern "C" unsigned int GXPC_FrameCount(void);
++static inline f32 JAIAnimePortSpeed(f32 speed) { return port_fps60_active ? speed * 2.0f : speed; }
++static inline bool JAIAnimePortRestartFrame() { return !port_fps60_active || (GXPC_FrameCount() & 1) == 0; }
++#else
++static inline f32 JAIAnimePortSpeed(f32 speed) { return speed; }
++static inline bool JAIAnimePortRestartFrame() { return true; }
++#endif
++
+ JAIAnimeSound::JAIAnimeSound()
+ {
+ 	unk60 = 0;
+@@ -86,7 +107,7 @@
+ 			while (mDataCounter < count
+ 			       && d->mEntries[mDataCounter].mStartFrame
+ 			              <= mCurrentTime + speed) {
+-				playActorAnimSound(interface, actor, speed, param3);
++				playActorAnimSound(interface, actor, JAIAnimePortSpeed(speed), param3);
+ 			}
+ 			mDataCounter = mDataCounterLimit;
+ 			mCurrentTime = frame;
+@@ -105,13 +126,14 @@
+ 					if (start == end
+ 					    || (start < end && end > frame && start <= frame)
+ 					    || (start > end && (end > frame || start < frame))) {
+-						startAnimSound(interface, id, &handle, actor, param3);
++						if (JAIAnimePortRestartFrame())
++							startAnimSound(interface, id, &handle, actor, param3);
+ 					} else {
+ 						mSlots[i].mIsPlaying = 0;
+ 					}
+ 				}
+ 				if (handle != nullptr) {
+-					setSpeedModifySound(handle, sd, speed);
++					setSpeedModifySound(handle, sd, JAIAnimePortSpeed(speed));
+ 					if ((sd->unk10 & 0x10) && sd->mEndFrame <= frame)
+ 						handle->stop(1);
+ 				}
+@@ -122,14 +144,14 @@
+ 
+ 		while (mDataCounter < count
+ 		       && d->mEntries[mDataCounter].mStartFrame <= frame) {
+-			playActorAnimSound(interface, actor, speed, param3);
++			playActorAnimSound(interface, actor, JAIAnimePortSpeed(speed), param3);
+ 		}
+ 	} else {
+ 		if (mCurrentTime < frame) {
+ 			while (mDataCounter < count && mDataCounter >= 0
+ 			       && d->mEntries[mDataCounter].mStartFrame
+ 			              >= mCurrentTime - speed) {
+-				playActorAnimSound(interface, actor, speed, param3);
++				playActorAnimSound(interface, actor, JAIAnimePortSpeed(speed), param3);
+ 			}
+ 			mDataCounter = count - 1;
+ 			mCurrentTime = frame;
+@@ -148,13 +170,14 @@
+ 					f32 t2 = sd->mEndFrame;
+ 					if (t1 == t2 || (t1 > t2 && t2 < frame && t1 > frame)
+ 					    || (t1 < t2 && (t2 < frame || t1 > frame))) {
+-						startAnimSound(interface, id, &handle, actor, param3);
++						if (JAIAnimePortRestartFrame())
++							startAnimSound(interface, id, &handle, actor, param3);
+ 					} else {
+ 						mSlots[i].mIsPlaying = 0;
+ 					}
+ 				}
+ 				if (handle != nullptr) {
+-					setSpeedModifySound(handle, sd, speed);
++					setSpeedModifySound(handle, sd, JAIAnimePortSpeed(speed));
+ 					if ((sd->unk10 & 0x10) && sd->mEndFrame >= frame)
+ 						handle->stop(1);
+ 				}
+@@ -165,7 +188,7 @@
+ 
+ 		while (mDataCounter < count && mDataCounter >= 0
+ 		       && d->mEntries[mDataCounter].mStartFrame >= frame) {
+-			playActorAnimSound(interface, actor, speed, param3);
++			playActorAnimSound(interface, actor, JAIAnimePortSpeed(speed), param3);
+ 		}
+ 	}
+ 
