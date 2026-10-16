@@ -127,8 +127,16 @@ void shots_poll(u32 field, void* xfb)
 // The debug overlay's speed multiplier (sms_gx; absent in builds without it).
 extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
 
+// Worst lateness of the retrace timer since the last read (ns): how far past its
+// deadline the timer thread woke, read by the Aurora backend's frame log.
+std::atomic<long long> g_late_max_ns{0};
+
 void* timer_thread(void*)
 {
+#ifdef _WIN32
+	const char* preciseEnv=getenv("SMS_VI_PRECISE_SLEEP");
+	const bool precise=preciseEnv && *preciseEnv && strcmp(preciseEnv,"0");
+#endif
 	// SMS_VI_HZ=<rate> overrides the 59.94 Hz retrace (benchmarking).
 	long period_ns = 16683350; // 1001/60 Hz
 	if (const char* hz = getenv("SMS_VI_HZ"))
@@ -143,7 +151,18 @@ void* timer_thread(void*)
 			t.tv_nsec -= 1000000000;
 			t.tv_sec++;
 		}
+#ifdef _WIN32
+		if(precise) port_sleep_until_precise(&t);
+		else port_sleep_until(&t);
+#else
 		port_sleep_until(&t);
+#endif
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		long long late = (long long)(now.tv_sec - t.tv_sec) * 1000000000LL + (now.tv_nsec - t.tv_nsec);
+		long long prev = g_late_max_ns.load();
+		while (late > prev && !g_late_max_ns.compare_exchange_weak(prev, late)) {
+		}
 		g_pending.fetch_add(1);
 		port_irq_kick();
 	}
@@ -178,6 +197,8 @@ void retrace_irq()
 	}
 }
 } // namespace
+
+extern "C" double port_vi_take_late_max(void) { return g_late_max_ns.exchange(0) * 1e-9; }
 
 extern "C" void port_vi_init(void)
 {

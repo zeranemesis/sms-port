@@ -51,6 +51,13 @@ std::atomic<int> g_irq_kicks(0);
 std::deque<std::function<void()> > g_deferred;
 std::vector<port_irq_poll_fn> g_sources;
 
+// Optional diagnostics for the thread issuing display copies. Other game
+// threads retain their normal scheduling and message ordering.
+OSThread* g_profile_thread;
+struct SwitchTiming { unsigned count = 0; double seconds = 0; };
+std::map<OSThread*, SwitchTiming> g_switch_timings;
+double mono_seconds();
+
 Host* host_of(OSThread* t)
 {
 	std::map<OSThread*, Host*>::iterator it = g_hosts.find(t);
@@ -188,6 +195,8 @@ void* windows_host_entry(void* argument)
 // again, or never if `self` is exiting.
 void switch_to(OSThread* self, OSThread* next, bool exiting)
 {
+	const bool measure = self && self == g_profile_thread && !exiting;
+	const double started = measure ? mono_seconds() : 0;
 	Host* hs = self ? host_of(self) : NULL;
 	if (hs)
 		hs->irq_enabled = g_irq_enabled;
@@ -251,6 +260,11 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 		}
 	}
 	g_irq_enabled = hs->irq_enabled;
+	if (measure) {
+		auto& timing = g_switch_timings[next];
+		timing.count++;
+		timing.seconds += mono_seconds() - started;
+	}
 }
 
 // Wall time with no runnable game thread (the overlay's frame breakdown).
@@ -748,3 +762,22 @@ extern "C" void OSWaitCond(OSCond* c, OSMutex* m)
 extern "C" void OSSignalCond(OSCond* c) { OSWakeupThread(&c->queue); }
 
 extern "C" double port_idle_seconds(void) { return g_idle_seconds; }
+
+extern "C" void port_os_profile_frame(unsigned frame)
+{
+	static FILE* file = [] {
+		const char* path = getenv("SMS_OS_PROFILE");
+		FILE* result = path && *path ? fopen(path,"w") : nullptr;
+		if (result) setvbuf(result,nullptr,_IOFBF,16384);
+		return result;
+	}();
+	if (!file) return;
+	g_profile_thread = g_cur;
+	for (const auto& item : g_switch_timings) {
+		const Host* host = host_of(item.first);
+		fprintf(file,"%u target %p entry %p switches %u blocked_ms %.3f\n",frame,
+		        (void*)item.first,host ? (void*)host->func : nullptr,
+		        item.second.count,item.second.seconds*1000);
+	}
+	g_switch_timings.clear();
+}

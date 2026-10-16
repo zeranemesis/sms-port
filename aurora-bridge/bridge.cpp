@@ -1,8 +1,15 @@
 // sms_aurora.dll: see sms_aurora.h.
 #define SMS_AURORA_BUILD
 #include "sms_aurora.h"
+#include "depth_z24x8.hpp"
 #include "sms_aurora_ui.h"
 #include "ui_internal.h"
+#include "gfx/common.hpp"
+#include "gfx/render_worker.hpp"
+#include "gfx/pipeline_cache.hpp"
+#include "gfx/sms_readback.hpp"
+#include "gx/fifo.hpp"
+#include "webgpu/gpu.hpp"
 
 #include <aurora/aurora.h>
 #include <aurora/event.h>
@@ -18,6 +25,10 @@
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <algorithm>
+#include <cstdlib>
+#include <string>
+#include <chrono>
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -91,6 +102,53 @@ void printStack(const char* why) {
 
 void onAbort(int) { printStack("abort"); }
 
+void printContextStack(CONTEXT* ctx) {
+    HANDLE proc = GetCurrentProcess();
+    HANDLE thread = GetCurrentThread();
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_LOAD_LINES);
+    SymInitialize(proc, nullptr, TRUE);
+    STACKFRAME64 frame{};
+    frame.AddrPC.Offset = ctx->Rip;
+    frame.AddrPC.Mode = AddrModeFlat;
+    frame.AddrFrame.Offset = ctx->Rbp;
+    frame.AddrFrame.Mode = AddrModeFlat;
+    frame.AddrStack.Offset = ctx->Rsp;
+    frame.AddrStack.Mode = AddrModeFlat;
+    CONTEXT ctxCopy = *ctx;
+    alignas(SYMBOL_INFO) char buf[sizeof(SYMBOL_INFO) + 256];
+    for (int i = 0; i < 48; i++) {
+        if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, proc, thread, &frame, &ctxCopy, nullptr,
+                         SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) break;
+        DWORD64 addr = frame.AddrPC.Offset;
+        if (!addr) break;
+        auto* sym = reinterpret_cast<SYMBOL_INFO*>(buf);
+        std::memset(buf, 0, sizeof buf);
+        sym->SizeOfStruct = sizeof(SYMBOL_INFO);
+        sym->MaxNameLen = 255;
+        DWORD64 disp = 0;
+        IMAGEHLP_LINE64 line{};
+        line.SizeOfStruct = sizeof line;
+        DWORD ldisp = 0;
+        char mod[MAX_PATH] = "?";
+        HMODULE hm = nullptr;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               reinterpret_cast<LPCSTR>(addr), &hm))
+            GetModuleFileNameA(hm, mod, sizeof mod);
+        const char* base = std::strrchr(mod, '\\');
+        if (SymFromAddr(proc, addr, &disp, sym)) {
+            if (SymGetLineFromAddr64(proc, addr, &ldisp, &line))
+                std::fprintf(stderr, "  %s!%s+0x%llx (%s:%lu)\n", base ? base + 1 : mod, sym->Name,
+                             (unsigned long long)disp, line.FileName, line.LineNumber);
+            else
+                std::fprintf(stderr, "  %s!%s+0x%llx\n", base ? base + 1 : mod, sym->Name, (unsigned long long)disp);
+        } else {
+            std::fprintf(stderr, "  %s+0x%llx\n", base ? base + 1 : mod,
+                         (unsigned long long)(addr - reinterpret_cast<DWORD64>(hm)));
+        }
+    }
+    std::fflush(stderr);
+}
+
 // Include faults in Dawn too: a render-resource lifetime failure can surface
 // in the graphics DLL after leaving this bridge's stack frame.
 LONG CALLBACK onException(EXCEPTION_POINTERS* info) {
@@ -101,17 +159,17 @@ LONG CALLBACK onException(EXCEPTION_POINTERS* info) {
                        reinterpret_cast<LPCSTR>(&onException), &self);
     GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
                        reinterpret_cast<LPCSTR>(info->ExceptionRecord->ExceptionAddress), &at);
-    if (at != self) {
-        char module[MAX_PATH]{};
-        if (!at || !GetModuleFileNameA(at,module,MAX_PATH)) return EXCEPTION_CONTINUE_SEARCH;
-        const char* base=std::strrchr(module,'\\');
-        if (_stricmp(base?base+1:module,"webgpu_dawn.dll")) return EXCEPTION_CONTINUE_SEARCH;
-    }
+    char module[MAX_PATH]{"?"};
+    if (at && GetModuleFileNameA(at,module,MAX_PATH)) {}
+    const char* base=std::strrchr(module,'\\');
     printed = true;
-    std::fprintf(stderr, "[sms_aurora] access violation at %p reading/writing %p\n",
+    std::fprintf(stderr, "[sms_aurora] access violation at %s+0x%llx (%p) reading/writing %p\n",
+                 base?base+1:module,
+                 at ? (unsigned long long)(reinterpret_cast<DWORD64>(info->ExceptionRecord->ExceptionAddress) - reinterpret_cast<DWORD64>(at)) : 0ULL,
                  info->ExceptionRecord->ExceptionAddress,
                  reinterpret_cast<void*>(info->ExceptionRecord->ExceptionInformation[1]));
-    printStack("access violation");
+    if (info->ContextRecord) printContextStack(info->ContextRecord);
+    else printStack("access violation");
     return EXCEPTION_CONTINUE_SEARCH;
 }
 void onTerminate() {
@@ -230,6 +288,29 @@ int sab_init(const SabConfig* c) {
     GXInit(s_fifo.data(), uint32_t(s_fifo.size()));
     s_ready = true;
     pumpAurora();  // opens gamepads: Aurora initialises input on the first update
+    const char* precompile = std::getenv("SMS_AURORA_PRECOMPILE");
+    if (!precompile || std::strcmp(precompile, "0")) {
+        SDL_Window* window = mainWindow();
+        const std::string title = window ? SDL_GetWindowTitle(window) : cfg.appName;
+        int lastPercent = -1;
+        const bool prepared = aurora::gfx::precompile_pipeline_cache([&](size_t ready, size_t total) {
+            pumpAurora();
+            for (const auto& event : s_pending) if (event.type == SAB_EV_QUIT) return false;
+            const int percent = total ? int((std::min)(ready, total) * 100 / total) : 100;
+            if (window && percent != lastPercent) {
+                const auto caption = title + " - Preparation des shaders : " + std::to_string(percent) + "%";
+                SDL_SetWindowTitle(window, caption.c_str());
+                lastPercent = percent;
+            }
+            return true;
+        });
+        if (window) SDL_SetWindowTitle(window, title.c_str());
+        if (!prepared) {
+            s_ready = false;
+            aurora_shutdown();
+            return 0;
+        }
+    }
     return 1;
 }
 
@@ -264,6 +345,37 @@ int sab_poll_event(SabEvent* out) {
     return 1;
 }
 
+int sab_begin_data_pass(uint16_t width, uint16_t height) {
+    if (!s_ready || !width || !height || width > 1024 || height > 1024) return 0;
+    aurora::gx::fifo::drain();
+    return aurora::gfx::begin_data_pass(width, height) ? 1 : 0;
+}
+
+uint32_t sab_copy_readback_capacity(void) { return aurora::gfx::sms_readback::copy_capacity(); }
+
+int sab_flush_copy_readbacks(void) {
+    if (!s_ready || aurora::gfx::is_offscreen()) return 0;
+    aurora::gx::fifo::drain();
+    // A recording-thread checkpoint can safely rotate the mapped staging
+    // buffer and submit its sealed prefix before waiting for occupied slots.
+    if (!aurora::gfx::submit_copy_checkpoint()) return 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    do {
+        if (aurora::gfx::sms_readback::wait_for_copy_capacity(0)) return 1;
+        // Use the same recording-thread/idle-worker contract as Aurora's
+        // staging waits. A sleeping CV alone does not advance Dawn events.
+        if (aurora::gfx::render_worker::is_idle()) aurora::webgpu::g_instance.ProcessEvents();
+        if (aurora::gfx::sms_readback::wait_for_copy_capacity(1)) return 1;
+    } while (std::chrono::steady_clock::now() < deadline);
+    return 0;
+}
+
+void sab_end_data_pass(void) {
+    if (!s_ready) return;
+    aurora::gx::fifo::drain();
+    aurora::gfx::end_data_pass();
+}
+
 void sab_set_efb_size(uint32_t width, uint32_t height) {
     static GXRenderModeObj rm;
     std::memset(&rm, 0, sizeof rm);
@@ -293,6 +405,9 @@ void sab_set_mouse_relative(int on) {
 
 int sab_begin_frame(void) {
     if (!s_ready) return 0;
+    if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
+        aurora::webgpu::g_instance.ProcessEvents();
+    }
     sab_apply_pending_settings();
     return aurora_begin_frame() ? 1 : 0;
 }
@@ -300,14 +415,63 @@ void sab_end_frame(void) {
     if (s_ready) { sab_ui_overlay_draw();aurora_end_frame(); }
 }
 
+void sab_finish_frame(int present) {
+    if (!s_ready) return;
+    if (present) sab_ui_overlay_draw();
+    aurora::finish_recording_frame(present!=0);
+}
+void sab_retain_efb(void) { if (s_ready) aurora::gfx::retain_efb_for_ui(); }
+int sab_copy_display(const void* dest,uint16_t x,uint16_t y,uint16_t w,uint16_t h,int clear) {
+    if (!s_ready) return 0;
+    aurora::gx::fifo::drain();
+    return aurora::gfx::copy_display(dest,{x,y,w,h},clear!=0)?1:0;
+}
+int sab_select_scanout(const void* dest,int black) {
+    return s_ready && aurora::gfx::select_scanout(dest,black!=0)?1:0;
+}
+
 void sab_process(const void* data, uint32_t size) {
     if (s_ready && data && size) GXCallDisplayListLE(data, size);
 }
 
+int sab_peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t* argb, uint32_t* z) {
+    if (!s_ready || !argb || !z) return 0;
+    aurora::gx::fifo::drain();
+    if (!aurora::gfx::peek_efb(x,y,revision,*argb,*z)) return 0;
+    return 1;
+}
+
+int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
+                             uint16_t dstWidth, uint16_t dstHeight) {
+    if (!s_ready || !dest || !width || !height || !dstWidth || !dstHeight ||
+        width > 1024 || height > 1024 || dstWidth > 1024 || dstHeight > 1024) return 0;
+    aurora::gx::fifo::drain();
+    std::vector<uint32_t> depth;
+    if (!aurora::gfx::copy_depth_efb({left, top, width, height}, depth) ||
+        depth.size() != size_t(width) * height) return 0;
+    std::vector<uint8_t> encoded;
+    if (!sms_aurora_depth::encode_z24x8(depth.data(), width, height, dstWidth, dstHeight, encoded)) return 0;
+    std::memcpy(dest, encoded.data(), encoded.size());
+    return 1;
+}
+
 void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
                   uint16_t dstHeight, uint32_t fmt, int clear, int readback) {
+    sab_copy_tex_request(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, 0);
+}
+
+void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
+                          uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear, int readback,
+                          uint64_t requestId) {
     if (!s_ready) return;
-    if (readback) aurora_sms_request_copy_readback(dest, dstWidth, dstHeight);
+    if (readback) {
+        // GX depth-copy formats carry the Z-format bit; this colour readback
+        // shader cannot return depth data.
+        if (!dest || !dstWidth || !dstHeight || (fmt & 0x10u))
+            aurora_sms_reject_copy_readback(dest, dstWidth, dstHeight, requestId);
+        else
+            aurora_sms_request_copy_readback(dest, dstWidth, dstHeight, requestId);
+    }
     GXSetTexCopySrc(left, top, width, height);
     GXSetTexCopyDst(dstWidth, dstHeight, GXTexFmt(fmt), GX_FALSE);
     GXCopyTex(dest, clear ? GX_TRUE : GX_FALSE);
@@ -315,7 +479,22 @@ void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint1
 
 int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                            const uint32_t** rgba) {
-    return s_ready ? aurora_sms_poll_copy_readback(dest, width, height, frameId, rgba) : 0;
+    uint64_t requestId;
+    int success;
+    // Older callers cannot consume failure notifications or request IDs.
+    while (sab_poll_copy_readback_request(dest, width, height, frameId, rgba, &requestId, &success)) {
+        if (success) return 1;
+    }
+    return 0;
+}
+
+int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
+                                   const uint32_t** rgba, uint64_t* requestId, int* success) {
+    if (!s_ready) return 0;
+    if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
+        aurora::webgpu::g_instance.ProcessEvents();
+    }
+    return aurora_sms_poll_copy_readback(dest, width, height, frameId, rgba, requestId, success);
 }
 
 uint64_t sab_frame_id(void) { return aurora_sms_current_frame_id(); }

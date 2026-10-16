@@ -1,0 +1,16 @@
+Reason: Native PC: define the Soleil bounce endpoint at phase 4, which the float timer can reach exactly before wrapping. Keep the retail source and timing unchanged.
+--- a/src/GC2D/SelectShine2.cpp
++++ b/src/GC2D/SelectShine2.cpp
+@@ -343,7 +343,12 @@
+ // c-hs7: getModel() is +8.
+ void TSelectShine::move()
+ {
++#ifdef TARGET_PC
++	// The phase wraps only above 4; its endpoint returns to the origin.
++	f32 newY = 0.0f;
++#else
+ 	f32 newY;
++#endif
+ 	if (mBoundTimer < 1.0f) {
+ 		newY = makeNewPosition(mBoundTimer, 0.0f, mBoundHeight * 0.9f,
+ 		                       mBoundHeight);

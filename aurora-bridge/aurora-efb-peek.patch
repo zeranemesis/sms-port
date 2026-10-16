@@ -1,0 +1,290 @@
+diff --git a/cmake/aurora_gx.cmake b/cmake/aurora_gx.cmake
+index 73b2802..8ad0c51 100644
+--- a/cmake/aurora_gx.cmake
++++ b/cmake/aurora_gx.cmake
+@@ -2,6 +2,7 @@ add_library(aurora_gx STATIC
+         lib/gfx/clear.cpp
+         lib/gfx/common.cpp
+         lib/gfx/depth_peek.cpp
++        lib/gfx/efb_peek.cpp
+         lib/gfx/sms_readback.cpp
+         lib/gfx/pipeline_cache.cpp
+         lib/gfx/render_worker.cpp
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index 272db00..dcee4e9 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "clear.hpp"
+ #include "depth_peek.hpp"
++#include "efb_peek.hpp"
+ #include "sms_readback.hpp"
+ #include "../internal.hpp"
+ #include "../webgpu/gpu.hpp"
+@@ -954,6 +955,7 @@ void shutdown() {
+   render_worker::shutdown();
+   shutdown_pipeline_cache();
+   depth_peek::shutdown();
++  efb_peek::shutdown();
+   sms_readback::shutdown();
+   tex_copy_conv::shutdown();
+   tex_palette_conv::shutdown();
+@@ -1395,6 +1397,71 @@ void after_submit() noexcept {
+ 
+ void gpu_synchronize() { render_worker::synchronize(); }
+ 
++bool peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z) {
++  if (!g_recordingFrame || g_currentRenderPass==UINT32_MAX || g_inOffscreen) return false;
++  const auto logicalSize=gx::logical_fb_size();
++  if (x>=logicalSize.x || y>=logicalSize.y) return false;
++  static uint64_t cachedFrame=0, cachedRevision=0;
++  auto& frame=current_frame_packet();
++  if (cachedFrame!=frame.frameId || cachedRevision!=revision) {
++    // Seal exactly the draws preceding GXPeek, before later HUD/pollution clears.
++    frame.uniforms.append_zeroes(gx::MaxUniformSize);
++    auto& oldPass=frame.renderPasses[g_currentRenderPass];
++    oldPass.observable=true;
++    const auto color=oldPass.colorView, depth=oldPass.copySourceDepthView;
++    const auto size=oldPass.targetSize;
++    const auto samples=oldPass.msaaSamples;
++    enqueue_pass(frame,g_recordingFrameSlot,g_currentRenderPass);
++    // Staging storage must be unmapped for submission. Preserve its populated
++    // ranges and restore them after remapping so all existing offsets stay valid.
++    std::array saved{frame.verts.clone(),frame.uniforms.clone(),frame.indices.clone(),
++                     frame.storage.clone(),frame.textureUpload.clone()};
++    const auto frameSlot=g_recordingFrameSlot;
++    render_worker::enqueue_work([frameSlot,color,depth,size,logicalSize,samples] {
++      auto& packet=g_framePackets[frameSlot];
++      efb_peek::encode(packet.encoder,color,depth,size,logicalSize,samples);
++      const auto staging=packet.stagingBuffer;
++      g_stagingBuffers[staging].Unmap();
++      s_mappingStates[staging].store(BufferMapState::Unmapped,std::memory_order_release);
++      const auto commands=packet.encoder.Finish();
++      g_queue.Submit(1,&commands);
++      efb_peek::complete();
++      auto mapped=std::make_shared<bool>(false);
++      const auto future=g_stagingBuffers[staging].MapAsync(wgpu::MapMode::Write,0,StagingBufferSize,
++          wgpu::CallbackMode::WaitAnyOnly,[mapped](wgpu::MapAsyncStatus status,wgpu::StringView) {
++            *mapped=status==wgpu::MapAsyncStatus::Success;
++          });
++      const auto result=g_instance.WaitAny(future,5'000'000'000);
++      CHECK(result==wgpu::WaitStatus::Success && *mapped,"EFB peek staging remap failed or timed out");
++      s_mappingStates[staging].store(BufferMapState::Mapped,std::memory_order_release);
++      const wgpu::CommandEncoderDescriptor desc{.label="Continue after EFB peek"};
++      packet.encoder=g_device.CreateCommandEncoder(&desc);
++    });
++    render_worker::synchronize();
++    const auto& staging=g_stagingBuffers[frame.stagingBuffer];
++    std::array<ByteBuffer*,5> buffers{&frame.verts,&frame.uniforms,&frame.indices,&frame.storage,&frame.textureUpload};
++    constexpr std::array capacities{VertexBufferSize,UniformBufferSize,IndexBufferSize,StorageBufferSize,TextureUploadSize};
++    uint64_t offset=0;
++    for (size_t i=0;i<buffers.size();++i) {
++      *buffers[i]=ByteBuffer{static_cast<uint8_t*>(staging.GetMappedRange(offset,capacities[i])),size_t(capacities[i])};
++      if (!saved[i].empty()) buffers[i]->append(saved[i].data(),saved[i].size());
++      offset+=capacities[i];
++    }
++    RenderPass next;
++    set_efb_targets(next);
++    next.clearColor=false; next.clearDepth=false;
++    next.commands.reserve(2048);
++    frame.renderPasses.emplace_back(std::move(next));
++    g_currentRenderPass=static_cast<uint32_t>(frame.renderPasses.size()-1);
++    push_command(CommandType::SetViewport,Command::Data{.setViewport=g_cachedViewport});
++    push_command(CommandType::SetScissor,Command::Data{.setScissor=g_cachedScissor});
++    cachedFrame=frame.frameId; cachedRevision=revision;
++  }
++  if (!efb_peek::read(x,y,argb,z)) return false;
++  if (gx::g_gxState.pixelFmt!=GX_PF_RGBA6_Z24) argb|=0xff000000u;
++  return true;
++}
++
+ static void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, const RenderPass& passInfo) {
+   ZoneScoped;
+   g_currentPipeline = UINTPTR_MAX;
+diff --git a/lib/gfx/common.hpp b/lib/gfx/common.hpp
+index 350a19a..8214801 100644
+--- a/lib/gfx/common.hpp
++++ b/lib/gfx/common.hpp
+@@ -236,6 +236,7 @@ uint64_t current_frame_id() noexcept;
+ void render_pass(const wgpu::RenderPassEncoder& pass, uint32_t idx);
+ void after_submit() noexcept;
+ void gpu_synchronize();
++bool peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z);
+ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
+                   Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat = GX_TF_RGBA8);
+ 
+diff --git a/lib/gfx/efb_peek.hpp b/lib/gfx/efb_peek.hpp
+new file mode 100644
+--- /dev/null
++++ b/lib/gfx/efb_peek.hpp
+@@ -0,0 +1,14 @@
++#pragma once
++
++#include "common.hpp"
++
++namespace aurora::gfx::efb_peek {
++// Render worker only. Read both attachments at the same render checkpoint.
++void encode(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& color,
++            const wgpu::TextureView& depth, wgpu::Extent3D sourceSize,
++            Vec2<uint32_t> logicalSize, uint32_t samples);
++void complete();
++// Recording thread, after render_worker::synchronize().
++bool read(uint32_t x, uint32_t y, uint32_t& argb, uint32_t& z);
++void shutdown();
++} // namespace aurora::gfx::efb_peek
+diff --git a/lib/gfx/efb_peek.cpp b/lib/gfx/efb_peek.cpp
+new file mode 100644
+--- /dev/null
++++ b/lib/gfx/efb_peek.cpp
+@@ -0,0 +1,150 @@
++#include "efb_peek.hpp"
++#include "../gx/gx.hpp"
++#include "render_worker.hpp"
++
++#include <array>
++#include <memory>
++#include <string>
++#include <vector>
++
++namespace aurora::gfx::efb_peek {
++namespace {
++Module Log("aurora::gfx::efb_peek");
++using webgpu::g_device;
++using webgpu::g_instance;
++using webgpu::g_queue;
++struct Params { uint32_t width, height, sourceWidth, sourceHeight; };
++static_assert(sizeof(Params) == 16);
++struct Pipeline { wgpu::BindGroupLayout layout; wgpu::ComputePipeline pipeline; };
++std::array<Pipeline, 2> g_pipelines;
++wgpu::Buffer g_storage, g_readback, g_params;
++uint64_t g_capacity = 0, g_bytes = 0;
++Vec2<uint32_t> g_size;
++std::vector<uint32_t> g_pixels;
++
++Pipeline create_pipeline(bool multisampled) {
++  const std::array entries{
++      wgpu::BindGroupLayoutEntry{.binding=0, .visibility=wgpu::ShaderStage::Compute,
++          .texture=wgpu::TextureBindingLayout{.sampleType=wgpu::TextureSampleType::Float,
++              .viewDimension=wgpu::TextureViewDimension::e2D, .multisampled=multisampled}},
++      wgpu::BindGroupLayoutEntry{.binding=1, .visibility=wgpu::ShaderStage::Compute,
++          .texture=wgpu::TextureBindingLayout{.sampleType=wgpu::TextureSampleType::Depth,
++              .viewDimension=wgpu::TextureViewDimension::e2D, .multisampled=multisampled}},
++      wgpu::BindGroupLayoutEntry{.binding=2, .visibility=wgpu::ShaderStage::Compute,
++          .buffer=wgpu::BufferBindingLayout{.type=wgpu::BufferBindingType::Storage}},
++      wgpu::BindGroupLayoutEntry{.binding=3, .visibility=wgpu::ShaderStage::Compute,
++          .buffer=wgpu::BufferBindingLayout{.type=wgpu::BufferBindingType::Uniform}},
++  };
++  const wgpu::BindGroupLayoutDescriptor layoutDesc{.label="EFB peek layout",
++      .entryCount=entries.size(), .entries=entries.data()};
++  Pipeline result;
++  result.layout=g_device.CreateBindGroupLayout(&layoutDesc);
++  std::string source=multisampled
++      ? "@group(0) @binding(0) var color: texture_multisampled_2d<f32>;\n"
++        "@group(0) @binding(1) var depth: texture_depth_multisampled_2d;\n"
++      : "@group(0) @binding(0) var color: texture_2d<f32>;\n"
++        "@group(0) @binding(1) var depth: texture_depth_2d;\n";
++  source+=R"(
++struct Params { size: vec2u, sourceSize: vec2u };
++@group(0) @binding(2) var<storage, read_write> pixels: array<vec2u>;
++@group(0) @binding(3) var<uniform> params: Params;
++@compute @workgroup_size(8, 8, 1)
++fn cs_main(@builtin(global_invocation_id) id: vec3u) {
++    if (any(id.xy >= params.size)) { return; }
++    let p = min(vec2u((vec2f(id.xy) + vec2f(0.5)) * vec2f(params.sourceSize) / vec2f(params.size)),
++                params.sourceSize - vec2u(1));
++    // Sample zero for both attachments: depth is never averaged across an edge.
++    let rgba = pack4x8unorm(textureLoad(color, vec2i(p), 0));
++    let d = textureLoad(depth, vec2i(p), 0);
++)";
++  source+=gx::UseReversedZ ? "    let forward = 1.0 - d;\n" : "    let forward = d;\n";
++  source+=R"(
++    let z = min(u32(clamp(forward, 0.0, 1.0) * 16777215.0 + 0.5), 0x00ffffffu);
++    let argb = (rgba & 0xff00ff00u) | ((rgba & 0xffu) << 16u) | ((rgba >> 16u) & 0xffu);
++    pixels[id.y * params.size.x + id.x] = vec2u(argb, z);
++}
++)";
++  const wgpu::ShaderSourceWGSL wgsl{wgpu::ShaderSourceWGSL::Init{.code=source.c_str()}};
++  const wgpu::ShaderModuleDescriptor moduleDesc{.nextInChain=&wgsl, .label="EFB peek shader"};
++  const auto module=g_device.CreateShaderModule(&moduleDesc);
++  const wgpu::PipelineLayoutDescriptor pipelineLayoutDesc{.bindGroupLayoutCount=1,
++      .bindGroupLayouts=&result.layout};
++  const auto layout=g_device.CreatePipelineLayout(&pipelineLayoutDesc);
++  const wgpu::ComputePipelineDescriptor pipelineDesc{.label="EFB peek pipeline", .layout=layout,
++      .compute=wgpu::ComputeState{.module=module, .entryPoint="cs_main"}};
++  result.pipeline=g_device.CreateComputePipeline(&pipelineDesc);
++  return result;
++}
++} // namespace
++
++void encode(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& color,
++            const wgpu::TextureView& depth, wgpu::Extent3D sourceSize,
++            Vec2<uint32_t> logicalSize, uint32_t samples) {
++  ASSERT(render_worker::is_worker_thread(), "EFB peek must be encoded by the render worker");
++  CHECK(color && depth && logicalSize.x && logicalSize.y, "Invalid EFB peek attachments");
++  g_size=logicalSize;
++  g_bytes=uint64_t(logicalSize.x)*logicalSize.y*8;
++  wgpu::Limits limits;
++  g_device.GetLimits(&limits);
++  CHECK(g_bytes<=limits.maxStorageBufferBindingSize, "EFB peek exceeds GPU buffer limits");
++  if (g_capacity<g_bytes) {
++    const wgpu::BufferDescriptor storageDesc{.label="EFB peek storage",
++        .usage=wgpu::BufferUsage::Storage|wgpu::BufferUsage::CopySrc, .size=g_bytes};
++    g_storage=g_device.CreateBuffer(&storageDesc);
++    const wgpu::BufferDescriptor readDesc{.label="EFB peek readback",
++        .usage=wgpu::BufferUsage::CopyDst|wgpu::BufferUsage::MapRead, .size=g_bytes};
++    g_readback=g_device.CreateBuffer(&readDesc);
++    g_capacity=g_bytes;
++  }
++  if (!g_params) {
++    const wgpu::BufferDescriptor paramsDesc{.label="EFB peek parameters",
++        .usage=wgpu::BufferUsage::Uniform|wgpu::BufferUsage::CopyDst, .size=sizeof(Params)};
++    g_params=g_device.CreateBuffer(&paramsDesc);
++  }
++  const Params params{logicalSize.x,logicalSize.y,sourceSize.width,sourceSize.height};
++  g_queue.WriteBuffer(g_params,0,&params,sizeof(params));
++  auto& pipeline=g_pipelines[samples>1 ? 1 : 0];
++  if (!pipeline.pipeline) pipeline=create_pipeline(samples>1);
++  const std::array entries{
++      wgpu::BindGroupEntry{.binding=0, .textureView=color},
++      wgpu::BindGroupEntry{.binding=1, .textureView=depth},
++      wgpu::BindGroupEntry{.binding=2, .buffer=g_storage, .size=g_bytes},
++      wgpu::BindGroupEntry{.binding=3, .buffer=g_params, .size=sizeof(Params)},
++  };
++  const wgpu::BindGroupDescriptor bindDesc{.label="EFB peek bind group", .layout=pipeline.layout,
++      .entryCount=entries.size(), .entries=entries.data()};
++  const auto bind=g_device.CreateBindGroup(&bindDesc);
++  const wgpu::ComputePassDescriptor passDesc{.label="EFB peek checkpoint"};
++  const auto pass=cmd.BeginComputePass(&passDesc);
++  pass.SetPipeline(pipeline.pipeline);
++  pass.SetBindGroup(0,bind);
++  pass.DispatchWorkgroups((logicalSize.x+7)/8,(logicalSize.y+7)/8);
++  pass.End();
++  cmd.CopyBufferToBuffer(g_storage,0,g_readback,0,g_bytes);
++}
++
++void complete() {
++  // WaitAnyOnly callbacks are consumed here; no callbacks outlive this checkpoint.
++  auto success=std::make_shared<bool>(false);
++  const auto future=g_readback.MapAsync(wgpu::MapMode::Read,0,g_bytes,wgpu::CallbackMode::WaitAnyOnly,
++      [success](wgpu::MapAsyncStatus status,wgpu::StringView) { *success=status==wgpu::MapAsyncStatus::Success; });
++  const auto status=g_instance.WaitAny(future,5'000'000'000);
++  CHECK(status==wgpu::WaitStatus::Success && *success, "EFB peek GPU readback failed or timed out");
++  const auto* data=static_cast<const uint32_t*>(g_readback.GetConstMappedRange(0,g_bytes));
++  CHECK(data!=nullptr, "EFB peek returned an empty mapping");
++  g_pixels.assign(data,data+g_bytes/4);
++  g_readback.Unmap();
++}
++
++bool read(uint32_t x,uint32_t y,uint32_t& argb,uint32_t& z) {
++  if (x>=g_size.x || y>=g_size.y || g_pixels.empty()) return false;
++  const auto offset=(size_t(y)*g_size.x+x)*2;
++  argb=g_pixels[offset]; z=g_pixels[offset+1];
++  return true;
++}
++
++void shutdown() {
++  g_pixels.clear(); g_size={}; g_bytes=0; g_capacity=0;
++  g_storage={}; g_readback={}; g_params={}; g_pipelines={};
++}
++} // namespace aurora::gfx::efb_peek

@@ -81,6 +81,15 @@ static_assert(offsetof(Voice, endRequested) == 0x10A, "endRequested");
 static_assert(offsetof(Voice, base) == 0x118, "baseAddress");
 static_assert(offsetof(Voice, fir) == 0x120, "variableFirCoeffs");
 
+// trace: how many coefficients of a voice filter are set
+static int nonzero(const int16_t* c, int n)
+{
+	int k = 0;
+	for (int i = 0; i < n; i++)
+		k += c[i] != 0;
+	return k;
+}
+
 struct FxLine {
 	uint16_t mode;      // 0x00 0 = off (config unk0)
 	uint16_t length;    // 0x02 delay length in subframes (config unkC)
@@ -342,10 +351,12 @@ void render_voice(int vi, int n)
 		if (g.trace)
 			fprintf(stderr,
 			        "[audio] voice %2d start: src %2u base 0x%06x ratio 0x%04x loop %u [%u,%u) n %d vol "
-			        "%04x/%04x/%04x/%04x bus %03x/%03x/%03x/%03x am %u\n",
+			        "%04x/%04x/%04x/%04x bus %03x/%03x/%03x/%03x am %u filter %d lp %d fir %d iir %d "
+			        "pan 0x%04x\n",
 			        vi, v.sourceType, v.base, v.ratio, v.looping, v.loopStart, v.endPosition, v.sampleCount,
 			        v.slot[0].target, v.slot[1].target, v.slot[2].target, v.slot[3].target, v.slot[0].bus,
-			        v.slot[1].bus, v.slot[2].bus, v.slot[3].bus, v.amEnabled);
+			        v.slot[1].bus, v.slot[2].bus, v.slot[3].bus, v.amEnabled, v.filterMode, v.lowPass,
+			        nonzero(v.fir, 20), nonzero(v.iir, 4), v.amPan);
 	}
 	bool stopping = v.endRequested != 0;
 	if (!supported(v.sourceType)) {

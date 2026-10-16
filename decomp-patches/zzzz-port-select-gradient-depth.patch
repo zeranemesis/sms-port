@@ -1,0 +1,32 @@
+Reason: PC render precision: keep the episode-selection background one float ULP inside its orthographic depth boundary. The exact retail Z=-100 plane disappears in Aurora; this changes only the background quad, not game timing or simulation. Original PAL sources remain unchanged.
+--- a/src/GC2D/SelectMenu.cpp
++++ b/src/GC2D/SelectMenu.cpp
+@@ -164,6 +164,9 @@
+ 
+ static inline void SelectGradDraw(TSelectGrad* grad)
+ {
++	// One float step inside the orthographic far plane: native projection
++	// rounding otherwise drops this background in Aurora. Visual depth only.
++	const f32 backgroundZ = -99.99999237060546875f;
+ 	GXSetDither(GX_TRUE);
+ 
+ 	Mtx mtx;
+@@ -195,14 +198,14 @@
+ 	u8 midB = (grad->mBottomRightCol.b + grad->mTopLeftCol.b) >> 1;
+ 
+ 	GXBegin(GX_QUADS, GX_VTXFMT0, 4);
+-	GXPosition3f32(0.0f, 16.0f, -100.0f);
++	GXPosition3f32(0.0f, 16.0f, backgroundZ);
+ 	GXColor3u8(grad->mTopLeftCol.r, grad->mTopLeftCol.g, grad->mTopLeftCol.b);
+-	GXPosition3f32(600.0f, 16.0f, -100.0f);
++	GXPosition3f32(600.0f, 16.0f, backgroundZ);
+ 	GXColor3u8(midR, midG, midB);
+-	GXPosition3f32(600.0f, 464.0f, -100.0f);
++	GXPosition3f32(600.0f, 464.0f, backgroundZ);
+ 	GXColor3u8(grad->mBottomRightCol.r, grad->mBottomRightCol.g,
+ 	           grad->mBottomRightCol.b);
+-	GXPosition3f32(0.0f, 464.0f, -100.0f);
++	GXPosition3f32(0.0f, 464.0f, backgroundZ);
+ 	GXColor3u8(midR, midG, midB);
+ 	GXEnd();
+ }

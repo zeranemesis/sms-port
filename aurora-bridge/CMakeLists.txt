@@ -32,6 +32,15 @@ if(MSVC)
 endif()
 add_subdirectory(../third_party/aurora aurora EXCLUDE_FROM_ALL)
 
+# RelWithDebInfo otherwise uses /Ob1, which leaves Aurora's small FIFO,
+# vertex and buffer helpers out of line in the per-primitive hot path.
+# Keep symbols and the existing floating-point model while matching Release
+# inlining. The option permits an identical-build A/B comparison.
+option(SMS_AURORA_OPTIMIZE_INLINING "Use release inlining in the Aurora GX renderer" ON)
+if(MSVC AND SMS_AURORA_OPTIMIZE_INLINING)
+  target_compile_options(aurora_gx PRIVATE $<$<CONFIG:RelWithDebInfo>:/Ob2>)
+endif()
+
 add_library(sms_aurora SHARED bridge.cpp ui.cpp live.cpp sms_aurora.h sms_aurora_ui.h sms_aurora_settings.h)
 target_include_directories(sms_aurora PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/aurora/lib"

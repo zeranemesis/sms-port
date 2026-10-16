@@ -1,0 +1,10 @@
+Reason: In offscreen 2D stamp rendering (initGXforStamp), disable depth testing so 2D quads with Z=0 are never discarded by reversed-Z backends or stale EFB depth state.
+
+--- a/src/Map/PollutionCount.cpp
++++ b/src/Map/PollutionCount.cpp
+@@ -530,4 +530,5 @@
+ 	GXSetTevAlphaOp(GX_TEVSTAGE2, GX_TEV_ADD, GX_TB_ZERO, GX_CS_SCALE_1, 1,
+ 	                GX_TEVPREV);
+ 	GXSetBlendMode(GX_BM_BLEND, GX_BL_SRCALPHA, GX_BL_INVSRCALPHA, GX_LO_NOOP);
++	GXSetZMode(GX_FALSE, GX_ALWAYS, GX_FALSE);
+ }

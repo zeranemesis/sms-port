@@ -1,0 +1,15 @@
+Reason: The retail MareWA0 animation override lacks its sentinel; TLodAnm::setBckAnm_ reads beyond it for nonzero animation indices. Terminate the native table without changing the matching decomp data.
+--- a/src/NPC/NpcInitPrg.cpp
++++ b/src/NPC/NpcInitPrg.cpp
+@@ -381,7 +381,11 @@
+ 	// BUG: missing -1 terminator
+ 	static const TAnmBckMapping sIndividualMareWA0Bck[] = {
+ 		{ 0, 3 },
++#ifdef TARGET_PC
++		// Native allocations do not preserve the retail adjacent data.
++		{ -1, -1 },
++#endif
+ 	};
+ 
+ 	switch (mActorType) {
+ 	case 0x4000019:

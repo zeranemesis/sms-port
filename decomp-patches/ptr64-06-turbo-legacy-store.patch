@@ -1,0 +1,20 @@
+Reason: PC memory safety: retail's Turbo controller branch writes prop rotation through the abandoned TNozzleTurbo type although the actual nozzle is TNozzleTrigger. PAL stores at +0x714; the native x64 layout moves it to +0xe00, beyond TWaterGun. Omit this unused legacy write on PC. The shipped prop animation still uses TWaterGun::rotateProp; original PowerPC sources and matching are unchanged.
+--- a/src/Player/MarioMove.cpp
++++ b/src/Player/MarioMove.cpp
+@@ -1607,6 +1607,9 @@
+ 			offFlag(MARIO_FLAG_FLUDD_EMITTING);
+ 		}
+ 
++#if !defined(TARGET_PC)
++		// The abandoned nozzle's prop field lies outside the shipped nozzle.
++		// PC prop animation uses TWaterGun::rotateProp above.
+ 		if ((s32)getFludd()->getCurrentNozzleIndex() == TWaterGun::Turbo
+ 		    && ((getStatus() + 0xF3C00000) == 0x201
+ 		        || ((getStatus() + 0xFC000000) & 0xFFFFFFFF) == 0x440)) {
+@@ -1620,5 +1623,6 @@
+ 			    = propRot;
+ 		}
++#endif
+ 	}
+ 
+ 	// mInput bit synthesis

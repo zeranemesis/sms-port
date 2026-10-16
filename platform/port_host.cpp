@@ -40,4 +40,26 @@ void port_sleep_until(const struct timespec* deadline)
 	if (ns > 0)
 		Sleep((DWORD)((ns + 999999LL) / 1000000LL));
 }
+
+// VI only: a per-thread timer avoids changing audio timing or the system timer
+// resolution. Unsupported hosts retain the original Sleep implementation.
+void port_sleep_until_precise(const struct timespec* deadline)
+{
+	struct Timer {
+		HANDLE handle = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION,
+		                                      TIMER_MODIFY_STATE | SYNCHRONIZE);
+		Timer() { std::fprintf(stderr,"[vi] precise timer: %s\n",handle ? "high-resolution waitable timer" : "Sleep fallback"); }
+		~Timer() { if(handle) CloseHandle(handle); }
+	};
+	thread_local Timer timer;
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	const long long ns = (long long)(deadline->tv_sec-now.tv_sec)*1000000000LL + deadline->tv_nsec-now.tv_nsec;
+	if(ns<=0) return;
+	LARGE_INTEGER due;
+	due.QuadPart = -((ns+99)/100); // Relative deadline, rounded to 100 ns.
+	if(timer.handle && SetWaitableTimer(timer.handle,&due,0,nullptr,nullptr,FALSE) &&
+	   WaitForSingleObject(timer.handle,INFINITE)==WAIT_OBJECT_0) return;
+	port_sleep_until(deadline);
+}
 #endif

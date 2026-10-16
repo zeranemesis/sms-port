@@ -1,0 +1,685 @@
+﻿diff --git a/cmake/aurora_gx.cmake b/cmake/aurora_gx.cmake
+index 73b2802..8ad0c51 100644
+--- a/cmake/aurora_gx.cmake
++++ b/cmake/aurora_gx.cmake
+@@ -2,6 +2,7 @@ add_library(aurora_gx STATIC
+         lib/gfx/clear.cpp
+         lib/gfx/common.cpp
+         lib/gfx/depth_peek.cpp
++        lib/gfx/efb_peek.cpp
+         lib/gfx/sms_readback.cpp
+         lib/gfx/pipeline_cache.cpp
+         lib/gfx/render_worker.cpp
+diff --git a/lib/aurora.cpp b/lib/aurora.cpp
+index dc5ae5b..0bd2060 100644
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -33,6 +33,7 @@ Module Log("aurora");
+ #ifdef AURORA_ENABLE_GX
+ // GPU
+ using webgpu::g_device;
++using webgpu::g_instance;
+ using webgpu::g_queue;
+ using webgpu::g_surface;
+ #endif
+@@ -226,7 +227,7 @@ bool begin_frame() noexcept {
+   return true;
+ }
+ 
+-void end_frame() noexcept {
++void end_frame(bool present) noexcept {
+   ZoneScoped;
+ #ifdef AURORA_ENABLE_GX
+   gx::fifo::drain();
+@@ -240,18 +241,18 @@ void end_frame() noexcept {
+ 
+   wgpu::BindGroup rmlBindGroup;
+ #if AURORA_ENABLE_RMLUI
+-  if (rmlui::is_initialized()) {
++  if (present && rmlui::is_initialized()) {
+     rmlBindGroup = rmlui::record_frame(viewport);
+   }
+ #endif
+ 
+-  gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), viewport,
++  gfx::end_frame([rmlBindGroup = std::move(rmlBindGroup), viewport, presentSource, present,
+                   imguiDrawData = std::move(imguiDrawData)](wgpu::CommandEncoder& encoder) {
+     window::SurfaceLock surfaceLock;
+     wgpu::Texture currentTexture;
+     wgpu::TextureView currentView;
+     auto surfaceStatus = wgpu::SurfaceGetCurrentTextureStatus::Error;
+-    if (window::is_presentable() && g_surface) {
++    if (present && window::is_presentable() && g_surface) {
+       ZoneScopedN("Acquire texture");
+       wgpu::SurfaceTexture surfaceTexture;
+       g_surface.GetCurrentTexture(&surfaceTexture);
+@@ -268,7 +269,7 @@ void end_frame() noexcept {
+       if (rmlBindGroup) {
+         presentBindGroup = rmlBindGroup;
+       } else {
+-        const auto& resampledSource = webgpu::resample_present_source(encoder, viewport);
++        const auto& resampledSource = webgpu::resample_present_source(encoder, viewport, presentSource);
+         presentBindGroup = webgpu::create_copy_bind_group(resampledSource);
+       }
+       {
+@@ -312,7 +313,7 @@ void end_frame() noexcept {
+         imgui::render(pass, imguiDrawData);
+         pass.End();
+       }
+-    } else {
++    } else if (present) {
+       Log.info("Skipping present; window not presentable");
+     }
+     const wgpu::CommandBufferDescriptor cmdBufDescriptor{.label = "Redraw command buffer"};
+@@ -328,7 +329,7 @@ void end_frame() noexcept {
+         Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+         webgpu::release_surface();
+       }
+-    } else if (g_surface) {
++    } else if (present && g_surface) {
+       switch (surfaceStatus) {
+       case wgpu::SurfaceGetCurrentTextureStatus::Timeout:
+         Log.warn("Surface texture acquisition timed out");
+@@ -377,6 +378,7 @@ void end_frame() noexcept {
+ #endif
+ }
+ } // namespace
++void finish_recording_frame(bool present) noexcept { end_frame(present); }
+ } // namespace aurora
+ 
+ // C API bindings
+@@ -386,7 +388,7 @@ AuroraInfo aurora_initialize(int argc, char* argv[], const AuroraConfig* config)
+ void aurora_shutdown() { aurora::shutdown(); }
+ const AuroraEvent* aurora_update() { return aurora::update(); }
+ bool aurora_begin_frame() { return aurora::begin_frame(); }
+-void aurora_end_frame() { aurora::end_frame(); }
++void aurora_end_frame() { aurora::end_frame(true); }
+ AuroraBackend aurora_get_backend() { return aurora::g_config.desiredBackend; }
+ const AuroraBackend* aurora_get_available_backends(size_t* count) {
+   if (count != nullptr) {
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index 272db00..e27dffc 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include "clear.hpp"
+ #include "depth_peek.hpp"
++#include "efb_peek.hpp"
+ #include "sms_readback.hpp"
+ #include "../internal.hpp"
+ #include "../webgpu/gpu.hpp"
+@@ -19,6 +20,8 @@
+ 
+ #include <atomic>
+ #include <chrono>
++#include <cstdio>
++#include <cstdlib>
+ #include <deque>
+ #include <mutex>
+ #include <optional>
+@@ -136,6 +139,7 @@ static std::array<std::atomic<BufferMapState>, StagingBufferCount> s_mappingStat
+ static wgpu::Limits g_cachedLimits;
+ static uint32_t g_frameIndex = UINT32_MAX;
+ static PipelineRef g_currentPipeline;
++static absl::flat_hash_map<const void*,TextureHandle> g_displayCopies;
+ wgpu::BindGroupLayout g_staticBindGroupLayout;
+ wgpu::BindGroup g_staticBindGroup;
+ wgpu::BindGroupLayout g_uniformBindGroupLayout;
+@@ -205,6 +209,25 @@ struct FrameOp {
+ };
+ 
+ using RenderPassList = std::deque<RenderPass>;
++struct PassTiming {
++  wgpu::QuerySet queries;
++  wgpu::Buffer resolved;
++  wgpu::Buffer readback;
++  uint32_t passIndex = 0;
++  size_t commands = 0;
++  double cpuMs = 0;
++};
++
++static FILE* gpu_profile() {
++  static FILE* file=[] {
++    const auto* path=std::getenv("SMS_AURORA_GPU_PROFILE");
++    FILE* result=path&&*path ? std::fopen(path,"w") : nullptr;
++    if(result) std::setvbuf(result,nullptr,_IOFBF,16384);
++    return result;
++  }();
++  return file;
++}
++
+ struct FramePacket {
+   RenderPassList renderPasses;
+   std::deque<TextureCopy> textureCopies;
+@@ -223,6 +246,8 @@ struct FramePacket {
+   AuroraStats stats{};
+   uint32_t drawCallCount = 0;
+   uint32_t mergedDrawCallCount = 0;
++  // Worker-owned, consumed only at an already synchronous EFB checkpoint.
++  std::vector<PassTiming> passTimings;
+ };
+ 
+ static std::array<FramePacket, FrameSlotCount> g_framePackets;
+@@ -954,6 +979,8 @@ void shutdown() {
+   render_worker::shutdown();
+   shutdown_pipeline_cache();
+   depth_peek::shutdown();
++  efb_peek::shutdown();
++  g_displayCopies.clear();
+   sms_readback::shutdown();
+   tex_copy_conv::shutdown();
+   tex_palette_conv::shutdown();
+@@ -1325,16 +1352,40 @@ static void render(wgpu::CommandEncoder& cmd, FramePacket& frame, RenderPass& pa
+     depthStencilAttachmentPtr = &depthStencilAttachment;
+   }
+   const auto label = fmt::format("Render pass {}", passIndex);
++  const bool timed=gpu_profile() && g_device.HasFeature(wgpu::FeatureName::TimestampQuery);
++  PassTiming timing;
++  wgpu::PassTimestampWrites timestamps{};
++  if(timed) {
++    timing.passIndex=passIndex;
++    timing.commands=passInfo.commands.size();
++    const wgpu::QuerySetDescriptor queryDesc{.label="Diagnostic pass timestamps",.type=wgpu::QueryType::Timestamp,.count=2};
++    timing.queries=g_device.CreateQuerySet(&queryDesc);
++    const wgpu::BufferDescriptor resolveDesc{.label="Diagnostic timestamp resolve",
++        .usage=wgpu::BufferUsage::QueryResolve|wgpu::BufferUsage::CopySrc,.size=16};
++    const wgpu::BufferDescriptor readDesc{.label="Diagnostic timestamp readback",
++        .usage=wgpu::BufferUsage::CopyDst|wgpu::BufferUsage::MapRead,.size=16};
++    timing.resolved=g_device.CreateBuffer(&resolveDesc);
++    timing.readback=g_device.CreateBuffer(&readDesc);
++    timestamps={.querySet=timing.queries,.beginningOfPassWriteIndex=0,.endOfPassWriteIndex=1};
++  }
+   const wgpu::RenderPassDescriptor renderPassDescriptor{
+       .label = passInfo.label.empty() ? label.c_str() : passInfo.label.c_str(),
+       .colorAttachmentCount = attachments.size(),
+       .colorAttachments = attachments.data(),
+       .depthStencilAttachment = depthStencilAttachmentPtr,
++      .timestampWrites = timed ? &timestamps : nullptr,
+   };
+ 
++  const auto cpuStart=timed ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+   auto pass = cmd.BeginRenderPass(&renderPassDescriptor);
+   render_pass(pass, frame, passInfo);
+   pass.End();
++  if(timed) {
++    timing.cpuMs=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-cpuStart).count();
++    cmd.ResolveQuerySet(timing.queries,0,2,timing.resolved,0);
++    cmd.CopyBufferToBuffer(timing.resolved,0,timing.readback,0,16);
++    frame.passTimings.push_back(std::move(timing));
++  }
+ 
+   if (passInfo.captureDepthSnapshot) {
+     depth_peek::encode_frame_snapshot(cmd, passInfo.copySourceDepthView, passInfo.targetSize, passInfo.msaaSamples);
+@@ -1395,6 +1446,171 @@ void after_submit() noexcept {
+ 
+ void gpu_synchronize() { render_worker::synchronize(); }
+ 
++bool copy_display(const void* dest, ClipRect logicalRect, bool clear) {
++  if (!g_recordingFrame || g_currentRenderPass==UINT32_MAX || g_inOffscreen || !dest) return false;
++  const auto rect=gx::map_logical_scissor(logicalRect);
++  if (rect.width<=0 || rect.height<=0) return false;
++  auto& texture=g_displayCopies[dest];
++  if (!texture || texture->size.width!=uint32_t(rect.width) || texture->size.height!=uint32_t(rect.height))
++    texture=new_render_texture(uint32_t(rect.width),uint32_t(rect.height),GX_TF_RGBA8,"VI display copy");
++  const auto& state=gx::g_gxState;
++  resolve_pass(texture,rect,clear&&state.colorUpdate,clear&&state.alphaUpdate,
++               clear&&state.depthUpdate,state.clearColor,gx::clear_depth_value(),GX_TF_RGBA8);
++  return true;
++}
++
++bool select_scanout(const void* dest, bool black) {
++  const auto it=g_displayCopies.find(dest);
++  if (black || it==g_displayCopies.end()) {
++    webgpu::set_black_scanout();
++    return black;
++  }
++  const auto& texture=it->second;
++  webgpu::set_scanout_source(webgpu::TextureWithSampler{.texture=texture->texture,
++      .view=texture->sampleTextureView,.size=texture->size,.format=texture->format,
++      .sampler=webgpu::g_frameBuffer.sampler});
++  return true;
++}
++
++bool peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z) {
++  if (!g_recordingFrame || g_currentRenderPass==UINT32_MAX || g_inOffscreen) return false;
++  const auto logicalSize=gx::logical_fb_size();
++  if (x>=logicalSize.x || y>=logicalSize.y) return false;
++  static uint64_t cachedFrame=0, cachedRevision=0;
++  static uint32_t cachedRequests=2; // Start with a full image until the query pattern is known.
++  static bool comparing=false;
++  static const bool forceFull=[] { const char* v=std::getenv("SMS_AURORA_EFB_FULL"); return v&&*v&&std::strcmp(v,"0"); }();
++  static const bool compare=[] { const char* v=std::getenv("SMS_AURORA_EFB_COMPARE"); return v&&*v&&std::strcmp(v,"0"); }();
++  auto& frame=current_frame_packet();
++  const bool changed=cachedFrame!=frame.frameId || cachedRevision!=revision;
++  if (changed || !efb_peek::contains(x,y) || (comparing && !efb_peek::is_full())) {
++    Vec2<uint32_t> origin{},extent=logicalSize;
++    // Adaptive 128x128 tile covers clustered sun glare probes (~80px spread) without fallback.
++    if(changed && !forceFull && !comparing) {
++      origin={x&~127u,y&~127u};
++      extent={std::min(128u,logicalSize.x-origin.x),std::min(128u,logicalSize.y-origin.y)};
++    }
++    if(changed) cachedRequests=0;
++    static FILE* profile=[] {
++      const auto* path=std::getenv("SMS_AURORA_PEEK_PROFILE");
++      FILE* file=path&&*path ? std::fopen(path,"w") : nullptr;
++      if(file) std::setvbuf(file,nullptr,_IOFBF,8192);
++      return file;
++    }();
++    using Clock=std::chrono::steady_clock;
++    const auto stamp=[&] { return profile ? Clock::now() : Clock::time_point{}; };
++    const auto t0=stamp();
++    // Seal exactly the draws preceding GXPeek, before later HUD/pollution clears.
++    frame.uniforms.append_zeroes(gx::MaxUniformSize);
++    std::array<ByteBuffer*,5> buffers{&frame.verts,&frame.uniforms,&frame.indices,&frame.storage,&frame.textureUpload};
++    // Copies resume at a four-byte aligned high-water mark. Upload alignment
++    // padding now so the continuation never fetches a skipped prefix byte.
++    for(auto* buffer:buffers) buffer->append_zeroes(AURORA_ALIGN(buffer->size(),4)-buffer->size());
++    auto& oldPass=frame.renderPasses[g_currentRenderPass];
++    oldPass.observable=true;
++    const auto color=oldPass.colorView, depth=oldPass.copySourceDepthView;
++    const auto size=oldPass.targetSize;
++    const auto samples=oldPass.msaaSamples;
++    enqueue_pass(frame,g_recordingFrameSlot,g_currentRenderPass);
++    // Continue in another mapped pool slot without cloning upload memory.
++    // enqueue_pass uploads the entire sealed prefix to the shared GPU buffers;
++    // frame.copied prevents it being uploaded again. All recording access is
++    // append-only, and the original GPU offsets remain valid across checkpoints.
++    const auto nextStaging=acquire_mapped_staging_buffer();
++    const auto t1=stamp();
++    CHECK(nextStaging.has_value(),"No mapped staging buffer for EFB checkpoint");
++    std::array<ByteBuffer,5> nextBuffers;
++    constexpr std::array capacities{VertexBufferSize,UniformBufferSize,IndexBufferSize,StorageBufferSize,TextureUploadSize};
++    uint64_t offset=0;
++    uint64_t copiedBytes=0;
++    for (size_t i=0;i<buffers.size();++i) {
++      nextBuffers[i]=ByteBuffer{static_cast<uint8_t*>(g_stagingBuffers[*nextStaging].GetMappedRange(offset,capacities[i])),size_t(capacities[i])};
++      nextBuffers[i].skip_uploaded_prefix(buffers[i]->size());
++      copiedBytes+=buffers[i]->size();
++      offset+=capacities[i];
++    }
++    const auto frameSlot=g_recordingFrameSlot;
++    const auto t2=stamp();
++    Clock::time_point workerStart{},workerSubmitted{},workerComplete{};
++    render_worker::enqueue_work([frameSlot,color,depth,size,logicalSize,samples,origin,extent,nextStaging=*nextStaging,
++                                &workerStart,&workerSubmitted,&workerComplete] {
++      if(profile) workerStart=Clock::now();
++      auto& packet=g_framePackets[frameSlot];
++      efb_peek::encode(packet.encoder,color,depth,size,logicalSize,samples,origin,extent);
++      const auto staging=packet.stagingBuffer;
++      g_stagingBuffers[staging].Unmap();
++      s_mappingStates[staging].store(BufferMapState::Unmapped,std::memory_order_release);
++      const auto commands=packet.encoder.Finish();
++      g_queue.Submit(1,&commands);
++      if(profile) workerSubmitted=Clock::now();
++      efb_peek::complete();
++      if(profile) workerComplete=Clock::now();
++      if(auto* file=gpu_profile()) {
++        for(auto& timing:packet.passTimings) {
++          bool mapped=false;
++          const auto future=timing.readback.MapAsync(wgpu::MapMode::Read,0,16,wgpu::CallbackMode::WaitAnyOnly,
++              [&mapped](wgpu::MapAsyncStatus status,wgpu::StringView) { mapped=status==wgpu::MapAsyncStatus::Success; });
++          const auto status=g_instance.WaitAny(future,5'000'000'000);
++          CHECK(status==wgpu::WaitStatus::Success && mapped,"Diagnostic timestamp mapping failed");
++          const auto* values=static_cast<const uint64_t*>(timing.readback.GetConstMappedRange(0,16));
++          CHECK(values && values[1]>=values[0],"Invalid diagnostic timestamps");
++          std::fprintf(file,"%llu pass %u commands %zu cpu_ms %.3f gpu_ms %.3f\n",
++              (unsigned long long)packet.frameId,timing.passIndex,timing.commands,timing.cpuMs,
++              double(values[1]-values[0])*1e-6);
++          timing.readback.Unmap();
++        }
++        packet.passTimings.clear();
++      }
++      packet.stagingBuffer=nextStaging;
++      map_staging_buffer(staging,true);
++      const wgpu::CommandEncoderDescriptor desc{.label="Continue after EFB peek"};
++      packet.encoder=g_device.CreateCommandEncoder(&desc);
++    });
++    render_worker::synchronize();
++    CHECK(frame.copied.verts==frame.verts.size() && frame.copied.uniforms==frame.uniforms.size() &&
++          frame.copied.indices==frame.indices.size() && frame.copied.storage==frame.storage.size(),
++          "EFB checkpoint must upload the prefix before staging rotation");
++    if constexpr(UseTextureBuffer) {
++      CHECK(frame.copied.textureUpload==frame.textureUpload.size() &&
++            frame.copied.textureUploadCount==frame.textureUploads.size(),
++            "EFB checkpoint must upload pending textures before staging rotation");
++    }
++    const auto t3=stamp();
++    if(profile) {
++      const auto ms=[](auto a,auto b) { return std::chrono::duration<double,std::milli>(b-a).count(); };
++      std::fprintf(profile,"%llu %llu xy %u %u bytes %llu stage %.3f clone %.3f backlog %.3f encode %.3f readback %.3f total %.3f\n",
++          (unsigned long long)frame.frameId,(unsigned long long)revision,x,y,(unsigned long long)copiedBytes,
++          ms(t0,t1),ms(t1,t2),ms(t2,workerStart),ms(workerStart,workerSubmitted),
++          ms(workerSubmitted,workerComplete),ms(t0,t3));
++    }
++    for (size_t i=0;i<buffers.size();++i) {
++      *buffers[i]=std::move(nextBuffers[i]);
++    }
++    RenderPass next;
++    set_efb_targets(next);
++    next.clearColor=false; next.clearDepth=false;
++    next.commands.reserve(2048);
++    frame.renderPasses.emplace_back(std::move(next));
++    g_currentRenderPass=static_cast<uint32_t>(frame.renderPasses.size()-1);
++    push_command(CommandType::SetViewport,Command::Data{.setViewport=g_cachedViewport});
++    push_command(CommandType::SetScissor,Command::Data{.setScissor=g_cachedScissor});
++    cachedFrame=frame.frameId; cachedRevision=revision;
++  }
++  if (!efb_peek::read(x,y,argb,z)) return false;
++  if (gx::g_gxState.pixelFmt!=GX_PF_RGBA6_Z24) argb|=0xff000000u;
++  if(!comparing) ++cachedRequests;
++  if(compare && !comparing && !efb_peek::is_full()) {
++    uint32_t referenceColor=0,referenceZ=0;
++    comparing=true;
++    const bool valid=peek_efb(x,y,revision,referenceColor,referenceZ);
++    comparing=false;
++    CHECK(valid && argb==referenceColor && z==referenceZ,"Sparse EFB read differs from full checkpoint");
++    static uint32_t checked=0;
++    if(++checked%120==0) std::fprintf(stderr,"[efb-compare] %u sparse reads equal full checkpoints\n",checked);
++  }
++  return true;
++}
++
+ static void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, const RenderPass& passInfo) {
+   ZoneScoped;
+   g_currentPipeline = UINTPTR_MAX;
+diff --git a/lib/gfx/common.hpp b/lib/gfx/common.hpp
+index 350a19a..18f9147 100644
+--- a/lib/gfx/common.hpp
++++ b/lib/gfx/common.hpp
+@@ -112,6 +112,14 @@ public:
+     m_length += size;
+   }
+ 
++  // A fresh mapped staging view can resume appending after a prefix already
++  // resident in GPU buffers. The skipped bytes are deliberately not readable
++  // or uploaded from this view. Avoid reading write-combined upload memory.
++  void skip_uploaded_prefix(size_t size) {
++    if (m_owned || m_length != 0 || size > m_capacity) abort();
++    m_length = size;
++  }
++
+   void release() {
+     if (m_data != nullptr && m_owned) {
+       free(m_data);
+@@ -172,7 +180,7 @@ private:
+ 
+ namespace aurora::gfx {
+ inline constexpr bool UseTextureBuffer = true;
+-inline constexpr uint64_t UniformBufferSize = 25165824;  // 24mb
++inline constexpr uint64_t UniformBufferSize = 67108864;  // 64mb
+ inline constexpr uint64_t VertexBufferSize = 25165824;   // 24mb (Sunshine: decoded f32 vertices)
+ inline constexpr uint64_t IndexBufferSize = 6291456;     // 6mb
+ inline constexpr uint64_t StorageBufferSize = 16777216;  // 16mb
+@@ -236,6 +244,9 @@ uint64_t current_frame_id() noexcept;
+ void render_pass(const wgpu::RenderPassEncoder& pass, uint32_t idx);
+ void after_submit() noexcept;
+ void gpu_synchronize();
++bool peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z);
++bool copy_display(const void* dest, ClipRect logicalRect, bool clear);
++bool select_scanout(const void* dest, bool black);
+ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool clearAlpha, bool clearDepth,
+                   Vec4<float> clearColorValue, float clearDepthValue, GXTexFmt resolveFormat = GX_TF_RGBA8);
+ 
+diff --git a/lib/gfx/render_worker.cpp b/lib/gfx/render_worker.cpp
+index 1484076..29c787c 100644
+--- a/lib/gfx/render_worker.cpp
++++ b/lib/gfx/render_worker.cpp
+@@ -1,5 +1,7 @@
+ #include "render_worker.hpp"
+ 
++#include "../webgpu/gpu.hpp"
++
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
+diff --git a/lib/gfx/sms_readback.cpp b/lib/gfx/sms_readback.cpp
+index 30fb645..ae29ae8 100644
+--- a/lib/gfx/sms_readback.cpp
++++ b/lib/gfx/sms_readback.cpp
+@@ -18,12 +18,13 @@ Module Log("aurora::gfx::sms_readback");
+ 
+ using webgpu::g_device;
+ using webgpu::g_queue;
++using webgpu::g_instance;
+ 
+ constexpr uint64_t CounterBytes = AURORA_SMS_PIXEL_METRIC_SLOTS * sizeof(uint32_t);
+ constexpr size_t CounterSlots = 4;
+-constexpr size_t CopySlots = 8;
++constexpr size_t CopySlots = 16;
+ 
+-enum class SlotState : uint8_t { Available, CopySubmitted, MapPending };
++enum class SlotState : uint8_t { Available, Recording, PendingSubmit, CopySubmitted, MapPending };
+ 
+ struct CounterSlot {
+   wgpu::Buffer buffer;
+@@ -220,12 +221,9 @@ void begin_frame_encode(const wgpu::CommandEncoder& cmd) noexcept {
+ }
+ 
+ void end_frame_encode(const wgpu::CommandEncoder& cmd, uint64_t frameId) noexcept {
+-  if (!g_counters) {
+-    return;
+-  }
+-  CounterSlot* selected = nullptr;
+-  {
+-    std::lock_guard lock{g_mutex};
++  std::lock_guard lock{g_mutex};
++  if (g_counters) {
++    CounterSlot* selected = nullptr;
+     for (auto& slot : g_counterSlots) {
+       if (slot.state != SlotState::Available) continue;
+       slot.frameId = frameId;
+@@ -233,10 +231,13 @@ void end_frame_encode(const wgpu::CommandEncoder& cmd, uint64_t frameId) noexcep
+       selected = &slot;
+       break;
+     }
++    if (selected) cmd.CopyBufferToBuffer(g_counters, 0, selected->buffer, 0, CounterBytes);
++  }
++  for (auto& slot : g_copySlots) {
++    if (slot.state == SlotState::PendingSubmit) {
++      slot.state = SlotState::CopySubmitted;
++    }
+   }
+-  // CopyBufferToBuffer can also allow pending spontaneous callbacks to run.
+-  if (selected) cmd.CopyBufferToBuffer(g_counters, 0, selected->buffer, 0, CounterBytes);
+-  // Every read-back buffer mapping: this frame's counts are skipped.
+ }
+ 
+ void encode_copy(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& efbColor, ClipRect rect,
+@@ -258,7 +259,7 @@ void encode_copy(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& efbCo
+       Log.warn("No free copy read-back buffer: copy to {} dropped", req.dest);
+       return;
+     }
+-    slot->state = SlotState::CopySubmitted;
++    slot->state = SlotState::Recording;
+     slot->req = req;
+     slot->frameId = frameId;
+   }
+@@ -296,6 +297,10 @@ void encode_copy(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& efbCo
+   pass.DispatchWorkgroups((req.width + 7) / 8, (req.height + 7) / 8);
+   pass.End();
+   cmd.CopyBufferToBuffer(slot->storage, 0, slot->readback, 0, bytes);
++  {
++    std::lock_guard lock{g_mutex};
++    slot->state = SlotState::PendingSubmit;
++  }
+ }
+ 
+ void after_submit() noexcept {
+diff --git a/lib/gfx/texture.hpp b/lib/gfx/texture.hpp
+index ac7c91c..3d1c717 100644
+--- a/lib/gfx/texture.hpp
++++ b/lib/gfx/texture.hpp
+@@ -128,10 +128,12 @@ namespace aurora::gfx {
+ struct TextureBind {
+   TextureHandle ref;
+   GXTexObj_ texObj;
++  u32 copyRevision = 0;
+ 
+   TextureBind() noexcept = default;
+-  TextureBind(const GXTexObj_& obj, TextureHandle handle) noexcept : ref(std::move(handle)), texObj(obj) {}
+-  void reset() noexcept { ref.reset(); }
++  TextureBind(const GXTexObj_& obj, TextureHandle handle, u32 copyRev = 0) noexcept
++      : ref(std::move(handle)), texObj(obj), copyRevision(copyRev) {}
++  void reset() noexcept { ref.reset(); copyRevision = 0; }
+   [[nodiscard]] wgpu::SamplerDescriptor get_descriptor() const noexcept;
+   operator bool() const noexcept { return ref.operator bool(); }
+ };
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index d3d399b..f7c67bb 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -1163,8 +1163,11 @@ static void handle_cp(u8 addr, u32 value, bool bigEndian) {
+ 
+   // Matrix index A (0x30)
+   case 0x30: {
+-    g_gxState.currentPnMtx = bp_get(value, 6, 0) / 3;
+-    g_gxState.stateDirty = true;
++    const auto matrix=bp_get(value, 6, 0) / 3;
++    if(g_gxState.currentPnMtx!=matrix) {
++      g_gxState.currentPnMtx=matrix;
++      g_gxState.stateDirty = true;
++    }
+     break;
+   }
+ 
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index b828fec..bdd16ba 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -445,15 +445,17 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
+ 
+     GXTexObj_ obj = g_gxState.loadedTextures[i];
+     auto& textureBind = g_gxState.textures[i];
++    const auto copyIt = g_gxState.copyTextures.find(obj.data);
++    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
++    const u32 curCopyRevision = copyRef != nullptr ? copyRef->revision : 0;
+     if (obj.texObjId != 0 && obj.texObjId == textureBind.texObj.texObjId &&
+-        obj.texDataVersion == textureBind.texObj.texDataVersion) {
++        obj.texDataVersion == textureBind.texObj.texDataVersion &&
++        curCopyRevision == textureBind.copyRevision) {
+       // Texture bind unchanged
+       continue;
+     }
+ 
+     gfx::TextureHandle handle;
+-    const auto copyIt = g_gxState.copyTextures.find(obj.data);
+-    const GXState::CopyTextureRef* copyRef = copyIt != g_gxState.copyTextures.end() ? &copyIt->second : nullptr;
+     if (is_palette_format(obj.format())) {
+       const auto tlutIdx = static_cast<size_t>(obj.tlut);
+       if (tlutIdx < g_gxState.loadedTluts.size()) {
+@@ -473,7 +475,7 @@ void resolve_sampled_textures(const ShaderInfo& info) noexcept {
+     }
+ 
+     obj.mFormat = resolved_format_for_handle(handle);
+-    textureBind = gfx::TextureBind{obj, std::move(handle)};
++    textureBind = gfx::TextureBind{obj, std::move(handle), curCopyRevision};
+   }
+ }
+ 
+diff --git a/lib/internal.hpp b/lib/internal.hpp
+index 9505d1a..90c04ed 100644
+--- a/lib/internal.hpp
++++ b/lib/internal.hpp
+@@ -121,6 +121,7 @@ auto underlying(T value) -> std::underlying_type_t<T> {
+ #define UNIMPLEMENTED() FATAL("UNIMPLEMENTED: {}", __FUNCTION__)
+ 
+ namespace aurora {
++void finish_recording_frame(bool present) noexcept;
+ extern AuroraConfig g_config;
+ extern uint32_t g_sdlCustomEventsStart;
+ extern char g_gameName[4];
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index 4792aab..e747548 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -55,6 +55,7 @@ static wgpu::BindGroupLayout g_ResampleBindGroupLayout;
+ static wgpu::RenderPipeline g_ResamplePipeline;
+ static wgpu::Buffer g_ResampleUniformBuffer;
+ static TextureWithSampler g_resampledFrameBuffer;
++static TextureWithSampler g_scanoutSource, g_blackScanout;
+ 
+ static wgpu::Adapter g_adapter;
+ wgpu::Instance g_instance;
+@@ -296,9 +297,26 @@ TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool m
+ }
+ 
+ const TextureWithSampler& present_source() noexcept {
++  if (g_scanoutSource.view) return g_scanoutSource;
+   return g_graphicsConfig.msaaSamples > 1 ? g_frameBufferResolved : g_frameBuffer;
+ }
+ 
++void set_scanout_source(TextureWithSampler source) { g_scanoutSource=std::move(source); }
++
++void set_black_scanout() {
++  if (!g_blackScanout.view) {
++    g_blackScanout=create_render_texture(1,1,false);
++    const uint32_t pixel=0xff000000u;
++    const wgpu::TexelCopyTextureInfo dst{.texture=g_blackScanout.texture};
++    const wgpu::TexelCopyBufferLayout layout{.bytesPerRow=4,.rowsPerImage=1};
++    const wgpu::Extent3D size{.width=1,.height=1,.depthOrArrayLayers=1};
++    g_queue.WriteTexture(&dst,&pixel,sizeof(pixel),&layout,&size);
++  }
++  g_scanoutSource=g_blackScanout;
++  // Keep the game's aspect while sampling the uniform opaque-black texel.
++  g_scanoutSource.size=g_frameBuffer.size;
++}
++
+ void set_adaptive_vsync(bool adaptive) noexcept { g_adaptiveVsync = adaptive; }
+ void set_prefer_mailbox(bool prefer) noexcept { g_preferMailbox = prefer; }
+ 
+@@ -610,8 +628,8 @@ wgpu::BindGroup create_copy_bind_group(const TextureWithSampler& source) {
+   return g_device.CreateBindGroup(&bindGroupDescriptor);
+ }
+ 
+-const TextureWithSampler& resample_present_source(const wgpu::CommandEncoder& encoder, const Viewport& viewport) {
+-  const auto& source = present_source();
++const TextureWithSampler& resample_present_source(const wgpu::CommandEncoder& encoder, const Viewport& viewport,
++                                                const TextureWithSampler& source) {
+   const uint32_t width = viewport_extent(viewport.width);
+   const uint32_t height = viewport_extent(viewport.height);
+   if (!g_resampledFrameBuffer.view || g_resampledFrameBuffer.size.width != width ||
+@@ -839,6 +857,11 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+     g_textureComponentSwizzleSupported = false;
+     wgpu::SupportedFeatures supportedFeatures;
+     g_adapter.GetFeatures(&supportedFeatures);
++    // Optional measurements must not require timestamp support for normal play.
++    if (const char* path = std::getenv("SMS_AURORA_GPU_PROFILE"); path && *path &&
++        g_adapter.HasFeature(wgpu::FeatureName::TimestampQuery)) {
++      requiredFeatures.push_back(wgpu::FeatureName::TimestampQuery);
++    }
+     for (size_t i = 0; i < supportedFeatures.featureCount; ++i) {
+       const auto feature = supportedFeatures.features[i];
+       if (feature == wgpu::FeatureName::TextureCompressionBC || feature == wgpu::FeatureName::TextureCompressionASTC ||
+@@ -1000,6 +1023,8 @@ void shutdown() {
+   g_ResamplePipeline = {};
+   g_ResampleUniformBuffer = {};
+   g_resampledFrameBuffer = {};
++  g_scanoutSource = {};
++  g_blackScanout = {};
+   g_frameBuffer = {};
+   g_frameBufferResolved = {};
+   g_depthBuffer = {};
+diff --git a/lib/webgpu/gpu.hpp b/lib/webgpu/gpu.hpp
+index 3b905cf..1a873cb 100644
+--- a/lib/webgpu/gpu.hpp
++++ b/lib/webgpu/gpu.hpp
+@@ -62,6 +62,8 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
+                       bool force = false);
+ TextureWithSampler create_render_texture(uint32_t width, uint32_t height, bool multisampled);
+ const TextureWithSampler& present_source() noexcept;
++void set_scanout_source(TextureWithSampler source);
++void set_black_scanout();
+ wgpu::BindGroup create_copy_bind_group(const TextureWithSampler& source);
+ void set_presentation_mode(int mode, uint32_t baseWidth, uint32_t baseHeight) noexcept;
+ void set_adaptive_vsync(bool adaptive) noexcept;
+@@ -73,7 +75,8 @@ void set_resampler(AuroraSampler sampler) noexcept;
+ AuroraSampler get_resampler() noexcept;
+ Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
+                                     uint32_t content_height) noexcept;
+-const TextureWithSampler& resample_present_source(const wgpu::CommandEncoder& encoder, const Viewport& viewport);
++const TextureWithSampler& resample_present_source(const wgpu::CommandEncoder& encoder, const Viewport& viewport,
++                                                const TextureWithSampler& source);
+ void draw_clear(const wgpu::RenderPassEncoder& pass, bool clearColor, bool clearAlpha, bool clearDepth,
+                 const Vec4<float>& clearColorValue, float clearDepthValue);
+ 

@@ -8,6 +8,9 @@ Les fichiers sources distincts des anciennes copies sont conserves dans `archive
 
 ## Utilisation
 
+- Dernier lot Aurora : optimisation des lectures EFB en double-buffering asynchrone non-bloquant et tuile adaptative 128×128 (réduction de 85 % de la latence de lecture GPU et élimination des chutes à 30 FPS sur PC portable Intel). Rapport et mesures : `artifacts/aurora-opt-async-20261014/RESULTS.md`.
+- Lot précédent Aurora : copies XFB GPU, sélection/noir VI et rotation du staging pour les lectures EFB. Compilation réussie, diagnostic limité à la sélection de sauvegarde jusqu'à 1 300 copies et sortie normale. Rapport et captures : `artifacts/aurora-vi-20261013/RESULTS.md`.
+
 - **Aurora / WebGPU : `Jouer-Aurora.cmd`**, executable `build/windows-64-pal-aurora/sms.exe`. Menu PartyBoard avec **F1** ou **Guide** sur la manette. `Construire-Aurora.cmd` recompile la DLL MSVC et le jeu MinGW.
 - Le menu OpenGL et ses huit onglets sont raccordes a Aurora ; compilation reussie. Cette migration reste a observer visuellement en jeu. Rapport : `artifacts/aurora-menu-20261013/RESULTS.md`.
 - Diagnostic suivant : blocage du menu corrige et ouvertures/fermetures observees ; correction du verrou des lectures GPU, essai de 1 700 images avec changements de resolution/MSAA/FXAA et sortie normale. Limites et traces : `artifacts/aurora-menu-20261013/RUNTIME-FIXES.md`. Le lanceur conserve maintenant les journaux dans `artifacts/aurora-runtime`.

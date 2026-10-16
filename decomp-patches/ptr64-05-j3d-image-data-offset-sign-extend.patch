@@ -1,0 +1,87 @@
+Reason: 64-bit: imageDataOffset in ResTIMG can be negative when pointing to external buffers (THP movie textures in ModelGate, mirrors in MapMirror). Sign-extend it when computing the image pointer in J3DTevs.cpp, MarDirectorInitECT.cpp, PollutionCount.cpp, PollutionLayer.cpp and BathWaterManager.cpp.
+
+--- a/libs/JSystem/src/J3D/J3DGraphBase/J3DTevs.cpp
++++ b/libs/JSystem/src/J3D/J3DGraphBase/J3DTevs.cpp
+@@ -386,7 +386,7 @@ void loadTexNo(u32 param_1, const u16& param_2)
+ 	J3DSys::sTexCoordScaleTable[param_1].field_0x02 = img->height;
+ 	J3DGDSetTexImgAttr((GXTexMapID)param_1, img->width, img->height,
+ 	                   (GXTexFmt)(img->format & 0xf));
+-	J3DGDSetTexImgPtr((GXTexMapID)param_1, (u8*)img + img->imageDataOffset);
++	J3DGDSetTexImgPtr((GXTexMapID)param_1, (u8*)img + (intptr_t)(s32)img->imageDataOffset);
+ 
+ 	J3DGDSetTexLookupMode(
+ 	    (GXTexMapID)param_1, (GXTexWrapMode)img->wrapS,
+@@ -398,7 +398,7 @@ void loadTexNo(u32 param_1, const u16& param_2)
+ 	if (img->isIndexTexture == true) {
+ 		GXTlutSize tlutSize = img->numColors > 16 ? GX_TLUT_256 : GX_TLUT_16;
+ 
+-		J3DGDLoadTlut((u8*)img + img->paletteOffset, (param_1 << 15) + 0xC0000,
++		J3DGDLoadTlut((u8*)img + (intptr_t)(s32)img->paletteOffset, (param_1 << 15) + 0xC0000,
+ 		              tlutSize);
+ 		J3DGDSetTexTlut((GXTexMapID)param_1, (param_1 << 15) + 0xC0000,
+ 		                (GXTlutFmt)img->colorFormat);
+--- a/src/MoveBG/ModelGate.cpp
++++ b/src/MoveBG/ModelGate.cpp
+@@ -355,9 +355,9 @@ void TModelGate::perform(u32 cue, JDrama::TGraphics* graphics)
+ 			THPTextureSet* set = ActivePlayer.dispTextureSet;
+ 			J3DTexture* tex    = unk78->getModel()->getModelData()->getTexture();
+ 			tex->mResources[0].imageDataOffset
+-			    = (u32)set->ytexture - (u32)&tex->mResources[0];
++			    = (u32)((intptr_t)set->ytexture - (intptr_t)&tex->mResources[0]);
+ 			tex->mResources[1].imageDataOffset
+-			    = (u32)set->utexture - (u32)&tex->mResources[1];
++			    = (u32)((intptr_t)set->utexture - (intptr_t)&tex->mResources[1]);
+ 			tex->mResources[2].imageDataOffset
+-			    = (u32)set->vtexture - (u32)&tex->mResources[2];
++			    = (u32)((intptr_t)set->vtexture - (intptr_t)&tex->mResources[2]);
+ 		}
+ 	}
+--- a/src/System/MarDirectorInitECT.cpp
++++ b/src/System/MarDirectorInitECT.cpp
+@@ -78,7 +78,7 @@ void TMarDirector::initECTGft(
+ 
+ 		const ResTIMG* img = gpPollution->getLayer(i)->getPollutionImage();
+ 
+-		efbTex->setImgPtr((u8*)img + img->imageDataOffset);
++		efbTex->setImgPtr((u8*)img + (intptr_t)(s32)img->imageDataOffset);
+ 		JDrama::TSize size(img->width, img->height);
+ 		efbTex->setDstSize(size);
+ 		efbTex->setTexFmt(GX_CTF_R8);
+--- a/src/Map/PollutionCount.cpp
++++ b/src/Map/PollutionCount.cpp
+@@ -170,7 +170,7 @@ void TPollutionCounterObj::draw(int index) const
+ 		return;
+ 
+ 	const ResTIMG* pRVar6 = mObjects[index]->mLayer->getPollutionImage();
+-	loadPollutionLayer((u8*)pRVar6 + pRVar6->imageDataOffset, pRVar6->width,
++	loadPollutionLayer((u8*)pRVar6 + (intptr_t)(s32)pRVar6->imageDataOffset, pRVar6->width,
+ 	                   pRVar6->height, GX_TEXMAP0);
+ 	j3dSys.setVtxPos(mObjects[index]->mLayer->getModelData()->getVtxPosArray());
+ 	GXClearPixMetric();
+@@ -339,7 +339,7 @@ void TPollutionCounterLayer::drawPollutionLayer(int layer_index) const
+ 	const TPollutionLayer* layer = mLayers[layer_index];
+ 	const ResTIMG* img           = layer->mPollutionImage;
+ 	drawBlack(img->width, img->height);
+-	loadPollutionLayer((u8*)img + img->imageDataOffset, img->width, img->height,
++	loadPollutionLayer((u8*)img + (intptr_t)(s32)img->imageDataOffset, img->width, img->height,
+ 	                   GX_TEXMAP0);
+ 	u16 flags = countGetLayerFlags(layer);
+ 	initGXforPollutionLayer(layer->getPollutionType(), flags,
+--- a/src/Map/PollutionLayer.cpp
++++ b/src/Map/PollutionLayer.cpp
+@@ -412,5 +412,5 @@ void TPollutionLayer::initTex(const char* name)
+ 	mPollutionImage               = getTexResource(name);
+ 	mPollutionImage->alphaEnabled = 2;
+ 
+-	mPollutionMap = (u8*)mPollutionImage + mPollutionImage->imageDataOffset;
++	mPollutionMap = (u8*)mPollutionImage + (intptr_t)(s32)mPollutionImage->imageDataOffset;
+ }
+--- a/src/Map/BathWaterManager.cpp
++++ b/src/Map/BathWaterManager.cpp
+@@ -860,5 +860,5 @@ void TBathtubData::makeTexObj(GXTexObj* tex_obj, void* resource)
+ 	height    = timg->height;
+ 	wrapS     = (GXTexWrapMode)timg->wrapS;
+ 	wrapT     = (GXTexWrapMode)timg->wrapT;
+-	image     = (u8*)timg + timg->imageDataOffset;
++	image     = (u8*)timg + (intptr_t)(s32)timg->imageDataOffset;
+ 	minFilter = (GXTexFilter)timg->minFilter;

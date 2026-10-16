@@ -1,0 +1,99 @@
+Reason: Native PC: skipping cinematic movies must not suppress the looping THP textures used by Plaza paintings. Scope the override to game calls; preserve middleware and transition timing.
+--- a/src/System/MarDirectorLoadResource.cpp
++++ b/src/System/MarDirectorLoadResource.cpp
+@@ -20,6 +20,24 @@
+ #include <M3DUtil/InfectiousStrings.hpp>
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
++
++#ifdef TARGET_PC
++extern "C" int port_skip_movies;
++#endif
++
++// Gate previews are game textures, independent of the cinematic skip option.
++static BOOL prepareGatePreview()
++{
++#ifdef TARGET_PC
++	const int saved = port_skip_movies;
++	port_skip_movies = 0;
++	const BOOL result = THPPlayerPrepare(0, 1, 0);
++	port_skip_movies = saved;
++	return result;
++#else
++	return THPPlayerPrepare(0, 1, 0);
++#endif
++}
+ #endif
+ 
+ extern void* gpSceneCmnDat;
+@@ -484,7 +502,7 @@
+ #endif
+ 		u32 sz = THPPlayerCalcNeedMemory();
+ 		THPPlayerSetBuffer(new (0x20) u8[sz]);
+-		if (!THPPlayerPrepare(0, 1, 0))
++		if (!prepareGatePreview())
+ 			return 1;
+ #ifdef VERSION_GMSP01
+ 		s32 start = OSGetTick();
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -41,6 +41,24 @@
+ #ifdef TARGET_PC
+ #include <sms_modhook.h>
+ #include <sms_modhook.h>
++
++#ifdef TARGET_PC
++extern "C" int port_skip_movies;
++#endif
++
++// Gate previews are game textures, independent of the cinematic skip option.
++static BOOL playGatePreview()
++{
++#ifdef TARGET_PC
++	const int saved = port_skip_movies;
++	port_skip_movies = 0;
++	const BOOL result = THPPlayerPlay();
++	port_skip_movies = saved;
++	return result;
++#else
++	return THPPlayerPlay();
++#endif
++}
+ #endif
+ #ifdef TARGET_PC
+ // BetterSunshineEngine (moveStageHandler, at each moveStage call in
+@@ -818,7 +836,7 @@
+ 		getGamePad()->offFlag(0x1);
+ 		SMSRumbleMgr->finishPause();
+ 		if (gpApplication.mCurrArea.getStage() == 1)
+-			THPPlayerPlay();
++			playGatePreview();
+ 		break;
+ 
+ 	case STATE_UNK10:
+@@ -832,14 +850,14 @@
+ 
+ 		SMSSwitch2DArchive("guide", gArBkConsole);
+ 		if (gpApplication.mCurrArea.getStage() == 1)
+-			THPPlayerPlay();
++			playGatePreview();
+ 		break;
+ 
+ 	case STATE_UNK11:
+ 		getGamePad()->offFlag(0x1);
+ 		SMSRumbleMgr->finishPause();
+ 		if (gpApplication.mCurrArea.getStage() == 1)
+-			THPPlayerPlay();
++			playGatePreview();
+ 		switch (unk261) {
+ 		case 3:
+ 			mConsole->startAppearBalloon(0x4B, true);
+@@ -1055,7 +1073,7 @@
+ 		if (mMap != 0xf)
+ 			getConsole()->unkC.off(CUE_MOVE | CUE_CALC_ANIM | CUE_DRAW);
+ 		if (currSeq.getStage() == 1)
+-			THPPlayerPlay();
++			playGatePreview();
+ 		break;
+ 
+ 	case 4:

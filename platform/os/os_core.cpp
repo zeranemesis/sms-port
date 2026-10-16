@@ -168,7 +168,10 @@ static inline void gx_invalidate(void* p, u32 n)
 	if (GXPC_InvalidateRange)
 		GXPC_InvalidateRange(p, n);
 }
-extern "C" void DCInvalidateRange(void*, u32) {}
+extern "C" void DCInvalidateRange(void* p, u32 n)
+{
+	gx_invalidate(p, n);
+}
 extern "C" void DCFlushRange(void* p, u32 n)
 {
 	gx_invalidate(p, n);

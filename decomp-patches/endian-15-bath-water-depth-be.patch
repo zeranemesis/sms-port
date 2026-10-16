@@ -1,0 +1,19 @@
+Reason: GX depth texture RAM remains big-endian on PC. Decode both Z24X8
+planes explicitly before constructing the bathtub height field.
+
+--- a/src/Map/BathWaterManager.cpp
++++ b/src/Map/BathWaterManager.cpp
+@@ -1712,8 +1712,13 @@
+ 			u16* block = (u16*)unk800A4 + ((br + bc * n) << 5);
+ 			for (s16 sr = 0; sr < 4; ++sr) {
+ 				for (s16 sc = 0; sc < 4; ++sc) {
++#ifdef TARGET_PC
++					s32 v = ((port_be16(block + sr + sc * 4) & 0xFFu) << 16)
++					        | port_be16(block + sr + sc * 4 + 0x10);
++#else
+ 					s32 v = (((block + sr + sc * 4)[0] << 16) & 0xFF0000)
+ 					        | (block + sr + sc * 4)[0x10];
++#endif
+ 					unk20[sr + br * 4][sc + bc * 4].y
+ 					    = h * ((f32)v * (1.0f / 16777216.0f));
+ 				}

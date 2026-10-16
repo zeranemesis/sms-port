@@ -72,6 +72,10 @@ SAB_API int sab_poll_event(SabEvent* ev);
 
 /* The logical EFB (GX coordinates) the game renders to, e.g. 640x480. */
 SAB_API void sab_set_efb_size(uint32_t width, uint32_t height);
+SAB_API int sab_begin_data_pass(uint16_t width, uint16_t height);
+SAB_API void sab_end_data_pass(void);
+SAB_API uint32_t sab_copy_readback_capacity(void);
+SAB_API int sab_flush_copy_readbacks(void);
 SAB_API void sab_get_window_size(uint32_t* width, uint32_t* height);
 SAB_API void sab_set_fullscreen(int on);
 SAB_API int sab_is_fullscreen(void);
@@ -83,9 +87,25 @@ SAB_API void sab_set_mouse_relative(int on);
  * commands submitted outside a frame are dropped by the caller. */
 SAB_API int sab_begin_frame(void);
 SAB_API void sab_end_frame(void);
+/* Submit game work without necessarily presenting it. VI selects scanout. */
+SAB_API void sab_finish_frame(int present);
+SAB_API void sab_retain_efb(void);
+SAB_API int sab_copy_display(const void* dest, uint16_t left, uint16_t top,
+                             uint16_t width, uint16_t height, int clear);
+SAB_API int sab_select_scanout(const void* dest, int black);
 
 /* Executes a little-endian command stream immediately. */
 SAB_API void sab_process(const void* data, uint32_t size);
+
+/* Synchronous EFB checkpoint, cached until revision/frame changes. Returns 0
+ * outside a frame or for invalid coordinates. Colour is GX ARGB, depth Z24. */
+SAB_API int sab_peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t* argb, uint32_t* z);
+/* Exact current-pass depth -> CPU RAM, complete before return. GX Z24X8 bytes
+ * are tiled 4x4, big-endian X/Zhi and Zmid/Zlo planes. On failure leaves dest
+ * unchanged. This CPU height-field path is separate from async colour copies. */
+SAB_API int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top,
+                                     uint16_t width, uint16_t height,
+                                     uint16_t dstWidth, uint16_t dstHeight);
 
 /* EFB -> texture copy into a GPU texture keyed by dest; a later texture whose
  * data pointer is dest samples it. fmt is the GXTexFmt of the copy. With
@@ -95,6 +115,15 @@ SAB_API void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t widt
                           uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear, int readback);
 SAB_API int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                                    const uint32_t** rgba);
+/* Identified colour copies while the backend is active: each readback request
+ * produces a success or failure result (shutdown cancels remaining requests).
+ * A failed result has success == 0 and rgba == NULL. IDs must be nonzero. */
+SAB_API void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
+                                  uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear,
+                                  int readback, uint64_t requestId);
+SAB_API int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t* height,
+                                           uint64_t* frameId, const uint32_t** rgba,
+                                           uint64_t* requestId, int* success);
 
 /* Pixel metrics: the GX_LOAD_AURORA_PIXEL_METRIC command (0x0100, then a u8
  * slot + 1, or 0 to stop) in the command stream selects the counter. Counts

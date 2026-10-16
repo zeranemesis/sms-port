@@ -35,9 +35,14 @@
 #include <string.h>
 #include <time.h>
 #include <tuple>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+extern "C" uint32_t VIGetRetraceCount(void);
+extern "C" double port_vi_take_late_max(void) __attribute__((weak));  // vi.cpp
+extern "C" void port_os_profile_frame(unsigned) __attribute__((weak));
 
 namespace gx {
 
@@ -50,6 +55,7 @@ namespace {
 
 bool s_ready = false;
 bool s_inFrame = false;
+bool s_dataPassActive = false;
 uint32_t s_frame = 0;
 uint32_t s_efbW = 0, s_efbH = 0;
 float s_widescreen = 1.f;
@@ -88,11 +94,18 @@ void refreshTexturePacks() {
     for(const auto& path:paths)raw.push_back(path.c_str());
     sab_set_texture_packs(s_texturePacks,raw.data(),uint32_t(raw.size()));
 }
-int s_speed = 1;
 bool s_mouseCamera = false, s_mouseCaptured = false, s_mouseReleased = false;
 bool s_hasFocus = true;
 bool s_overlay = false;
 GXPCVIScanoutFn s_viScanout = nullptr;
+bool s_autoPresent = true, s_haveScanout = false, s_pollingVI = false;
+std::thread::id s_graphicsThread;
+std::unordered_map<const void*, uint64_t> s_xfbSerials;
+const void* s_lastCopiedXfb = nullptr;
+const void* s_presentedXfb = nullptr;
+uint64_t s_copySerial = 0, s_presentedSerial = 0, s_presentedCount = 0;
+bool s_presentedBlack = true;
+uint32_t s_presentedWidth = 0, s_presentedHeight = 0;
 void (*s_eventCb)(const union SDL_Event*) = nullptr;
 double (*s_idleClock)(void) = nullptr;
 
@@ -136,6 +149,7 @@ inline void putAurora(uint16_t sub) {
 }
 
 double s_submitSeconds = 0;  // statistics: Aurora's command processing on this thread
+double s_submitTotalSeconds = 0; // Monotonic diagnostic counter, independent of report resets.
 
 void submit() {
     if (s_cmd.empty()) return;
@@ -144,7 +158,9 @@ void submit() {
         clock_gettime(CLOCK_MONOTONIC, &t0);
         sab_process(s_cmd.data(), uint32_t(s_cmd.size()));
         clock_gettime(CLOCK_MONOTONIC, &t1);
-        s_submitSeconds += double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+        const double elapsed=double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
+        s_submitSeconds += elapsed;
+        s_submitTotalSeconds += elapsed;
     }
     s_cmd.clear();
 }
@@ -162,6 +178,7 @@ struct MetricSlot {
     int token = -1;
     uint32_t tris = 0;
     float drawScale = 1.f;  // widescreen: the counted draws' horizontal scale (GX pixels per EFB pixel column)
+    float pixelArea = 0.f;  // native data passes count 1:1; zero uses the frame's display scale
 };
 std::vector<MetricSlot> s_metricSlots;                       // this frame's
 struct MetricFrame {
@@ -198,7 +215,8 @@ void collectPixelMetrics() {
                 const float area = it->second.area;
                 for (size_t i = 0; i < slots.size() && i < 255; i++) {
                     if (slots[i].token < 0) continue;
-                    const double perPixel = double(area > 0 ? area : 1.0f) * double(slots[i].drawScale);
+                    const float slotArea = slots[i].pixelArea > 0.f ? slots[i].pixelArea : area;
+                    const double perPixel = double(slotArea > 0 ? slotArea : 1.0f) * double(slots[i].drawScale);
                     uint64_t v = uint64_t(double(counts[i]) / perPixel + 0.5) +
                                  uint64_t(slots[i].tris) * 4;
                     s_tokenValues[uint16_t(slots[i].token)] = v > 0xFFFFFFFFu ? 0xFFFFFFFFu : uint32_t(v);
@@ -217,14 +235,43 @@ void collectPixelMetrics() {
 // as GXCopyTex would (format, intensity) and stored in the game's memory,
 // unless the CPU changed those bytes in the meantime.
 struct PendingCopy {
+    uint64_t requestId;
+    const void* dest;
     uint64_t frameId;
     uint64_t hash;  // the destination's bytes when the copy was made (or last written back)
-    uint32_t bytes, fmt, layout;
+    uint32_t width, height, bytes, fmt, layout;
     bool intensity, alphaOne;
 };
-std::map<const void*, std::vector<PendingCopy>> s_pendingCopies;
+std::map<uint64_t, PendingCopy> s_pendingCopies;
+std::unordered_map<const void*, uint64_t> s_appliedCopyRequests;
+uint64_t s_nextCopyRequest = 0;
 std::unordered_set<const void*> s_efbCopyDestinations;
 uint32_t s_writeBackCount = 0;  // statistics
+
+// Each result, including a failed request, retires only its own metadata.
+// Frame/address alone cannot identify multiple copies to one texture in a frame.
+bool takeCopyReadback(uint64_t requestId, const void* dest, uint32_t width,
+                      uint32_t height, bool success, const uint32_t* rgba, PendingCopy& pc) {
+    auto it = s_pendingCopies.find(requestId);
+    if (it == s_pendingCopies.end()) return false;
+    pc = it->second;
+    s_pendingCopies.erase(it);
+    if (!success || !rgba || dest != pc.dest || width != pc.width || height != pc.height) return false;
+    const auto applied = s_appliedCopyRequests.find(dest);
+    if (applied != s_appliedCopyRequests.end() && requestId <= applied->second) return false;
+    // A delayed GPU copy must not overwrite a newer CPU edit of its texture.
+    return hashBytes(dest, pc.bytes) == pc.hash;
+}
+
+void finishCopyReadback(const PendingCopy& pc, uint64_t storedHash) {
+    s_appliedCopyRequests[pc.dest] = pc.requestId;
+    for (auto it = s_pendingCopies.upper_bound(pc.requestId); it != s_pendingCopies.end(); ++it) {
+        auto& later = it->second;
+        // Our own write is not a CPU edit for later copies of the same bytes.
+        if (later.dest == pc.dest && later.bytes == pc.bytes && later.hash == pc.hash)
+            later.hash = storedHash;
+    }
+}
 
 bool copyWriteBackEnabled() {
     static int on = -1;
@@ -263,6 +310,7 @@ void convertCopyPixel(uint8_t* c, uint32_t f, bool intensity, bool alphaOne) {
     } else {
         switch (f) {
         case 0: o[0] = o[1] = o[2] = o[3] = quant(r, 4); break;
+        case 1: o[0] = o[1] = o[2] = o[3] = r; break;
         case 2: o[0] = o[1] = o[2] = quant(r, 4); o[3] = quant(a, 4); break;
         case 3: o[0] = o[1] = o[2] = r; o[3] = a; break;
         case 4: o[0] = quant(r, 5); o[1] = quant(g8, 6); o[2] = quant(b, 5); o[3] = 255; break;
@@ -288,6 +336,7 @@ uint8_t s_dumpMarkers[32];
 struct PendingDump {
     uint32_t frame;
     std::string dir;
+    uint64_t requestId;
 };
 std::unordered_map<const void*, PendingDump> s_dumpPending;  // marker -> frame and folder
 // F9: the current frame and the next two seconds go to artifacts/aurora-captures/<time>/.
@@ -304,12 +353,14 @@ int dumpEvery() {
     return every > 0 ? every : 1;
 }
 
-bool writeFrameDump(const void* marker, uint32_t w, uint32_t h, const uint32_t* rgba) {
+bool writeFrameDump(const void* marker, uint32_t w, uint32_t h, const uint32_t* rgba,
+                    uint64_t requestId, bool success) {
     auto it = s_dumpPending.find(marker);
     if (it == s_dumpPending.end()) return false;
+    if (it->second.requestId != requestId) return true;  // a stale marker result cannot retire its replacement
     char path[1024];
     snprintf(path, sizeof path, "%s/frame_%06u.ppm", it->second.dir.c_str(), it->second.frame);
-    if (FILE* f = fopen(path, "wb")) {
+    if (FILE* f = success && rgba && w && h ? fopen(path, "wb") : nullptr) {
         fprintf(f, "P6\n%u %u\n255\n", w, h);
         std::vector<uint8_t> row(size_t(w) * 3);
         for (uint32_t y = 0; y < h; y++) {
@@ -331,34 +382,37 @@ bool writeFrameDump(const void* marker, uint32_t w, uint32_t h, const uint32_t* 
 void storeCopyReadbacks() {
     const void* dest;
     uint32_t w, h;
-    uint64_t frameId;
+    uint64_t frameId, requestId;
+    int success;
     const uint32_t* rgba;
     static std::vector<uint8_t> px, enc;
-    while (sab_poll_copy_readback(&dest, &w, &h, &frameId, &rgba)) {
-        if (writeFrameDump(dest, w, h, rgba)) continue;
-        auto it = s_pendingCopies.find(dest);
-        if (it == s_pendingCopies.end()) continue;
-        auto& q = it->second;
-        while (!q.empty() && q.front().frameId < frameId) q.erase(q.begin());  // read-backs that never came
-        if (q.empty() || q.front().frameId != frameId) continue;
-        PendingCopy pc = q.front();
-        q.erase(q.begin());
-        if (hashBytes(dest, pc.bytes) == pc.hash) {  // otherwise the CPU wrote them after the copy: it wins
-            px.resize(size_t(w) * h * 4);
-            memcpy(px.data(), rgba, px.size());
-            for (size_t i = 0; i < px.size(); i += 4) convertCopyPixel(&px[i], pc.fmt, pc.intensity, pc.alphaOne);
-            enc.resize(texLevelBytes(pc.layout, w, h));
-            uint32_t n = encodeTexture(px.data(), pc.layout, w, h, enc.data());
-            if (n > pc.bytes) n = pc.bytes;
-            memcpy(const_cast<void*>(dest), enc.data(), n);
-            const uint64_t stored = hashBytes(dest, pc.bytes);
-            for (auto& later : q)  // our own write is not a CPU change for the copies still pending
-                if (later.hash == pc.hash) later.hash = stored;
-            GXPC_InvalidateRange(dest, pc.bytes);
-            s_writeBackCount++;
-        }
-        if (q.empty()) s_pendingCopies.erase(it);
+    while (sab_poll_copy_readback_request(&dest, &w, &h, &frameId, &rgba, &requestId, &success)) {
+        if (writeFrameDump(dest, w, h, rgba, requestId, success != 0)) continue;
+        PendingCopy pc{};
+        if (!takeCopyReadback(requestId, dest, w, h, success != 0, rgba, pc)) continue;
+        if (texLevelBytes(pc.layout, w, h) != pc.bytes) continue;
+        px.resize(size_t(w) * h * 4);
+        memcpy(px.data(), rgba, px.size());
+        for (size_t i = 0; i < px.size(); i += 4) convertCopyPixel(&px[i], pc.fmt, pc.intensity, pc.alphaOne);
+        enc.resize(texLevelBytes(pc.layout, w, h));
+        uint32_t n = encodeTexture(px.data(), pc.layout, w, h, enc.data());
+        if (n != pc.bytes) continue;
+        memcpy(const_cast<void*>(dest), enc.data(), n);
+        const uint64_t stored = hashBytes(dest, pc.bytes);
+        finishCopyReadback(pc, stored);
+        GXPC_InvalidateRange(dest, pc.bytes);
+        s_writeBackCount++;
     }
+}
+
+void ensureCopyReadbackCapacity() {
+    const auto capacity = sab_copy_readback_capacity();
+    if (capacity <= 1 || s_pendingCopies.size() + s_dumpPending.size() < capacity - 1) return;
+    // Completed results still count as frontend pending until polled. Retire
+    // those first; keep counting queued/unencoded requests before admitting more.
+    storeCopyReadbacks();
+    if (s_pendingCopies.size() + s_dumpPending.size() >= capacity - 1 && sab_flush_copy_readbacks())
+        storeCopyReadbacks();
 }
 
 // ------------------------------------------------------------------ statistics
@@ -371,8 +425,24 @@ std::vector<double> s_frameTimes;
 double s_lastFrameEnd = 0, s_presentAccum = 0;
 // Time spent getting the next swapchain image (the display's vsync wait), and how
 // many frames waited long enough to make the game miss a retrace.
-double s_acquireAccum = 0;
+double s_acquireAccum = 0, s_acquireLast = 0;
 int s_acquireLong = 0;
+// SMS_GX_FRAMELOG=<file>: one line per frame (timing breakdown and retraces
+// it spanned), to find what makes a frame miss a retrace.
+FILE* s_frameLog = nullptr;
+// Optional diagnostic counters; normal play avoids the extra fine-grained clocks.
+FILE* s_profileLog = nullptr;
+bool s_profileFine = false;
+struct FrameProfile {
+    double draw = 0, textures = 0, peek = 0;
+    uint32_t draws = 0, peeks = 0;
+} s_profile;
+struct ProfileScope {
+    double& total;
+    double start;
+    explicit ProfileScope(double& value) : total(value), start(s_profileFine ? nowSeconds() : 0) {}
+    ~ProfileScope() { if (s_profileFine) total += nowSeconds() - start; }
+};
 
 // ------------------------------------------------------------------ vertex format 0
 uint32_t s_curFmt = ~0u;  // the VF_* format the CP registers of Aurora hold
@@ -424,6 +494,7 @@ struct TexKeyHash {
 };
 struct TexEntry {
     uint32_t id, version;
+    uint32_t copyVersion = 0;
     uint64_t hash;
     uint32_t bytes;
     uint32_t checkedGen;
@@ -431,6 +502,7 @@ struct TexEntry {
 };
 std::unordered_map<TexKey, TexEntry, TexKeyHash> s_textures;
 std::multimap<uintptr_t, TexEntry*> s_texByAddr;
+std::unordered_map<const void*, uint32_t> s_copyVersions;
 uint32_t s_nextTexId = 0x40000000u;
 uint32_t s_texGen = 1;
 
@@ -444,8 +516,22 @@ uint32_t s_nextTlutId = 0x40000000u;
 struct MapState {
     uint32_t id = 0, version = 0, tlutId = 0;
     bool regsDirty = true;
+    // unordered_map node references survive rehash; entries live until shutdown.
+    TexEntry* entry = nullptr;
+    const uint8_t* data = nullptr;
+    uint32_t image0 = 0, levels = 0;
+    const TlutEntry* palette = nullptr;
+    uint32_t paletteReg = 0, paletteEntries = 0;
 };
 MapState s_maps[8];
+bool prepCacheEnabled() {
+    static const bool enabled=[] { const char* v=getenv("SMS_GX_PREP_CACHE"); return !v || strcmp(v,"0"); }();
+    return enabled;
+}
+bool stateCacheEnabled() {
+    static const bool enabled=[] { const char* v=getenv("SMS_GX_STATE_CACHE"); return !v || strcmp(v,"0"); }();
+    return enabled;
+}
 
 uint32_t texLevels(int map) {
     uint32_t mode0 = g.bp[bpTexReg(BP_TX_MODE0, map)];
@@ -472,6 +558,14 @@ TexEntry& textureEntry(const uint8_t* ptr, uint32_t image0, uint32_t levels) {
 }
 
 void recheck(TexEntry& e, const uint8_t* ptr) {
+    auto cvIt = s_copyVersions.find(ptr);
+    if (cvIt != s_copyVersions.end() && e.copyVersion != cvIt->second) {
+        e.copyVersion = cvIt->second;
+        e.version++;
+        e.dirty = false;
+        e.checkedGen = s_texGen;
+        return;
+    }
     if (!e.dirty && e.checkedGen == s_texGen) return;
     e.dirty = false;
     e.checkedGen = s_texGen;
@@ -491,6 +585,16 @@ uint32_t tlutFor(int map, uint32_t fmt, const uint8_t** data, uint16_t* entries,
     uint32_t n = fmt == GX_TF_C4 ? 16 : fmt == GX_TF_C8 ? 256 : 16384;
     if (off + n * 2 > TMEM_TLUT_SIZE) n = (TMEM_TLUT_SIZE - off) / 2;
     const uint8_t* src = g.tlutMem + off;
+    auto& ms = s_maps[map];
+    // Both FIFO loads and GXLoadTlut write TMEM. Compare its current bytes,
+    // rather than assuming that the texture address or frame identifies a palette.
+    // This also catches overlapping loads into the middle of a palette.
+    if (stateCacheEnabled() && ms.palette && ms.paletteReg == reg && ms.paletteEntries == n &&
+        std::memcmp(src, ms.palette->data.data(), n * 2) == 0) {
+        *data = ms.palette->data.data();
+        *entries = uint16_t(n);
+        return ms.palette->id;
+    }
     uint64_t h = hashBytes(src, n * 2, uint64_t(*tlutFmt) << 32 | n);
     auto& slot = s_tluts[h];
     if (!slot) {
@@ -498,6 +602,9 @@ uint32_t tlutFor(int map, uint32_t fmt, const uint8_t** data, uint16_t* entries,
         slot->id = s_nextTlutId++;
         slot->data.assign(src, src + n * 2);
     }
+    ms.palette = slot.get();
+    ms.paletteReg = reg;
+    ms.paletteEntries = n;
     *data = slot->data.data();
     *entries = uint16_t(n);
     return slot->id;
@@ -520,6 +627,7 @@ uint32_t usedMaps() {
 }
 
 void syncTextures() {
+    ProfileScope timing(s_profile.textures);
     uint32_t mask = usedMaps();
     for (int m = 0; m < 8; m++) {
         if (!(mask & (1u << m))) continue;
@@ -527,7 +635,12 @@ void syncTextures() {
         if (!ptr) continue;
         uint32_t image0 = g.bp[bpTexReg(BP_TX_IMAGE0, m)];
         uint32_t levels = texLevels(m);
-        TexEntry& e = textureEntry(ptr, image0, levels);
+        MapState& ms = s_maps[m];
+        if(!prepCacheEnabled() || !ms.entry || ms.data!=ptr || ms.image0!=image0 || ms.levels!=levels) {
+            ms.entry=&textureEntry(ptr,image0,levels);
+            ms.data=ptr; ms.image0=image0; ms.levels=levels;
+        }
+        TexEntry& e = *ms.entry;
         recheck(e, ptr);
         uint32_t fmt = (image0 >> 20) & 0xF;
         uint32_t tlutId = 0;
@@ -536,7 +649,6 @@ void syncTextures() {
         uint32_t tlutFmt = 0;
         bool ci = fmt == GX_TF_C4 || fmt == GX_TF_C8 || fmt == GX_TF_C14X2;
         if (ci) tlutId = tlutFor(m, fmt, &tlutData, &tlutEntries, &tlutFmt);
-        MapState& ms = s_maps[m];
         if (!ms.regsDirty && ms.id == e.id && ms.version == e.version && ms.tlutId == tlutId) continue;
         static const bool texLog = getenv("SMS_AURORA_TEXLOG") != nullptr;
         if (texLog && e.version == 1 && ms.id != e.id)
@@ -615,12 +727,37 @@ uint32_t s_primFmt = 0, s_primStride = 0;
 
 // Aurora decodes inline vertex data as the GameCube stores it, big-endian,
 // whatever the byte order of the surrounding command stream.
+inline void copyBE32_3(uint8_t* out, const uint8_t* in) {
+    uint32_t v0, v1, v2;
+    std::memcpy(&v0, in, 4);
+    std::memcpy(&v1, in + 4, 4);
+    std::memcpy(&v2, in + 8, 4);
+    v0 = __builtin_bswap32(v0);
+    v1 = __builtin_bswap32(v1);
+    v2 = __builtin_bswap32(v2);
+    std::memcpy(out, &v0, 4);
+    std::memcpy(out + 4, &v1, 4);
+    std::memcpy(out + 8, &v2, 4);
+}
+
+inline void copyBE32_2(uint8_t* out, const uint8_t* in) {
+    uint32_t v0, v1;
+    std::memcpy(&v0, in, 4);
+    std::memcpy(&v1, in + 4, 4);
+    v0 = __builtin_bswap32(v0);
+    v1 = __builtin_bswap32(v1);
+    std::memcpy(out, &v0, 4);
+    std::memcpy(out + 4, &v1, 4);
+}
+
 inline void copyBE32(uint8_t* out, const uint8_t* in, uint32_t words) {
+    if (words == 3) { copyBE32_3(out, in); return; }
+    if (words == 2) { copyBE32_2(out, in); return; }
     for (uint32_t i = 0; i < words; i++) {
         uint32_t v;
-        memcpy(&v, in + i * 4, 4);
+        std::memcpy(&v, in + i * 4, 4);
         v = __builtin_bswap32(v);
-        memcpy(out + i * 4, &v, 4);
+        std::memcpy(out + i * 4, &v, 4);
     }
 }
 
@@ -653,8 +790,17 @@ DrawMapping drawMapping(uint32_t count) {
     const float wide=s_widescreen, margin=320.f*(wide-1.f);
     const bool ortho=(g.xfReg[XFR_PROJ+6]&1)!=0;
     if(s_stretch2D&&ortho)return result;
+    // Orthographic depth-only passes produce data for a logical EFB copy
+    // (the bathtub height field). Moving their vertices/scissor into the HUD
+    // frame leaves the CPU's unshifted depth-copy rectangle empty.
+    const uint32_t writes = g.bp[BP_CMODE0];
+    const bool depthOnly = !(writes & ((1u << 3) | (1u << 4))) && (g.bp[BP_ZMODE] & (1u << 4));
+    if (ortho && depthOnly) return result;
     const float sx=xfFloat(XFR_VIEWPORT),cx=xfFloat(XFR_VIEWPORT+3)-342.f;
     const bool full=std::fabs(std::fabs(sx)*2.f-640.f)<2.f&&std::fabs(cx-320.f)<2.f;
+    // Sub-viewports keep their existing mapping. Avoid transforming every
+    // vertex of pollution/data draws only to discard the computed bounds.
+    if (!full) return result;
     if(full&&!ortho&&!s_hud) {
         const float p0=xfFloat(XFR_PROJ),p11=xfFloat(XFR_PROJ+2);
         const float aspect=p0!=0.f?std::fabs(p11/p0):0.f;
@@ -687,7 +833,6 @@ DrawMapping drawMapping(uint32_t count) {
         }
         return center<640.f/3.f?0.f:center>1280.f/3.f?2.f*margin:margin;
     };
-    if(!full) return {1.f/wide,anchorOffset(cx)/wide};
     if(!ortho)return {1.f/wide,anchorOffset(lo<=hi?(lo+hi)*.5f:320.f)/wide};
     bool artwork=false;
     const bool color=(g.bp[BP_CMODE0]>>3)&1;
@@ -707,23 +852,32 @@ DrawMapping drawMapping(uint32_t count) {
 }
 
 void emitDraw(uint8_t opcode, uint32_t count) {
+    ProfileScope timing(s_profile.draw);
+    if (s_profileLog) ++s_profile.draws;
     const VtxFmtLayout& L = vtxFmtLayout(s_primFmt);
     const uint32_t fmt = s_primFmt;
     const bool mtx = fmt & VF_MTX;
     const bool nrm = fmt & VF_NRM;
     const uint32_t nrmBytes = (fmt & VF_NBT) ? 36 : 12;
-    uint32_t outStride = (mtx ? 9 : 0) + 12 + (nrm ? nrmBytes : 0);
-    for (int c = 0; c < 2; c++)
-        if (fmt & (VF_CLR0 << c)) outStride += 4;
-    for (int t = 0; t < 8; t++)
-        if (fmt & (VF_TEX0 << t)) outStride += 8;
+    static uint32_t strideFormat=~0u, outStride=0;
+    if(!prepCacheEnabled() || strideFormat!=fmt) {
+        outStride = (mtx ? 9 : 0) + 12 + (nrm ? nrmBytes : 0);
+        for (int c = 0; c < 2; c++)
+            if (fmt & (VF_CLR0 << c)) outStride += 4;
+        for (int t = 0; t < 8; t++)
+            if (fmt & (VF_TEX0 << t)) outStride += 8;
+        strideFormat=fmt;
+    }
     setVertexFormat(fmt);
     syncTextures();
     syncTexCoordScales();
     const auto mapping=drawMapping(count);
     const bool mapped=mapping.scale!=1.f||mapping.offset!=0.f;
     const uint32_t tl=g.bp[BP_SCISSOR_TL],br=g.bp[BP_SCISSOR_BR];
-    if (s_metricActive && !s_metricSlots.empty()) s_metricSlots.back().drawScale = mapping.scale;
+    if (s_metricActive && !s_metricSlots.empty()) {
+        s_metricSlots.back().drawScale = mapping.scale;
+        s_metricSlots.back().pixelArea = s_dataPassActive ? 1.f : 0.f;
+    }
     if(mapped) {
         emitViewport(mapping.scale, mapping.offset);
         const int left=int((tl>>12)&0x7ff)-342,right=int((br>>12)&0x7ff)-342;
@@ -743,23 +897,24 @@ void emitDraw(uint8_t opcode, uint32_t count) {
     const uint8_t* in = s_prim.data();
     for (uint32_t v = 0; v < count; v++, in += s_primStride) {
         if (mtx) {
-            memcpy(out, in + L.mtx, 9);
+            std::memcpy(out, in + L.mtx, 9);
             out += 9;
         }
-        copyBE32(out, in, 3);
+        copyBE32_3(out, in);
         out += 12;
         if (nrm) {
-            copyBE32(out, in + L.nrm, nrmBytes / 4);
+            if (nrmBytes == 12) copyBE32_3(out, in + L.nrm);
+            else copyBE32(out, in + L.nrm, nrmBytes / 4);
             out += nrmBytes;
         }
         for (int c = 0; c < 2; c++)
             if (fmt & (VF_CLR0 << c)) {
-                memcpy(out, in + L.clr[c], 4);
+                std::memcpy(out, in + L.clr[c], 4);
                 out += 4;
             }
         for (int t = 0; t < 8; t++)
             if (fmt & (VF_TEX0 << t)) {
-                copyBE32(out, in + L.tex[t], 2);
+                copyBE32_2(out, in + L.tex[t]);
                 out += 8;
             }
     }
@@ -783,10 +938,12 @@ void emitDraw(uint8_t opcode, uint32_t count) {
 }
 
 // ------------------------------------------------------------------ frames
-void beginFrame() {
+void beginFrame(bool retain = true) {
     const double t0 = nowSeconds();
     s_inFrame = sab_begin_frame() != 0;
+    if (s_inFrame && retain) sab_retain_efb();
     const double waited = nowSeconds() - t0;
+    s_acquireLast = waited;
     s_acquireAccum += waited;
     s_acquireLong += waited > 0.004;
     s_frameId = s_inFrame ? sab_frame_id() : 0;
@@ -795,10 +952,16 @@ void beginFrame() {
     s_curFmt = ~0u;
     for (auto& m : s_maps) m.regsDirty = true;
     for (bool& v : s_suValid) v = false;
+    storeCopyReadbacks();
 }
 
 void reportStats() {
-    if (!s_statsEvery || s_frameTimes.size() < size_t(s_statsEvery)) return;
+    if (!s_statsEvery) {
+        s_submitSeconds=0; s_acquireAccum=0; s_acquireLong=0;
+        s_writeBackCount=0; s_presentAccum=0; s_stats={};
+        return;
+    }
+    if (s_frameTimes.size() < size_t(s_statsEvery)) return;
     std::vector<double> t = s_frameTimes;
     std::sort(t.begin(), t.end());
     double med = t[t.size() / 2] * 1000, p90 = t[t.size() * 9 / 10] * 1000, worst = t.back() * 1000;
@@ -835,19 +998,79 @@ void reportStats() {
 
 void pumpEvents();
 
-void present() {
+// frame, ms since the previous present, then within that interval: the game's
+// VI idle, Aurora submit (draw calls), the end-of-frame work, the swapchain wait
+// at the previous frame's start, the retraces that passed and the VI timer's
+// worst lateness.
+void writeFrameLog(double t0, double t1) {
+    if (port_os_profile_frame) port_os_profile_frame(s_frame);
+    static double lastIdle = 0, lastSubmit = 0;
+    static uint32_t lastRetrace = 0;
+    const double idle = s_idleClock ? s_idleClock() : 0;
+    const uint32_t retrace = VIGetRetraceCount();
+    const double late = port_vi_take_late_max ? port_vi_take_late_max() : 0;
+    if (s_lastFrameEnd > 0)
+        fprintf(s_frameLog, "%u %.2f idle %.2f submit %.2f end %.2f acquire %.2f retraces %u late %.2f\n", s_frame,
+                (t1 - s_lastFrameEnd) * 1000, (idle - lastIdle) * 1000, (s_submitTotalSeconds - lastSubmit) * 1000,
+                (t1 - t0) * 1000, s_acquireLast * 1000, retrace - lastRetrace, late * 1000);
+    lastIdle = idle;
+    lastSubmit = s_submitTotalSeconds;
+    lastRetrace = retrace;
+}
+
+// VI chooses the visible XFB independently of the buffer GX is writing.
+bool prepareScanout(const void* explicitXfb = nullptr, bool force = false) {
+    if (!s_inFrame || (!s_autoPresent && !force)) return false;
+    const void* xfb = explicitXfb ? explicitXfb : s_lastCopiedXfb;
+    int viBlack = 0;
+    if (!explicitXfb && s_viScanout && !s_viScanout(&xfb, &viBlack)) return false;
+    const auto it = s_xfbSerials.find(xfb);
+    const uint64_t serial = it == s_xfbSerials.end() ? 0 : it->second;
+    bool black = viBlack != 0 || !xfb || !serial;
+    uint32_t width = 0, height = 0;
+    sab_get_window_size(&width, &height);
+    bool changed = force || !s_haveScanout || black != s_presentedBlack ||
+        (!black && (xfb != s_presentedXfb || serial != s_presentedSerial)) ||
+        width != s_presentedWidth || height != s_presentedHeight;
+#ifdef SMS_PARTYBOARD_UI
+    changed = changed || GXPC_MenuVisible();
+#endif
+    if (!changed) return false;
+    if (!sab_select_scanout(xfb, black ? 1 : 0)) black = true;
+    s_presentedXfb = xfb; s_presentedSerial = serial; s_presentedBlack = black;
+    s_presentedWidth = width; s_presentedHeight = height; s_haveScanout = true;
+    ++s_presentedCount;
+    static const bool log = getenv("SMS_VI_LOG") != nullptr;
+    static unsigned logged = 0;
+    if (log && logged++ < 120)
+        fprintf(stderr,"[gx-aurora] VI present %llu at copy %u: XFB %p serial %llu black %d\n",
+                (unsigned long long)s_presentedCount,s_frame,xfb,(unsigned long long)serial,int(black));
+    return true;
+}
+
+void present(bool show = true) {
     double t0 = nowSeconds();
     endFrameMetrics();
     submit();
-    if (s_inFrame) sab_end_frame();
+    if (s_inFrame) sab_finish_frame(show ? 1 : 0);
     s_inFrame = false;
     collectPixelMetrics();
     storeCopyReadbacks();
     double t1 = nowSeconds();
-    s_presentAccum += t1 - t0;
-    if (s_lastFrameEnd > 0) s_frameTimes.push_back(t1 - s_lastFrameEnd);
-    s_lastFrameEnd = t1;
-    reportStats();
+    if (show) {
+        s_presentAccum += t1 - t0;
+        if (s_statsEvery && s_lastFrameEnd > 0) s_frameTimes.push_back(t1 - s_lastFrameEnd);
+        if (s_frameLog) writeFrameLog(t0, t1);
+        if (s_profileLog) {
+            fprintf(s_profileLog, "%u %.3f draws %u draw %.3f textures %.3f peeks %u peek %.3f\n",
+                    s_frame, s_lastFrameEnd > 0 ? (t1-s_lastFrameEnd)*1000 : 0,
+                    s_profile.draws, s_profile.draw*1000, s_profile.textures*1000,
+                    s_profile.peeks, s_profile.peek*1000);
+            s_profile = {};
+        }
+        s_lastFrameEnd = t1;
+        reportStats();
+    }
     pumpEvents();
 #ifdef SMS_PARTYBOARD_UI
     // Keep presenting the retained game image and WebGPU UI while the game
@@ -860,6 +1083,12 @@ void present() {
         sab_delay(8);
     }
 #endif
+    // Bounded diagnostic runs exit normally, including renderer shutdown.
+    static const unsigned stopAfter = [] {
+        const char* value = getenv("SMS_GX_STOP_AFTER");
+        return value ? unsigned(strtoul(value, nullptr, 10)) : 0u;
+    }();
+    if (stopAfter && s_frame >= stopAfter) std::exit(0);
     beginFrame();
 }
 
@@ -926,6 +1155,7 @@ void pumpEvents() {
             continue;
         case SAB_EV_FOCUS_GAINED:
             s_hasFocus = true;
+            s_haveScanout = false;
             if (s_mouseCamera && !s_mouseReleased) captureMouse(true);
             continue;
         case SAB_EV_MOUSEBUTTONDOWN:
@@ -951,7 +1181,7 @@ void pumpEvents() {
                 continue;
             }
             if (ev.scancode == SC_F7) {
-                if (fresh) s_speed = s_speed >= 4 ? 1 : s_speed * 2;
+                // Keep simulation and audio at the original speed.
                 continue;
             }
             if (ev.scancode == SC_GRAVE) continue;
@@ -1044,7 +1274,9 @@ void sinkBP(uint32_t reg, uint32_t data) {
     if ((reg >= BP_TX_IMAGE3 && reg < BP_TX_IMAGE3 + 4) || (reg >= BP_TX_IMAGE3 + 0x20 && reg < BP_TX_IMAGE3 + 0x24))
         return;  // host pointers travel in GX_LOAD_AURORA_TEXOBJ
     if ((reg >= BP_TX_IMAGE0 && reg < BP_TX_IMAGE0 + 4) || (reg >= BP_TX_IMAGE0 + 0x20 && reg < BP_TX_IMAGE0 + 0x24))
-        s_maps[(reg & 3) + ((reg & 0x20) ? 4 : 0)].regsDirty = true;  // Aurora forgets the texture's size
+        // sinkBP runs before the front-end shadow is updated. Aurora's BP
+        // handler ignores identical writes, so those do not forget the size.
+        if(g.bp[reg]!=data) s_maps[(reg & 3) + ((reg & 0x20) ? 4 : 0)].regsDirty = true;
     if (reg >= BP_SU_SSIZE && reg < BP_SU_SSIZE + 16) s_suValid[reg - BP_SU_SSIZE] = false;
     static const char* dbg = getenv("SMS_AURORA_XFDBG");  // c = log TEV colour registers
     if (dbg && strchr(dbg, 'c') && reg >= 0xE0 && reg <= 0xE7) {
@@ -1056,10 +1288,30 @@ void sinkBP(uint32_t reg, uint32_t data) {
 
 void sinkCP(uint8_t reg, uint32_t value) {
     // The vertex loader runs in gx_fifo.cpp: only the matrix indices matter.
-    if ((reg & 0xF0) == CP_MATIDX_A || (reg & 0xF0) == CP_MATIDX_B) putCP(reg, value);
+    if ((reg & 0xF0) == CP_MATIDX_A || (reg & 0xF0) == CP_MATIDX_B) {
+        static uint32_t sent[2]{};
+        static bool valid[2]{};
+        const unsigned slot = (reg & 0xF0) == CP_MATIDX_B;
+        if (stateCacheEnabled() && valid[slot] && sent[slot] == value) return;
+        sent[slot] = value;
+        valid[slot] = true;
+        putCP(reg, value);
+    }
 }
 
 void sinkXF(uint16_t addr, uint32_t count, const uint32_t* words) {
+    // Cache only XF memory (matrices/lights). Viewport/projection registers
+    // have command-size-dependent decoding and temporary per-draw overrides.
+    // Preserve every register command and the original span of changed loads.
+    static uint32_t sent[0x1000]{};
+    static bool valid[0x1000]{};
+    static const char* debug = getenv("SMS_AURORA_XFDBG");
+    if (stateCacheEnabled() && !debug && addr < 0x1000 && count <= 0x1000u - addr) {
+        if (std::memcmp(sent + addr, words, count * sizeof(uint32_t)) == 0 &&
+            std::all_of(valid + addr, valid + addr + count, [](bool v) { return v; })) return;
+        std::memcpy(sent + addr, words, count * sizeof(uint32_t));
+        std::fill(valid + addr, valid + addr + count, true);
+    }
     put8(0x10);
     put32((count - 1) << 16 | addr);
     size_t n = s_cmd.size();
@@ -1100,7 +1352,10 @@ void flushBatch() {}
 void onStateChange() {}
 void markXfMemDirty() {}
 void finishDraws() { submit(); }
-void synchronizeReadbacks() {}
+void synchronizeReadbacks() {
+    if (!s_ready || s_pendingCopies.empty()) return;
+    storeCopyReadbacks();
+}
 
 uint8_t* primitiveBegin(uint8_t, uint32_t count, uint32_t fmt, uint32_t stride) {
     s_primFmt = fmt;
@@ -1126,13 +1381,16 @@ void executeCopy(uint32_t ctrl) {
     const bool disp = (ctrl >> 14) & 1;
     const bool clear = (ctrl >> 11) & 1;
     void* dest = g.copyDest;
-    if(dest&&!(ctrl&(1u<<14)))s_efbCopyDestinations.insert(dest);
-    if (disp) {
-        if (w != s_efbW || h != s_efbH) {
-            s_efbW = w;
-            s_efbH = h;
-            sab_set_efb_size(w, h);
+    if (dest && !(ctrl & (1u << 14))) {
+        s_efbCopyDestinations.insert(dest);
+        s_copyVersions[dest]++;
+        for (auto& ms : s_maps) {
+            if (ms.data == dest) ms.regsDirty = true;
         }
+    }
+    if (disp) {
+        if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; }
+        const bool sizeChanged = w != s_efbW || h != s_efbH;
         s_frame++;
         static const uint32_t dumpFrom = getenv("SMS_GX_DUMP_FROM") ? uint32_t(atoi(getenv("SMS_GX_DUMP_FROM"))) : 0;
         const bool dumpThis = dumpDir() && s_frame >= dumpFrom && s_frame % uint32_t(dumpEvery()) == 0;
@@ -1140,29 +1398,34 @@ void executeCopy(uint32_t ctrl) {
         if (s_inFrame && (dumpThis || captureThis)) {
             void* marker = &s_dumpMarkers[s_dumpNext++ % sizeof s_dumpMarkers];
             if (!s_dumpPending.count(marker)) {
-                s_dumpPending[marker] = PendingDump{s_frame, captureThis ? s_captureDir : std::string(dumpDir())};
-                sab_copy_tex(marker, x, y, w, h, w, h, GX_TF_RGBA8, 0, 1);
+                const uint64_t requestId = ++s_nextCopyRequest;
+                s_dumpPending[marker] = PendingDump{s_frame, captureThis ? s_captureDir : std::string(dumpDir()), requestId};
+                sab_copy_tex_request(marker, x, y, w, h, w, h, GX_TF_RGBA8, 0, 1, requestId);
             }
         }
         if (g_displayCopyHook) g_displayCopyHook(dest);
-        present();
+        if (s_inFrame && sab_copy_display(dest,x,y,w,h,clear ? 1 : 0)) {
+            s_xfbSerials[dest] = ++s_copySerial;
+            s_lastCopiedXfb = dest;
+        }
+        // The completed image was drawn using the old logical EFB mapping.
+        // Reconfigure only after capturing it, for subsequent game draws.
+        if (sizeChanged) {
+            s_efbW = w; s_efbH = h;
+            sab_set_efb_size(w,h);
+        }
+        const bool show = prepareScanout();
+        present(show);
         return;
     }
     const bool half = (ctrl >> 9) & 1;
     uint16_t dw = half ? uint16_t(w / 2) : w, dh = half ? uint16_t(h / 2) : h;
     if (!dw) dw = 1;
     if (!dh) dh = 1;
-    // Widescreen: draws that do not span the screen land in the centred 4:3 area
-    // (drawMapping), so a copy of a part of the screen is taken from there too,
-    // as the OpenGL port does. A full-width copy, or one under Stretch2D, takes
-    // the whole width.
-    uint16_t cx = x, cw = w;
-    if (s_widescreen > 1.0001f && !s_stretch2D && !(x == 0 && w >= 640)) {
-        const float wide = s_widescreen, margin = 320.f * (wide - 1.f);
-        const float l = (float(x) + margin) / wide, r = (float(x + w) + margin) / wide;
-        cx = uint16_t(std::lround(l));
-        cw = uint16_t(std::max(1l, std::lround(r) - long(cx)));
-    }
+    // Texture copies are specified in GameCube logical coordinates; Aurora's map_logical_scissor
+    // scales them to the render target. Sub-viewport/offscreen texture copies (such as pollution layers
+    // and water distortion) must never be squished or shifted by widescreen HUD margins.
+    const uint16_t cx = x, cw = w;
     const uint32_t f = ((ctrl >> 3) & 1) << 3 | ((ctrl >> 4) & 7);
     const bool zcopy = (g.bp[BP_PE_CONTROL] & 7) == 3;
     // Only data copies come back to RAM (Delfino's pollution layers are R8 into I8):
@@ -1171,16 +1434,24 @@ void executeCopy(uint32_t ctrl) {
     const uint32_t layout = copyLayout(f, false);
     const bool readback = s_inFrame && dest && !zcopy && copyWriteBackEnabled() &&
                           (layout <= 3 || copyWriteBackAll());
+    if (readback && !s_dataPassActive) {
+        ensureCopyReadbackCapacity();
+    }
+    uint64_t requestId = 0;
     if (readback) {
         PendingCopy pc{};
+        pc.requestId = requestId = ++s_nextCopyRequest;
+        pc.dest = dest;
         pc.frameId = s_frameId;
+        pc.width = dw;
+        pc.height = dh;
         pc.fmt = f;
         pc.layout = copyLayout(f, false);
         pc.bytes = texLevelBytes(pc.layout, dw, dh);
         pc.intensity = ((ctrl >> 15) & 3) == 3;
         pc.alphaOne = (g.bp[BP_PE_CONTROL] & 7) != 1;  // only RGBA6_Z24 keeps alpha
         pc.hash = hashBytes(dest, pc.bytes);
-        s_pendingCopies[dest].push_back(pc);
+        s_pendingCopies.emplace(requestId, pc);
     }
     static const bool copyLog = getenv("SMS_GX_COPY_LOG") != nullptr;
     if (copyLog) {
@@ -1189,12 +1460,56 @@ void executeCopy(uint32_t ctrl) {
             fprintf(stderr, "[gx-aurora] copy %p %ux%u (src %ux%u at %u,%u) fmt %u intensity %d layout %u, %u bytes\n",
                     dest, dw, dh, w, h, x, y, f, int((((ctrl >> 15) & 3) == 3)), copyLayout(f, false), texLevelBytes(copyLayout(f, false), dw, dh));
     }
-    if (s_inFrame) sab_copy_tex(dest, cx, y, cw, h, dw, dh, g_texCopyFmt, clear ? 1 : 0, readback ? 1 : 0);
+    // The bathtub mesh reads this depth buffer on the CPU in the same frame.
+    // Capture before the copy/clear changes the EFB; never enqueue it as a
+    // delayed colour write-back. RAM retains GX byte order (PC reader decodes BE).
+    if (s_inFrame && dest && g_texCopyFmt == GX_TF_Z24X8) {
+        if (!sab_copy_depth_z24x8_sync(dest, cx, y, cw, h, dw, dh)) {
+            static uint32_t reported = 0;
+            if (reported++ < 4) fprintf(stderr, "[gx-aurora] exact Z24X8 CPU copy failed at frame %u\n", s_frame);
+        }
+    }
+    if (s_inFrame) sab_copy_tex_request(dest, cx, y, cw, h, dw, dh, g_texCopyFmt, clear ? 1 : 0, readback ? 1 : 0, requestId);
+    if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; }
     s_stats.copies++;
 }
 
-uint32_t peekColor(int, int) { return 0xFF000000u; }
-uint32_t peekZ(int, int) { return 0xFFFFFF; }
+// Colour/depth probes share the exact EFB checkpoint until a draw or copy
+// changes it. Do not use a final-frame image: the game probes before HUD draws.
+static uint64_t s_peekRevision = 0;
+static uint64_t s_peekDraws = ~uint64_t(0), s_peekCopies = ~uint64_t(0), s_peekFrame = ~uint64_t(0);
+static bool peekPixel(int x, int y, uint32_t& color, uint32_t& z) {
+    if (!s_ready || !s_inFrame || x < 0 || y < 0) return false;
+    if (s_peekDraws != s_stats.draws || s_peekCopies != s_stats.copies || s_peekFrame != s_frameId) {
+        ++s_peekRevision;
+        s_peekDraws = s_stats.draws; s_peekCopies = s_stats.copies; s_peekFrame = s_frameId;
+    }
+    submit();
+    const double start = nowSeconds();
+    const bool valid = sab_peek_efb(uint32_t(x), uint32_t(y), s_peekRevision, &color, &z) != 0;
+    if (s_profileLog) { ++s_profile.peeks; s_profile.peek += nowSeconds()-start; }
+    static const bool log = getenv("SMS_GX_PEEK_LOG") != nullptr;
+    static unsigned logged = 0;
+    if (log && logged++ < 64)
+        fprintf(stderr, "[gx-aurora] peek frame %llu revision %llu at %d,%d: ARGB %08x Z %06x valid %d, %.3f ms\n",
+                (unsigned long long)s_frameId, (unsigned long long)s_peekRevision, x, y,
+                unsigned(color), unsigned(z), int(valid), (nowSeconds() - start) * 1000);
+    return valid;
+}
+uint32_t peekColor(int x, int y) {
+    static const bool enablePeek = getenv("SMS_GX_PEEK") != nullptr;
+    if (!enablePeek) return 0xff000000u;
+    uint32_t color = 0xff000000u, z = 0xffffffu;
+    peekPixel(x, y, color, z);
+    return color;
+}
+uint32_t peekZ(int x, int y) {
+    static const bool enablePeek = getenv("SMS_GX_PEEK") != nullptr;
+    if (!enablePeek) return 0xffffffu;
+    uint32_t color = 0xff000000u, z = 0xffffffu;
+    peekPixel(x, y, color, z);
+    return z;
+}
 
 #define METRIC_DUMP_TAG "aurora"
 // SMS_GX_METRIC_DUMP=0xADDR:size writes those bytes at reads 12 and 40 of a token (debugging).
@@ -1267,10 +1582,18 @@ extern "C" {
 
 int GXPC_InitAuto(int) {
     if (s_ready) return 1;
+    s_graphicsThread = std::this_thread::get_id();
     if (const char* e = getenv("SMS_GX_STATS")) {
         s_statsEvery = atoi(e) > 0 ? atoi(e) : 0;
-        g_gxStats = s_statsEvery > 0;
     }
+    // Aurora's report uses its own coarse counters, not g_decodeSeconds.
+    // Do not time every FIFO primitive merely to print the frame statistics.
+    g_gxStats = envTrue("SMS_GX_VERTEX_TIMERS");
+    if (const char* e = getenv("SMS_GX_FRAMELOG"))
+        if (*e && (s_frameLog = fopen(e, "w"))) setvbuf(s_frameLog, nullptr, _IOFBF, 1 << 16);
+    if (const char* e = getenv("SMS_GX_PROFILE"))
+        if (*e && (s_profileLog = fopen(e, "w"))) setvbuf(s_profileLog, nullptr, _IOFBF, 8192);
+    s_profileFine = s_profileLog && !envTrue("SMS_GX_PROFILE_LIGHT");
     SabConfig cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.title = "Super Mario Sunshine";
@@ -1293,13 +1616,15 @@ int GXPC_InitAuto(int) {
     }
     fprintf(stderr, "[gx-aurora] Aurora ready (%s)\n", sab_backend_name());
     s_ready = true;
+    s_cmd.reserve(2 * 1024 * 1024);
+    s_prim.reserve(128 * 1024);
     s_efbW = 640;
     s_efbH = 480;
     sab_set_efb_size(s_efbW, s_efbH);
     const char* tp=getenv("SMS_TEXTURE_PACKS");
     s_texturePacks=!tp||(strcmp(tp,"0")&&strcmp(tp,"off"));
     refreshTexturePacks();
-    beginFrame();
+    beginFrame(false);
 #ifdef SMS_PARTYBOARD_UI
     GXPC_MenuInit(nullptr, nullptr);
 #endif
@@ -1337,10 +1662,18 @@ int GXPC_ParseArgs(int* argc, char** argv) {
 void GXPC_SetHeadless(int) {}
 // Scripted presses (SMS_AUTOPRESS) set the key state directly: the SDL2 event queue is not pumped here.
 int GXPC_IsHeadless(void) { return getenv("SMS_AUTOPRESS") ? 1 : 0; }
-void GXPC_SetAutoPresent(int) {}
-void GXPC_SetVIScanoutCallback(GXPCVIScanoutFn fn) { s_viScanout = fn; }
-void GXPC_PollVI(void) { pumpEvents(); }
-void GXPC_Present(const void*) {}
+void GXPC_SetAutoPresent(int on) { s_autoPresent = on != 0; s_haveScanout = false; }
+void GXPC_SetVIScanoutCallback(GXPCVIScanoutFn fn) { s_viScanout = fn; s_haveScanout = false; }
+void GXPC_PollVI(void) {
+    if (!s_ready || s_pollingVI || std::this_thread::get_id() != s_graphicsThread) return;
+    s_pollingVI = true;
+    if (prepareScanout()) present(true);
+    else pumpEvents();
+    s_pollingVI = false;
+}
+void GXPC_Present(const void* xfb) {
+    if (s_ready && prepareScanout(xfb,true)) present(true);
+}
 uint32_t GXPC_FrameCount(void) { return s_frame; }
 void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
     if (s_ready) sab_set_window_icon(rgba, w, h);
@@ -1348,7 +1681,13 @@ void GXPC_SetWindowIcon(const uint8_t* rgba, int w, int h) {
 int GXPC_RunLauncher(const char*, const char*, int) { return 1; }
 int GXPC_MouseCaptured(void) { return s_mouseCaptured; }
 void GXPC_SetIdleClock(double (*idle)(void)) { s_idleClock = idle; }
-int GXPC_GetSpeed(void) { return s_speed; }
+int GXPC_GetSpeed(void) { return 1; }
+void GXPC_BeginDataPass(unsigned short width, unsigned short height) {
+    if (!s_ready || !s_inFrame || s_dataPassActive) return;
+    submit();
+    ensureCopyReadbackCapacity();
+    s_dataPassActive = sab_begin_data_pass(width, height) != 0;
+}
 int GXPC_ReadXFB(const void*, uint8_t*, int*, int*) { return 0; }
 
 void GXPC_InvalidateRange(const void* p, uint32_t size) {

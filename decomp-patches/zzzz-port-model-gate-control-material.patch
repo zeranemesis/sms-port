@@ -1,0 +1,54 @@
+Reason: PC native layout: use the actual SampleCtrlMaterial declaration. The fake retail view puts TEV stages at +60 while the x64 constructor puts them at +80, so portal swirl reads and overwrites unrelated fields. Keep original decomp sources unchanged.
+--- a/include/MoveBG/ModelGate.hpp
++++ b/include/MoveBG/ModelGate.hpp
+@@ -7,17 +7,8 @@
+ 
+ class SampleCtrlModelData;
+ 
+-// TODO: this belongs in M3DUtil/SampleCtrlModel.hpp, which only forward
+-// declares the class. It lives here because this batch may not edit shared
+-// headers; nothing else in the tree dereferences a SampleCtrlMaterial yet.
+-// TModelGate::perform patches the tev stage infos at indices 0, 2, 3 and 5 of
+-// the array at 0x3c and copies them into the gate material's matching stages,
+-// so the array holds at least six entries.
+-class SampleCtrlMaterial {
+-public:
+-	/* 0x00 */ u8 unk0[0x3C];
+-	/* 0x3C */ J3DTevStageInfo mTevStageInfo[6];
+-};
++// Use the constructor's native layout, including pointer/vtable alignment.
++#include <M3DUtil/SampleCtrlNode.hpp>
+ 
+ /// The magic warp gate in Delfino Plaza. Holding it (as a TTakeActor) is how
+ /// Mario gets pulled through: the gate owns the wind model, the swirl
+--- a/src/MoveBG/ModelGate.cpp
++++ b/src/MoveBG/ModelGate.cpp
+@@ -477,15 +477,15 @@
+ 			}
+ 
+ 			SampleCtrlMaterial* ctrl = mCtrlModelData->mMaterials[0];
+-			u8& swirl0              = ctrl->mTevStageInfo[0].field_0x5;
+-			J3DTevStageInfo& info2 = ctrl->mTevStageInfo[2];
++			u8& swirl0              = ctrl->unk3C[0].field_0x5;
++			J3DTevStageInfo& info2 = ctrl->unk3C[2];
+ 			u8& swirl2              = info2.field_0x5;
+-			J3DTevStageInfo& info3 = ctrl->mTevStageInfo[3];
++			J3DTevStageInfo& info3 = ctrl->unk3C[3];
+ 			u8& swirl3a             = info3.field_0x5;
+ 			u8& swirl3b             = info3.field_0x6;
+ 			u8& swirl3c             = info3.field_0x7;
+ 			u8& swirl3d             = info3.field_0x8;
+-			J3DTevStageInfo& info5 = ctrl->mTevStageInfo[5];
++			J3DTevStageInfo& info5 = ctrl->unk3C[5];
+ 			u8& swirl5              = info5.field_0x11;
+ 			swirl0  = 0;
+ 			swirl2  = 0;
+@@ -524,7 +524,7 @@
+ 				break;
+ 			}
+ 
+-			J3DTevStageInfo& info0 = ctrl->mTevStageInfo[0];
++			J3DTevStageInfo& info0 = ctrl->unk3C[0];
+ 			tevBlock->getTevStage(0)->setTevStageInfo(info0);
+ 			tevBlock->getTevStage(2)->setTevStageInfo(
+ 			    info2);

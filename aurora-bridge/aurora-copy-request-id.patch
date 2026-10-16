@@ -1,0 +1,114 @@
+--- a/include/aurora/sms_ext.h
++++ b/include/aurora/sms_ext.h
+@@ -30,11 +30,13 @@
+ int aurora_sms_poll_pixel_metrics(uint64_t* frameId, const uint32_t** counts);
+ 
+ /* The next GXCopyTex is read back too (width x height RGBA8 texels). */
+-void aurora_sms_request_copy_readback(const void* dest, uint32_t width, uint32_t height);
++void aurora_sms_request_copy_readback(const void* dest, uint32_t width, uint32_t height, uint64_t requestId);
++/* Retire an unsupported/invalid request without scheduling a GPU mapping. */
++void aurora_sms_reject_copy_readback(const void* dest, uint32_t width, uint32_t height, uint64_t requestId);
+ 
+ /* Returns 1 and one finished read-back (rgba valid until the next call). */
+ int aurora_sms_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
+-                                  const uint32_t** rgba);
++                                  const uint32_t** rgba, uint64_t* requestId, int* success);
+ 
+ #ifdef __cplusplus
+ }
+--- a/lib/gfx/sms_readback.hpp
++++ b/lib/gfx/sms_readback.hpp
+@@ -8,6 +8,7 @@
+   const void* dest = nullptr;
+   uint32_t width = 0;
+   uint32_t height = 0;
++  uint64_t requestId = 0;
+ };
+ 
+ void initialize();
+--- a/lib/gfx/sms_readback.cpp
++++ b/lib/gfx/sms_readback.cpp
+@@ -135,7 +135,7 @@
+ }
+ 
+ bool ensure_copy_slot(CopySlot& slot, uint64_t bytes) {
+-  if (slot.storage && slot.capacity >= bytes) {
++  if (slot.storage && slot.readback && slot.params && slot.capacity >= bytes) {
+     return true;
+   }
+   slot.capacity = std::max<uint64_t>(bytes, 64 * 1024);
+@@ -243,6 +243,8 @@
+ void encode_copy(const wgpu::CommandEncoder& cmd, const wgpu::TextureView& efbColor, ClipRect rect,
+                  const CopyRequest& req, uint64_t frameId) noexcept {
+   if (!g_copyPipeline || !efbColor || req.width == 0 || req.height == 0 || rect.width <= 0 || rect.height <= 0) {
++    std::lock_guard lock{g_mutex};
++    if (g_active) g_copyResults.push_back(CopyResult{.req = req, .frameId = frameId});
+     return;
+   }
+   const uint64_t bytes = uint64_t(req.width) * req.height * 4;
+@@ -257,6 +259,7 @@
+     }
+     if (slot == nullptr) {
+       Log.warn("No free copy read-back buffer: copy to {} dropped", req.dest);
++      g_copyResults.push_back(CopyResult{.req = req, .frameId = frameId});
+       return;
+     }
+     slot->state = SlotState::Recording;
+@@ -267,6 +270,7 @@
+   if (!ensure_copy_slot(*slot, bytes)) {
+     std::lock_guard lock{g_mutex};
+     slot->state = SlotState::Available;
++    if (g_active) g_copyResults.push_back(CopyResult{.req = req, .frameId = frameId});
+     return;
+   }
+   const Params params{
+@@ -361,7 +365,9 @@
+                       }
+                       std::lock_guard lock{g_mutex};
+                       if (!g_active || generation != g_generation) return;
+-                      if (!result.rgba.empty()) g_copyResults.push_back(std::move(result));
++                      // Empty pixels are an explicit failure, so the caller can
++                      // retire precisely this request rather than shift a FIFO.
++                      g_copyResults.push_back(std::move(result));
+                       g_copySlots[i].state = SlotState::Available;
+                     });
+   }
+@@ -401,12 +407,24 @@
+   return 1;
+ }
+ 
+-void aurora_sms_request_copy_readback(const void* dest, uint32_t width, uint32_t height) {
+-  g_pendingCopy = CopyRequest{.dest = dest, .width = width, .height = height};
++void aurora_sms_request_copy_readback(const void* dest, uint32_t width, uint32_t height, uint64_t requestId) {
++  if (g_pendingCopy.dest) {
++    std::lock_guard lock{g_mutex};
++    if (g_active) g_copyResults.push_back(CopyResult{.req = g_pendingCopy});
++  }
++  g_pendingCopy = CopyRequest{.dest = dest, .width = width, .height = height, .requestId = requestId};
++}
++
++void aurora_sms_reject_copy_readback(const void* dest, uint32_t width, uint32_t height, uint64_t requestId) {
++  std::lock_guard lock{g_mutex};
++  if (g_active) {
++    g_copyResults.push_back(CopyResult{
++        .req = CopyRequest{.dest = dest, .width = width, .height = height, .requestId = requestId}});
++  }
+ }
+ 
+ int aurora_sms_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
+-                                  const uint32_t** rgba) {
++                                  const uint32_t** rgba, uint64_t* requestId, int* success) {
+   std::lock_guard lock{g_mutex};
+   if (g_copyResults.empty()) {
+     return 0;
+@@ -417,7 +435,9 @@
+   *width = g_returnedCopy.req.width;
+   *height = g_returnedCopy.req.height;
+   *frameId = g_returnedCopy.frameId;
+-  *rgba = g_returnedCopy.rgba.data();
++  *requestId = g_returnedCopy.req.requestId;
++  *success = !g_returnedCopy.rgba.empty();
++  *rgba = *success ? g_returnedCopy.rgba.data() : nullptr;
+   return 1;
+ }
+ }

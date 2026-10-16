@@ -1,0 +1,24 @@
+Reason: Aurora must render the entire pollution data mask, including rows below the visible scanout. This PC hook isolates the mask update and stamps until GXCopyTex. Other backends keep their existing EFB path.
+--- a/src/Map/PollutionCount.cpp
++++ b/src/Map/PollutionCount.cpp
+@@ -17,6 +17,10 @@
+ #include <MSound/MSSetSound.hpp>
+ #include <MSound/MSoundBGM.hpp>
+ 
++#ifdef TARGET_PC
++extern "C" void GXPC_BeginDataPass(unsigned short, unsigned short) __attribute__((weak));
++#endif
++
+ static void drawBlack(u16 param_1, u16 param_2)
+ {
+ 
+@@ -337,5 +341,9 @@
+ 	const TPollutionLayer* layer = mLayers[layer_index];
+ 	const ResTIMG* img           = layer->mPollutionImage;
++#ifdef TARGET_PC
++	if (GXPC_BeginDataPass) GXPC_BeginDataPass(img->width, img->height);
++#endif
++
+ 	drawBlack(img->width, img->height);
+ 	loadPollutionLayer((u8*)img + img->imageDataOffset, img->width, img->height,
+ 	                   GX_TEXMAP0);

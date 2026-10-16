@@ -57,6 +57,7 @@ const uint16_t kAudioS16Sys  = 0x8010; // AUDIO_S16LSB (little-endian hosts)
 typedef int (*PFN_SDL_InitSubSystem)(uint32_t);
 typedef uint32_t (*PFN_SDL_OpenAudioDevice)(const char*, int, const SdlAudioSpec*, SdlAudioSpec*, int);
 typedef void (*PFN_SDL_PauseAudioDevice)(uint32_t, int);
+typedef void (*PFN_SDL_CloseAudioDevice)(uint32_t);
 typedef const char* (*PFN_SDL_GetError)(void);
 
 const u32 kRate = 32000;
@@ -65,7 +66,7 @@ struct Ai {
 	bool enabled; // the DMA engine runs (not SMS_NO_AUDIO)
 	bool output;  // SMS_AUDIO != 0: a device or SMS_AUDIO_WAV
 	bool inited;
-	bool running;
+	std::atomic<bool> running{false};
 	bool swap;
 	int volume;                // SMS_VOLUME (0..100) as a Q8 output gain; 256 is unity
 	bool menuMuted;            // Host menu pause; DMA timing remains unchanged.
@@ -79,6 +80,11 @@ struct Ai {
 	std::vector<int16_t> fifo;
 	size_t head, count;
 	bool sdl;
+	uint32_t sdlDevice;
+	PFN_SDL_CloseAudioDevice closeDevice;
+	std::atomic<bool> stopping{false};
+	pthread_t clockThread;
+	bool clockStarted;
 	s16 lastL, lastR;
 	// Null clock
 	std::atomic<int> due;
@@ -134,8 +140,32 @@ void wav_close(void)
 	}
 }
 
+void shutdown_output()
+{
+	if (g.stopping.exchange(true))
+		return;
+	g.running = false;
+	// Close waits for any in-flight SDL callback to finish. Do not hold mu:
+	// that callback may still need it before SDL can join its audio thread.
+	if (g.sdlDevice) {
+		g.closeDevice(g.sdlDevice);
+		g.sdlDevice = 0;
+	}
+	g.sdl = false;
+	if (g.clockStarted) {
+		pthread_join(g.clockThread, NULL);
+		g.clockStarted = false;
+	}
+	g.due = 0;
+	wav_close();
+}
+
 void sdl_callback(void*, uint8_t* stream, int len)
 {
+	if (g.stopping.load()) {
+		memset(stream, 0, (size_t)len);
+		return;
+	}
 	int16_t* out = (int16_t*)stream;
 	size_t frames = (size_t)len / 4;
 	int speed = playback_speed();
@@ -156,7 +186,7 @@ void sdl_callback(void*, uint8_t* stream, int len)
 		}
 		low = g.count < fifo_target(speed);
 	}
-	if (low)
+	if (low && !g.stopping.load())
 		port_irq_kick();
 }
 
@@ -164,7 +194,7 @@ void* null_clock(void*)
 {
 	struct timespec t;
 	clock_gettime(CLOCK_MONOTONIC, &t);
-	for (;;) {
+	while (!g.stopping.load()) {
 		u32 len = g.latchedLen ? g.latchedLen : 0x460 * 2;
 		long ns = (long)((u64)(len / 4) * 1000000000ull / kRate / playback_speed());
 		t.tv_nsec += ns;
@@ -173,6 +203,8 @@ void* null_clock(void*)
 			t.tv_sec++;
 		}
 		port_sleep_until(&t);
+		if (g.stopping.load())
+			break;
 		if (g.running) {
 			if (g.due.load() < 4) // a stalled game does not get a burst later
 				g.due.fetch_add(1);
@@ -206,8 +238,9 @@ bool open_sdl()
 	PFN_SDL_InitSubSystem init  = (PFN_SDL_InitSubSystem)dlsym(h, "SDL_InitSubSystem");
 	PFN_SDL_OpenAudioDevice op  = (PFN_SDL_OpenAudioDevice)dlsym(h, "SDL_OpenAudioDevice");
 	PFN_SDL_PauseAudioDevice pa = (PFN_SDL_PauseAudioDevice)dlsym(h, "SDL_PauseAudioDevice");
+	PFN_SDL_CloseAudioDevice cl = (PFN_SDL_CloseAudioDevice)dlsym(h, "SDL_CloseAudioDevice");
 	PFN_SDL_GetError err        = (PFN_SDL_GetError)dlsym(h, "SDL_GetError");
-	if (!init || !op || !pa || !err)
+	if (!init || !op || !pa || !cl || !err)
 		return false;
 	// SDL turns SIGINT/SIGTERM into an SDL_QUIT event; nothing pumps events in
 	// a headless run, so the process would ignore them. (No effect if the GX
@@ -229,6 +262,8 @@ bool open_sdl()
 		port_log("[audio] no SDL audio device: %s\n", err());
 		return false;
 	}
+	g.sdlDevice = dev;
+	g.closeDevice = cl;
 	pa(dev, 0);
 	port_log("[audio] SDL output: %d Hz, %u-frame device buffer\n", have.freq, have.samples);
 	return true;
@@ -236,6 +271,12 @@ bool open_sdl()
 
 void init_output()
 {
+	// Registered after g's construction and before either producer starts:
+	// stop and join both before static teardown destroys mu and fifo.
+	if (atexit(shutdown_output) != 0) {
+		port_log("[audio] cannot register output shutdown; AI DMA disabled\n");
+		return;
+	}
 	const char* e = getenv("SMS_AUDIO");
 	g.output      = !(e && strcmp(e, "0") == 0);
 	g.enabled     = !port_no_audio;
@@ -255,7 +296,6 @@ void init_output()
 		g.wav = fopen(e, "wb");
 		if (g.wav) {
 			wav_header(g.wav, 0);
-			atexit(wav_close);
 		}
 	}
 	e              = getenv("SMS_AUDIO_OUT");
@@ -272,9 +312,9 @@ void init_output()
 	if (!g.sdl) {
 		if (g.output)
 			port_log("[audio] no audio device: pacing AI DMA from the host clock\n");
-		pthread_t th;
-		pthread_create(&th, NULL, null_clock, NULL);
-		pthread_detach(th);
+		g.clockStarted = pthread_create(&g.clockThread, NULL, null_clock, NULL) == 0;
+		if (!g.clockStarted)
+			port_log("[audio] cannot start AI DMA host clock\n");
 	}
 }
 
@@ -321,7 +361,7 @@ u64 g_det_acc; // deterministic pacing: samples owed, in 1/60000 units
 // Interrupt source, polled on the emulated CPU when kicked.
 void ai_poll()
 {
-	if (!g.running)
+	if (g.stopping.load() || !g.running)
 		return;
 	if (port_audio_dsp_frame_pending && port_audio_dsp_frame_pending()) {
 		port_irq_kick(); // the audio thread is mid-frame: retry at the next check point
