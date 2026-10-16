@@ -72,7 +72,11 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             "<div id='status-line'/><footer><button id='resume' data-action='resume'>Reprendre</button>"
             "<button id='save' data-action='save'>Enregistrer les réglages</button>"
             "<button id='quit' data-action='quit'>Quitter</button></footer></window></body></rml>";
-        document=context->LoadDocumentFromMemory(markup,root+"/sunshine.rml");
+        // RmlUi reads "C:" as a URL protocol; it spells drive letters "C|" and
+        // turns them back into "C:" when resolving the stylesheets.
+        std::string source=root+"/sunshine.rml";
+        std::replace(source.begin(),source.end(),':','|');
+        document=context->LoadDocumentFromMemory(markup,source);
         if(!document)return;
         document->AddEventListener("click",this);
         document->AddEventListener("keydown",this,true);

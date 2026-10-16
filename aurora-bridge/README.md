@@ -92,6 +92,16 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
 
 ## Renderer work beyond the menu
 
+- Aurora checks `dawn_cache.db` and `pipeline_cache.db` with `PRAGMA quick_check`
+  when it opens them. A corrupt file is moved aside as `<name>.corrupt` and
+  rebuilt empty. Before this, a `dawn_cache.db` corrupted on 14 October made
+  every Dawn shader lookup fail: no compiled shader was reused, and a 3-minute
+  session logged about 16,900 SQLite errors. A failed query now resets its
+  statement, and corruption found during play disables the cache for that
+  session only. `aurora-cache-recovery.patch` holds this change alone; the
+  cumulative `aurora-state-20261016.patch` includes it. Evidence:
+  `artifacts/aurora-cachefix-20261016` (one rebuild run, then one warm run with
+  no SQLite errors).
 
 - The native frontend polls completed copy results before forcing a pressure
   checkpoint. Queued requests and pending dumps still count toward the same
