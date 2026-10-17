@@ -455,6 +455,29 @@ int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top, uint16_t 
     return 1;
 }
 
+int sab_copy_depth_z24x8_async(uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint64_t tag) {
+    if (!s_ready || !tag || !width || !height || width > 1024 || height > 1024) return 0;
+    aurora::gx::fifo::drain();
+    return aurora::gfx::request_depth_efb_async({left, top, width, height}, tag) ? 1 : 0;
+}
+
+int sab_take_depth_z24x8(uint64_t tag, void* dest, uint16_t width, uint16_t height, uint16_t dstWidth,
+                         uint16_t dstHeight) {
+    if (!s_ready) return 0;
+    if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
+        aurora::webgpu::g_instance.ProcessEvents();
+    }
+    static std::vector<uint32_t> depth;
+    uint64_t doneTag = 0;
+    bool success = false;
+    if (!aurora::gfx::take_depth_efb_async(doneTag, depth, success)) return 0;
+    if (doneTag != tag || !success || !dest || depth.size() != size_t(width) * height) return -1;
+    std::vector<uint8_t> encoded;
+    if (!sms_aurora_depth::encode_z24x8(depth.data(), width, height, dstWidth, dstHeight, encoded)) return -1;
+    std::memcpy(dest, encoded.data(), encoded.size());
+    return 1;
+}
+
 void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
                   uint16_t dstHeight, uint32_t fmt, int clear, int readback) {
     sab_copy_tex_request(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, 0);

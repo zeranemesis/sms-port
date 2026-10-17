@@ -92,6 +92,16 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
 
 ## Renderer work beyond the menu
 
+- Corona Mountain's boss ran at about 37 fps: the bathtub's Z24X8 depth copy
+  (`TBathWaterMeshRenderer::prerender`, read back by `makeHeightMap`) waited
+  for the GPU every frame, about 9 ms. After a first synchronous copy per
+  buffer it is now asked for without waiting and stored into RAM once the GPU
+  has it, usually by the next frame, if that RAM is unchanged since the
+  request. The surface lags the drops by about a frame; side-by-side captures
+  match. 59.7 fps in the 20-stage tour. `SMS_AURORA_SYNC_DEPTH=1` restores the
+  waiting copy. `aurora-async-depth.patch` holds the Aurora side alone.
+
+
 - Aurora used to abort on any GX logic op other than CLEAR, COPY and NOOP
   ("unsupported logic op 10"). Pinna Park reached that through
   `TMario::drawLogic`, which draws Mario in white with `GX_LO_INV` to invert

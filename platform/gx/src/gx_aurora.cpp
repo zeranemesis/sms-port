@@ -379,6 +379,8 @@ bool writeFrameDump(const void* marker, uint32_t w, uint32_t h, const uint32_t* 
     return true;
 }
 
+void collectDepthCopy();
+
 void storeCopyReadbacks() {
     const void* dest;
     uint32_t w, h;
@@ -403,6 +405,69 @@ void storeCopyReadbacks() {
         GXPC_InvalidateRange(dest, pc.bytes);
         s_writeBackCount++;
     }
+    collectDepthCopy();
+}
+
+// The bathtub's Z24X8 depth copy (Corona Mountain's boss): the CPU builds the
+// water surface from it. Waiting for the GPU at every copy cost about 9 ms of
+// each frame, so after a first synchronous copy it is asked for without
+// waiting and stored into RAM once the GPU has it, usually by the next frame.
+// The console's GP also ran behind the CPU; the surface just lags the drops
+// by a frame. SMS_AURORA_SYNC_DEPTH=1 restores the waiting copy.
+struct DepthCopy {
+    uint64_t tag = 0;
+    void* dest = nullptr;
+    uint32_t bytes = 0;
+    uint64_t hash = 0;
+    uint16_t width = 0, height = 0, dstWidth = 0, dstHeight = 0;
+};
+DepthCopy s_depthPending;
+const void* s_depthStoredDest = nullptr;
+uint64_t s_depthStoredFrame = 0, s_depthNextTag = 0;
+
+bool asyncDepthCopies() {
+    static const bool on = [] {
+        const char* v = getenv("SMS_AURORA_SYNC_DEPTH");
+        return !v || !*v || strcmp(v, "0") == 0;
+    }();
+    return on;
+}
+
+uint32_t z24x8Bytes(uint32_t w, uint32_t h) { return ((w + 3) / 4) * ((h + 3) / 4) * 64; }
+
+// Stores a finished copy if its RAM still holds what it held when the copy was
+// asked for: a stage change frees the heap, and the buffer may be reused.
+void collectDepthCopy() {
+    if (!s_depthPending.tag) return;
+    static std::vector<uint8_t> scratch;
+    scratch.resize(s_depthPending.bytes);
+    const int r = sab_take_depth_z24x8(s_depthPending.tag, scratch.data(), s_depthPending.width,
+                                       s_depthPending.height, s_depthPending.dstWidth, s_depthPending.dstHeight);
+    if (r == 0) return;
+    if (r == 1 && hashBytes(s_depthPending.dest, s_depthPending.bytes) == s_depthPending.hash) {
+        memcpy(s_depthPending.dest, scratch.data(), s_depthPending.bytes);
+        s_depthStoredDest = s_depthPending.dest;
+        s_depthStoredFrame = s_frameId;
+    }
+    s_depthPending = {};
+}
+
+bool copyDepthZ24X8(void* dest, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t dw, uint16_t dh) {
+    collectDepthCopy();
+    // While a copy is in flight the exact-depth slot is busy: keep that one.
+    if (s_depthPending.tag) return true;
+    const bool warm = s_depthStoredDest == dest && s_frameId - s_depthStoredFrame <= 4;
+    if (!asyncDepthCopies() || !warm) {
+        if (!sab_copy_depth_z24x8_sync(dest, x, y, w, h, dw, dh)) return false;
+        s_depthStoredDest = dest;
+        s_depthStoredFrame = s_frameId;
+        return true;
+    }
+    const uint64_t tag = ++s_depthNextTag;
+    if (!sab_copy_depth_z24x8_async(x, y, w, h, tag)) return false;
+    s_depthPending = {tag, dest, z24x8Bytes(dw, dh), 0, w, h, dw, dh};
+    s_depthPending.hash = hashBytes(dest, s_depthPending.bytes);
+    return true;
 }
 
 void ensureCopyReadbackCapacity() {
@@ -1464,7 +1529,7 @@ void executeCopy(uint32_t ctrl) {
     // Capture before the copy/clear changes the EFB; never enqueue it as a
     // delayed colour write-back. RAM retains GX byte order (PC reader decodes BE).
     if (s_inFrame && dest && g_texCopyFmt == GX_TF_Z24X8) {
-        if (!sab_copy_depth_z24x8_sync(dest, cx, y, cw, h, dw, dh)) {
+        if (!copyDepthZ24X8(dest, cx, y, cw, h, dw, dh)) {
             static uint32_t reported = 0;
             if (reported++ < 4) fprintf(stderr, "[gx-aurora] exact Z24X8 CPU copy failed at frame %u\n", s_frame);
         }

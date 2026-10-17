@@ -106,6 +106,17 @@ SAB_API int sab_peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t* ar
 SAB_API int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top,
                                      uint16_t width, uint16_t height,
                                      uint16_t dstWidth, uint16_t dstHeight);
+/* The same exact depth copy without waiting for the GPU. Returns 0 when it is
+ * not queued (another is still in flight, or invalid arguments). tag must be
+ * non-zero and is handed back to sab_take_depth_z24x8. */
+SAB_API int sab_copy_depth_z24x8_async(uint16_t left, uint16_t top, uint16_t width,
+                                      uint16_t height, uint64_t tag);
+/* Collects a finished asynchronous depth copy. 1: it was the copy for tag and
+ * dest now holds its Z24X8 bytes (same layout as the synchronous copy). 0: not
+ * finished yet. -1: finished but failed, for another tag, or dest was null;
+ * dest is left unchanged. width/height are the source rectangle's size. */
+SAB_API int sab_take_depth_z24x8(uint64_t tag, void* dest, uint16_t width, uint16_t height,
+                                uint16_t dstWidth, uint16_t dstHeight);
 
 /* EFB -> texture copy into a GPU texture keyed by dest; a later texture whose
  * data pointer is dest samples it. fmt is the GXTexFmt of the copy. With

@@ -1,0 +1,170 @@
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -1506,7 +1506,7 @@
+ 
+ static bool peek_efb_impl(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z,
+                           const ClipRect* exactRect = nullptr, std::vector<uint32_t>* exactDepth = nullptr,
+-                          bool submitOnly = false) {
++                          bool submitOnly = false, uint64_t asyncDepthTag = 0) {
+   if (!g_recordingFrame || g_currentRenderPass==UINT32_MAX || g_inOffscreen) return false;
+   const auto logicalSize=gx::logical_fb_size();
+   if (x>=logicalSize.x || y>=logicalSize.y) return false;
+@@ -1573,7 +1573,8 @@
+     const auto t2=stamp();
+     Clock::time_point workerStart{},workerSubmitted{},workerComplete{};
+     render_worker::enqueue_work([frameSlot,color,depth,size,logicalSize,samples,origin,extent,nextStaging=*nextStaging,
+-                                &workerStart,&workerSubmitted,&workerComplete,exact,exactDepth,&exactSuccess,submitOnly] {
++                                &workerStart,&workerSubmitted,&workerComplete,exact,exactDepth,&exactSuccess,submitOnly,
++                                asyncDepthTag] {
+       if(profile) workerStart=Clock::now();
+       auto& packet=g_framePackets[frameSlot];
+       if (!submitOnly)
+@@ -1587,7 +1588,8 @@
+       sms_readback::after_submit();
+       if(profile) workerSubmitted=Clock::now();
+       if (!submitOnly) {
+-        if (exact) exactSuccess = efb_peek::complete_depth(*exactDepth);
++        if (exact && asyncDepthTag) exactSuccess = efb_peek::request_depth(asyncDepthTag);
++        else if (exact) exactSuccess = efb_peek::complete_depth(*exactDepth);
+         else efb_peek::complete();
+       }
+       if(profile) workerComplete=Clock::now();
+@@ -1680,6 +1682,23 @@
+   return peek_efb_impl(uint32_t(rect.x), uint32_t(rect.y), 0, argb, z, &rect, &depth);
+ }
+ 
++bool request_depth_efb_async(ClipRect rect, uint64_t tag) {
++  const auto size = gx::logical_fb_size();
++  if (tag == 0 || rect.x < 0 || rect.y < 0 || rect.width <= 0 || rect.height <= 0 ||
++      uint32_t(rect.x) >= size.x || uint32_t(rect.y) >= size.y ||
++      uint32_t(rect.width) > size.x - uint32_t(rect.x) ||
++      uint32_t(rect.height) > size.y - uint32_t(rect.y)) return false;
++  // One exact copy maps at a time; a request made while the previous one is
++  // still in flight is skipped and the caller keeps the older result.
++  if (!efb_peek::exact_depth_idle()) return false;
++  uint32_t argb = 0, z = 0;
++  return peek_efb_impl(uint32_t(rect.x), uint32_t(rect.y), 0, argb, z, &rect, nullptr, false, tag);
++}
++
++bool take_depth_efb_async(uint64_t& tag, std::vector<uint32_t>& depth, bool& success) {
++  return efb_peek::take_depth(tag, depth, success);
++}
++
+ static void render_pass(const wgpu::RenderPassEncoder& pass, FramePacket& frame, const RenderPass& passInfo) {
+   // A skipped draw in an EFB texture copy permanently changes game data (e.g.
+   // a pollution mask), unlike a transient missing draw in the visible image.
+--- a/lib/gfx/common.hpp
++++ b/lib/gfx/common.hpp
+@@ -248,6 +248,10 @@
+ bool peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t& argb, uint32_t& z);
+ // Seal/submit the current pass and wait for forward uint24 depth in this region.
+ bool copy_depth_efb(ClipRect rect, std::vector<uint32_t>& depth);
++// The same exact depth copy without waiting for the GPU: the result is taken
++// later, under the same non-zero tag, from take_depth_efb_async.
++bool request_depth_efb_async(ClipRect rect, uint64_t tag);
++bool take_depth_efb_async(uint64_t& tag, std::vector<uint32_t>& depth, bool& success);
+ bool submit_copy_checkpoint();
+ bool copy_display(const void* dest, ClipRect logicalRect, bool clear);
+ bool select_scanout(const void* dest, bool black);
+--- a/lib/gfx/efb_peek.cpp
++++ b/lib/gfx/efb_peek.cpp
+@@ -7,6 +7,7 @@
+ #include <cstdlib>
+ #include <cstring>
+ #include <memory>
++#include <mutex>
+ #include <string>
+ #include <vector>
+ 
+@@ -211,6 +212,64 @@
+   return success;
+ }
+ 
++namespace {
++struct DepthResult {
++  uint64_t tag = 0;
++  std::vector<uint32_t> depth;
++  bool ready = false;
++  bool success = false;
++};
++std::mutex g_depthMutex;
++DepthResult g_depthResult;
++} // namespace
++
++bool request_depth(uint64_t tag) {
++  ASSERT(render_worker::is_worker_thread(), "Exact EFB depth must be requested on the render worker");
++  if (g_activeEncodingSlot != int(ExactDepthSlot)) return false;
++  g_activeEncodingSlot = -1;
++  auto& slot = g_slots[ExactDepthSlot];
++  slot.state.store(SlotState::MapPending, std::memory_order_release);
++  const auto readback = slot.readback;
++  const uint64_t bytes = slot.bytes;
++  const size_t pixels = size_t(slot.extent.x) * slot.extent.y;
++  readback.MapAsync(wgpu::MapMode::Read, 0, bytes, wgpu::CallbackMode::AllowSpontaneous,
++      [tag, readback, bytes, pixels](wgpu::MapAsyncStatus status, wgpu::StringView) {
++        std::vector<uint32_t> depth;
++        bool success = false;
++        if (status == wgpu::MapAsyncStatus::Success) {
++          if (const auto* data = static_cast<const uint32_t*>(readback.GetConstMappedRange(0, bytes))) {
++            depth.resize(pixels);
++            for (size_t i = 0; i < pixels; ++i) depth[i] = data[i * 2 + 1];
++            success = true;
++          }
++          readback.Unmap();
++        }
++        {
++          std::lock_guard lock(g_depthMutex);
++          g_depthResult.tag = tag;
++          g_depthResult.depth = std::move(depth);
++          g_depthResult.ready = true;
++          g_depthResult.success = success;
++        }
++        g_slots[ExactDepthSlot].state.store(SlotState::Available, std::memory_order_release);
++      });
++  return true;
++}
++
++bool exact_depth_idle() {
++  return g_slots[ExactDepthSlot].state.load(std::memory_order_acquire) == SlotState::Available;
++}
++
++bool take_depth(uint64_t& tag, std::vector<uint32_t>& depth, bool& success) {
++  std::lock_guard lock(g_depthMutex);
++  if (!g_depthResult.ready) return false;
++  tag = g_depthResult.tag;
++  success = g_depthResult.success;
++  depth = std::move(g_depthResult.depth);
++  g_depthResult = {};
++  return true;
++}
++
+ void complete() {
+   if (g_activeEncodingSlot < 0) return;
+   const size_t slotIdx = size_t(g_activeEncodingSlot);
+@@ -306,6 +365,10 @@
+ 
+ void shutdown() {
+   g_cachedPixels.clear(); g_size={}; g_cachedOrigin={}; g_cachedExtent={};
++  {
++    std::lock_guard lock(g_depthMutex);
++    g_depthResult = {};
++  }
+   g_hasCachedData.store(false, std::memory_order_release);
+   for (auto& s : g_slots) {
+     s.storage={}; s.readback={}; s.capacity=0; s.bytes=0; s.origin={}; s.extent={};
+--- a/lib/gfx/efb_peek.hpp
++++ b/lib/gfx/efb_peek.hpp
+@@ -11,6 +11,13 @@
+ void complete();
+ // Render worker, after submission: no stale cache, waits for this exact copy.
+ bool complete_depth(std::vector<uint32_t>& depth);
++// Render worker, after submission: maps this exact copy without waiting. The
++// result is collected later with take_depth under the same tag.
++bool request_depth(uint64_t tag);
++// Any thread: whether no exact depth copy is encoding or mapping.
++bool exact_depth_idle();
++// Recording thread: the finished asynchronous depth copy, once.
++bool take_depth(uint64_t& tag, std::vector<uint32_t>& depth, bool& success);
+ // Recording thread, after render_worker::synchronize().
+ bool contains(uint32_t x, uint32_t y);
+ bool is_full();
