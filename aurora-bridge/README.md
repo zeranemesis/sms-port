@@ -92,6 +92,17 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
 
 ## Renderer work beyond the menu
 
+- Aurora used to abort on any GX logic op other than CLEAR, COPY and NOOP
+  ("unsupported logic op 10"). Pinna Park reached that through
+  `TMario::drawLogic`, which draws Mario in white with `GX_LO_INV` to invert
+  the image behind him. All 16 ops are now blend equations: exact for any
+  source for the ones that need no constant, and exact for a white source
+  (the game's only use) for INV, NAND, SET and the rest. `aurora-logic-ops.patch`
+  holds this change alone; `aurora-state-20261016.patch` includes it.
+  Pinna Park now loads and plays; evidence in
+  `artifacts/perf-stages-20261017-101145-pinna-logicop`.
+
+
 - Aurora checks `dawn_cache.db` and `pipeline_cache.db` with `PRAGMA quick_check`
   when it opens them. A corrupt file is moved aside as `<name>.corrupt` and
   rebuilt empty. Before this, a `dawn_cache.db` corrupted on 14 October made

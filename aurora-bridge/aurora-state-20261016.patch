@@ -1117,6 +1117,75 @@ diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
    }
  }
  
+@@ -555,33 +557,46 @@ static inline wgpu::BlendState to_blend_state(GXBlendMode mode, GXBlendFactor sr
+         .dstFactor = wgpu::BlendFactor::One,
+     };
+     break;
+-  case GX_BM_LOGIC:
++  case GX_BM_LOGIC: {
++    // WebGPU has no logic ops, so each is written as src * f + dst * g. The
++    // result is exact for channels that are 0 or 1. CLEAR, AND, REVAND,
++    // COPY, INVAND, NOOP, XOR and OR are exact for either source value. The
++    // ops that need a constant 1 (INV, NAND, INVOR, SET, NOR, EQUIV, INVCOPY)
++    // use the source as that 1: they are exact for a white source. That is
++    // how Super Mario Sunshine draws with them (TMario::drawLogic: a white
++    // material and GX_LO_INV to invert the image behind Mario), and it is
++    // better than aborting the game.
++    using F = wgpu::BlendFactor;
++    F src = F::One, dst = F::Zero;
+     switch (op) {
+-      DEFAULT_FATAL("unsupported logic op {}", underlying(op));
+-    case GX_LO_CLEAR:
+-      colorBlendComponent = {
+-          .operation = wgpu::BlendOperation::Add,
+-          .srcFactor = wgpu::BlendFactor::Zero,
+-          .dstFactor = wgpu::BlendFactor::Zero,
+-      };
+-      break;
+-    case GX_LO_COPY:
+-      colorBlendComponent = {
+-          .operation = wgpu::BlendOperation::Add,
+-          .srcFactor = wgpu::BlendFactor::One,
+-          .dstFactor = wgpu::BlendFactor::Zero,
+-      };
+-      break;
+-    case GX_LO_NOOP:
+-      colorBlendComponent = {
+-          .operation = wgpu::BlendOperation::Add,
+-          .srcFactor = wgpu::BlendFactor::Zero,
+-          .dstFactor = wgpu::BlendFactor::One,
+-      };
++    case GX_LO_CLEAR: src = F::Zero; dst = F::Zero; break;              // 0
++    case GX_LO_AND: src = F::Dst; dst = F::Zero; break;                 // s & d
++    case GX_LO_REVAND: src = F::OneMinusDst; dst = F::Zero; break;      // s & ~d
++    case GX_LO_COPY: src = F::One; dst = F::Zero; break;                // s
++    case GX_LO_INVAND: src = F::Zero; dst = F::OneMinusSrc; break;      // ~s & d
++    case GX_LO_NOOP: src = F::Zero; dst = F::One; break;                // d
++    case GX_LO_XOR: src = F::OneMinusDst; dst = F::OneMinusSrc; break;  // s ^ d
++    case GX_LO_OR: src = F::OneMinusDst; dst = F::One; break;           // s | d
++    case GX_LO_INV: src = F::OneMinusDst; dst = F::Zero; break;         // ~d, with s = 1
++    case GX_LO_NAND: src = F::OneMinusDst; dst = F::Zero; break;        // ~(s & d), s = 1
++    case GX_LO_REVOR: src = F::One; dst = F::OneMinusSrc; break;        // s | ~d, s = 1
++    case GX_LO_INVOR: src = F::Zero; dst = F::One; break;               // ~s | d, s = 1
++    case GX_LO_SET: src = F::One; dst = F::OneMinusSrc; break;          // 1, s = 1
++    case GX_LO_NOR: src = F::Zero; dst = F::Zero; break;                // ~(s | d), s = 1
++    case GX_LO_EQUIV: src = F::Dst; dst = F::Zero; break;               // ~(s ^ d), s = 1
++    case GX_LO_INVCOPY: src = F::Zero; dst = F::Zero; break;            // ~s, s = 1
++    default:
++      Log.warn("unsupported logic op {}, drawing as copy", underlying(op));
+       break;
+     }
++    colorBlendComponent = {
++        .operation = wgpu::BlendOperation::Add,
++        .srcFactor = src,
++        .dstFactor = dst,
++    };
+     break;
+   }
++  }
+   wgpu::BlendComponent alphaBlendComponent;
+   if (dstAlpha != UINT32_MAX) {
+     alphaBlendComponent = wgpu::BlendComponent{
 diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
 --- a/lib/gx/shader.cpp
 +++ b/lib/gx/shader.cpp
