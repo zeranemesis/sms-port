@@ -101,6 +101,10 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
   match. 59.7 fps in the 20-stage tour. `SMS_AURORA_SYNC_DEPTH=1` restores the
   waiting copy. `aurora-async-depth.patch` holds the Aurora side alone.
 
+- `SMS_CPU_SAMPLE=<file>` (`platform/cpu_sampler.cpp`) samples every thread's
+  stack about once a millisecond without administrator rights;
+  `python tools/cpu-profile.py <file> --frames a-b` names the functions
+  (nm for the game, dbghelp for the DLLs). It found the depth wait above.
 
 - Aurora used to abort on any GX logic op other than CLEAR, COPY and NOOP
   ("unsupported logic op 10"). Pinna Park reached that through
