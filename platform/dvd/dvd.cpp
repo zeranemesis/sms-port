@@ -412,20 +412,136 @@ static void apply_user_mods()
 	}
 }
 
-// CubeShelf supplies already-normalized content roots in priority order.
-// This path only overlays recognized asset directories, not executables or saves.
-static void apply_cubeshelf_mods() {
-    const char* list = getenv("SMS_CUBESHELF_MOD_LIST");
-    if (!list || !*list) return;
-    std::ifstream input(list);std::string root;
-    while (std::getline(input,root)) {
-        if (!root.empty() && root.back()=='\r') root.pop_back();
-        if (root.empty()) continue;
-        int replaced=0,added=0;
-        for (const char* folder : {"data","scene","sound","movie","card"})
-            overlay_dir(root+"/"+folder,folder,&replaced,&added);
-        port_log("[dvd] CubeShelf mod: %d replaced, %d added (%s)\n",replaced,added,root.c_str());
-    }
+// The disc paths (from the base FST, before any mod) of the files called `name`,
+// compared without case like the FST itself.
+static std::vector<std::string> disc_paths_named(const std::string& name)
+{
+	std::vector<std::string> found;
+	std::vector<std::pair<u32, std::string>> dirs; // (one past last descendant, path)
+	for (u32 i = 1; i < (u32)g_baseFst.size(); i++) {
+		while (!dirs.empty() && i >= dirs.back().first)
+			dirs.pop_back();
+		const Entry& e = g_baseFst[i];
+		const std::string path = (dirs.empty() ? std::string() : dirs.back().second + "/") + e.name;
+		if (e.dir)
+			dirs.push_back({e.next, path});
+		else if (strcasecmp(e.name.c_str(), name.c_str()) == 0)
+			found.push_back(path);
+	}
+	return found;
+}
+
+// One CubeShelf content root, mapped onto the disc's root.
+static void overlay_cubeshelf_root(const std::string& root)
+{
+	int replaced = 0, added = 0, placed = 0, patches = 0;
+	DIR* dp = opendir(root.c_str());
+	if (!dp)
+		return;
+	std::vector<std::string> names;
+	while (dirent* e = readdir(dp))
+		if (strcmp(e->d_name, ".") && strcmp(e->d_name, ".."))
+			names.push_back(e->d_name);
+	closedir(dp);
+	for (const std::string& n : names) {
+		const std::string h = root + "/" + n;
+		struct stat st;
+		if (stat(h.c_str(), &st) != 0)
+			continue;
+		if (S_ISDIR(st.st_mode)) {
+			overlay_dir(h, n, &replaced, &added);
+			continue;
+		}
+		// Launcher metadata, never part of the game.
+		if (strcasecmp(n.c_str(), "cubeshelf-mod.json") == 0)
+			continue;
+		std::string lower = n;
+		for (char& c : lower)
+			c = (char)tolower((unsigned char)c);
+		const size_t dot = lower.rfind('.');
+		const std::string ext = dot == std::string::npos ? std::string() : lower.substr(dot);
+		if (ext == ".xdelta" || ext == ".vcdiff" || ext == ".bps" || ext == ".ips") {
+			patches++;
+			continue;
+		}
+		// A pack of loose files says nothing about where they go. One the disc
+		// does not have at its root but has at exactly one other path goes there.
+		std::string rel = n;
+		if (lookup_disc(("/" + n).c_str()) < 0) {
+			const std::vector<std::string> paths = disc_paths_named(n);
+			if (paths.size() == 1) {
+				rel = paths[0];
+				placed++;
+				port_log("[dvd] CubeShelf mod: loose %s placed at /%s\n", n.c_str(), rel.c_str());
+			}
+		}
+		const s32 e = lookup_disc(("/" + rel).c_str());
+		if (e >= 0 && !g_fst[e].dir) {
+			Entry& d    = g_fst[e];
+			d.host      = h;
+			d.length    = (u32)st.st_size;
+			d.fd        = -1;
+			d.mem       = NULL;
+			d.from_host = true;
+			replaced++;
+		} else {
+			add_entry(rel, false, h, (u32)st.st_size);
+			added++;
+		}
+	}
+	port_log("[dvd] CubeShelf mod: %d replaced, %d added, %d loose files placed (%s)\n", replaced, added,
+	         placed, root.c_str());
+	if (patches)
+		port_log("[dvd] CubeShelf mod %s ships %d disc patch file(s) (xdelta/BPS/IPS): a patched disc, not "
+		         "files to overlay, so they are not applied\n",
+		         root.c_str(), patches);
+}
+
+// CubeShelf (SMS_CUBESHELF_MOD_LIST): a UTF-8 list of mod content roots, one
+// per line, highest priority first. Blank lines, "#" comments and a BOM are
+// ignored; a relative line is relative to the list's folder; a root that no
+// longer exists is skipped. Each root maps onto the disc's root (CubeShelf has
+// already chosen a mod's files/ folder). Roots are applied lowest priority
+// first, so the highest priority mod wins a file, as a later SMS_MOD does.
+static void apply_cubeshelf_mods()
+{
+	const char* list = getenv("SMS_CUBESHELF_MOD_LIST");
+	if (!list || !*list)
+		return;
+	std::ifstream input(list, std::ios::binary);
+	if (!input) {
+		port_log("[dvd] CubeShelf mod list %s cannot be read; no mods\n", list);
+		return;
+	}
+	std::string base = list;
+	const size_t cut = base.find_last_of("/\\");
+	base = cut == std::string::npos ? std::string(".") : base.substr(0, cut);
+	std::vector<std::string> roots;
+	std::string line;
+	bool first = true;
+	while (std::getline(input, line)) {
+		if (first && line.compare(0, 3, "\xEF\xBB\xBF") == 0)
+			line.erase(0, 3);
+		first = false;
+		while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t'))
+			line.pop_back();
+		size_t start = line.find_first_not_of(" \t");
+		if (start == std::string::npos || line[start] == '#')
+			continue;
+		line = line.substr(start);
+		const bool absolute = line[0] == '/' || line[0] == '\\' || (line.size() > 1 && line[1] == ':');
+		const std::string root = absolute ? line : base + "/" + line;
+		struct stat st;
+		if (stat(root.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+			port_log("[dvd] CubeShelf mod %s is missing; skipped\n", root.c_str());
+			continue;
+		}
+		roots.push_back(root);
+	}
+	if (roots.empty())
+		port_log("[dvd] CubeShelf mod list %s names no usable mod\n", list);
+	for (auto it = roots.rbegin(); it != roots.rend(); ++it)
+		overlay_cubeshelf_root(*it);
 }
 
 static std::string overlay_signature() {
