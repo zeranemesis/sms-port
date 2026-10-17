@@ -9,6 +9,9 @@
 // After the logos, the application goes straight to the first stage. Once a
 // stage has run its frames, the director is asked for the next one through
 // setNextStage, as a pipe or a warp would; after the last, the game quits.
+// A stage that is still there kLeaveGrace frames after that request (an event
+// waiting for a button, such as the airstrip's arrival dialogue, defers the
+// change) has its director end the scene itself.
 // Nothing here runs unless SMS_STAGE_TOUR is set.
 #include <cstdio>
 #include <cstdlib>
@@ -25,6 +28,7 @@ struct Stop {
 
 // TApplication's states (System/Application.hpp).
 enum { kBoot = 2 };
+constexpr int kLeaveGrace = 300;
 
 struct Tour {
     bool parsed = false;
@@ -118,6 +122,7 @@ extern "C" int port_stage_tour_tick(void)
         return 0;
     if (++t.ticks < t.frames)
         return 0;
+    t.ticks = 0;
     t.leaving = true;
     if (t.log) {
         std::fprintf(t.log, "leave %d %d %u\n", t.stops[t.index].stage, t.stops[t.index].scenario,
@@ -126,4 +131,20 @@ extern "C" int port_stage_tour_tick(void)
     }
     const int next = t.index + 1 < (int)t.stops.size() ? t.index + 1 : t.index;
     return ((t.stops[next].stage + 1) << 8) | (t.stops[next].scenario & 0xff);
+}
+
+// Called once per TMarDirector::direct, after port_stage_tour_tick. Returns 1
+// once a stage has ignored its setNextStage for kLeaveGrace frames: direct
+// then returns the gameplay state, which ends the scene like a finished fade.
+extern "C" int port_stage_tour_force_exit(void)
+{
+    Tour& t = tour();
+    if (t.stops.empty() || t.index < 0 || !t.leaving)
+        return 0;
+    if (++t.ticks < kLeaveGrace)
+        return 0;
+    if (t.ticks == kLeaveGrace)
+        std::fprintf(stderr, "[tour] stage %d,%d ignored its exit for %d frames; ending it\n",
+                     t.stops[t.index].stage, t.stops[t.index].scenario, kLeaveGrace);
+    return 1;
 }

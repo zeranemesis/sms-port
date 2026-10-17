@@ -92,6 +92,26 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
 
 ## Renderer work beyond the menu
 
+- Survey of every stage and episode (`python tools/perf-stages.py --all`: the
+  109 stage,scenario pairs whose archive is on the disc; stageArc.bin also
+  names 16 that are not, such as pinnaDemo1 and most pinna_ex*). On the Intel
+  Ultra 7 255U at scale 2, 60 fps: no crash, 59.64 fps at worst, 97 stages with
+  no frame over 25 ms. Evidence: `artifacts/perf-stages-20261017-143226-all-episodes-3`.
+  The fixes behind it:
+  - Shadow Mario's chase episodes (Gelato 5, Pianta 2, Noki 5) crashed while
+    loading: a RARC root's ".." entry is directory 0xFFFFFFFF, which wrapped to
+    the entry before the table on the console's 32-bit pointers and pointed
+    64 GiB away here (`decomp-patches/ptr64-07-jkr-archive-directory-index-wrap.patch`).
+  - About a third of the isolated slow frames were a retrace reaching the game
+    late: the idle loop waited on a condition variable that `port_irq_kick`
+    signalled without its mutex, so a kick just before the wait was lost until
+    a 15.6 ms Windows timer tick (`platform/os/os_thread.cpp`).
+  - Aurora's command processing runs on its own thread (`GxThread` in
+    `bridge.cpp`); every other entry point waits for it to catch up first.
+    `SMS_AURORA_GX_THREAD=0` keeps it on the game thread.
+  - The copy read-back pool has 32 slots instead of 16: Noki's pollution layers
+    no longer force a GPU checkpoint every frame (`aurora-copy-slots.patch`).
+
 - Corona Mountain's boss ran at about 37 fps: the bathtub's Z24X8 depth copy
   (`TBathWaterMeshRenderer::prerender`, read back by `makeHeightMap`) waited
   for the GPU every frame, about 9 ms. After a first synchronous copy per

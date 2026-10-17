@@ -39,7 +39,9 @@ class NmModule:
 class DbgHelp:
     """MSVC images: dbghelp reads their PDBs."""
     def __init__(self):
-        self.dll = ctypes.WinDLL('dbghelp')
+        # The SDK's dbghelp reads current MSVC PDBs; System32's may not.
+        sdk = Path('C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/dbghelp.dll')
+        self.dll = ctypes.WinDLL(str(sdk) if sdk.exists() else 'dbghelp')
         self.proc = wt.HANDLE(0x5A5A)
         self.dll.SymSetOptions(0x2 | 0x4)  # SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS
         self.dll.SymInitializeW(self.proc, None, False)
@@ -55,7 +57,7 @@ class DbgHelp:
                         ('Tag', wt.ULONG), ('NameLen', wt.ULONG), ('MaxNameLen', wt.ULONG),
                         ('Name', ctypes.c_char * 512)]
         self.info = SYMBOL_INFO()
-        self.info.SizeOfStruct = ctypes.sizeof(SYMBOL_INFO) - 512 + 1
+        self.info.SizeOfStruct = 88  # sizeof(SYMBOL_INFO) in C: the fixed part, padded
         self.info.MaxNameLen = 511
         self.dll.SymFromAddr.argtypes = [wt.HANDLE, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64),
                                          ctypes.c_void_p]

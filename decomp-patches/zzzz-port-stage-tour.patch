@@ -37,25 +37,29 @@ Reason: port: SMS_STAGE_TOUR plays a list of stages without the title or file se
  		// mod reads the state from r30 and stores it itself.
 --- a/src/System/MarDirectorDirect.cpp
 +++ b/src/System/MarDirectorDirect.cpp
-@@ -88,6 +88,10 @@
+@@ -88,6 +88,11 @@
  }
  #endif
  
 +#ifdef TARGET_PC
 +extern "C" int port_stage_tour_tick(void);
++extern "C" int port_stage_tour_force_exit(void);
 +#endif
 +
  // TODO: 99.7%, frame 0x158 vs retail 0x198 (TGraphics sits 0x40 higher, a
  // dead low region) and r29/r30 swapped. Body from upstream (98.5 -> 99.7).
  int TMarDirector::direct()
-@@ -109,6 +113,12 @@
+@@ -109,6 +114,15 @@
  
  	u32 desiredAppState = TApplication::APP_STATE_DEFAULT;
  
 +#ifdef TARGET_PC
-+	// port: SMS_STAGE_TOUR moves on once this stage has run its frames.
++	// port: SMS_STAGE_TOUR moves on once this stage has run its frames, and
++	// ends a stage that keeps ignoring that request.
 +	if (int tourNext = port_stage_tour_tick())
 +		setNextStage(tourNext, nullptr);
++	if (port_stage_tour_force_exit())
++		return TApplication::APP_STATE_GAMEPLAY;
 +#endif
 +
  	JDrama::TGraphics local_140;
