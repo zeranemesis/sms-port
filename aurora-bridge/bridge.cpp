@@ -33,10 +33,95 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dbghelp.h>
+#include <condition_variable>
 #include <deque>
+#include <mutex>
+#include <thread>
 #include <vector>
 
 namespace {
+// Aurora's command processor turns the game's GX stream into draws. It used
+// to run inside sab_process, on the game thread: about a fifth of a busy
+// frame (Pinna Park) went there while the game waited. This thread runs it
+// instead, in order, while the game builds the rest of the frame. Every other
+// entry point waits until the thread has caught up (sab_gx_sync), so Aurora's
+// state is never used from two threads at once. SMS_AURORA_GX_THREAD=0 keeps
+// the processing on the game thread.
+class GxThread {
+public:
+    void start() {
+        const char* v = std::getenv("SMS_AURORA_GX_THREAD");
+        if ((v && std::strcmp(v, "0") == 0) || m_thread.joinable()) return;
+        m_stop = false;
+        m_thread = std::thread([this] { run(); });
+    }
+    void finish() {
+        if (!m_thread.joinable()) return;
+        {
+            std::lock_guard lock(m_mutex);
+            m_stop = true;
+        }
+        m_work.notify_all();
+        m_thread.join();
+    }
+    bool running() const { return m_thread.joinable(); }
+    void push(const void* data, uint32_t size) {
+        std::vector<uint8_t> buffer;
+        {
+            std::unique_lock lock(m_mutex);
+            // A few chunks ahead is enough to overlap; more only adds latency.
+            m_space.wait(lock, [this] { return m_queue.size() < kMaxQueued; });
+            if (!m_free.empty()) {
+                buffer = std::move(m_free.back());
+                m_free.pop_back();
+            }
+        }
+        buffer.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + size);
+        {
+            std::lock_guard lock(m_mutex);
+            m_queue.push_back(std::move(buffer));
+        }
+        m_work.notify_one();
+    }
+    void sync() {
+        if (!m_thread.joinable() || std::this_thread::get_id() == m_thread.get_id()) return;
+        std::unique_lock lock(m_mutex);
+        m_idle.wait(lock, [this] { return m_queue.empty() && !m_busy; });
+    }
+
+private:
+    static constexpr size_t kMaxQueued = 3;
+    void run() {
+        for (;;) {
+            std::vector<uint8_t> buffer;
+            {
+                std::unique_lock lock(m_mutex);
+                m_work.wait(lock, [this] { return m_stop || !m_queue.empty(); });
+                if (m_queue.empty()) return;
+                buffer = std::move(m_queue.front());
+                m_queue.pop_front();
+                m_busy = true;
+            }
+            m_space.notify_one();
+            GXCallDisplayListLE(buffer.data(), uint32_t(buffer.size()));
+            {
+                std::lock_guard lock(m_mutex);
+                m_busy = false;
+                if (m_free.size() < kMaxQueued + 1) m_free.push_back(std::move(buffer));
+                if (m_queue.empty()) m_idle.notify_all();
+            }
+        }
+    }
+    std::thread m_thread;
+    std::mutex m_mutex;
+    std::condition_variable m_work, m_space, m_idle;
+    std::deque<std::vector<uint8_t>> m_queue;
+    std::vector<std::vector<uint8_t>> m_free;
+    bool m_busy = false;
+    bool m_stop = false;
+};
+GxThread s_gxThread;
+
 bool s_ready = false;
 AuroraBackend s_backend = BACKEND_AUTO;
 std::deque<SabEvent> s_pending;
@@ -254,6 +339,8 @@ void pumpAurora() {
 }
 }  // namespace
 
+void sab_gx_sync() { s_gxThread.sync(); }
+
 extern "C" {
 
 int sab_init(const SabConfig* c) {
@@ -287,6 +374,7 @@ int sab_init(const SabConfig* c) {
     s_fifo.resize(256 * 1024);
     GXInit(s_fifo.data(), uint32_t(s_fifo.size()));
     s_ready = true;
+    s_gxThread.start();
     pumpAurora();  // opens gamepads: Aurora initialises input on the first update
     const char* precompile = std::getenv("SMS_AURORA_PRECOMPILE");
     if (!precompile || std::strcmp(precompile, "0")) {
@@ -306,6 +394,7 @@ int sab_init(const SabConfig* c) {
         });
         if (window) SDL_SetWindowTitle(window, title.c_str());
         if (!prepared) {
+            s_gxThread.finish();
             s_ready = false;
             aurora_shutdown();
             return 0;
@@ -316,12 +405,15 @@ int sab_init(const SabConfig* c) {
 
 void sab_shutdown(void) {
     if (!s_ready) return;
+    s_gxThread.sync();
+    s_gxThread.finish();
     sab_ui_shutdown();
     s_ready = false;
     aurora_shutdown();
 }
 
 const char* sab_backend_name(void) {
+    sab_gx_sync();
     switch (s_backend) {
     case BACKEND_D3D11: return "Direct3D 11";
     case BACKEND_D3D12: return "Direct3D 12";
@@ -335,6 +427,7 @@ const char* sab_backend_name(void) {
 }
 
 int sab_poll_event(SabEvent* out) {
+    sab_gx_sync();
     if (!s_ready) return 0;
     if (s_pending.empty()) {
         pumpAurora();
@@ -346,14 +439,16 @@ int sab_poll_event(SabEvent* out) {
 }
 
 int sab_begin_data_pass(uint16_t width, uint16_t height) {
+    sab_gx_sync();
     if (!s_ready || !width || !height || width > 1024 || height > 1024) return 0;
     aurora::gx::fifo::drain();
     return aurora::gfx::begin_data_pass(width, height) ? 1 : 0;
 }
 
-uint32_t sab_copy_readback_capacity(void) { return aurora::gfx::sms_readback::copy_capacity(); }
+uint32_t sab_copy_readback_capacity(void) { sab_gx_sync(); return aurora::gfx::sms_readback::copy_capacity(); }
 
 int sab_flush_copy_readbacks(void) {
+    sab_gx_sync();
     if (!s_ready || aurora::gfx::is_offscreen()) return 0;
     aurora::gx::fifo::drain();
     // A recording-thread checkpoint can safely rotate the mapped staging
@@ -371,12 +466,14 @@ int sab_flush_copy_readbacks(void) {
 }
 
 void sab_end_data_pass(void) {
+    sab_gx_sync();
     if (!s_ready) return;
     aurora::gx::fifo::drain();
     aurora::gfx::end_data_pass();
 }
 
 void sab_set_efb_size(uint32_t width, uint32_t height) {
+    sab_gx_sync();
     static GXRenderModeObj rm;
     std::memset(&rm, 0, sizeof rm);
     rm.fbWidth = uint16_t(width);
@@ -388,22 +485,25 @@ void sab_set_efb_size(uint32_t width, uint32_t height) {
 }
 
 void sab_get_window_size(uint32_t* width, uint32_t* height) {
+    sab_gx_sync();
     int ww = 0, hh = 0;
     if (SDL_Window* w = mainWindow()) SDL_GetWindowSizeInPixels(w, &ww, &hh);
     if (width) *width = uint32_t(ww);
     if (height) *height = uint32_t(hh);
 }
 
-void sab_set_fullscreen(int on) { VISetWindowFullscreen(on != 0); }
-int sab_is_fullscreen(void) { return VIGetWindowFullscreen() ? 1 : 0; }
-void sab_set_vsync(int on) { aurora_enable_vsync(on != 0); }
-void sab_set_window_title(const char* title) { VISetWindowTitle(title); }
+void sab_set_fullscreen(int on) { sab_gx_sync(); VISetWindowFullscreen(on != 0); }
+int sab_is_fullscreen(void) { sab_gx_sync(); return VIGetWindowFullscreen() ? 1 : 0; }
+void sab_set_vsync(int on) { sab_gx_sync(); aurora_enable_vsync(on != 0); }
+void sab_set_window_title(const char* title) { sab_gx_sync(); VISetWindowTitle(title); }
 
 void sab_set_mouse_relative(int on) {
+    sab_gx_sync();
     if (SDL_Window* w = mainWindow()) SDL_SetWindowRelativeMouseMode(w, on != 0);
 }
 
 int sab_begin_frame(void) {
+    sab_gx_sync();
     if (!s_ready) return 0;
     if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
         aurora::webgpu::g_instance.ProcessEvents();
@@ -412,29 +512,36 @@ int sab_begin_frame(void) {
     return aurora_begin_frame() ? 1 : 0;
 }
 void sab_end_frame(void) {
+    sab_gx_sync();
     if (s_ready) { sab_ui_overlay_draw();aurora_end_frame(); }
 }
 
 void sab_finish_frame(int present) {
+    sab_gx_sync();
     if (!s_ready) return;
     if (present) sab_ui_overlay_draw();
     aurora::finish_recording_frame(present!=0);
 }
-void sab_retain_efb(void) { if (s_ready) aurora::gfx::retain_efb_for_ui(); }
+void sab_retain_efb(void) { sab_gx_sync(); if (s_ready) aurora::gfx::retain_efb_for_ui(); }
 int sab_copy_display(const void* dest,uint16_t x,uint16_t y,uint16_t w,uint16_t h,int clear) {
+    sab_gx_sync();
     if (!s_ready) return 0;
     aurora::gx::fifo::drain();
     return aurora::gfx::copy_display(dest,{x,y,w,h},clear!=0)?1:0;
 }
 int sab_select_scanout(const void* dest,int black) {
+    sab_gx_sync();
     return s_ready && aurora::gfx::select_scanout(dest,black!=0)?1:0;
 }
 
 void sab_process(const void* data, uint32_t size) {
-    if (s_ready && data && size) GXCallDisplayListLE(data, size);
+    if (!s_ready || !data || !size) return;
+    if (s_gxThread.running()) s_gxThread.push(data, size);
+    else GXCallDisplayListLE(data, size);
 }
 
 int sab_peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t* argb, uint32_t* z) {
+    sab_gx_sync();
     if (!s_ready || !argb || !z) return 0;
     aurora::gx::fifo::drain();
     if (!aurora::gfx::peek_efb(x,y,revision,*argb,*z)) return 0;
@@ -443,6 +550,7 @@ int sab_peek_efb(uint32_t x, uint32_t y, uint64_t revision, uint32_t* argb, uint
 
 int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
                              uint16_t dstWidth, uint16_t dstHeight) {
+    sab_gx_sync();
     if (!s_ready || !dest || !width || !height || !dstWidth || !dstHeight ||
         width > 1024 || height > 1024 || dstWidth > 1024 || dstHeight > 1024) return 0;
     aurora::gx::fifo::drain();
@@ -456,6 +564,7 @@ int sab_copy_depth_z24x8_sync(void* dest, uint16_t left, uint16_t top, uint16_t 
 }
 
 int sab_copy_depth_z24x8_async(uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint64_t tag) {
+    sab_gx_sync();
     if (!s_ready || !tag || !width || !height || width > 1024 || height > 1024) return 0;
     aurora::gx::fifo::drain();
     return aurora::gfx::request_depth_efb_async({left, top, width, height}, tag) ? 1 : 0;
@@ -463,6 +572,7 @@ int sab_copy_depth_z24x8_async(uint16_t left, uint16_t top, uint16_t width, uint
 
 int sab_take_depth_z24x8(uint64_t tag, void* dest, uint16_t width, uint16_t height, uint16_t dstWidth,
                          uint16_t dstHeight) {
+    sab_gx_sync();
     if (!s_ready) return 0;
     if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
         aurora::webgpu::g_instance.ProcessEvents();
@@ -480,12 +590,14 @@ int sab_take_depth_z24x8(uint64_t tag, void* dest, uint16_t width, uint16_t heig
 
 void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
                   uint16_t dstHeight, uint32_t fmt, int clear, int readback) {
+    sab_gx_sync();
     sab_copy_tex_request(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, 0);
 }
 
 void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
                           uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear, int readback,
                           uint64_t requestId) {
+    sab_gx_sync();
     if (!s_ready) return;
     if (readback) {
         // GX depth-copy formats carry the Z-format bit; this colour readback
@@ -502,6 +614,7 @@ void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t widt
 
 int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                            const uint32_t** rgba) {
+    sab_gx_sync();
     uint64_t requestId;
     int success;
     // Older callers cannot consume failure notifications or request IDs.
@@ -513,6 +626,7 @@ int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height,
 
 int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                                    const uint32_t** rgba, uint64_t* requestId, int* success) {
+    sab_gx_sync();
     if (!s_ready) return 0;
     if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
         aurora::webgpu::g_instance.ProcessEvents();
@@ -520,17 +634,20 @@ int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t*
     return aurora_sms_poll_copy_readback(dest, width, height, frameId, rgba, requestId, success);
 }
 
-uint64_t sab_frame_id(void) { return aurora_sms_current_frame_id(); }
-float sab_efb_pixel_area_scale(void) { return aurora_sms_efb_pixel_area_scale(); }
+uint64_t sab_frame_id(void) { sab_gx_sync(); return aurora_sms_current_frame_id(); }
+float sab_efb_pixel_area_scale(void) { sab_gx_sync(); return aurora_sms_efb_pixel_area_scale(); }
 int sab_poll_pixel_metrics(uint64_t* frameId, const uint32_t** counts) {
+    sab_gx_sync();
     return s_ready ? aurora_sms_poll_pixel_metrics(frameId, counts) : 0;
 }
 
 void sab_destroy_copy_tex(void* dest) {
+    sab_gx_sync();
     if (s_ready) GXDestroyCopyTex(dest);
 }
 
 void sab_set_window_icon(const uint8_t* rgba, int width, int height) {
+    sab_gx_sync();
     SDL_Window* w = mainWindow();
     if (!w || !rgba || width <= 0 || height <= 0) return;
     if (SDL_Surface* s =

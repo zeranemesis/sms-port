@@ -115,6 +115,7 @@ Rml::Dictionary dictionary(const SabUiParameter* values, uint32_t count) {
 }
 
 bool sab_ui_process_sdl(const SDL_Event& e) {
+    sab_gx_sync();
     if (!callbacks.event || !portalDocument) return false;
     SabUiEvent out{};
     out.modifiers = uint16_t(SDL_GetModState());
@@ -153,12 +154,14 @@ bool sab_ui_process_sdl(const SDL_Event& e) {
 }
 
 void sab_ui_set_effects(int fxaa, float gamma) {
+    sab_gx_sync();
     if (effectFxaa != (fxaa != 0) || effectGamma != gamma) {
         effectFxaa = fxaa != 0; effectGamma = gamma; effectDirty = true;
     }
 }
 
 void sab_ui_overlay_draw() {
+    sab_gx_sync();
     if (!overlayVisible) return;
     ImGui::SetNextWindowBgAlpha(0.72f);
     ImGui::SetNextWindowPos(ImVec2(12,12), ImGuiCond_Always);
@@ -177,9 +180,10 @@ void sab_ui_overlay_draw() {
 }
 
 extern "C" {
-void sab_set_overlay(int visible) { overlayVisible = visible != 0; }
-void sab_set_menu_paused(int paused) { aurora::rmlui::set_game_frame_frozen(paused != 0); }
+void sab_set_overlay(int visible) { sab_gx_sync(); overlayVisible = visible != 0; }
+void sab_set_menu_paused(int paused) { sab_gx_sync(); aurora::rmlui::set_game_frame_frozen(paused != 0); }
 int sab_ui_initialize(const char* version, const SabUiCallbacks* input) {
+    sab_gx_sync();
     auto* context = aurora::rmlui::get_context();
     if (!context || !input || input->abiVersion != SAB_UI_ABI_VERSION) return 0;
     if (!version || Rml::GetVersion() != version) {
@@ -200,14 +204,16 @@ int sab_ui_initialize(const char* version, const SabUiCallbacks* input) {
     return 1;
 }
 void sab_ui_shutdown(void) {
+    sab_gx_sync();
     callbacks = {};
     if (presentEffect) { renderer()->ReleaseFilter(presentEffect); presentEffect = 0; }
     effectDirty = true;
     if (portalDocument) { portalDocument->Close(); portalDocument = nullptr; }
     for (auto*& cursor : cursors) { if (cursor) SDL_DestroyCursor(cursor); cursor = nullptr; }
 }
-double sab_ui_time(void) { return double(SDL_GetTicksNS()) / 1e9; }
+double sab_ui_time(void) { sab_gx_sync(); return double(SDL_GetTicksNS()) / 1e9; }
 void sab_ui_cursor(const char* name) {
+    sab_gx_sync();
     SDL_SystemCursor kind = SDL_SYSTEM_CURSOR_DEFAULT;
     if (name && !std::strcmp(name, "pointer")) kind = SDL_SYSTEM_CURSOR_POINTER;
     else if (name && !std::strcmp(name, "text")) kind = SDL_SYSTEM_CURSOR_TEXT;
@@ -221,8 +227,9 @@ void sab_ui_cursor(const char* name) {
     if (!cursors[kind]) cursors[kind] = SDL_CreateSystemCursor(kind);
     if (cursors[kind]) SDL_SetCursor(cursors[kind]);
 }
-void sab_ui_clipboard_set(const char* text) { SDL_SetClipboardText(text ? text : ""); }
+void sab_ui_clipboard_set(const char* text) { sab_gx_sync(); SDL_SetClipboardText(text ? text : ""); }
 uint32_t sab_ui_clipboard_get(char* text, uint32_t capacity) {
+    sab_gx_sync();
     char* clipboard = SDL_GetClipboardText();
     const uint32_t size = clipboard ? uint32_t(std::strlen(clipboard) + 1) : 1;
     if (text && capacity) {
@@ -234,6 +241,7 @@ uint32_t sab_ui_clipboard_get(char* text, uint32_t capacity) {
     return size;
 }
 void sab_ui_keyboard(int enabled, float x, float y, float height) {
+    sab_gx_sync();
     if (SDL_Window* w = window()) {
         if (enabled) {
             // Rml caret coordinates are content pixels; SDL IME expects
@@ -255,8 +263,9 @@ void sab_ui_keyboard(int enabled, float x, float y, float height) {
         } else SDL_StopTextInput(w);
     }
 }
-void sab_ui_request_quit(void) { SDL_Event e{}; e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
+void sab_ui_request_quit(void) { sab_gx_sync(); SDL_Event e{}; e.type = SDL_EVENT_QUIT; SDL_PushEvent(&e); }
 uint64_t sab_ui_geometry_create(const SabUiVertex* input, uint32_t count, const int32_t* indices, uint32_t indexCount) {
+    sab_gx_sync();
     std::vector<Rml::Vertex> vertices(count);
     for (uint32_t i = 0; i < count; ++i) {
         const auto& v = input[i];
@@ -265,34 +274,37 @@ uint64_t sab_ui_geometry_create(const SabUiVertex* input, uint32_t count, const 
     static_assert(sizeof(int) == sizeof(int32_t));
     return renderer()->CompileGeometry({vertices.data(), vertices.size()}, {indices, indexCount});
 }
-void sab_ui_geometry_draw(uint64_t g, float x, float y, uint64_t t) { renderer()->RenderGeometry(g, {x,y}, t); }
-void sab_ui_geometry_release(uint64_t g) { renderer()->ReleaseGeometry(g); }
+void sab_ui_geometry_draw(uint64_t g, float x, float y, uint64_t t) { sab_gx_sync(); renderer()->RenderGeometry(g, {x,y}, t); }
+void sab_ui_geometry_release(uint64_t g) { sab_gx_sync(); renderer()->ReleaseGeometry(g); }
 uint64_t sab_ui_texture_create(const uint8_t* rgba, int w, int h) {
+    sab_gx_sync();
     return renderer()->GenerateTexture({rgba, size_t(w)*size_t(h)*4}, {w,h});
 }
-void sab_ui_texture_release(uint64_t t) { renderer()->ReleaseTexture(t); }
-void sab_ui_scissor_enable(int on) { renderer()->EnableScissorRegion(on != 0); }
-void sab_ui_scissor_set(int l, int t, int r, int b) { renderer()->SetScissorRegion(Rml::Rectanglei::FromPositionSize({l,t},{r-l,b-t})); }
-void sab_ui_clip_enable(int on) { renderer()->EnableClipMask(on != 0); }
-void sab_ui_clip_draw(int op, uint64_t g, float x, float y) { renderer()->RenderToClipMask(Rml::ClipMaskOperation(op),g,{x,y}); }
+void sab_ui_texture_release(uint64_t t) { sab_gx_sync(); renderer()->ReleaseTexture(t); }
+void sab_ui_scissor_enable(int on) { sab_gx_sync(); renderer()->EnableScissorRegion(on != 0); }
+void sab_ui_scissor_set(int l, int t, int r, int b) { sab_gx_sync(); renderer()->SetScissorRegion(Rml::Rectanglei::FromPositionSize({l,t},{r-l,b-t})); }
+void sab_ui_clip_enable(int on) { sab_gx_sync(); renderer()->EnableClipMask(on != 0); }
+void sab_ui_clip_draw(int op, uint64_t g, float x, float y) { sab_gx_sync(); renderer()->RenderToClipMask(Rml::ClipMaskOperation(op),g,{x,y}); }
 void sab_ui_transform(const float* rows) {
+    sab_gx_sync();
     if (!rows) { renderer()->SetTransform(nullptr); return; }
     Rml::Matrix4f m;
     for (int i=0;i<4;++i) m.SetRow(i,{rows[i*4],rows[i*4+1],rows[i*4+2],rows[i*4+3]});
     renderer()->SetTransform(&m);
 }
-uint64_t sab_ui_layer_push(void) { return renderer()->PushLayer(); }
+uint64_t sab_ui_layer_push(void) { sab_gx_sync(); return renderer()->PushLayer(); }
 void sab_ui_layer_composite(uint64_t s, uint64_t d, int replace, const uint64_t* filters, uint32_t count) {
+    sab_gx_sync();
     std::vector<Rml::CompiledFilterHandle> handles;
     if (count) handles.assign(filters, filters+count);
     renderer()->CompositeLayers(s,d,replace ? Rml::BlendMode::Replace : Rml::BlendMode::Blend,{handles.data(),handles.size()});
 }
-void sab_ui_layer_pop(void) { renderer()->PopLayer(); }
-uint64_t sab_ui_layer_texture(void) { return renderer()->SaveLayerAsTexture(); }
-uint64_t sab_ui_layer_mask(void) { return renderer()->SaveLayerAsMaskImage(); }
-uint64_t sab_ui_filter_create(const char* name, const SabUiParameter* p, uint32_t count) { return renderer()->CompileFilter(name,dictionary(p,count)); }
-void sab_ui_filter_release(uint64_t f) { renderer()->ReleaseFilter(f); }
-uint64_t sab_ui_shader_create(const char* name, const SabUiParameter* p, uint32_t count) { return renderer()->CompileShader(name,dictionary(p,count)); }
-void sab_ui_shader_draw(uint64_t s, uint64_t g, float x, float y, uint64_t t) { renderer()->RenderShader(s,g,{x,y},t); }
-void sab_ui_shader_release(uint64_t s) { renderer()->ReleaseShader(s); }
+void sab_ui_layer_pop(void) { sab_gx_sync(); renderer()->PopLayer(); }
+uint64_t sab_ui_layer_texture(void) { sab_gx_sync(); return renderer()->SaveLayerAsTexture(); }
+uint64_t sab_ui_layer_mask(void) { sab_gx_sync(); return renderer()->SaveLayerAsMaskImage(); }
+uint64_t sab_ui_filter_create(const char* name, const SabUiParameter* p, uint32_t count) { sab_gx_sync(); return renderer()->CompileFilter(name,dictionary(p,count)); }
+void sab_ui_filter_release(uint64_t f) { sab_gx_sync(); renderer()->ReleaseFilter(f); }
+uint64_t sab_ui_shader_create(const char* name, const SabUiParameter* p, uint32_t count) { sab_gx_sync(); return renderer()->CompileShader(name,dictionary(p,count)); }
+void sab_ui_shader_draw(uint64_t s, uint64_t g, float x, float y, uint64_t t) { sab_gx_sync(); renderer()->RenderShader(s,g,{x,y},t); }
+void sab_ui_shader_release(uint64_t s) { sab_gx_sync(); renderer()->ReleaseShader(s); }
 }

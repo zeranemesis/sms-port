@@ -36,6 +36,7 @@ aurora::texture::ReplacementGroup packs;
 }
 
 void sab_apply_pending_settings() {
+    sab_gx_sync();
     if (windowSettings.pending || graphicsSettings.pending || packsPending)
         aurora::gfx::gpu_synchronize();
     if(windowSettings.pending) {
@@ -118,18 +119,21 @@ void sab_apply_pending_settings() {
 // for the display too, and the two clocks beat, so frames miss a retrace. Mailbox
 // keeps vsync (no tearing) without the wait. SMS_PRESENT_FIFO=1 restores FIFO.
 void sab_configure_present() {
+    sab_gx_sync();
     const char* fifo=std::getenv("SMS_PRESENT_FIFO");
     aurora::webgpu::set_prefer_mailbox(!(fifo&&*fifo&&std::strcmp(fifo,"0")!=0));
 }
 
 extern "C" {
 void sab_apply_window_settings(const char* vsync,const char* mode,const char* fullscreenMode,int display,int scale) {
+    sab_gx_sync();
     WindowSettings next{true,vsync?vsync:"off",mode?mode:"windowed",fullscreenMode?fullscreenMode:"desktop",display,scale};
     if(next.vsync==windowSettings.vsync&&next.mode==windowSettings.mode&&
        next.fullscreenMode==windowSettings.fullscreenMode&&next.display==windowSettings.display&&next.scale==windowSettings.scale)return;
     windowSettings=std::move(next);
 }
 void sab_apply_graphics_settings(int scale,int msaa,int fxaa,int aniso,float gamma,const char* aspect,const char* filter,float wide) {
+    sab_gx_sync();
     // WebGPU exposes one or four samples for these render attachments.
     GraphicsSettings next{true,std::clamp(scale,1,8),msaa>1?4:1,fxaa!=0,std::clamp(aniso,1,16),
                       std::clamp(gamma,0.5f,2.f),wide,aspect?aspect:"keep",filter?filter:"bilinear"};
@@ -138,13 +142,15 @@ void sab_apply_graphics_settings(int scale,int msaa,int fxaa,int aniso,float gam
        next.aspect==graphicsSettings.aspect&&next.filter==graphicsSettings.filter)return;
     graphicsSettings=std::move(next);
 }
-void sab_delay(uint32_t ms) { SDL_Delay(ms); }
+void sab_delay(uint32_t ms) { sab_gx_sync(); SDL_Delay(ms); }
 int sab_begin_menu_frame(void) {
+    sab_gx_sync();
     const int ready=sab_begin_frame();
     if(ready)aurora::gfx::retain_efb_for_ui();
     return ready;
 }
 void sab_set_texture_packs(int enabled,const char* const* paths,uint32_t count) {
+    sab_gx_sync();
     packsEnabled=enabled!=0;
     packPaths.clear();
     for(uint32_t i=0;i<count;++i)if(paths[i]&&*paths[i])packPaths.emplace_back(paths[i]);

@@ -6,3 +6,5 @@ void sab_ui_overlay_draw();
 void sab_ui_set_effects(int fxaa, float gamma);
 void sab_apply_pending_settings();
 void sab_configure_present();
+// Waits until the GX thread has processed everything submitted (bridge.cpp).
+void sab_gx_sync();
