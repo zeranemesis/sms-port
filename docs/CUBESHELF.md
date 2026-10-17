@@ -44,6 +44,23 @@ Disc patches (`.xdelta`, `.vcdiff`, `.bps`, `.ips`) build a different disc and a
 Super Mario Eclipse is one: it also changes the game's code (see [ECLIPSE.md](ECLIPSE.md)).
 CubeShelf reports such a mod as unusable on its mod page.
 
+## Mods made for Dolphin
+
+Many GameBanana skins replace `data/mario.szs` with a model built from fewer nodes than Mario's, while the game reaches into Mario's model by index: shape 4, 5, 6 and 10, the cap's joint 1, the `_mat_eye_L`/`_mat_eye_R` materials, a shadow joint's child.
+On a GameCube those accesses read past the end of a table; Dolphin without its MMU ignores them, which is why such skins work there (Super Waluigi Sunshine's readme says to turn the MMU off or the game crashes).
+Here they crashed while Mario loaded.
+`decomp-patches/zzzz-port-mod-model-missing-nodes.patch` gives an index past the end of a model's joint, shape, material or matrix table a stand-in node that no model draws, logs each missing index once (`[j3d] a model has no shape 4 (it has 2)`), and always applies BetterSunshineEngine's guard for a shadow joint with no child.
+Mario's own model has every node, so the game is unchanged without mods.
+
+Tried with three skins from GameBanana, installed as CubeShelf installs them (a loose `mario.szs`, placed at `/data/mario.szs`): Garfield (248171), Super Waluigi Sunshine (248164) and Mario 64 Swap's raw file (448379).
+Each replaced Mario in Bianco Hills, and Garfield and Mario 64 Swap played seven more stages (Delfino Plaza, Ricco, Gelato, Hotel Delfino, Pinna Park, Noki, the Corona boss) without a crash.
+Frame times matched the unmodded game measured in the same session.
+
+Cutscene Removal (50018) ships its movies as THP 1.0 files, which the game's THP player refuses to open (it takes 1.1 only).
+On a GameCube the movie director's setup thread then ends with that failure as its exit value, left in r3, and the director moves on at once: that is how the mod removes the cutscenes.
+The port had made those thread entry points return null, so the director waited forever on a black screen; `decomp-patches/zzzz-port-thread-exit-values.patch` returns the callee's result again.
+With the mod, Delfino Plaza's arrival movie ends at once (frame 105 instead of 3247) and the stage follows.
+
 ## Checked
 
 A stage tour with three test mods (two replacing `bianco0.szs` at different priorities, one shipping a loose `airport0.szs`), a blank line, a comment, a relative path, a missing mod and a BOM: Bianco Hills loaded the higher priority mod's archive, the loose file reached `/data/scene/airport0.szs`, and the missing mod was skipped.

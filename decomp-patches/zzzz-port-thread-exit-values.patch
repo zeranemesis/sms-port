@@ -1,0 +1,96 @@
+Reason: port: thread entry points return their callee's result, as retail leaves it in r3; direct() reads it, so a failed setup moves on (Cutscene Removal's movies, which the THP player refuses, are skipped instead of waiting forever)
+--- a/src/GC2D/SelectDir.cpp
++++ b/src/GC2D/SelectDir.cpp
+@@ -82,9 +82,13 @@
+ 
+ void* TSelectDir::setupThreadFunc(void* param_1)
+ {
+-	((TSelectDir*)param_1)->rsetup();
+ #ifdef TARGET_PC
+-	return nullptr; // thread exit value: retail leaves the callee's r3, nothing reads it
++	// The thread's exit value is the callee's result, which retail leaves in
++	// r3. direct() reads it through OSJoinThread, so a setup that fails moves
++	// on (a movie that will not open, such as Cutscene Removal's, is skipped).
++	return (void*)(intptr_t)((TSelectDir*)param_1)->rsetup();
++#else
++	((TSelectDir*)param_1)->rsetup();
+ #endif
+ }
+ 
+--- a/src/System/CardManager.cpp
++++ b/src/System/CardManager.cpp
+@@ -232,9 +232,13 @@
+ 
+ static void* cardmain(void* param_1)
+ {
+-	((TCardManager*)param_1)->cmdLoop();
+ #ifdef TARGET_PC
+-	return nullptr; // thread exit value: retail leaves the callee's r3, nothing reads it
++	// The thread's exit value is the callee's result, which retail leaves in
++	// r3. direct() reads it through OSJoinThread, so a setup that fails moves
++	// on (a movie that will not open, such as Cutscene Removal's, is skipped).
++	return (void*)(intptr_t)((TCardManager*)param_1)->cmdLoop();
++#else
++	((TCardManager*)param_1)->cmdLoop();
+ #endif
+ }
+ 
+--- a/src/System/MarDirector.cpp
++++ b/src/System/MarDirector.cpp
+@@ -72,9 +72,18 @@
+ 
+ void* TMarDirector::setupThreadFunc(void* param_1)
+ {
+-	({ typedef __typeof__(((TMarDirector*)param_1)->loadResource()) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80296DE0); if (sms_mod_t_) ((__typeof__(sms_mod_as_free(static_cast<sms_mod_r_ (TMarDirector::*)()>(&TMarDirector::loadResource))))sms_mod_t_)(((TMarDirector*)param_1)); else ((TMarDirector*)param_1)->loadResource(); });
+ #ifdef TARGET_PC
+-	return nullptr; // thread exit value: retail leaves the callee's r3, nothing reads it
++	// The thread's exit value is the callee's result, which retail leaves in
++	// r3. direct() reads it through OSJoinThread, so a setup that fails moves
++	// on (a movie that will not open, such as Cutscene Removal's, is skipped).
++	void* sms_mod_t_ = SMS_MOD_SITE(0x80296DE0);
++	const int result = sms_mod_t_
++	    ? ((__typeof__(sms_mod_as_free(static_cast<int (TMarDirector::*)()>(&TMarDirector::loadResource))))sms_mod_t_)(
++	          (TMarDirector*)param_1)
++	    : ((TMarDirector*)param_1)->loadResource();
++	return (void*)(intptr_t)result;
++#else
++	({ typedef __typeof__(((TMarDirector*)param_1)->loadResource()) sms_mod_r_; void* sms_mod_t_ = SMS_MOD_SITE(0x80296DE0); if (sms_mod_t_) ((__typeof__(sms_mod_as_free(static_cast<sms_mod_r_ (TMarDirector::*)()>(&TMarDirector::loadResource))))sms_mod_t_)(((TMarDirector*)param_1)); else ((TMarDirector*)param_1)->loadResource(); });
+ #endif
+ }
+ 
+--- a/src/System/MenuDir.cpp
++++ b/src/System/MenuDir.cpp
+@@ -55,9 +55,13 @@
+ void* TMenuDirector::setupThreadFunc(void* param_1)
+ {
+ 	// BUG: return missing
+-	((TMenuDirector*)param_1)->rsetup();
+ #ifdef TARGET_PC
+-	return nullptr; // thread exit value: retail leaves the callee's r3, nothing reads it
++	// The thread's exit value is the callee's result, which retail leaves in
++	// r3. direct() reads it through OSJoinThread, so a setup that fails moves
++	// on (a movie that will not open, such as Cutscene Removal's, is skipped).
++	return (void*)(intptr_t)((TMenuDirector*)param_1)->rsetup();
++#else
++	((TMenuDirector*)param_1)->rsetup();
+ #endif
+ }
+ 
+--- a/src/System/MovieDirector.cpp
++++ b/src/System/MovieDirector.cpp
+@@ -198,9 +198,13 @@
+ 
+ void* TMovieDirector::setupThreadFunc(void* self)
+ {
+-	((TMovieDirector*)self)->rsetup();
+ #ifdef TARGET_PC
+-	return nullptr; // thread exit value: retail leaves the callee's r3, nothing reads it
++	// The thread's exit value is the callee's result, which retail leaves in
++	// r3. direct() reads it through OSJoinThread, so a setup that fails moves
++	// on (a movie that will not open, such as Cutscene Removal's, is skipped).
++	return (void*)(intptr_t)((TMovieDirector*)self)->rsetup();
++#else
++	((TMovieDirector*)self)->rsetup();
+ #endif
+ }
+ 

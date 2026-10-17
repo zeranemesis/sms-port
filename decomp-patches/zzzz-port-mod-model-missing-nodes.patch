@@ -1,0 +1,145 @@
+Reason: port: mods: an index past the end of a model's joint, shape, material or matrix table gets a stand-in, as Dolphin without MMU tolerates, and the shadow's childless-joint guard always applies; GameBanana Mario skins crashed TMario::initModel, TMarioCap and TMBindShadowParts
+--- a/libs/JSystem/include/JSystem/J3D/J3DGraphAnimator/J3DModel.hpp
++++ b/libs/JSystem/include/JSystem/J3D/J3DGraphAnimator/J3DModel.hpp
+@@ -48,6 +48,19 @@
+ };
+ 
+ // Should be 0xbc bytes
++#ifdef TARGET_PC
++class J3DShape;
++// port: stand-ins for a joint or shape index past the end of a model's table.
++// The game hard-codes indices into Mario's model (shape 4, the cap's joint 1)
++// that GameBanana skins built from fewer nodes do not have. Dolphin without its
++// MMU ignores the stray access, which is why those mods work there; here it
++// was a crash. J3DModel.cpp defines them, and logs each missing index once.
++J3DJoint* port_j3d_missing_joint(u16 index, u16 count);
++J3DShape* port_j3d_missing_shape(u16 index, u16 count);
++J3DMaterial* port_j3d_missing_material(u16 index, u16 count);
++MtxPtr port_j3d_missing_matrix(int index, u16 count);
++#endif
++
+ class J3DModelData {
+ public:
+ 	void clear();
+@@ -78,10 +91,18 @@
+ 	JUTNameTab* getJointName() const { return unkB0; }
+ 	J3DJoint* getJointNodePointer(u16 idx) const
+ 	{
++#ifdef TARGET_PC
++		if (idx >= mJointNum)
++			return port_j3d_missing_joint(idx, mJointNum);
++#endif
+ 		return mJointNodePointer[idx];
+ 	}
+ 	J3DShape* getShapeNodePointer(u16 idx) const
+ 	{
++#ifdef TARGET_PC
++		if (idx >= mShapeNum)
++			return port_j3d_missing_shape(idx, mShapeNum);
++#endif
+ 		return mShapeNodePointer[idx];
+ 	}
+ 	u16 getDrawMtxNum() const { return mDrawMtxData.mEntryNum; }
+@@ -97,6 +118,12 @@
+ 	J3DMaterial* getMaterialNodePointer(u16 idx) const
+ 	{
+ 		J3D_ASSERT_RANGE(idx < mMaterialNum);
++#ifdef TARGET_PC
++		// A material looked up by a name the model lacks (getIndex gives
++		// 0xFFFF), such as Mario's _mat_eye_L in a skin.
++		if (idx >= mMaterialNum)
++			return port_j3d_missing_material(idx, mMaterialNum);
++#endif
+ 		return mMaterials[idx];
+ 	}
+ 	void setTexture(J3DTexture* texture) { unkAC = texture; }
+@@ -252,7 +279,14 @@
+ 	void prepareShapePackets();
+ 
+ 	J3DModelData* getModelData() { return mModelData; }
+-	MtxPtr getAnmMtx(int idx) { return mNodeMatrices[idx]; }
++	MtxPtr getAnmMtx(int idx)
++	{
++#ifdef TARGET_PC
++		if (idx < 0 || idx >= mModelData->getJointNum())
++			return port_j3d_missing_matrix(idx, mModelData->getJointNum());
++#endif
++		return mNodeMatrices[idx];
++	}
+ 	void setAnmMtx(int idx, Mtx mtx) { MTXCopy(mtx, mNodeMatrices[idx]); }
+ 	J3DMatPacket* getMatPacket(u16 idx) { return &mMatPackets[idx]; }
+ 	J3DMatPacket* getMatPacketArray() { return mMatPackets; }
+--- a/libs/JSystem/src/J3D/J3DGraphAnimator/J3DModel.cpp
++++ b/libs/JSystem/src/J3D/J3DGraphAnimator/J3DModel.cpp
+@@ -1471,3 +1471,55 @@
+ 	mShapePacket.setVtxNrm(mVertexBuffer->getCurrentVtxNrm());
+ 	mShapePacket.setVtxCol(mVertexBuffer->getCurrentVtxCol());
+ }
++
++#ifdef TARGET_PC
++#include <dolphin/os.h>
++
++// port: see J3DModel.hpp. Writes land in an object no model draws; reads see
++// a default-constructed node, as Dolphin's unmapped reads see zero.
++enum { PORT_J3D_JOINT, PORT_J3D_SHAPE, PORT_J3D_MATERIAL, PORT_J3D_MATRIX };
++
++static void port_j3d_report_missing(int kind, u16 index, u16 count)
++{
++	static const char* const names[] = { "joint", "shape", "material", "matrix" };
++	static u32 reported[4][8];
++	if (index < 256 && (reported[kind][index >> 5] & (1u << (index & 31))))
++		return;
++	if (index < 256)
++		reported[kind][index >> 5] |= 1u << (index & 31);
++	OSReport("[j3d] a model has no %s %u (it has %u); using a stand-in, as a mod built for "
++	         "Dolphin without MMU expects\n",
++	         names[kind], index, count);
++}
++
++J3DJoint* port_j3d_missing_joint(u16 index, u16 count)
++{
++	static J3DJoint standIn;
++	port_j3d_report_missing(PORT_J3D_JOINT, index, count);
++	return &standIn;
++}
++
++J3DShape* port_j3d_missing_shape(u16 index, u16 count)
++{
++	static J3DShape standIn;
++	port_j3d_report_missing(PORT_J3D_SHAPE, index, count);
++	return &standIn;
++}
++J3DMaterial* port_j3d_missing_material(u16 index, u16 count)
++{
++	// Marked unique, so change() leaves it alone instead of reading the
++	// original material it does not have.
++	static J3DMaterial standIn;
++	standIn.setMaterialID(1u << 30);
++	port_j3d_report_missing(PORT_J3D_MATERIAL, index, count);
++	return &standIn;
++}
++
++MtxPtr port_j3d_missing_matrix(int index, u16 count)
++{
++	static Mtx standIn;
++	MTXIdentity(standIn);
++	port_j3d_report_missing(PORT_J3D_MATRIX, u16(index), count);
++	return standIn;
++}
++#endif
+--- a/src/MarioUtil/ShadowUtil.cpp
++++ b/src/MarioUtil/ShadowUtil.cpp
+@@ -52,9 +52,10 @@
+ #ifdef TARGET_PC
+ 	// BetterSunshineEngine (shadowCrashPatch and fixShadowPartsCrash, both
+ 	// at retail 0x802320E0 over the child's joint-number load): a joint with
+-	// no child takes joint number 0 instead of reading through null.
+-	if (SMS_MOD_SITE(0x802320E0)
+-	    && !param_1->getModelData()->getJointNodePointer(param_2)->getChild())
++	// no child takes joint number 0 instead of reading through null. Applied
++	// with or without that engine: Mario's own model always has the child,
++	// and GameBanana skins built from fewer joints crashed here.
++	if (!param_1->getModelData()->getJointNodePointer(param_2)->getChild())
+ 		mChildMtx = param_1->getAnmMtx(0);
+ 	else
+ #endif
