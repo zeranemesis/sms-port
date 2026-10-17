@@ -1,0 +1,11 @@
+--- a/lib/gfx/sms_readback.cpp
++++ b/lib/gfx/sms_readback.cpp
+@@ -24,7 +24,7 @@
+ 
+ constexpr uint64_t CounterBytes = AURORA_SMS_PIXEL_METRIC_SLOTS * sizeof(uint32_t);
+ constexpr size_t CounterSlots = 4;
+-constexpr size_t CopySlots = 16;
++constexpr size_t CopySlots = 32;
+ 
+ enum class SlotState : uint8_t { Available, Recording, PendingSubmit, CopySubmitted, MapPending };
+ 
