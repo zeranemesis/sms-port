@@ -102,6 +102,12 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
   Pinna Park now loads and plays; evidence in
   `artifacts/perf-stages-20261017-101145-pinna-logicop`.
 
+- Stage survey without the title or file select: `SMS_STAGE_TOUR=2,0;9,0`
+  plays those stage,scenario pairs in one process, `SMS_STAGE_TOUR_FRAMES`
+  game frames each, then quits (`platform/stage_tour.cpp`,
+  `decomp-patches/zzzz-port-stage-tour.patch`). `python tools/perf-stages.py`
+  runs it over 20 stages with copied saves and settings, and prints frame
+  times per stage from `SMS_GX_PROFILE`.
 
 - Aurora checks `dawn_cache.db` and `pipeline_cache.db` with `PRAGMA quick_check`
   when it opens them. A corrupt file is moved aside as `<name>.corrupt` and

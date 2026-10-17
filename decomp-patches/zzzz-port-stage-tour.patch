@@ -1,0 +1,63 @@
+Reason: port: SMS_STAGE_TOUR plays a list of stages without the title or file select (performance testing; platform/stage_tour.cpp)
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -758,6 +758,10 @@
+ 	return result;
+ }
+ 
++#ifdef TARGET_PC
++extern "C" int port_stage_tour_transition(int, int*, int*);
++#endif
++
+ void TApplication::proc()
+ {
+ 	// Dead leftovers: the ROM reserves this much stack with no code
+@@ -908,6 +912,22 @@
+ 		}
+ 
+ #ifdef TARGET_PC
++		// port: SMS_STAGE_TOUR (platform/stage_tour.cpp) replaces the title
++		// screen with a list of stages, each played for a set number of frames.
++		{
++			int tourStage, tourScenario;
++			const int tour = port_stage_tour_transition(mAppState, &tourStage,
++			                                            &tourScenario);
++			if (tour < 0) {
++				nextState = APP_STATE_QUIT;
++			} else if (tour > 0) {
++				nextState = APP_STATE_GAMEPLAY;
++				mNextArea.set(tourStage, tourScenario, 0);
++			}
++		}
++#endif
++
++#ifdef TARGET_PC
+ 		// BetterSunshineEngine (isLevelSelectAvailable, retail 0x802A6794):
+ 		// the `stb r30, 0x8(r31)` storing the next state becomes a call; the
+ 		// mod reads the state from r30 and stores it itself.
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -88,6 +88,10 @@
+ }
+ #endif
+ 
++#ifdef TARGET_PC
++extern "C" int port_stage_tour_tick(void);
++#endif
++
+ // TODO: 99.7%, frame 0x158 vs retail 0x198 (TGraphics sits 0x40 higher, a
+ // dead low region) and r29/r30 swapped. Body from upstream (98.5 -> 99.7).
+ int TMarDirector::direct()
+@@ -109,6 +113,12 @@
+ 
+ 	u32 desiredAppState = TApplication::APP_STATE_DEFAULT;
+ 
++#ifdef TARGET_PC
++	// port: SMS_STAGE_TOUR moves on once this stage has run its frames.
++	if (int tourNext = port_stage_tour_tick())
++		setNextStage(tourNext, nullptr);
++#endif
++
+ 	JDrama::TGraphics local_140;
+ 
+ 	u8 prevSeGateMask = SMSGetMSound()->mSeGateMask;
