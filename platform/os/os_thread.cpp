@@ -37,7 +37,15 @@ struct Host {
 };
 
 pthread_mutex_t g_cpu = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t g_idle_cv = PTHREAD_COND_INITIALIZER;
+// Idle wake-ups. port_irq_kick comes from host threads (the VI timer, audio)
+// that must not take g_cpu, which the game holds while it runs. A condition
+// signal on g_cpu sent between the idle loop's last check and its wait was
+// lost, and the wait then lasted its whole timeout - up to a 15.6 ms Windows
+// timer tick for a "1 ms" wait, so a retrace reached the game a frame late.
+// The kick now sets a flag under its own small mutex, which the wait reads.
+pthread_mutex_t g_kick_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t g_kick_cv = PTHREAD_COND_INITIALIZER;
+bool g_kicked;
 OSThread* g_cur;
 OSThread g_default_thread;
 std::map<OSThread*, Host*> g_hosts;
@@ -276,6 +284,27 @@ double mono_seconds()
 	return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
 }
 
+// Waits, with g_cpu released, until port_irq_kick or about a millisecond.
+void idle_wait()
+{
+	pthread_mutex_unlock(&g_cpu);
+	pthread_mutex_lock(&g_kick_mutex);
+	if (!g_kicked) {
+		struct timespec ts;
+		clock_gettime(CLOCK_REALTIME, &ts);
+		ts.tv_nsec += 1000000;
+		if (ts.tv_nsec >= 1000000000) {
+			ts.tv_sec++;
+			ts.tv_nsec -= 1000000000;
+		}
+		while (!g_kicked && pthread_cond_timedwait(&g_kick_cv, &g_kick_mutex, &ts) == 0) {
+		}
+	}
+	g_kicked = false;
+	pthread_mutex_unlock(&g_kick_mutex);
+	pthread_mutex_lock(&g_cpu);
+}
+
 // Give up the CPU if someone better is runnable (or, with `yield`, an equal).
 // Blocks in the idle loop while nothing is runnable.
 void reschedule(bool yield)
@@ -294,14 +323,7 @@ void reschedule(bool yield)
 			continue;
 		if (idle_from == 0)
 			idle_from = mono_seconds();
-		struct timespec ts;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec += 1000000;
-		if (ts.tv_nsec >= 1000000000) {
-			ts.tv_sec++;
-			ts.tv_nsec -= 1000000000;
-		}
-		pthread_cond_timedwait(&g_idle_cv, &g_cpu, &ts);
+		idle_wait();
 	}
 	if (idle_from != 0)
 		g_idle_seconds += mono_seconds() - idle_from;
@@ -376,7 +398,10 @@ Host* new_host()
 extern "C" void port_irq_kick(void)
 {
 	g_irq_kicks.fetch_add(1);
-	pthread_cond_signal(&g_idle_cv);
+	pthread_mutex_lock(&g_kick_mutex);
+	g_kicked = true;
+	pthread_cond_signal(&g_kick_cv);
+	pthread_mutex_unlock(&g_kick_mutex);
 }
 
 extern "C" void port_irq_add_source(port_irq_poll_fn fn) { g_sources.push_back(fn); }
@@ -529,10 +554,7 @@ extern "C" void OSExitThread(OSThread* valArg)
 			break;
 		if (port_vi_idle_advance())
 			continue;
-		struct timespec ts;
-		clock_gettime(CLOCK_REALTIME, &ts);
-		ts.tv_nsec = (ts.tv_nsec + 1000000) % 1000000000;
-		pthread_cond_timedwait(&g_idle_cv, &g_cpu, &ts);
+		idle_wait();
 	}
 	switch_to(self, next, true);
 }
