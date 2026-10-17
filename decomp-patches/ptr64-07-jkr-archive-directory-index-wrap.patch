@@ -1,0 +1,42 @@
+Reason: ptr64: a RARC directory index wraps like the console's 32-bit pointer sum (root ".." is 0xFFFFFFFF); Shadow Mario's chase episodes crashed
+--- a/libs/JSystem/src/JKernel/JKRArchivePri.cpp
++++ b/libs/JSystem/src/JKernel/JKRArchivePri.cpp
+@@ -63,15 +63,27 @@
+ 	return nullptr;
+ }
+ 
++#ifdef TARGET_PC
++// port: a directory index is a u32 the console added to a 32-bit pointer, so
++// it wrapped. The ".." entry of an archive's root holds 0xFFFFFFFF, and the
++// GameCube read the entry just before the table. Added to a 64-bit pointer the
++// same index lands 64 GiB away: Shadow Mario's "/../map/pad/Setting.prm" from
++// the root crashed Gelato, Pianta and Noki's chase episodes. Sign-extending
++// gives back the console's entry.
++#define JKR_DIR_INDEX(id) ((s32)(id))
++#else
++#define JKR_DIR_INDEX(id) (id)
++#endif
++
+ JKRArchive::SDIDirEntry* JKRArchive::findDirectory(const char* name,
+                                                    u32 directoryId) const
+ {
+ 	if (name == nullptr) {
+-		return mDirectories + directoryId;
++		return mDirectories + JKR_DIR_INDEX(directoryId);
+ 	}
+ 
+ 	CArcName arcName(&name, '/');
+-	SDIDirEntry* dirEntry   = mDirectories + directoryId;
++	SDIDirEntry* dirEntry   = mDirectories + JKR_DIR_INDEX(directoryId);
+ 	SDIFileEntry* fileEntry = mFileEntries + dirEntry->mFirstIdx;
+ 
+ 	for (int i = 0; i < dirEntry->mNum; i++) {
+@@ -121,7 +133,7 @@
+ {
+ 	if (name) {
+ 		CArcName arcName(&name, '/');
+-		SDIDirEntry* dirEntry   = mDirectories + directoryId;
++		SDIDirEntry* dirEntry   = mDirectories + JKR_DIR_INDEX(directoryId);
+ 		SDIFileEntry* fileEntry = mFileEntries + dirEntry->mFirstIdx;
+ 
+ 		for (int i = 0; i < dirEntry->mNum; ++i) {
