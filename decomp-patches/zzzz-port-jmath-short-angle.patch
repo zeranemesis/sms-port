@@ -1,0 +1,24 @@
+Reason: port: JMASin and JMACos convert a short angle past 32767 through a word, as the PowerPC does (fctiwz), instead of an undefined float-to-s16 conversion that indexes before the sine table
+--- a/libs/JSystem/include/JSystem/JMath.hpp
++++ b/libs/JSystem/include/JSystem/JMath.hpp
+@@ -104,9 +104,20 @@
+ 	return jmaSinTable[static_cast<u16>(v) >> jmaSinShift];
+ }
+ 
++#ifdef TARGET_PC
++// Degrees past 180 make a short angle past 32767. The PowerPC converts through
++// a word (fctiwz) and keeps its low 16 bits; a direct float-to-s16 conversion
++// of such a value is undefined here, and GCC indexes the table with the
++// sign-extended angle (Super Mario Eclipse's long-lived tornadoes, a 1-up's
++// circle: reads before jmaSinTable).
++inline f32 JMACos(f32 v) { return JMASCos((s16)(s32)DEG2SHORTANGLE(v)); }
++
++inline f32 JMASin(f32 v) { return JMASSin((s16)(s32)DEG2SHORTANGLE(v)); }
++#else
+ inline f32 JMACos(f32 v) { return JMASCos(DEG2SHORTANGLE(v)); }
+ 
+ inline f32 JMASin(f32 v) { return JMASSin(DEG2SHORTANGLE(v)); }
++#endif
+ 
+ bool JMANewSinTable(u8 numBits);
+ void JMADeleteSinTable();

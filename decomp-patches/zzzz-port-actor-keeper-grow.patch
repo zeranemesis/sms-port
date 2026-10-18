@@ -1,0 +1,41 @@
+Reason: port: a TMActorKeeper grows its actor arrays when a code mod registers more actors than it was made for (Super Mario Eclipse's iron crate), instead of writing past them into the first actor's model
+--- a/src/Strategic/ObjModel.cpp
++++ b/src/Strategic/ObjModel.cpp
+@@ -107,9 +107,21 @@
+ {
+ }
+ 
++#ifdef TARGET_PC
++// Code mods register more actors than a keeper was made for (Super Mario
++// Eclipse's iron crate: a keeper for 1, then its crate and its broken crate).
++// On the console the extra entries land past the arrays, on whatever follows
++// them in the heap; here that is the first actor's model, whose vtable it
++// clears. The arrays grow instead.
++#define PORT_RESERVE_ACTOR()                                                   	do {                                                                       		if (mActorNum >= mModelDataNum) {                                      			u16 grown        = mModelDataNum ? mModelDataNum * 2 : 1;          			MActor** actors  = new MActor*[grown];                             			u16* indices     = new u16[grown];                                 			memset(actors, 0, grown * sizeof(actors[0]));                      			memset(indices, 0, grown * sizeof(indices[0]));                    			memcpy(actors, mActors, mModelDataNum * sizeof(actors[0]));        			memcpy(indices, mActorModelDataIndices,                            			       mModelDataNum * sizeof(indices[0]));                        			mActors                = actors;                                   			mActorModelDataIndices = indices;                                  			mModelDataNum          = grown;                                    		}                                                                      	} while (0)
++#else
++#define PORT_RESERVE_ACTOR() ((void)0)
++#endif
++
+ MActor* TMActorKeeper::createAndRegister(SDLModelData* model_data,
+                                          u32 model_flags)
+ {
++	PORT_RESERVE_ACTOR();
+ 	SDLModel* model = new SDLModel(model_data, model_flags, 1);
+ 	MActor* actor   = new MActor(mActorAnmData);
+ 	actor->setModel(model, model_flags);
+@@ -144,6 +156,7 @@
+ MActor* TMActorKeeper::createMActorFromNthData(int n, u32 flags)
+ {
+ 	TModelDataKeeper* keeper          = mModelDataKeeper;
++	PORT_RESERVE_ACTOR();
+ 	mActorModelDataIndices[mActorNum] = n;
+ 	SDLModelData* data                = keeper->getNthData(n);
+ 	return createAndRegister(data, flags);
+@@ -177,6 +190,7 @@
+ 	// createMActorFromNthData's body, duplicated in the original: routing this
+ 	// through the method leaves createAndRegister at depth 2, where MWCC
+ 	// refuses it and the whole allocator ranking shifts (77.5% vs 100%).
++	PORT_RESERVE_ACTOR();
+ 	mActorModelDataIndices[getActorNum()] = index;
+ 	SDLModelData* data                = keeper->getNthData(index);
+ 	return createAndRegister(data, flags);

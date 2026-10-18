@@ -1,0 +1,47 @@
+Reason: port: setDead4LiveActor and setHide4LiveActor on an actor that is no live actor (Super Mario Eclipse's redCity names a TMapStaticObj) set only its hit flag; the live flag would land in the object's own members
+--- a/src/System/EventWatcher.cpp
++++ b/src/System/EventWatcher.cpp
+@@ -465,6 +465,21 @@
+ 
+ 	TLiveActor* liveActor
+ 	    = (TLiveActor*)JDrama::TNameRefGen::search2(actorName);
++#ifdef TARGET_PC
++	// Scripts also name actors that are no live actor (Super Mario Eclipse's
++	// redCity: "randomizer_off", a TMapStaticObj). On the console the live
++	// flag lands past the end of such an object; here it would land in its
++	// members (its model). Only the hit flag, which every hit actor has, is set.
++	if (liveActor && !dynamic_cast<TLiveActor*>((JDrama::TNameRef*)liveActor)) {
++		if (THitActor* hitActor = dynamic_cast<THitActor*>((JDrama::TNameRef*)liveActor)) {
++			if (value)
++				hitActor->onHitFlag(HIT_FLAG_NO_COLLISION);
++			else
++				hitActor->offHitFlag(HIT_FLAG_NO_COLLISION);
++		}
++		liveActor = nullptr;
++	}
++#endif
+ 	if (liveActor) {
+ 		if (value) {
+ 			liveActor->onLiveFlag(LIVE_FLAG_HIDDEN);
+@@ -496,6 +511,21 @@
+ 
+ 	TLiveActor* liveActor
+ 	    = (TLiveActor*)JDrama::TNameRefGen::search2(actorName);
++#ifdef TARGET_PC
++	// Scripts also name actors that are no live actor (Super Mario Eclipse's
++	// redCity: "randomizer_off", a TMapStaticObj). On the console the live
++	// flag lands past the end of such an object; here it would land in its
++	// members (its model). Only the hit flag, which every hit actor has, is set.
++	if (liveActor && !dynamic_cast<TLiveActor*>((JDrama::TNameRef*)liveActor)) {
++		if (THitActor* hitActor = dynamic_cast<THitActor*>((JDrama::TNameRef*)liveActor)) {
++			if (value)
++				hitActor->onHitFlag(HIT_FLAG_NO_COLLISION);
++			else
++				hitActor->offHitFlag(HIT_FLAG_NO_COLLISION);
++		}
++		liveActor = nullptr;
++	}
++#endif
+ 	if (liveActor) {
+ 		if (value) {
+ 			liveActor->onLiveFlag(LIVE_FLAG_DEAD);

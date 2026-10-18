@@ -281,11 +281,22 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
     # is read, and it has to be read in their byte order.
     ("src/settings.cpp", r"\+ info\.(mBannerImage|mIconTable)->mTextureOffset",
      r"+ __builtin_bswap32(info.\1->mTextureOffset)", "card banner and icon offsets are big-endian"),
-    # Run-time rewrites of the retail game's instructions: the port has no
-    # retail code, so each goes to the patch registry for the decomp hooks
-    # that port it (platform/mods/modhooks.cpp) instead of into memory.
-    # TMarioAnimeData::isPumpOK's replacement is PowerPC assembly: the FLUDD
-    # animation id against BSE's (extended) animation count.
+    # initAreaInfo reads the game's stage tables by retail address through
+    # SMS_PORT_REGION, which the cast pattern of RAWDATA_FIX does not see:
+    # natively it read whatever memory sat there, every stage mapped to the
+    # airstrip, and stage intros named it with no episode ("(null)").
+    ("src/area.cpp",
+     r"SMS_PORT_REGION\((0x803C0CC8|0x803C0CF0|0x803C0D18|0x803C0E30|0x803DF498|0x803DF4D8), 0, 0, 0\)",
+     r"sms_mod_rawdata(\1)",
+     "area table sources at their port objects"),
+    # shouldDebugPassThroughCameraPerform reads bit 0 of TGraphics' u16 at
+    # offset 0 as byte 1, its low byte on the PowerPC; natively byte 1 is the
+    # high byte, so the camera never reset its up vector after a stage's
+    # intro camera, and the view tilted further with every stage.
+    ("src/debug/freeflycam.cpp",
+     r"return \(graphics->_00\[1\] & 1\);",
+     r"return (*(const u16 *)graphics->_00 & 1);",
+     "TGraphics flag read as the game's u16"),
     # shadowMarioInitHandler (in place of SMS_isMultiPlayerMap in
     # TEMario::loadAfter) reads Shadow Mario from r31, the TEMario, at retail
     # 0x150 (mEnemyMario) in assembly, which compiles to nothing natively.
@@ -293,6 +304,11 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
      r"SMS_ASM_BLOCK\(\"lwz %0, 0x150 \(31\)\" : \"=r\"\(player\)\);",
      r"{ u8 *emario; SMS_FROM_GPR(31, emario); player = *(TMario **)(emario + SMS_OFFSET(TEMario, 0x150)); }",
      "shadowMarioInitHandler without assembly"),
+    # Run-time rewrites of the retail game's instructions: the port has no
+    # retail code, so each goes to the patch registry for the decomp hooks
+    # that port it (platform/mods/modhooks.cpp) instead of into memory.
+    # TMarioAnimeData::isPumpOK's replacement is PowerPC assembly: the FLUDD
+    # animation id against BSE's (extended) animation count.
     ("src/player.cpp",
      r"static SMS_ASM_FUNC void isPumpOk\(\) \{\n\s*SMS_ASM_BLOCK\(\"lhz       3, 2 \(3\)[^;]*\);\n\}",
      r"static bool isPumpOk(const u8 *animeData) {\n    return *(const u16 *)(animeData + 2) < sPlayerAnimeInfosSize;\n}",

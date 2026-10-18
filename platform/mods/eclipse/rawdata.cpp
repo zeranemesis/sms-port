@@ -2,6 +2,7 @@
 // (fixup_sources.py routes those casts through sms_mod_rawdata): the port's
 // object at each address. Retail addresses from the disc's map.
 #include <Enemy/Graph.hpp>
+#include <GC2D/ShineTable.hpp>
 #include <Enemy/RocketNerve.hpp>
 #include <MSound/MSModBgm.hpp>
 #include <MarioUtil/ScreenUtil.hpp>
@@ -13,6 +14,8 @@
 extern TRailNode sms_port_grDummyRail[3];
 extern const char* sms_port_streamMovies[20];
 extern "C" GXColor sms_port_emarioWaterColor;
+extern u8* const sms_port_shineStageTable;
+extern u8* const sms_port_exShineTable;
 
 extern "C" void* sms_mod_rawdata(unsigned int addr)
 {
@@ -20,6 +23,14 @@ extern "C" void* sms_mod_rawdata(unsigned int addr)
 	case 0x803ACA68: return MSBgmXFade::scTiming;                                // scTiming__10MSBgmXFade
 	case 0x803ACAB0: return MSBgmXFade::scExp;                                   // scExp__10MSBgmXFade
 	case 0x803AFB48: return sms_port_grDummyRail;                                // grDummyRail (graph.cpp)
+	// BetterSunshineEngine's area table reads the game's: ShineTable.hpp's
+	// file-local copies (read-only, the same in every object) and StageUtil's.
+	case 0x803C0CC8: return (void*)scShineConvTable;                             // scShineConvTable
+	case 0x803C0CF0: return (void*)scEtcShineConvTable;                          // scEtcShineConvTable
+	case 0x803C0D18: return (void*)scScenarioNameTable;                          // scScenarioNameTable
+	case 0x803C0E30: return (void*)scNormalStageTable;                           // scNormalStageTable
+	case 0x803DF498: return sms_port_shineStageTable;                            // shineStageTable (StageUtil.cpp)
+	case 0x803DF4D8: return sms_port_exShineTable;                               // exShineTable (StageUtil.cpp)
 	case 0x803DFA00: return sms_port_streamMovies;                               // movies$2059 (TMovieDirector::getStreamMovieName)
 	case 0x8040DAB4: return (void*)&TNerveRocketPossessedNozzle::theNerve();     // instance$2890
 	case 0x8040DABC: return (void*)&TNerveRocketFly::theNerve();                 // instance$2904

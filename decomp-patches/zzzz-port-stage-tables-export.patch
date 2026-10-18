@@ -1,0 +1,17 @@
+Reason: port: shineStageTable and exShineTable are exported for code mods that read them by retail address (BetterSunshineEngine's area table, platform/mods/eclipse/rawdata.cpp)
+--- a/src/System/StageUtil.cpp
++++ b/src/System/StageUtil.cpp
+@@ -27,6 +27,13 @@
+ 
+ // clang-format on
+ 
++#ifdef TARGET_PC
++// Code mods read both tables by their retail addresses (BetterSunshineEngine's
++// area table, platform/mods/eclipse/rawdata.cpp).
++extern u8* const sms_port_shineStageTable = shineStageTable;
++extern u8* const sms_port_exShineTable    = exShineTable;
++#endif
++
+ // UNUSED
+ bool SMS_isExMap(u8 stage) { return stage > 0x14 && stage < 0x35; }
+ 

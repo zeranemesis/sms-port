@@ -56,6 +56,14 @@ What ELF gives the Linux build for free is done by hand on PE/COFF:
 Tested (2026-10-18) on a reconstructed Eclipse disc: the three modules start, BSE's first-boot settings are saved, and the opening cutscene and the Tutorial play with their dialogue and HUD.
 Aurora had no `GX_CULL_ALL`, which Eclipse uses; it now drops those polygons as the GameCube does.
 
+The stage tour (`SMS_STAGE_TOUR`, which follows the current area under Eclipse, whose boot skips the application's transitions) then played all 101 stops of Eclipse's own stages (61 to 92) on the exact disc, and these were fixed on the way:
+
+- BSE reads bit 0 of `TGraphics`' `u16` at offset 0 as its byte 1, the low byte only on the PowerPC: the camera never reset its up vector after a stage's intro camera, and the view tilted further with every stage (`fixup_sources.py`).
+- BSE's area table read the game's stage tables through `SMS_PORT_REGION`, which the cast pattern of the retail-data fixup did not catch: every stage was the airstrip, and stage intros said "(null)" for the episode. They now go to the port's tables ([rawdata.cpp](../platform/mods/eclipse/rawdata.cpp), `zzzz-port-stage-tables-export.patch`).
+- Scripts call `setDead4LiveActor`/`setHide4LiveActor` on objects that are no live actor (redCity's `randomizer_off`, a `TMapStaticObj`): on the console the live flag lands past the object, here in its model; only the hit flag is set (`zzzz-port-setdead-non-live.patch`).
+- A short angle past 32767 (degrees past 180) went through an undefined float-to-`s16` conversion in `JMASin`/`JMACos`, and GCC indexed the sine table with the sign-extended value (Petey's long-lived tornado, a 1-up's circle); it now converts through a word, as `fctiwz` does (`zzzz-port-jmath-short-angle.patch`).
+- Eclipse's iron crate registers two actors in a `TMActorKeeper` made for one: on the console the second lands past the arrays, here on the first model's vtable; the arrays grow (`zzzz-port-actor-keeper-grow.patch`).
+
 ## How the port runs it
 
 - **Patches.** Each `SMS_PATCH_BL`/`SMS_PATCH_B`/`SMS_WRITE_32` registers under its retail address in the port's registry ([modhooks.cpp](../platform/mods/modhooks.cpp)) instead of writing to memory, from the mods' static constructors, which run when the modules load (after `TApplication::initialize` has the heaps and DVD up), as Kuribo runs them.
