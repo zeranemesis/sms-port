@@ -39,6 +39,23 @@ SMS_DISC_IMAGE="mods/eclipse/Super Mario Eclipse v1.1.0.iso" build-ecl/sms
 Nothing of theirs is kept in this repository.
 Without it, the build is the plain port: every hook below is in the source but finds nothing registered and runs the original code.
 
+### Windows (MinGW, 64-bit)
+
+The game is built by MSYS2's MinGW g++ as usual (`-DSMS_REGION=GMSE01`); the mods by LLVM's clang (`-DSMS_CLANG=.../clang.exe -DSMS_CLANGXX=.../clang++.exe`), aimed at the same ABI (`SMS_CLANG_TARGET`, `x86_64-w64-windows-gnu` by default).
+What ELF gives the Linux build for free is done by hand on PE/COFF:
+
+- **Module names.** COFF has no hidden visibility: [localize_module.py](../platform/mods/eclipse/lib/localize_module.py) localizes what each module defines outright, but not its COMDAT copies of inline functions (the linker keeps one copy of each by name, and a local reference to a dropped copy would resolve to address 0).
+  The mods are built with `-fno-auto-import`, which keeps clang from reaching extern data through `.refptr` stubs, COMDATs of the same kind.
+- **Constructors.** A linker script makes `ld -r` write a PE image, so the mods' `.ctors` is renamed `sms_mod_ctors$m` instead, and [modhooks.cpp](../platform/mods/modhooks.cpp) brackets it with `$a` and `$z` markers (PE has no `__start_`/`__stop_` symbols).
+- **Weak definitions.** The mods' definitions are made weak, as SunshineHeaderInterface's inline ones are on ELF, so the game's own (`TMario`'s parameter constructors) win; undefined references stay strong, so a missing symbol fails the link.
+  GCC emits only the complete-object destructor (`D1`) on PE, so the base-object ones the mods call (`D2`) are aliased to it ([cmake/eclipse.cmake](../cmake/eclipse.cmake)), as are the LLP64 spellings of the functions aliased on other hosts.
+- **Sized delete.** clang calls `operator delete(void*, size_t)`, renamed with the others to go to the game's heaps (`__sms_game_delete_sized`).
+- **Layouts.** MinGW lays bitfields out Microsoft's way and has a 32-bit `long`: the mods are built with `-mno-ms-bitfields` (SunshineHeaderInterface's bitfields then take the GameCube's layout), and Windows has its own [shi-layout-mingw.patch](../platform/mods/eclipse/shi-layout-mingw.patch), from the plain US build's 64-bit layouts and a 32-bit image of the game's headers (`g++ -m32 -femit-class-debug-always`, one object per header, linked into a DLL that gdb reads).
+- **Region.** [zzzz-port-gmse01-guards.patch](../decomp-patches/zzzz-port-gmse01-guards.patch) keeps the PAL-only code the decomp gained out of the North American build.
+
+Tested (2026-10-18) on a reconstructed Eclipse disc: the three modules start, BSE's first-boot settings are saved, and the opening cutscene and the Tutorial play with their dialogue and HUD.
+Aurora had no `GX_CULL_ALL`, which Eclipse uses; it now drops those polygons as the GameCube does.
+
 ## How the port runs it
 
 - **Patches.** Each `SMS_PATCH_BL`/`SMS_PATCH_B`/`SMS_WRITE_32` registers under its retail address in the port's registry ([modhooks.cpp](../platform/mods/modhooks.cpp)) instead of writing to memory, from the mods' static constructors, which run when the modules load (after `TApplication::initialize` has the heaps and DVD up), as Kuribo runs them.

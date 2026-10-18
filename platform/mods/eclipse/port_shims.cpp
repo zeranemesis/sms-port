@@ -157,7 +157,11 @@ SHIM(f32, shim_TSpcSlice_getDataFloat, "_ZNK9TSpcSlice12getDataFloatEv", const T
 
 // Free functions
 SHIM(f32, shim_MsWrap_f, "_Z6MsWrapIfET_S0_S0_S0_", f32 t, f32 l, f32 r) { return MsWrap<f32>(t, l, r); }
+// MinGW keeps the game's inline SpcTrace (spcinterp.hpp) as a strong COMDAT
+// definition, which already serves the mods there.
+#ifndef _WIN32
 SHIM(void, shim_SpcTrace, "_Z8SpcTracePKcz", const char*, ...) { }
+#endif
 
 // Retail function names BetterSunshineEngine declares extern "C"
 extern "C" void setShineFlag__12TFlagManagerFUc(TFlagManager* self, u16 flag)

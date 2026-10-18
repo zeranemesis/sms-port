@@ -39,6 +39,19 @@ if(NOT SMS_ARCH)
   set(SMS_ARCH 32)
 endif()
 set(_arch -m${SMS_ARCH})
+# On Windows the mods are built for the MinGW ABI the game uses
+# (SMS_CLANG_TARGET, e.g. x86_64-w64-windows-gnu).
+if(SMS_CLANG_TARGET)
+  list(APPEND _arch --target=${SMS_CLANG_TARGET})
+endif()
+# MinGW: without auto-import, clang reaches extern data through .refptr.<name>
+# COMDAT stubs; two modules' stubs for their own (localized) gSaveBnr would
+# share one name and the linker would keep only one. The game is no DLL.
+# -mno-ms-bitfields: SunshineHeaderInterface's bitfields (TLiveActor's state
+# flags) take the GameCube's layout, not Microsoft's.
+if(WIN32)
+  list(APPEND _arch -fno-auto-import -mno-ms-bitfields)
+endif()
 if(SMS_ARCH STREQUAL "32")
   # SSE float math, as the game is built (x87 would round differently)
   list(APPEND _arch -malign-double -msse2 -mfpmath=sse)
@@ -80,13 +93,23 @@ target_compile_options(eclipse_objs PRIVATE ${_opts})
 # each linked into one object whose own definitions are made local; what they
 # use of the engine and the game stays an undefined reference, resolved by
 # name as Kuribo resolves it.
+# COFF has no hidden visibility: localize_module.py localizes what each module
+# defines outright (not its COMDAT copies of inline functions).
+if(WIN32)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  # llvm-objcopy cannot localize COFF symbols; binutils' objcopy can.
+  find_program(SMS_GNU_OBJCOPY NAMES objcopy x86_64-w64-mingw32-objcopy REQUIRED)
+  set(_localize ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/localize_module.py ${CMAKE_NM} ${SMS_GNU_OBJCOPY})
+else()
+  set(_localize ${CMAKE_OBJCOPY} --localize-hidden)
+endif()
 set(_modules)
 foreach(m moveset eclipse)
   target_compile_options(${m}_objs PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
   set(_o ${CMAKE_CURRENT_BINARY_DIR}/${m}_module.o)
   add_custom_command(OUTPUT ${_o}
-    COMMAND ${CMAKE_CXX_COMPILER} -m${SMS_ARCH} -r -nostdlib -o ${_o} $<TARGET_OBJECTS:${m}_objs>
-    COMMAND ${CMAKE_OBJCOPY} --localize-hidden ${_o}
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -o ${_o} $<TARGET_OBJECTS:${m}_objs>
+    COMMAND ${_localize} ${_o}
     DEPENDS ${m}_objs $<TARGET_OBJECTS:${m}_objs> COMMAND_EXPAND_LISTS VERBATIM)
   list(APPEND _modules ${_o})
 endforeach()
@@ -96,10 +119,26 @@ endforeach()
 # keep apart. This partial link also moves their static constructors out of
 # .ctors (mod_ctors.ld).
 set(_obj ${CMAKE_CURRENT_BINARY_DIR}/sms_eclipse_all.o)
-add_custom_command(OUTPUT ${_obj}
-  COMMAND ${CMAKE_CXX_COMPILER} -m${SMS_ARCH} -r -nostdlib -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
-    $<TARGET_OBJECTS:bse_objs> ${_modules}
-  DEPENDS bse_objs $<TARGET_OBJECTS:bse_objs> ${_modules} ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
-  COMMAND_EXPAND_LISTS VERBATIM)
+if(WIN32)
+  # A linker script makes ld write a PE image, not an object: link plainly and
+  # rename the section (modhooks.cpp brackets sms_mod_ctors$m on Windows).
+  add_custom_command(OUTPUT ${_obj}
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -o ${_obj}
+      $<TARGET_OBJECTS:bse_objs> ${_modules}
+    # clang's .llvm_addrsig would end up as a section of the executable.
+    COMMAND ${SMS_GNU_OBJCOPY} --rename-section .ctors=sms_mod_ctors$m --remove-section=.llvm_addrsig ${_obj}
+    # Definitions weak, as the inline ones SunshineHeaderInterface's headers
+    # give for functions the game defines outright (TMario's parameter
+    # constructors) are on ELF: the game's definition wins.
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/localize_module.py --weaken ${CMAKE_NM} ${SMS_GNU_OBJCOPY} ${_obj}
+    DEPENDS bse_objs $<TARGET_OBJECTS:bse_objs> ${_modules}
+    COMMAND_EXPAND_LISTS VERBATIM)
+else()
+  add_custom_command(OUTPUT ${_obj}
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
+      $<TARGET_OBJECTS:bse_objs> ${_modules}
+    DEPENDS bse_objs $<TARGET_OBJECTS:bse_objs> ${_modules} ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
+    COMMAND_EXPAND_LISTS VERBATIM)
+endif()
 add_library(sms_eclipse STATIC ${_obj})
 set_target_properties(sms_eclipse PROPERTIES LINKER_LANGUAGE CXX)

@@ -295,8 +295,11 @@ else()
   set(_object_prefix "")
   set(SMS_OBJCOPY objcopy)
 endif()
+# The sized deletes (C++14, which clang uses for the mods) go to the same
+# functions through platform/mods/modhooks.cpp (objcopy renames to one name
+# only once): the game's delete finds the block's heap itself.
 file(WRITE ${CMAKE_BINARY_DIR}/game_new_syms.txt
-  "${_object_prefix}_Znw${_sz} __sms_game_new\n${_object_prefix}_Zna${_sz} __sms_game_new_array\n${_object_prefix}_ZdlPv __sms_game_delete\n${_object_prefix}_ZdaPv __sms_game_delete_array\n")
+  "${_object_prefix}_Znw${_sz} __sms_game_new\n${_object_prefix}_Zna${_sz} __sms_game_new_array\n${_object_prefix}_ZdlPv __sms_game_delete\n${_object_prefix}_ZdaPv __sms_game_delete_array\n${_object_prefix}_ZdlPv${_sz} __sms_game_delete_sized\n${_object_prefix}_ZdaPv${_sz} __sms_game_delete_array_sized\n")
 add_custom_command(TARGET sms_game POST_BUILD
   COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt $<TARGET_FILE:sms_game>
   COMMENT "Renaming the game's global operator new/delete")

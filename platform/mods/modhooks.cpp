@@ -183,12 +183,27 @@ extern "C" void sms_mod_add_module(const char* name, sms_mod_entry_t entry)
 	modules().push_back({name, entry});
 }
 
+// The mods' sized deletes (C++14), renamed by CMakeLists.txt: the game's
+// delete finds the block's heap itself.
+extern "C" void __sms_game_delete(void* p);
+extern "C" void __sms_game_delete_array(void* p);
+extern "C" void __sms_game_delete_sized(void* p, size_t) { __sms_game_delete(p); }
+extern "C" void __sms_game_delete_array_sized(void* p, size_t) { __sms_game_delete_array(p); }
+
 // The code mods' static constructors (patch registrations, module entries,
 // their globals), moved out of the process's own by cmake/eclipse.cmake.
 typedef void (*ctor_t)(void);
 #if defined(__APPLE__)
 extern "C" ctor_t __start_sms_mod_ctors[] __attribute__((weak_import));
 extern "C" ctor_t __stop_sms_mod_ctors[] __attribute__((weak_import));
+#elif defined(_WIN32)
+// PE has no __start_/__stop_ symbols: the mods' constructors are in
+// sms_mod_ctors$m (platform/mods/eclipse/lib), which the linker places
+// between these two markers, sorting the grouped sections by name.
+__attribute__((section("sms_mod_ctors$a"), used)) static ctor_t s_mod_ctors_a[1] = {nullptr};
+__attribute__((section("sms_mod_ctors$z"), used)) static ctor_t s_mod_ctors_z[1] = {nullptr};
+#define __start_sms_mod_ctors (s_mod_ctors_a + 1)
+#define __stop_sms_mod_ctors (s_mod_ctors_z + 0)
 #else
 extern "C" ctor_t __start_sms_mod_ctors[] __attribute__((weak));
 extern "C" ctor_t __stop_sms_mod_ctors[] __attribute__((weak));

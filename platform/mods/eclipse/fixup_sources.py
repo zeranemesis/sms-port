@@ -500,7 +500,10 @@ if __name__ == "__main__":
         sys.exit(__doc__)
     roots = [os.path.abspath(a) for a in sys.argv[1:]]
     here = os.path.dirname(os.path.abspath(__file__))
-    patches = [os.path.join(here, "shi-layout.patch"), os.path.join(here, "mods-port.patch")]
+    # MinGW lays the game's classes out otherwise than Linux and macOS (its
+    # bitfields and long), so Windows has its own layout patch.
+    layout = "shi-layout-mingw.patch" if sys.platform == "win32" else "shi-layout.patch"
+    patches = [os.path.join(here, layout), os.path.join(here, "mods-port.patch")]
     marker = os.path.join(os.path.dirname(roots[1]), ".sms_port_fixups")
     digest = state(roots, [os.path.abspath(__file__)] + patches)
     if os.path.exists(marker) and open(marker).read().strip() == digest:

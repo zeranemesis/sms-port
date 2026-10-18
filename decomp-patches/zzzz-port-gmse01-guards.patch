@@ -1,0 +1,101 @@
+Reason: let the GMSE01 (North American) build compile, for Super Mario Eclipse: give the 4D2 emitter manager retail's US count, and keep PAL-only members (the Bathtub's interpolation flag, the pause menu's 0x20 pane, the card screen's language and box resizing) behind VERSION_GMSP01; card headers in English outside PAL
+--- a/src/GC2D/CardLoad.cpp
++++ b/src/GC2D/CardLoad.cpp
+@@ -1048,7 +1048,9 @@
+ 
+ 		case 2:
+ 			if (unk754->movementOption()) {
++#ifdef VERSION_GMSP01
+ 				changeLanguage(TFlagManager::smInstance->getFlag(0xA0001));
++#endif
+ 				unk14 = 7;
+ 			}
+ 			break;
+@@ -1773,7 +1775,9 @@
+ 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
+ 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
+ 
++#ifdef VERSION_GMSP01
+ 		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
++#endif
+ 
+ 		unk580->hide();
+ 		unk568->getPane()->show();
+@@ -1967,7 +1971,9 @@
+ 		setMessage(unk560, 0x400, 13);
+ 		setMessage(unk564, 0x400, 13);
+ 
++#ifdef VERSION_GMSP01
+ 		resizeBox((J2DWindow*)unk524->getPane(), unk53C, unk538);
++#endif
+ 
+ 		unk524->getPane()->show();
+ 		JUTRect bounds = unk524->getPane()->getBounds();
+@@ -2042,7 +2048,9 @@
+ 		setMessage(unk57C, 0x400, (u16)cMessageID[unk1C]);
+ 		setMessage(unk580, 0x400, (u16)cMessageID[unk1C]);
+ 
++#ifdef VERSION_GMSP01
+ 		resizeBox((J2DWindow*)unk568->getPane(), unk580, unk57C);
++#endif
+ 
+ 		unk568->getPane()->show();
+ 		unk580->hide();
+--- a/src/GC2D/PauseMenu2.cpp
++++ b/src/GC2D/PauseMenu2.cpp
+@@ -587,7 +587,9 @@
+ 				// Retail fades the pane at 0x20 (unk20) with the menu pane:
+ 				// after the `stb r5,0(r4)` on mMenuPane it reloads 0x20(r31)
+ 				// and stores the same value at 0xcc again.
++#ifdef VERSION_GMSP01
+ 				unk20->setAlpha(alpha);
++#endif
+ 			}
+ 			if (cue & CUE_DRAW) {
+ 				draw(graphics);
+@@ -668,7 +670,9 @@
+ 	// Retail sets the alpha on the pane at 0x20 (unk20, declared for PAL in
+ 	// PauseMenu2.hpp) as well as the menu pane: its store is
+ 	// `stb r0,0xcc(r4)` after `lwz r4,0x20(r3)`, and J2DPane::mAlpha is 0xCC.
++#ifdef VERSION_GMSP01
+ 	unk20->setAlpha(255);
++#endif
+ 	mMenuPane->mRotation = 0.0f;
+ 	PauseConsole(SMSGetMarDirector())->pauseIn();
+ 	SMSRumbleMgr->startPause();
+--- a/src/MoveBG/MapObjCorona.cpp
++++ b/src/MoveBG/MapObjCorona.cpp
+@@ -668,7 +668,9 @@
+ 
+ void TBathtub::perform(u32 cue, JDrama::TGraphics* graphics)
+ {
++#ifdef VERSION_GMSP01
+ 	onLiveFlag(LIVE_FLAG_CALC_INT_FRAME);
++#endif
+ 	TMapObjBase::perform(cue, graphics);
+ 	u32 calcCue = cue & 1;
+ 	if (calcCue) {
+--- a/src/System/CardManager.cpp
++++ b/src/System/CardManager.cpp
+@@ -557,6 +557,10 @@
+ 	// 0xA0001 is the live language option flag (0..4); language 0 (English)
+ 	// prints the date month-first, the European ones day-first.
+ 	u32 language = TFlagManager::getInstance()->getFlag(0xA0001);
++#ifndef VERSION_GMSP01
++	// Only the PAL game has the language option; the others print English.
++	language = 0;
++#endif
+ 
+ 	snprintf(header->mTitle, 0x20, titles[language]);
+ 	OSCalendarTime auStack_54;
+--- a/src/System/MarDirectorLoadResource.cpp
++++ b/src/System/MarDirectorLoadResource.cpp
+@@ -105,7 +105,7 @@
+ 	gpMarioParticleManager->unk3B8 = new JPAEmitterManager(
+ 	    gpResourceManager, particleNum, emitterNum, emitterNum * 2, nullptr);
+ 	gpEmitterManager4D2 = new JPAEmitterManager(
+-	    nullptr, VERSION_SELECT(GMSJ01(200), GMSP01(270)), 0x20, 0x40, nullptr);
++	    nullptr, VERSION_SELECT(GMSJ01(200), GMSP01(270), GMSE01(200)), 0x20, 0x40, nullptr);
+ 	loadParticle();
+ 
+ 	void* rawArch = SMSLoadArchive("/data/yoshi.arc", nullptr, 0, nullptr);

@@ -66,6 +66,9 @@ if(NOT _rc EQUAL 0)
 endif()
 
 include(ExternalProject)
+if(WIN32 AND NOT SMS_CLANG_TARGET)
+  set(SMS_CLANG_TARGET "x86_64-w64-windows-gnu" CACHE STRING "Target triple the mods are built for with clang")
+endif()
 set(_eclipse_lib "${CMAKE_BINARY_DIR}/eclipse-build/libsms_eclipse.a")
 ExternalProject_Add(sms_eclipse_build
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/platform/mods/eclipse/lib
@@ -75,7 +78,8 @@ ExternalProject_Add(sms_eclipse_build
     -DECLIPSE_SRC=${SMS_ECLIPSE_SRC_DIR}/eclipse -DBSE_SRC=${SMS_ECLIPSE_SRC_DIR}/bse
     -DMOVESET_SRC=${SMS_ECLIPSE_SRC_DIR}/moveset
     -DSHI_SRC=${SMS_ECLIPSE_SRC_DIR}/shi -DPORT_MODS=${CMAKE_CURRENT_SOURCE_DIR}/platform/mods
-    -DSMS_ARCH=${SMS_ARCH}
+    -DSMS_ARCH=${SMS_ARCH} -DSMS_CLANG_TARGET=${SMS_CLANG_TARGET}
+    -DCMAKE_C_COMPILER_TARGET=${SMS_CLANG_TARGET} -DCMAKE_CXX_COMPILER_TARGET=${SMS_CLANG_TARGET}
   BUILD_ALWAYS ON
   INSTALL_COMMAND ""
   BUILD_BYPRODUCTS ${_eclipse_lib})
@@ -87,7 +91,10 @@ ExternalProject_Add(sms_eclipse_build
 # game's heaps.
 ExternalProject_Add_Step(sms_eclipse_build rename_new
   COMMAND ${SMS_OBJCOPY} --redefine-syms=${CMAKE_BINARY_DIR}/game_new_syms.txt ${_eclipse_lib}
-  DEPENDEES build)
+  DEPENDEES build
+  # The build step always runs and may re-archive the library; renaming
+  # again is harmless.
+  ALWAYS TRUE)
 
 # Functions the mods call out of line that the decomp only has inline, and
 # SDK functions the retail game never needed: built with the game's flags.
@@ -136,6 +143,24 @@ if(SMS_ARCH STREQUAL "32")
     -Wl,--defsym=_ZN7JKRHeap5allocEjiPS_=_ZN7JKRHeap5allocEmiPS_
     -Wl,--defsym=_ZN13JKRMemArchiveC1EPvj15JKRMemBreakFlag=_ZN13JKRMemArchiveC1EPvm15JKRMemBreakFlag
     -Wl,--defsym=_ZN12TMarDirector19fireStartDemoCameraEPKcPKN9JGeometry5TVec3IfEElfbPFlmmEmPN6JDrama6TActorENS9_6TFlagTItEE=_ZN12TMarDirector19fireStartDemoCameraEPKcPKN9JGeometry5TVec3IfEElfbPFljmEjPN6JDrama6TActorENS9_6TFlagTItEE)
+elseif(WIN32)
+  # LLP64 (MinGW): the game's u32 is unsigned int and uintptr_t unsigned long
+  # long; the mods' unsigned long is 32 bits and their size_t 64.
+  target_link_options(sms PRIVATE
+    -Wl,--defsym=_ZN7JKRHeap5allocEyiPS_=_ZN7JKRHeap5allocEjiPS_
+    -Wl,--defsym=_ZN13JKRMemArchiveC1EPvy15JKRMemBreakFlag=_ZN13JKRMemArchiveC1EPvj15JKRMemBreakFlag
+    -Wl,--defsym=_ZN6JStage6TActor11JSGSetShapeEm=_ZN6JStage6TActor11JSGSetShapeEj
+    -Wl,--defsym=_ZN6JStage6TActor15JSGSetAnimationEm=_ZN6JStage6TActor15JSGSetAnimationEj
+    -Wl,--defsym=_ZN6JStage7TSystem16JSGGetSystemDataEm=_ZN6JStage7TSystem16JSGGetSystemDataEj
+    -Wl,--defsym=_ZN6JStage7TSystem16JSGSetSystemDataEmm=_ZN6JStage7TSystem16JSGSetSystemDataEjj
+    -Wl,--defsym=_ZN12TMarDirector19fireStartDemoCameraEPKcPKN9JGeometry5TVec3IfEEifbPFijjEjPN6JDrama6TActorENS9_6TFlagTItEE=_ZN12TMarDirector19fireStartDemoCameraEPKcPKN9JGeometry5TVec3IfEEifbPFiyjEyPN6JDrama6TActorENS9_6TFlagTItEE)
+  # The mods' destructors call their game bases' base-object destructors
+  # (D2); on PE, GCC emits only the complete-object one (D1), which ELF
+  # aliases to D2. None of these classes has a virtual base, so the two do the
+  # same.
+  foreach(_c 10TBPTornado 11TBossPakkun 11TMapObjBall 11TMapObjBase 11TNerveBPFly 11TRailMapObj 13TNerveBPHover 14TMapObjGeneral 15TNerveBPTakeOff 18TBossPakkunManager 5TCoin 9THitActor)
+    target_link_options(sms PRIVATE -Wl,--defsym=_ZN${_c}D2Ev=_ZN${_c}D1Ev)
+  endforeach()
 else()
   # On LP64 hosts it is the other way round: the game's u32 is unsigned int,
   # and these declarations (size_t, unsigned long) say unsigned long.
