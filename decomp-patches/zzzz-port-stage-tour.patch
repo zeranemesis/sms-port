@@ -42,7 +42,7 @@ Reason: port: SMS_STAGE_TOUR plays a list of stages without the title or file se
  #endif
  
 +#ifdef TARGET_PC
-+extern "C" int port_stage_tour_tick(void);
++extern "C" int port_stage_tour_tick(int area);
 +extern "C" int port_stage_tour_force_exit(void);
 +#endif
 +
@@ -55,8 +55,8 @@ Reason: port: SMS_STAGE_TOUR plays a list of stages without the title or file se
  
 +#ifdef TARGET_PC
 +	// port: SMS_STAGE_TOUR moves on once this stage has run its frames, and
-+	// ends a stage that keeps ignoring that request.
-+	if (int tourNext = port_stage_tour_tick())
++	// ends a stage that keeps ignoring that request (area: stage << 8 | scenario).
++	if (int tourNext = port_stage_tour_tick(gpApplication.mCurrArea.getStage() << 8 | gpApplication.mCurrArea.getScenario()))
 +		setNextStage(tourNext, nullptr);
 +	if (port_stage_tour_force_exit())
 +		return TApplication::APP_STATE_GAMEPLAY;

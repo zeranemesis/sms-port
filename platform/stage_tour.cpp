@@ -13,6 +13,13 @@
 // waiting for a button, such as the airstrip's arrival dialogue, defers the
 // change) has its director end the scene itself.
 // Nothing here runs unless SMS_STAGE_TOUR is set.
+//
+// A code mod can take the game into its own first scene without the
+// application's transitions (Super Mario Eclipse's boot goes straight to its
+// Tutorial). Until a transition has been seen, the tour then runs from the
+// director alone: the current area turning into the stop asked for (or any
+// other) is that stop starting, and the game quits once the last stop has run
+// its frames.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -39,6 +46,9 @@ struct Tour {
     bool leaving = false;
     int retries = 0;
     FILE* log = nullptr;
+    bool sawTransition = false; // the application's transitions drive the tour
+    int area = -1;              // without them: the area seen last
+    int pending = -1;           // and the stop asked for next
 };
 
 Tour g_tour;
@@ -85,6 +95,7 @@ extern "C" int port_stage_tour_transition(int finishedState, int* stage, int* sc
     // The title screen that would follow the Nintendo logo is skipped.
     if (t.stops.empty() || finishedState == kBoot)
         return 0;
+    t.sawTransition = true;
     if (t.index < 0) {
         t.index = 0;
     } else if (t.leaving || t.retries >= 1) {
@@ -113,11 +124,70 @@ extern "C" int port_stage_tour_transition(int finishedState, int* stage, int* sc
     return 1;
 }
 
+namespace {
+
+int encode(const Stop& s)
+{
+    return ((s.stage + 1) << 8) | (s.scenario & 0xff);
+}
+
+// The tour without the application's transitions (see the top of the file).
+int director_tick(Tour& t, int area)
+{
+    const int previous = t.area;
+    t.area = area;
+    if (area != previous) {
+        if (t.pending >= 0) {
+            t.index = t.pending;
+            t.pending = -1;
+            t.ticks = 0;
+            t.leaving = false;
+            std::fprintf(stderr, "[tour] stage %d,%d at frame %u\n", t.stops[t.index].stage,
+                         t.stops[t.index].scenario, frame_count());
+            if (t.log) {
+                std::fprintf(t.log, "start %d %d %u\n", t.stops[t.index].stage, t.stops[t.index].scenario,
+                             frame_count());
+                std::fflush(t.log);
+            }
+        }
+    }
+    if (t.index < 0) {
+        // The mod's own first scene: leave it for the first stop.
+        if (t.pending >= 0 || ++t.ticks < 60)
+            return 0;
+        t.ticks = 0;
+        t.pending = 0;
+        return encode(t.stops[0]);
+    }
+    if (t.leaving || ++t.ticks < t.frames)
+        return 0;
+    t.ticks = 0;
+    t.leaving = true;
+    if (t.log) {
+        std::fprintf(t.log, "leave %d %d %u\n", t.stops[t.index].stage, t.stops[t.index].scenario,
+                     frame_count());
+        std::fflush(t.log);
+    }
+    if (t.index + 1 >= (int)t.stops.size()) {
+        std::fprintf(stderr, "[tour] done\n");
+        if (t.log)
+            std::fclose(t.log), t.log = nullptr;
+        std::fflush(nullptr);
+        std::_Exit(0);
+    }
+    t.pending = t.index + 1;
+    return encode(t.stops[t.pending]);
+}
+
+} // namespace
+
 // Called once per TMarDirector::direct. Returns non-zero, once per stop, when
 // the stop has run its frames: the caller then passes it to setNextStage.
-extern "C" int port_stage_tour_tick(void)
+extern "C" int port_stage_tour_tick(int area)
 {
     Tour& t = tour();
+    if (!t.stops.empty() && !t.sawTransition)
+        return director_tick(t, area);
     if (t.stops.empty() || t.index < 0 || t.leaving)
         return 0;
     if (++t.ticks < t.frames)
@@ -130,7 +200,7 @@ extern "C" int port_stage_tour_tick(void)
         std::fflush(t.log);
     }
     const int next = t.index + 1 < (int)t.stops.size() ? t.index + 1 : t.index;
-    return ((t.stops[next].stage + 1) << 8) | (t.stops[next].scenario & 0xff);
+    return encode(t.stops[next]);
 }
 
 // Called once per TMarDirector::direct, after port_stage_tour_tick. Returns 1

@@ -82,11 +82,16 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  		unk3FC->setPaneOffset(80, 0, 0, 0, 465 - unk3FC->mInitialBounds.y1);
  	else
  		unk3FC->setPaneOffset(80, 0, -73, 0, 465 - unk3FC->mInitialBounds.y1);
-@@ -1782,8 +1834,20 @@
+@@ -1782,8 +1834,25 @@
  	JMSMesgEntry* entry
  	    = unk3D0->getMessageEntry(messageID & 0xffff);
  
 +#ifdef TARGET_PC
++	// A message the stage's archive lacks (Super Mario Eclipse's airport1,
++	// FLUDD's 86): the console reads zeros at the bottom of memory there
++	// (entry->unk4 is 0), so no balloon opens.
++	if (!entry)
++		return false;
 +	// BetterSunshineEngine (shouldRenderTalkBalloon, retail 0x8014A21C, given
 +	// the entry and reading r28 = this; `cmpwi r3, 0x0` at 0x8014A220 and
 +	// `bne` at 0x8014A224): the balloon opens only when the mod says so.
@@ -103,7 +108,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  
  	if (unk10 != 0) {
  		if (unk3F4 == 0xffffffff) {
-@@ -1955,8 +2019,19 @@
+@@ -1955,8 +2024,19 @@
  
  	TWaterGun* waterGun = gpMarioOriginal->getFludd();
  	JUTRect bounds(((J2DPicture*)unk26C->getPane())->getBounds());
@@ -123,7 +128,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  
  	if (waterGun->isPressureOn()) {
  		f32 pressure    = waterGun->getPressure();
-@@ -2519,6 +2594,15 @@
+@@ -2519,6 +2599,15 @@
  	if (unk8A != 0) {
  		if (unk8A > 0xFB) {
  			int spentBlueCoins = 0;
@@ -139,7 +144,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  			for (int flag = 0x46; flag < 0x56; ++flag)
  				if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  					++spentBlueCoins;
-@@ -2526,6 +2610,9 @@
+@@ -2526,6 +2615,9 @@
  			for (int flag = 0x6C; flag <= 0x73; ++flag)
  				if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  					++spentBlueCoins;
@@ -149,7 +154,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  
  			if (unk170 != blueTotal - spentBlueCoins * 10) {
  				--unk170;
-@@ -2620,6 +2707,15 @@
+@@ -2620,6 +2712,15 @@
  		++unk168;
  
  		int spentBlueCoins = 0;
@@ -165,7 +170,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  		for (int flag = 0x46; flag < 0x56; ++flag)
  			if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  				++spentBlueCoins;
-@@ -2627,6 +2723,9 @@
+@@ -2627,6 +2728,9 @@
  		for (int flag = 0x6C; flag < 0x74; ++flag)
  			if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  				++spentBlueCoins;
@@ -175,7 +180,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  
  		int blueCoins = unk168;
  		blueCoins -= spentBlueCoins * 10;
-@@ -2779,6 +2878,15 @@
+@@ -2779,6 +2883,15 @@
  	TFlagManager::smInstance->getFlag(0x40001);
  
  	int blueCoins = 0;
@@ -191,7 +196,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  	for (int flag = 0x46; flag < 0x56; ++flag)
  		if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  			++blueCoins;
-@@ -2786,6 +2894,9 @@
+@@ -2786,6 +2899,9 @@
  	for (int flag = 0x6C; flag <= 0x73; ++flag)
  		if (TFlagManager::smInstance->getFlag(0x10000 + flag) != 0)
  			++blueCoins;
@@ -201,7 +206,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  
  	// TODO: retail computes this straight into the flag counter's register
  	// (`subf. r25`); the countBlueCoin/loadAfter `-=` spelling and reusing
-@@ -3591,10 +3702,27 @@
+@@ -3591,10 +3707,27 @@
  static inline void updateConsole(TGCConsole2* console)
  {
  	if (!console->unk50) {
@@ -229,7 +234,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  		console->endCameraDemo();
  	}
  
-@@ -3762,7 +3890,15 @@
+@@ -3762,7 +3895,15 @@
  			console->unk18 = 5;
  			console->unk38 = 0;
  		}
@@ -245,7 +250,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  			console->unk84 = 1;
  		if (!(amount >= 8 && console->unk84 == 0) && console->unk84 < 1000)
  			++console->unk84;
-@@ -4031,7 +4167,21 @@
+@@ -4031,7 +4172,21 @@
  	// The ROM reads gpMarioOriginal->mFlag directly and tests 0x8000, not
  	// the 0x10000 bit through the SMS_CheckMarioFlag wrapper: the tank only
  	// comes up once Mario actually has FLUDD.
@@ -267,7 +272,7 @@ Reason: port: code-mod hooks (sms_modhook.h): TGCConsole2 blue-coin counts, wate
  	    && !console->unk45 && !console->unk50)
  		console->startAppearTank();
  
-@@ -4607,6 +4757,14 @@
+@@ -4607,6 +4762,14 @@
                                 JDrama::TGraphics* graphics)
  {
  	J2DOrthoGraph graph(graphics->getViewport());

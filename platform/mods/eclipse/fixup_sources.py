@@ -286,6 +286,13 @@ BSE_FIXES = TEXTURE_FIXES + CARD_IMAGE_FIXES + optional([RAWADDR_FIX]) + [RAWDAT
     # that port it (platform/mods/modhooks.cpp) instead of into memory.
     # TMarioAnimeData::isPumpOK's replacement is PowerPC assembly: the FLUDD
     # animation id against BSE's (extended) animation count.
+    # shadowMarioInitHandler (in place of SMS_isMultiPlayerMap in
+    # TEMario::loadAfter) reads Shadow Mario from r31, the TEMario, at retail
+    # 0x150 (mEnemyMario) in assembly, which compiles to nothing natively.
+    ("src/player.cpp",
+     r"SMS_ASM_BLOCK\(\"lwz %0, 0x150 \(31\)\" : \"=r\"\(player\)\);",
+     r"{ u8 *emario; SMS_FROM_GPR(31, emario); player = *(TMario **)(emario + SMS_OFFSET(TEMario, 0x150)); }",
+     "shadowMarioInitHandler without assembly"),
     ("src/player.cpp",
      r"static SMS_ASM_FUNC void isPumpOk\(\) \{\n\s*SMS_ASM_BLOCK\(\"lhz       3, 2 \(3\)[^;]*\);\n\}",
      r"static bool isPumpOk(const u8 *animeData) {\n    return *(const u16 *)(animeData + 2) < sPlayerAnimeInfosSize;\n}",

@@ -17,7 +17,11 @@ void* invoke(void* argument)
 	jmp_buf* previous = exit_point;
 	exit_point = &done;
 	void* result = NULL;
-	if (setjmp(done) == 0)
+	// No frame: the jump back from port_win64_thread_exit restores the
+	// registers without an SEH unwind of the frames in between, which fails
+	// through code mods' frames (Super Mario Eclipse's look-point thread,
+	// destroyed while it waits in OSReceiveMessage at a scene change).
+	if (_setjmp(done, NULL) == 0)
 		result = call->entry(call->argument);
 	exit_point = previous;
 	return result;

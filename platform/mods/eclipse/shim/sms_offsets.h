@@ -36,6 +36,7 @@ inline constexpr sms_offset_entry sms_offset_table[] = {
     {"TCameraInbetween", 0x4, 0x4, 0x4},  // mFramesRemaining
     {"TCardSave", 0x1c, 0x1c, 0x28},  // unk1C.[0]
     {"TCardSave", 0x2e9, 0x2e9, 0x471},  // unk2E9
+    {"TEMario", 0x150, 0x150, 0x1d0},  // mEnemyMario
     {"TEnemyMario::TSettingParams", 0x40, 0x40, 0x80},  // mWaterCtMax.TParamT<short>.value
     {"TFlagManager", 0x6c, 0x6c, 0x6c},  // mCardBools.[108]
     {"TFlagManager", 0x6d, 0x6d, 0x6d},  // mCardBools.[109]
