@@ -40,9 +40,24 @@ A mod may add files the disc does not have.
 A pack of loose files at its root says nothing about where they go.
 A root file the disc does not have at its root, but has at exactly one other path, is placed at that path; the log says so (`loose airport0.szs placed at /data/scene/airport0.szs`).
 
-Disc patches (`.xdelta`, `.vcdiff`, `.bps`, `.ips`) build a different disc and are not applied; the log names them.
-Super Mario Eclipse is one: it also changes the game's code (see [ECLIPSE.md](ECLIPSE.md)).
-CubeShelf reports such a mod as unusable on its mod page.
+Disc patches (`.xdelta`, `.vcdiff`, `.bps`, `.ips`) build a different disc and are not applied over this one; the log names them.
+CubeShelf reports such a mod as unusable on Super Mario Sunshine's mod page.
+
+## Super Mario Eclipse
+
+Eclipse is a disc patch that also changes the game's code (see [ECLIPSE.md](ECLIPSE.md)), so it is a game of its own in CubeShelf (`GMSE04`), on its own runtime.
+`tools/package-cubeshelf.ps1 -Version <same version> -Eclipse` packages `build/windows-64-ecl` (`-DSMS_REGION=GMSE01 -DSMS_ECLIPSE=ON`) as `sms-eclipse-win-x64.zip` beside the PAL archive, and rewrites `checksums.txt` for both: one release carries the two runtimes.
+
+The player installs the "Super Mario Eclipse" mod (GameBanana 536309) from that game's Mods tab and picks a complete North American disc (`GMSE01`).
+Its data preparation (`DiscPatch` in CubeShelf's catalogue) checks the disc's MD5 (`0c6d2edae9fdf40dfc410ff1623e4119`, the only image Eclipse's patch applies to) and refuses any other with a message naming the expected image: a trimmed, compressed or other-region copy cannot be patched.
+It then applies the mod's `v1.1.0.xdelta` with CubeShelf's own VCDIFF decoder (each 8 MiB window checked against xdelta3's Adler-32), checks the result's MD5 (`caa546309e0443f7b47632b040a250d7`) and keeps it as `GMSE04/disc.iso` beside `sms.exe`; the player's disc is never modified.
+The game is started in its folder with:
+
+```text
+SMS_DISC_IMAGE=GMSE04/disc.iso
+```
+
+and no mod list: file mods are not applied over Eclipse.
 
 ## Mods made for Dolphin
 
