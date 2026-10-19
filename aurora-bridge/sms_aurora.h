@@ -89,9 +89,41 @@ SAB_API int sab_begin_frame(void);
 SAB_API void sab_end_frame(void);
 /* Submit game work without necessarily presenting it. VI selects scanout. */
 SAB_API void sab_finish_frame(int present);
+/* The next presented frame is shown no earlier than this long after it ends
+ * (frame generation: a generated image half a game frame after the game's). */
+SAB_API void sab_present_after(uint32_t microseconds);
+
+/* Frame generation: a frame made of recorded operations (the game's stream
+ * with its matrices moved on, its copies), recorded and presented on the GX
+ * thread without the caller waiting, no earlier than presentAfterUs from now.
+ * The stream bytes are not copied: they must stay valid until the next call
+ * that waits for the GX thread (any other sab_* call but sab_process). */
+enum {
+    SAB_REPLAY_STREAM = 0,
+    SAB_REPLAY_COPY_TEX = 1,
+    SAB_REPLAY_COPY_DISPLAY = 2,
+    SAB_REPLAY_DATA_PASS_BEGIN = 3,
+    SAB_REPLAY_DATA_PASS_END = 4,
+};
+typedef struct SabReplayOp {
+    int kind;
+    const void* bytes; /* SAB_REPLAY_STREAM: the command stream */
+    uint32_t size;
+    void* dest;
+    uint16_t x, y, w, h, dw, dh;
+    uint32_t fmt;
+    int clear;
+} SabReplayOp;
+SAB_API void sab_submit_replay(const SabReplayOp* ops, uint32_t count, const void* xfb, uint32_t presentAfterUs);
+/* sab_begin_frame (and sab_retain_efb) run in order on the GX thread, without
+ * waiting: the next frame's stream can be queued behind a replay. */
+SAB_API void sab_begin_frame_async(int retainEfb);
 /* Statistics since the last call: the GX thread's working time, and the time
  * callers waited for it. */
 SAB_API void sab_gx_thread_times(double* busySeconds, double* waitedSeconds);
+/* Statistics since the last call (5 values, seconds): frame generation's replay
+ * begin, stream, copies, end, and the asynchronous begins. */
+SAB_API void sab_gx_thread_breakdown(double* seconds);
 SAB_API void sab_retain_efb(void);
 SAB_API int sab_copy_display(const void* dest, uint16_t left, uint16_t top,
                              uint16_t width, uint16_t height, int clear);

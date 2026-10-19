@@ -41,6 +41,7 @@
 #include <vector>
 
 extern "C" uint32_t VIGetRetraceCount(void);
+extern "C" int port_fps60_active __attribute__((weak));  // the game's (frame rate patches)
 extern "C" double port_vi_take_late_max(void) __attribute__((weak));  // vi.cpp
 extern "C" void port_os_profile_frame(unsigned) __attribute__((weak));
 
@@ -148,6 +149,19 @@ inline void putAurora(uint16_t sub) {
     put16(sub);
 }
 
+// Frame generation (SMS_FRAMEGEN=1, a prototype): each frame's command stream
+// is kept, and right after the game's frame is presented it is played again
+// with every matched object's matrices carried half a game frame further along
+// their motion, and that image is presented half a frame later: 120 images a
+// second from the game's 60. See the section "frame generation" below.
+bool fgEnabled() {
+    static const bool enabled = [] { const char* v = getenv("SMS_FRAMEGEN"); return v && *v && strcmp(v, "0"); }();
+    return enabled;
+}
+void fgTakeStream();
+void fgNoteMetric(size_t slotByte);
+void fgNoteDraw(uint8_t opcode, uint32_t count, uint32_t fmt, const VtxFmtLayout& L);
+
 double s_submitSeconds = 0;  // statistics: Aurora's command processing on this thread
 double s_submitTotalSeconds = 0; // Monotonic diagnostic counter, independent of report resets.
 
@@ -157,6 +171,7 @@ void submit() {
         timespec t0, t1;
         clock_gettime(CLOCK_MONOTONIC, &t0);
         sab_process(s_cmd.data(), uint32_t(s_cmd.size()));
+        if (fgEnabled()) fgTakeStream();
         clock_gettime(CLOCK_MONOTONIC, &t1);
         const double elapsed=double(t1.tv_sec - t0.tv_sec) + double(t1.tv_nsec - t0.tv_nsec) * 1e-9;
         s_submitSeconds += elapsed;
@@ -190,6 +205,14 @@ std::unordered_map<uint16_t, uint32_t> s_tokenValues;
 bool s_metricActive = false;
 int s_metricReadToken = -1;
 uint64_t s_frameId = 0;
+bool s_frameIdKnown = true;
+uint64_t curFrameId() {
+    if (!s_frameIdKnown) {
+        s_frameId = s_inFrame ? sab_frame_id() : 0;
+        s_frameIdKnown = true;
+    }
+    return s_frameId;
+}
 
 void metricStop() {
     if (!s_metricActive) return;
@@ -200,8 +223,8 @@ void metricStop() {
 
 void endFrameMetrics() {
     metricStop();
-    if (!s_metricSlots.empty() && s_frameId)
-        s_metricFrames[s_frameId] = MetricFrame{std::move(s_metricSlots), sab_efb_pixel_area_scale()};
+    if (!s_metricSlots.empty() && curFrameId())
+        s_metricFrames[curFrameId()] = MetricFrame{std::move(s_metricSlots), sab_efb_pixel_area_scale()};
     s_metricSlots.clear();
 }
 
@@ -447,7 +470,7 @@ void collectDepthCopy() {
     if (r == 1 && hashBytes(s_depthPending.dest, s_depthPending.bytes) == s_depthPending.hash) {
         memcpy(s_depthPending.dest, scratch.data(), s_depthPending.bytes);
         s_depthStoredDest = s_depthPending.dest;
-        s_depthStoredFrame = s_frameId;
+        s_depthStoredFrame = curFrameId();
     }
     s_depthPending = {};
 }
@@ -456,11 +479,11 @@ bool copyDepthZ24X8(void* dest, uint16_t x, uint16_t y, uint16_t w, uint16_t h, 
     collectDepthCopy();
     // While a copy is in flight the exact-depth slot is busy: keep that one.
     if (s_depthPending.tag) return true;
-    const bool warm = s_depthStoredDest == dest && s_frameId - s_depthStoredFrame <= 4;
+    const bool warm = s_depthStoredDest == dest && curFrameId() - s_depthStoredFrame <= 4;
     if (!asyncDepthCopies() || !warm) {
         if (!sab_copy_depth_z24x8_sync(dest, x, y, w, h, dw, dh)) return false;
         s_depthStoredDest = dest;
-        s_depthStoredFrame = s_frameId;
+        s_depthStoredFrame = curFrameId();
         return true;
     }
     const uint64_t tag = ++s_depthNextTag;
@@ -594,7 +617,9 @@ bool prepCacheEnabled() {
     return enabled;
 }
 bool stateCacheEnabled() {
-    static const bool enabled=[] { const char* v=getenv("SMS_GX_STATE_CACHE"); return !v || strcmp(v,"0"); }();
+    // Frame generation plays a frame's stream again on its own: a write skipped
+    // because an earlier frame had sent the same value would be missing there.
+    static const bool enabled=[] { const char* v=getenv("SMS_GX_STATE_CACHE"); return (!v || strcmp(v,"0")) && !fgEnabled(); }();
     return enabled;
 }
 
@@ -953,6 +978,7 @@ void emitDraw(uint8_t opcode, uint32_t count) {
             putBP(BP_SCISSOR_BR,(br&~0x7ff000u)|(uint32_t(r)<<12));
         }
     }
+    if (fgEnabled() && s_inFrame) fgNoteDraw(opcode, count, fmt, L);
     // A draw holds at most 0xFFFF vertices; the loader never makes bigger ones.
     put8(uint8_t(opcode | 0));  // vertex attribute format 0
     put16(uint16_t(count));
@@ -1002,22 +1028,418 @@ void emitDraw(uint8_t opcode, uint32_t count) {
     if (s_cmd.size() > (4u << 20)) submit();
 }
 
+// ------------------------------------------------------------------ frame generation
+// What a frame did, in order, to do it again: the command stream chunks (with
+// where each draw starts and the position matrices it uses), the texture and
+// display copies, the data passes. Anything else (a depth copy, an EFB size
+// change) marks the frame as not replayable. Everything lives in two frames
+// (this one and the previous one) whose buffers are reused: a busy frame has
+// 30,000 draws, and copying or reallocating per draw cost more than the replay.
+struct FgDraw {
+    uint64_t key;     // the same draw in another frame (see fgKey)
+    uint32_t offset;  // in its chunk, where the draw command starts
+    uint32_t row0;    // its first FgRow
+    uint8_t nrows;
+};
+struct FgRow {
+    uint32_t at;  // in the chunk, the row's 12 words in the XF load that set them; ~0u: none
+    uint32_t row; // position-matrix row (XF memory row = 4 words)
+    float m[12];
+};
+struct FgOp {
+    enum Kind : uint8_t { Stream, CopyTex, CopyDisplay, DataPassBegin, DataPassEnd } kind;
+    uint32_t buffer = 0, draw0 = 0, draw1 = 0;  // Stream: its chunk and draws
+    void* dest = nullptr;
+    uint16_t x = 0, y = 0, w = 0, h = 0, dw = 0, dh = 0;
+    uint32_t fmt = 0;
+    bool clear = false;
+};
+std::vector<std::vector<uint8_t>> s_fgPool;  // spare chunk buffers
+struct FgFrame {
+    std::vector<FgOp> ops;
+    std::vector<std::vector<uint8_t>> buffers;
+    std::vector<FgDraw> draws;
+    std::vector<FgRow> rows;
+    bool valid = true;
+    bool shown = false;  // ends with a display copy
+    void* xfb = nullptr;
+    void clear() {
+        for (auto& b : buffers) {
+            b.clear();
+            s_fgPool.push_back(std::move(b));
+        }
+        buffers.clear();
+        ops.clear();
+        draws.clear();
+        rows.clear();
+        valid = true;
+        shown = false;
+        xfb = nullptr;
+    }
+};
+FgFrame s_fgFrames[2];
+FgFrame* s_fgCur = &s_fgFrames[0];
+FgFrame* s_fgPrev = &s_fgFrames[1];
+uint32_t s_fgPendingDraw = 0;     // the first draw of s_cmd in s_fgCur->draws
+std::vector<size_t> s_fgMetrics;  // metric slot bytes in s_cmd
+double s_fgLastLive = 0, s_fgPeriod = 1.0 / 59.94;
+uint32_t s_fgReplays = 0, s_fgMatched = 0, s_fgDrawsSeen = 0;
+double s_fgSeconds = 0, s_fgBuild = 0, s_fgProcess = 0, s_fgFinish = 0;
+uint32_t s_fgRows = 0, s_fgStale = 0;
+// Where in s_cmd the latest full load of each position-matrix row is (valid
+// while s_fgRowSerial matches s_fgSerial, the chunk being built).
+uint32_t s_fgRowAt[64], s_fgRowSerial[64];
+uint32_t s_fgSerial = 1;
+bool s_fgAsyncBegin = false;  // a replay is queued: begin the next frame behind it
+uint8_t s_fgMarkers[8];
+uint32_t s_fgMarkerNext = 0;
+
+void fgInvalidate() { if (fgEnabled()) s_fgCur->valid = false; }
+
+void fgNoteMetric(size_t slotByte) { s_fgMetrics.push_back(slotByte); }
+
+// An XF load into position-matrix memory: the rows it sets whole can be
+// rewritten in place by the replay; the ones it sets in part cannot.
+void fgNoteXf(uint32_t addr, uint32_t count, size_t dataAt) {
+    if (addr >= 64 * 4) return;
+    const uint32_t end = std::min<uint32_t>(addr + count, 64 * 4);
+    for (uint32_t row = addr / 4; row * 4 < end; row++) {
+        if (row * 4 >= addr && row * 4 + 12 <= addr + count) {
+            s_fgRowAt[row] = uint32_t(dataAt + (row * 4 - addr) * 4);
+            s_fgRowSerial[row] = s_fgSerial;
+        } else {
+            s_fgRowSerial[row] = 0;
+        }
+    }
+}
+
+// A draw is the same as one of the previous frame when it draws the same
+// vertices the same way: indexed positions come from the model's array, so
+// its address names the mesh; direct ones (2D, particles) are named by their
+// first vertex. Repeats of a key pair up in order.
+uint64_t fgKey(uint8_t opcode, uint32_t count, uint32_t fmt) {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&](uint64_t v) {
+        h ^= v;
+        h *= 1099511628211ull;
+    };
+    mix(opcode);
+    mix(count);
+    mix(fmt);
+    const uint32_t posType = (g.cpVcdLo >> 9) & 3;  // VCD_LO: 1 direct, 2-3 indexed
+    if (posType >= 2) mix(reinterpret_cast<uintptr_t>(g.arrayBase[0]));
+    else if (s_prim.size() >= 12) {
+        uint64_t v;
+        std::memcpy(&v, s_prim.data(), 8);
+        mix(v);
+    }
+    mix(reinterpret_cast<uintptr_t>(g.texImage[0]));
+    return h;
+}
+
+void fgNoteDraw(uint8_t opcode, uint32_t count, uint32_t fmt, const VtxFmtLayout& L) {
+    FgFrame& f = *s_fgCur;
+    FgDraw d{fgKey(opcode, count, fmt), uint32_t(s_cmd.size()), uint32_t(f.rows.size()), 0};
+    auto addRow = [&](uint32_t row) {
+        if (row > 61) return true;
+        for (uint32_t i = d.row0; i < f.rows.size(); i++)
+            if (f.rows[i].row == row) return true;
+        if (d.nrows == 10) return false;
+        FgRow& r = f.rows.emplace_back();
+        r.at = s_fgRowSerial[row] == s_fgSerial ? s_fgRowAt[row] : ~0u;
+        r.row = row;
+        std::memcpy(r.m, &g.xfMem[row * 4], 48);
+        d.nrows++;
+        return true;
+    };
+    if (fmt & VF_MTX) {
+        const uint8_t* in = s_prim.data();
+        for (uint32_t v = 0; v < count && addRow(in[L.mtx]); v++, in += s_primStride) {
+        }
+    } else {
+        addRow(g.cpMatA & 0x3F);
+    }
+    f.draws.push_back(d);
+}
+
+// After sab_process: the chunk itself becomes the recording (s_cmd takes a
+// spare buffer instead of being copied).
+void fgTakeStream() {
+    s_fgSerial++;  // offsets into s_cmd end with it
+    FgFrame& f = *s_fgCur;
+    if (!s_inFrame) {
+        if (s_fgPendingDraw < f.draws.size()) {
+            f.rows.resize(f.draws[s_fgPendingDraw].row0);
+            f.draws.resize(s_fgPendingDraw);
+        }
+        s_fgMetrics.clear();
+        return;
+    }
+    std::vector<uint8_t> chunk;
+    if (!s_fgPool.empty()) {
+        chunk = std::move(s_fgPool.back());
+        s_fgPool.pop_back();
+    }
+    chunk.swap(s_cmd);
+    for (size_t at : s_fgMetrics)
+        if (at < chunk.size()) chunk[at] = 0;  // no counting in the replay
+    s_fgMetrics.clear();
+    FgOp op{FgOp::Stream};
+    op.buffer = uint32_t(f.buffers.size());
+    op.draw0 = s_fgPendingDraw;
+    op.draw1 = uint32_t(f.draws.size());
+    s_fgPendingDraw = op.draw1;
+    f.buffers.push_back(std::move(chunk));
+    f.ops.push_back(op);
+}
+
+void fgNoteCopy(FgOp::Kind kind, void* dest, uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t dw,
+                uint16_t dh, uint32_t fmt, bool clear) {
+    if (!fgEnabled() || !s_inFrame) return;
+    FgOp op{kind};
+    op.dest = dest;
+    op.x = x, op.y = y, op.w = w, op.h = h, op.dw = dw, op.dh = dh;
+    op.fmt = fmt;
+    op.clear = clear;
+    if (kind == FgOp::CopyDisplay) {
+        s_fgCur->shown = true;
+        s_fgCur->xfb = dest;
+    }
+    s_fgCur->ops.push_back(op);
+}
+
+void fgNoteDataPass(bool begin, uint16_t w = 0, uint16_t h = 0) {
+    if (!fgEnabled() || !s_inFrame) return;
+    FgOp op{begin ? FgOp::DataPassBegin : FgOp::DataPassEnd};
+    op.w = w, op.h = h;
+    s_fgCur->ops.push_back(op);
+}
+
+// The matrix half a step on: m + a (m - previous). Not across a jump (a camera
+// cut, a teleport, a reused key): then the current matrix.
+bool fgExtrapolate(const float* cur, const float* prev, float a, float* out) {
+    float rot = 0, tr = 0;
+    for (int i = 0; i < 12; i++) {
+        const float d = std::fabs(cur[i] - prev[i]);
+        if (i % 4 == 3) tr = std::max(tr, d);
+        else rot = std::max(rot, d);
+    }
+    if (rot > 0.3f || tr > 400.f) return false;
+    bool moved = false;
+    for (int i = 0; i < 12; i++) {
+        out[i] = cur[i] + a * (cur[i] - prev[i]);
+        moved |= out[i] != cur[i];
+    }
+    return moved;
+}
+
+void fgReplay() {
+    const double t0 = nowSeconds();
+    static const float ahead = [] {
+        const char* v = getenv("SMS_FRAMEGEN_AHEAD");
+        return v ? float(atof(v)) : 0.5f;
+    }();
+    FgFrame& cur = *s_fgCur;
+    const FgFrame& prev = *s_fgPrev;
+    // Dumps read the replayed image back: that needs the synchronous path.
+    static const bool sync = getenv("SMS_FRAMEGEN_DUMP") || getenv("SMS_FRAMEGEN_SYNC");
+    if (sync && !sab_begin_frame()) return;
+    static std::vector<SabReplayOp> queued;
+    queued.clear();
+    auto queue = [&](int kind, const FgOp& op) {
+        SabReplayOp r{};
+        r.kind = kind;
+        if (kind == SAB_REPLAY_STREAM) {
+            r.bytes = cur.buffers[op.buffer].data();
+            r.size = uint32_t(cur.buffers[op.buffer].size());
+        }
+        r.dest = op.dest;
+        r.x = op.x, r.y = op.y, r.w = op.w, r.h = op.h, r.dw = op.dw, r.dh = op.dh;
+        r.fmt = op.fmt;
+        r.clear = op.clear ? 1 : 0;
+        queued.push_back(r);
+    };
+    double tStep = nowSeconds();
+    // The game draws in nearly the same order every frame: each draw is looked
+    // for just after the previous match, a few draws on at most (objects that
+    // appeared or went away); repeats of a mesh pair up in order.
+    constexpr size_t kWindow = 64;
+    size_t cursor = 0;
+    for (const auto& op : cur.ops) {
+        switch (op.kind) {
+        case FgOp::Stream: {
+            tStep = nowSeconds();
+            std::vector<uint8_t>& bytes = cur.buffers[op.buffer];
+            // The game's own matrix loads are rewritten in place: the stream
+            // keeps its shape, so Aurora merges the draws as it did.
+            for (uint32_t di = op.draw0; di < op.draw1; di++) {
+                const FgDraw& d = cur.draws[di];
+                s_fgDrawsSeen++;
+                const FgDraw* p = nullptr;
+                const size_t end = std::min(prev.draws.size(), cursor + kWindow);
+                for (size_t k = cursor; k < end; k++)
+                    if (prev.draws[k].key == d.key) {
+                        p = &prev.draws[k];
+                        cursor = k + 1;
+                        break;
+                    }
+                if (!p || p->nrows != d.nrows) continue;
+                s_fgMatched++;
+                for (uint32_t i = 0; i < d.nrows; i++) {
+                    const FgRow& r = cur.rows[d.row0 + i];
+                    if (r.at == ~0u || r.at + 48 > bytes.size()) continue;
+                    // Only where the load still holds the matrix the draw used
+                    // (an earlier draw sharing the load has moved it already).
+                    if (std::memcmp(&bytes[r.at], r.m, 48) != 0) {
+                        s_fgStale++;
+                        continue;
+                    }
+                    float m[12];
+                    if (!fgExtrapolate(r.m, prev.rows[p->row0 + i].m, ahead, m)) continue;
+                    std::memcpy(&bytes[r.at], m, 48);
+                    s_fgRows++;
+                }
+            }
+            const double tb = nowSeconds();
+            s_fgBuild += tb - tStep;
+            if (sync) sab_process(bytes.data(), uint32_t(bytes.size()));
+            else queue(SAB_REPLAY_STREAM, op);
+            tStep = nowSeconds();
+            s_fgProcess += tStep - tb;
+            break;
+        }
+        case FgOp::CopyTex:
+            if (sync) sab_copy_tex_request(op.dest, op.x, op.y, op.w, op.h, op.dw, op.dh, op.fmt, op.clear ? 1 : 0, 0, 0);
+            else queue(SAB_REPLAY_COPY_TEX, op);
+            break;
+        case FgOp::CopyDisplay: {
+            if (!sync) {
+                queue(SAB_REPLAY_COPY_DISPLAY, op);
+                break;
+            }
+            static const bool dump = getenv("SMS_FRAMEGEN_DUMP") != nullptr;
+            static const uint32_t dumpFrom = getenv("SMS_GX_DUMP_FROM") ? uint32_t(atoi(getenv("SMS_GX_DUMP_FROM"))) : 0;
+            if (dump && dumpDir() && s_frame >= dumpFrom && s_frame % uint32_t(dumpEvery()) == 0) {
+                static const std::string dir = std::string(dumpDir()) + "/fg";
+                static const bool made = (_mkdir(dir.c_str()), true);
+                (void)made;
+                void* marker = &s_fgMarkers[s_fgMarkerNext++ % sizeof s_fgMarkers];
+                if (!s_dumpPending.count(marker)) {
+                    ensureCopyReadbackCapacity();
+                    const uint64_t requestId = ++s_nextCopyRequest;
+                    s_dumpPending[marker] = PendingDump{s_frame, dir, requestId};
+                    sab_copy_tex_request(marker, op.x, op.y, op.w, op.h, op.w, op.h, GX_TF_RGBA8, 0, 1, requestId);
+                }
+            }
+            sab_copy_display(op.dest, op.x, op.y, op.w, op.h, op.clear ? 1 : 0);
+            break;
+        }
+        case FgOp::DataPassBegin:
+            if (sync) sab_begin_data_pass(op.w, op.h);
+            else queue(SAB_REPLAY_DATA_PASS_BEGIN, op);
+            break;
+        case FgOp::DataPassEnd:
+            if (sync) sab_end_data_pass();
+            else queue(SAB_REPLAY_DATA_PASS_END, op);
+            break;
+        }
+    }
+    // Half a game frame after the game's own image.
+    const double wait = s_fgLastLive + s_fgPeriod * 0.5 - nowSeconds();
+    const uint32_t waitUs = wait > 0 ? uint32_t(wait * 1e6) : 0;
+    const double tf = nowSeconds();
+    if (sync) {
+        sab_select_scanout(cur.xfb, 0);
+        sab_present_after(waitUs);
+        sab_finish_frame(1);
+    } else {
+        // The bridge reads the chunks where they are: they stay untouched
+        // until this frame's buffers are reused, two frames from now, after
+        // the GX thread has long finished with them.
+        sab_submit_replay(queued.data(), uint32_t(queued.size()), cur.xfb, waitUs);
+        s_fgAsyncBegin = true;
+    }
+    s_fgFinish += nowSeconds() - tf;
+    s_fgReplays++;
+    s_fgSeconds += nowSeconds() - t0;
+}
+
+// Frame generation steps aside when the game stops keeping up: the replay
+// costs the GX thread about as much as the game's frame, and in a heavy scene
+// the two together can make the game miss retraces. Blocks of 60 game frames
+// are counted; 4 misses or more in one pause the replays, for 2 seconds at
+// first, twice as long each time it happens again soon after (16 s at most),
+// back to 2 seconds after a clean block.
+struct FgPacing {
+    uint32_t frames = 0, misses = 0;
+    uint32_t pausedUntil = 0;  // s_frame
+    uint32_t pause = 120;
+    bool paused(uint32_t frame) const { return frame < pausedUntil; }
+} s_fgPacing;
+
+void fgCountFrame(double dt) {
+    FgPacing& p = s_fgPacing;
+    if (p.paused(s_frame)) return;
+    const bool fps60 = &port_fps60_active && port_fps60_active;
+    const double expected = fps60 ? 1.0 / 59.94 : 2.0 / 59.94;
+    p.frames++;
+    p.misses += dt > expected * 1.5 && dt < 0.25;  // not a load or a pause
+    if (p.frames < 60) return;
+    if (p.misses >= 4) {
+        p.pausedUntil = s_frame + p.pause;
+        fprintf(stderr, "[gx-aurora] framegen: %u missed retraces in 60 frames, paused for %u frames\n", p.misses,
+                p.pause);
+        p.pause = std::min<uint32_t>(p.pause * 2, 960);
+    } else if (p.misses == 0) {
+        p.pause = 120;
+    }
+    p.frames = p.misses = 0;
+}
+
+// After the game's frame is presented: play it again, half a step on.
+void fgAfterPresent(bool shown) {
+    if (!fgEnabled()) return;
+    if (shown && s_fgCur->shown) {
+        const double now = nowSeconds();
+        if (s_fgLastLive > 0) {
+            const double dt = now - s_fgLastLive;
+            if (dt > 0.005 && dt < 0.05) s_fgPeriod = 0.9 * s_fgPeriod + 0.1 * dt;
+            fgCountFrame(dt);
+        }
+        s_fgLastLive = now;
+        if (s_fgCur->valid && !s_fgPrev->ops.empty() && s_fgCur->xfb && !s_fgPacing.paused(s_frame)) fgReplay();
+        std::swap(s_fgCur, s_fgPrev);
+    }
+    s_fgCur->clear();
+    s_fgPendingDraw = 0;
+    s_fgSerial++;
+    s_fgMetrics.clear();
+}
+
 // ------------------------------------------------------------------ frames
 void beginFrame(bool retain = true) {
     const double t0 = nowSeconds();
-    s_inFrame = sab_begin_frame() != 0;
-    if (s_inFrame && retain) sab_retain_efb();
+    const bool async = s_fgAsyncBegin;
+    s_fgAsyncBegin = false;
+    if (async) {
+        sab_begin_frame_async(retain ? 1 : 0);
+        s_inFrame = true;
+    } else {
+        s_inFrame = sab_begin_frame() != 0;
+        if (s_inFrame && retain) sab_retain_efb();
+    }
     const double waited = nowSeconds() - t0;
     s_acquireLast = waited;
     s_acquireAccum += waited;
     s_acquireLong += waited > 0.004;
-    s_frameId = s_inFrame ? sab_frame_id() : 0;
+    s_frameIdKnown = !async;
+    if (!async) s_frameId = s_inFrame ? sab_frame_id() : 0;
     // Aurora starts each frame with fresh state: send the vertex format again
     // and every texture before its next use.
     s_curFmt = ~0u;
     for (auto& m : s_maps) m.regsDirty = true;
     for (bool& v : s_suValid) v = false;
-    storeCopyReadbacks();
+    if (!async) storeCopyReadbacks();
 }
 
 void reportStats() {
@@ -1047,13 +1469,27 @@ void reportStats() {
             s_submitSeconds / n * 1000, s_presentAccum / n * 1000, s_acquireAccum / n * 1000, s_acquireLong,
             s_stats.draws / n, s_stats.vertices / n, s_stats.texLoads / n, s_stats.texRehash / n,
             s_stats.copies / n);
+    s_submitSeconds = 0;
     {
         double busy = 0, waited = 0;
         sab_gx_thread_times(&busy, &waited);
         fprintf(stderr, "[gx-aurora] GX thread: busy %.2f ms, game waited %.2f ms per frame\n", busy / n * 1000,
                 waited / n * 1000);
+        if (fgEnabled()) {
+            double b[5];
+            sab_gx_thread_breakdown(b);
+            fprintf(stderr, "[gx-aurora] GX thread replay: begin %.2f, stream %.2f, copies %.2f, end %.2f; next begin %.2f ms per frame\n",
+                    b[0] / n * 1000, b[1] / n * 1000, b[2] / n * 1000, b[3] / n * 1000, b[4] / n * 1000);
+        }
     }
-    s_submitSeconds = 0;
+    if (fgEnabled()) {
+        fprintf(stderr, "[gx-aurora] framegen: %u replays, %u of %u draws matched, %u rows (%u stale), %.2f ms per replay"
+                " (build %.2f, process %.2f, finish %.2f)\n", s_fgReplays, s_fgMatched, s_fgDrawsSeen, s_fgRows, s_fgStale,
+                s_fgReplays ? s_fgSeconds / s_fgReplays * 1000 : 0.0, s_fgReplays ? s_fgBuild / s_fgReplays * 1000 : 0.0,
+                s_fgReplays ? s_fgProcess / s_fgReplays * 1000 : 0.0, s_fgReplays ? s_fgFinish / s_fgReplays * 1000 : 0.0);
+        s_fgReplays = s_fgMatched = s_fgDrawsSeen = s_fgRows = s_fgStale = 0;
+        s_fgSeconds = s_fgBuild = s_fgProcess = s_fgFinish = 0;
+    }
     s_acquireAccum = 0;
     s_acquireLong = 0;
     if (!s_tokenValues.empty() || s_writeBackCount) {
@@ -1123,10 +1559,12 @@ void present(bool show = true) {
     double t0 = nowSeconds();
     endFrameMetrics();
     submit();
+    const bool wasInFrame = s_inFrame;
     if (s_inFrame) sab_finish_frame(show ? 1 : 0);
     s_inFrame = false;
     collectPixelMetrics();
     storeCopyReadbacks();
+    const bool fgShown = show && wasInFrame;
     double t1 = nowSeconds();
     if (show) {
         s_presentAccum += t1 - t0;
@@ -1160,6 +1598,7 @@ void present(bool show = true) {
         return value ? unsigned(strtoul(value, nullptr, 10)) : 0u;
     }();
     if (stopAfter && s_frame >= stopAfter) std::exit(0);
+    fgAfterPresent(fgShown);
     beginFrame();
 }
 
@@ -1388,6 +1827,7 @@ void sinkXF(uint16_t addr, uint32_t count, const uint32_t* words) {
     size_t n = s_cmd.size();
     s_cmd.resize(n + size_t(count) * 4);
     memcpy(&s_cmd[n], words, size_t(count) * 4);
+    if (fgEnabled() && s_inFrame) fgNoteXf(addr, count, n);
     // SMS_AURORA_XFDBG: l = lighting off, t = log texgens and channel controls, L = log lights
     static const char* dbg = getenv("SMS_AURORA_XFDBG");
     if (dbg) {
@@ -1460,7 +1900,7 @@ void executeCopy(uint32_t ctrl) {
         }
     }
     if (disp) {
-        if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; }
+        if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; fgNoteDataPass(false); }
         const bool sizeChanged = w != s_efbW || h != s_efbH;
         s_frame++;
         static const uint32_t dumpFrom = getenv("SMS_GX_DUMP_FROM") ? uint32_t(atoi(getenv("SMS_GX_DUMP_FROM"))) : 0;
@@ -1475,6 +1915,7 @@ void executeCopy(uint32_t ctrl) {
             }
         }
         if (g_displayCopyHook) g_displayCopyHook(dest);
+        fgNoteCopy(FgOp::CopyDisplay, dest, x, y, w, h, w, h, 0, clear);
         if (s_inFrame && sab_copy_display(dest,x,y,w,h,clear ? 1 : 0)) {
             s_xfbSerials[dest] = ++s_copySerial;
             s_lastCopiedXfb = dest;
@@ -1482,6 +1923,7 @@ void executeCopy(uint32_t ctrl) {
         // The completed image was drawn using the old logical EFB mapping.
         // Reconfigure only after capturing it, for subsequent game draws.
         if (sizeChanged) {
+            fgInvalidate();
             s_efbW = w; s_efbH = h;
             sab_set_efb_size(w,h);
         }
@@ -1513,7 +1955,7 @@ void executeCopy(uint32_t ctrl) {
         PendingCopy pc{};
         pc.requestId = requestId = ++s_nextCopyRequest;
         pc.dest = dest;
-        pc.frameId = s_frameId;
+        pc.frameId = curFrameId();
         pc.width = dw;
         pc.height = dh;
         pc.fmt = f;
@@ -1535,13 +1977,15 @@ void executeCopy(uint32_t ctrl) {
     // Capture before the copy/clear changes the EFB; never enqueue it as a
     // delayed colour write-back. RAM retains GX byte order (PC reader decodes BE).
     if (s_inFrame && dest && g_texCopyFmt == GX_TF_Z24X8) {
+        fgInvalidate();
         if (!copyDepthZ24X8(dest, cx, y, cw, h, dw, dh)) {
             static uint32_t reported = 0;
             if (reported++ < 4) fprintf(stderr, "[gx-aurora] exact Z24X8 CPU copy failed at frame %u\n", s_frame);
         }
     }
+    fgNoteCopy(FgOp::CopyTex, dest, cx, y, cw, h, dw, dh, g_texCopyFmt, clear);
     if (s_inFrame) sab_copy_tex_request(dest, cx, y, cw, h, dw, dh, g_texCopyFmt, clear ? 1 : 0, readback ? 1 : 0, requestId);
-    if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; }
+    if (s_dataPassActive) { sab_end_data_pass(); s_dataPassActive = false; fgNoteDataPass(false); }
     s_stats.copies++;
 }
 
@@ -1551,9 +1995,9 @@ static uint64_t s_peekRevision = 0;
 static uint64_t s_peekDraws = ~uint64_t(0), s_peekCopies = ~uint64_t(0), s_peekFrame = ~uint64_t(0);
 static bool peekPixel(int x, int y, uint32_t& color, uint32_t& z) {
     if (!s_ready || !s_inFrame || x < 0 || y < 0) return false;
-    if (s_peekDraws != s_stats.draws || s_peekCopies != s_stats.copies || s_peekFrame != s_frameId) {
+    if (s_peekDraws != s_stats.draws || s_peekCopies != s_stats.copies || s_peekFrame != curFrameId()) {
         ++s_peekRevision;
-        s_peekDraws = s_stats.draws; s_peekCopies = s_stats.copies; s_peekFrame = s_frameId;
+        s_peekDraws = s_stats.draws; s_peekCopies = s_stats.copies; s_peekFrame = curFrameId();
     }
     submit();
     const double start = nowSeconds();
@@ -1563,7 +2007,7 @@ static bool peekPixel(int x, int y, uint32_t& color, uint32_t& z) {
     static unsigned logged = 0;
     if (log && logged++ < 64)
         fprintf(stderr, "[gx-aurora] peek frame %llu revision %llu at %d,%d: ARGB %08x Z %06x valid %d, %.3f ms\n",
-                (unsigned long long)s_frameId, (unsigned long long)s_peekRevision, x, y,
+                (unsigned long long)curFrameId(), (unsigned long long)s_peekRevision, x, y,
                 unsigned(color), unsigned(z), int(valid), (nowSeconds() - start) * 1000);
     return valid;
 }
@@ -1607,6 +2051,7 @@ void pixMetricClear() {
     s_metricSlots.push_back(MetricSlot{});
     s_metricActive = true;
     putAurora(0x0100);  // GX_LOAD_AURORA_PIXEL_METRIC: count into slot size() - 1
+    if (fgEnabled()) fgNoteMetric(s_cmd.size());
     put8(uint8_t(s_metricSlots.size()));
 }
 bool pixMetricDeferred() { return s_metricActive; }
@@ -1758,6 +2203,7 @@ void GXPC_BeginDataPass(unsigned short width, unsigned short height) {
     submit();
     ensureCopyReadbackCapacity();
     s_dataPassActive = sab_begin_data_pass(width, height) != 0;
+    if (s_dataPassActive) fgNoteDataPass(true, width, height);
 }
 int GXPC_ReadXFB(const void*, uint8_t*, int*, int*) { return 0; }
 

@@ -37,6 +37,7 @@
 #include <chrono>
 #include <functional>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <thread>
 #include <vector>
@@ -406,6 +407,10 @@ int sab_init(const SabConfig* c) {
     char arg0[] = "sms";
     char* argv[] = {arg0, nullptr};
     sab_configure_present();
+    // Frame generation (SMS_FRAMEGEN, gx_aurora.cpp) keeps a third frame in flight:
+    // its generated image waits for its present while the next frame records.
+    if (const char* fg = std::getenv("SMS_FRAMEGEN"); fg && *fg && std::strcmp(fg, "0") != 0)
+        aurora_sms_set_frames_in_flight(3);
     AuroraInfo info = aurora_initialize(1, argv, &cfg);
     s_backend = info.backend;
     s_fifo.resize(256 * 1024);
@@ -577,11 +582,117 @@ void sab_finish_frame(int present) {
     if (present) sab_ui_overlay_draw();
     aurora::finish_recording_frame(present!=0);
 }
+void sab_present_after(uint32_t microseconds) { sab_gx_sync(); aurora_sms_present_after(microseconds); }
+
+namespace {
+// sab_begin_frame without the wait, on whichever thread runs it.
+bool beginFrameNow() {
+    if (!s_ready) return false;
+    if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
+        aurora::webgpu::g_instance.ProcessEvents();
+    }
+    sab_apply_pending_settings();
+    return aurora_begin_frame();
+}
+
+// A frame made of recorded operations, run on the GX thread (or here when
+// there is none): frame generation's replayed frame.
+struct ReplayOp {
+    int kind;
+    const uint8_t* bytes;  // the caller's, valid until the job has run
+    uint32_t size;
+    void* dest;
+    uint16_t x, y, w, h, dw, dh;
+    uint32_t fmt;
+    int clear;
+};
+// Statistics: where the GX thread's time goes (seconds): replay begin, stream,
+// copies, end; asynchronous begin.
+double s_gxSpent[5];
+struct GxSpent {
+    int slot;
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~GxSpent() { s_gxSpent[slot] += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(); }
+};
+
+void runReplay(const std::vector<ReplayOp>& ops, const void* xfb, std::chrono::steady_clock::time_point presentAt) {
+    {
+        GxSpent t{0};
+        if (!beginFrameNow()) return;
+    }
+    for (const auto& op : ops) {
+        GxSpent t{op.kind == SAB_REPLAY_STREAM ? 1 : 2};
+        switch (op.kind) {
+        case SAB_REPLAY_STREAM:
+            GXCallDisplayListLE(op.bytes, op.size);
+            break;
+        case SAB_REPLAY_COPY_TEX:
+            GXSetTexCopySrc(op.x, op.y, op.w, op.h);
+            GXSetTexCopyDst(op.dw, op.dh, GXTexFmt(op.fmt), GX_FALSE);
+            GXCopyTex(op.dest, op.clear ? GX_TRUE : GX_FALSE);
+            break;
+        case SAB_REPLAY_COPY_DISPLAY:
+            aurora::gx::fifo::drain();
+            aurora::gfx::copy_display(op.dest, {op.x, op.y, op.w, op.h}, op.clear != 0);
+            break;
+        case SAB_REPLAY_DATA_PASS_BEGIN:
+            aurora::gx::fifo::drain();
+            aurora::gfx::begin_data_pass(op.w, op.h);
+            break;
+        case SAB_REPLAY_DATA_PASS_END:
+            aurora::gx::fifo::drain();
+            aurora::gfx::end_data_pass();
+            break;
+        }
+    }
+    GxSpent t{3};
+    aurora::gfx::select_scanout(xfb, false);
+    const auto left = std::chrono::duration_cast<std::chrono::microseconds>(presentAt - std::chrono::steady_clock::now());
+    aurora_sms_present_after(left.count() > 0 ? uint32_t(left.count()) : 0);
+    sab_ui_overlay_draw();
+    aurora::finish_recording_frame(true);
+}
+}  // namespace
+
+void sab_submit_replay(const SabReplayOp* ops, uint32_t count, const void* xfb, uint32_t presentAfterUs) {
+    if (!s_ready || !ops || !count) return;
+    const auto presentAt = std::chrono::steady_clock::now() + std::chrono::microseconds(presentAfterUs);
+    auto recorded = std::make_shared<std::vector<ReplayOp>>();
+    recorded->reserve(count);
+    for (uint32_t i = 0; i < count; i++) {
+        const SabReplayOp& o = ops[i];
+        recorded->push_back(ReplayOp{o.kind, static_cast<const uint8_t*>(o.bytes), o.size, o.dest, o.x, o.y, o.w,
+                                     o.h, o.dw, o.dh, o.fmt, o.clear});
+    }
+    if (s_gxThread.running()) {
+        s_gxThread.pushJob([recorded, xfb, presentAt] { runReplay(*recorded, xfb, presentAt); });
+    } else {
+        runReplay(*recorded, xfb, presentAt);
+    }
+}
+
 void sab_gx_thread_times(double* busySeconds, double* waitedSeconds) {
     *busySeconds = *waitedSeconds = 0;
     if (s_gxThread.running()) s_gxThread.takeTimes(busySeconds, waitedSeconds);
 }
 
+void sab_gx_thread_breakdown(double* seconds) {
+    sab_gx_sync();
+    for (int i = 0; i < 5; i++) {
+        seconds[i] = s_gxSpent[i];
+        s_gxSpent[i] = 0;
+    }
+}
+
+void sab_begin_frame_async(int retainEfb) {
+    if (!s_ready) return;
+    auto job = [retainEfb] {
+        GxSpent t{4};
+        if (beginFrameNow() && retainEfb) aurora::gfx::retain_efb_for_ui();
+    };
+    if (s_gxThread.running()) s_gxThread.pushJob(job);
+    else job();
+}
 void sab_retain_efb(void) { sab_gx_sync(); if (s_ready) aurora::gfx::retain_efb_for_ui(); }
 int sab_copy_display(const void* dest,uint16_t x,uint16_t y,uint16_t w,uint16_t h,int clear) {
     sab_gx_sync();
