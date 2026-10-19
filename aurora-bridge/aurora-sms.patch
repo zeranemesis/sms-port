@@ -1,7 +1,7 @@
 From 65b5f262b947276fddf54703ea86f40d4fc1facb Mon Sep 17 00:00:00 2001
 From: Valentin Samson <valentin_samson@nps-bea.fr>
 Date: Tue, 13 Oct 2026 14:34:01 +0200
-Subject: [PATCH 1/3] Hardware-accurate fixes for Super Mario Sunshine's
+Subject: [PATCH 1/5] Hardware-accurate fixes for Super Mario Sunshine's
  command streams
 
 - Channel control: decode (and encode) the attenuation bits as the SDK
@@ -271,7 +271,7 @@ index bb9ddec..fadc382 100644
 From 4b37ac6a2d8550adb396c95f880923db233f39b0 Mon Sep 17 00:00:00 2001
 From: Valentin Samson <valentin_samson@nps-bea.fr>
 Date: Tue, 13 Oct 2026 18:02:34 +0200
-Subject: [PATCH 2/3] Sunshine port: menu rendering, pixel metrics, copy
+Subject: [PATCH 2/5] Sunshine port: menu rendering, pixel metrics, copy
  read-back, viewport offset
 
 - Viewport origin decoded and encoded with the SDK's 342 offset (was 340):
@@ -1633,7 +1633,7 @@ index 51257ea..5361995 100644
 From e2b6057d1584832ea8b05ce7103d0ec3654db863 Mon Sep 17 00:00:00 2001
 From: Valentin SAMSON <BEAVSN@BEA.local>
 Date: Tue, 13 Oct 2026 20:02:25 +0200
-Subject: [PATCH 3/3] Present in Mailbox mode with vsync when the game paces
+Subject: [PATCH 3/5] Present in Mailbox mode with vsync when the game paces
  itself
 
 Super Mario Sunshine paces its frames on its own retrace clock. With a FIFO
@@ -1703,6 +1703,209 @@ index 422853f..3b905cf 100644
  void set_resampler(AuroraSampler sampler) noexcept;
  AuroraSampler get_resampler() noexcept;
  Viewport calculate_present_viewport(uint32_t surface_width, uint32_t surface_height, uint32_t content_width,
+-- 
+2.55.0.windows.5
+
+
+From 028e692aa83d5fb2507619b1e3ad35709104e62d Mon Sep 17 00:00:00 2001
+From: Valentin SAMSON <BEAVSN@BEA.local>
+Date: Sun, 18 Oct 2026 09:11:53 +0200
+Subject: [PATCH 4/5] GX: drop GX_CULL_ALL polygons instead of aborting
+
+Super Mario Eclipse sets GX_CULL_ALL, which the GameCube honours by
+culling every polygon (lines and points are never culled). WebGPU has no
+such mode: the command processor now skips those draws, and a pipeline
+asking for it (from an older pipeline cache) gets no culling.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/gx/command_processor.cpp | 8 ++++++++
+ lib/gx/gx.cpp                | 3 +++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/lib/gx/command_processor.cpp b/lib/gx/command_processor.cpp
+index d3d399b..9aa6658 100644
+--- a/lib/gx/command_processor.cpp
++++ b/lib/gx/command_processor.cpp
+@@ -1558,6 +1558,14 @@ static void draw_prim(GXPrimitive prim, GXVtxFmt fmt, u16 vtxCount, const u8* da
+   if (pos + totalVtxBytes > size)
+     UNLIKELY { handle_draw_overrun(totalVtxBytes, data, pos, size); }
+ 
++  // GX_CULL_ALL culls every polygon (lines and points are never culled);
++  // WebGPU has no such mode, so the draw is dropped here.
++  if (g_gxState.cullMode == GX_CULL_ALL && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS)
++    UNLIKELY {
++      pos += totalVtxBytes;
++      return;
++    }
++
+   auto* lastDraw = !g_gxState.stateDirty ? gfx::get_last_draw_command<DrawData>() : nullptr;
+   const bool canMerge = lastDraw != nullptr && prim != GX_LINES && prim != GX_LINESTRIP && prim != GX_POINTS &&
+                         lastDraw->instanceCount == 1;
+diff --git a/lib/gx/gx.cpp b/lib/gx/gx.cpp
+index b828fec..69b568d 100644
+--- a/lib/gx/gx.cpp
++++ b/lib/gx/gx.cpp
+@@ -620,6 +620,9 @@ static inline wgpu::PrimitiveState to_primitive_state(GXCullMode gx_cullMode) {
+     cullMode = wgpu::CullMode::Back;
+     break;
+   case GX_CULL_NONE:
++  // The command processor drops GX_CULL_ALL's polygons; lines and points
++  // (and pipelines from an older cache) are never culled.
++  case GX_CULL_ALL:
+     break;
+   }
+   return {
+-- 
+2.55.0.windows.5
+
+
+From 4693afff52cefdca36221252f19fad56edc79a0b Mon Sep 17 00:00:00 2001
+From: Valentin SAMSON <BEAVSN@BEA.local>
+Date: Mon, 19 Oct 2026 07:50:28 +0200
+Subject: [PATCH 5/5] Clear only the copied rectangle, and widen lines along
+ one axis like GX
+
+A copy with clear started a render pass that cleared the whole target; GX
+clears only the source rectangle. Super Mario Sunshine's level-start iris
+copies and clears a 48x48 square at the centre each frame, so the screen
+went black around that square. A partial copy now clears with a scissored
+clear draw; a full-target copy keeps the pass load-clear.
+
+Lines were widened perpendicular to their direction by the smaller of the
+two viewport scales. GX widens them vertically when closer to horizontal,
+horizontally otherwise, in EFB pixels. The iris masks the screen with one
+horizontal line per row, and with a narrower horizontal scale rows showed
+through as stripes.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ lib/gfx/clear.cpp  | 16 +++++++++++++++-
+ lib/gfx/clear.hpp  |  1 +
+ lib/gfx/common.cpp | 30 +++++++++++++++++++++++++++---
+ lib/gx/shader.cpp  |  9 ++++++---
+ 4 files changed, 49 insertions(+), 7 deletions(-)
+
+diff --git a/lib/gfx/clear.cpp b/lib/gfx/clear.cpp
+index d0b4c78..341730d 100644
+--- a/lib/gfx/clear.cpp
++++ b/lib/gfx/clear.cpp
+@@ -1,5 +1,7 @@
+ #include "clear.hpp"
+ 
++#include <algorithm>
++
+ #include "../webgpu/gpu.hpp"
+ #include "tracy/Tracy.hpp"
+ 
+@@ -119,7 +121,19 @@ void render(const DrawData& data, const wgpu::RenderPassEncoder& pass, const wgp
+   pass.SetBlendConstant(&data.color);
+   pass.SetViewport(0.f, 0.f, static_cast<float>(targetSize.width), static_cast<float>(targetSize.height), data.depth,
+                    data.depth);
+-  pass.SetScissorRect(0, 0, targetSize.width, targetSize.height);
++  const auto& sc = data.scissor;
++  if (sc.width > 0 && sc.height > 0) {
++    const auto x = std::min(static_cast<uint32_t>(std::max(sc.x, 0)), targetSize.width);
++    const auto y = std::min(static_cast<uint32_t>(std::max(sc.y, 0)), targetSize.height);
++    const auto w = std::min(static_cast<uint32_t>(sc.width), targetSize.width - x);
++    const auto h = std::min(static_cast<uint32_t>(sc.height), targetSize.height - y);
++    if (w == 0 || h == 0) {
++      return;
++    }
++    pass.SetScissorRect(x, y, w, h);
++  } else {
++    pass.SetScissorRect(0, 0, targetSize.width, targetSize.height);
++  }
+   pass.Draw(3);
+ }
+ } // namespace aurora::gfx::clear
+diff --git a/lib/gfx/clear.hpp b/lib/gfx/clear.hpp
+index 2f87117..3c846ce 100644
+--- a/lib/gfx/clear.hpp
++++ b/lib/gfx/clear.hpp
+@@ -9,6 +9,7 @@ struct DrawData {
+   PipelineRef pipeline;
+   wgpu::Color color;
+   float depth = 0.f;
++  ClipRect scissor{}; // empty: the whole target
+ };
+ 
+ constexpr uint32_t ClearPipelineConfigVersion = 2;
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index 272db00..12f7ac3 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -584,6 +584,12 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+ 
+   // Populate new render pass from previous
+   const auto msaaSamples = prevPass.msaaSamples;
++  // GX clears only the copied rectangle. The new pass's load-clear covers the whole
++  // target, so it is used only when the copy covers it all; a partial copy (Sunshine's
++  // level-start iris copies and clears a 48x48 square) clears with a scissored draw.
++  const bool fullRect = rect.x <= 0 && rect.y <= 0 &&
++                        rect.x + rect.width >= static_cast<int32_t>(prevPass.targetSize.width) &&
++                        rect.y + rect.height >= static_cast<int32_t>(prevPass.targetSize.height);
+   RenderPass newPass{
+       .colorView = prevPass.colorView,
+       .resolveView = prevPass.resolveView,
+@@ -595,8 +601,8 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+       .msaaSamples = msaaSamples,
+       .clearColorValue = clearColorValue,
+       .clearDepthValue = clearDepthValue,
+-      .clearColor = clearColor && clearAlpha,
+-      .clearDepth = clearDepth,
++      .clearColor = fullRect && clearColor && clearAlpha,
++      .clearDepth = fullRect && clearDepth,
+       .hasDepth = prevPass.hasDepth,
+       .hasStencil = prevPass.hasStencil,
+   };
+@@ -604,7 +610,25 @@ void resolve_pass(TextureHandle texture, ClipRect rect, bool clearColor, bool cl
+   current_render_passes().emplace_back(std::move(newPass));
+   ++g_currentRenderPass;
+ 
+-  if (!newPass.clearColor && (clearColor || clearAlpha)) {
++  if (!fullRect && (clearColor || clearAlpha || clearDepth)) {
++    push_draw_command(clear::DrawData{
++        .pipeline = pipeline_ref(clear::PipelineConfig{
++            .msaaSamples = msaaSamples,
++            .clearColor = clearColor,
++            .clearAlpha = clearAlpha,
++            .clearDepth = clearDepth,
++        }),
++        .color =
++            wgpu::Color{
++                .r = clearColorValue.x(),
++                .g = clearColorValue.y(),
++                .b = clearColorValue.z(),
++                .a = clearColorValue.w(),
++            },
++        .depth = clearDepthValue,
++        .scissor = rect,
++    });
++  } else if (!newPass.clearColor && (clearColor || clearAlpha)) {
+     // If we're only clearing color _or_ alpha, perform a clear draw
+     push_draw_command(clear::DrawData{
+         .pipeline = pipeline_ref(clear::PipelineConfig{
+diff --git a/lib/gx/shader.cpp b/lib/gx/shader.cpp
+index b269fcb..e19b250 100644
+--- a/lib/gx/shader.cpp
++++ b/lib/gx/shader.cpp
+@@ -1032,9 +1032,12 @@ std::string build_shader_source(const ShaderConfig& config) noexcept {
+         "\n    let ndc_b = clip_b.xy / clip_b.w;"
+         "\n    let viewport_scale = ubuf.render_viewport_size / max(ubuf.logical_viewport_size, vec2f(1.0));"
+         "\n    let delta_px = (ndc_b - ndc_a) / 2.0 * ubuf.render_viewport_size;"
+-        "\n    let dir_px = select(vec2f(1.0, 0.0), normalize(delta_px), dot(delta_px, delta_px) > 1e-10);"
+-        "\n    let perp_px = vec2f(-dir_px.y, dir_px.x);"
+-        "\n    let line_width = ubuf.line_width * min(viewport_scale.x, viewport_scale.y);"
++        // GX widens a line along one axis, in EFB pixels: vertically when it is closer to
++        // horizontal, horizontally otherwise. Sunshine's iris masks the screen with
++        // one-pixel horizontal lines, one per row; any thinner and rows show through.
++        "\n    let horizontal = abs(delta_px.x) >= abs(delta_px.y);"
++        "\n    let perp_px = select(vec2f(1.0, 0.0), vec2f(0.0, 1.0), horizontal);"
++        "\n    let line_width = ubuf.line_width * select(viewport_scale.x, viewport_scale.y, horizontal);"
+         "\n    let offset_px = perp_px * (line_width / 2.0) * select(-1.0, 1.0, (vidx & 1u) != 0u);"
+         "\n    let offset_ndc = (offset_px * 2.0) / ubuf.render_viewport_size;"
+         "\n    let clip_base = select(clip_a, clip_b, use_b);"
 -- 
 2.55.0.windows.5
 
