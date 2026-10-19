@@ -42,6 +42,9 @@
 
 extern "C" uint32_t VIGetRetraceCount(void);
 extern "C" int port_fps60_active __attribute__((weak));  // the game's (frame rate patches)
+extern "C" int port_frame_rate __attribute__((weak));            // port_runtime.cpp
+extern "C" int port_frame_rate_auto_capped __attribute__((weak));
+extern "C" void sms_frontend_sync_game_rate(void) __attribute__((weak));
 extern "C" double port_vi_take_late_max(void) __attribute__((weak));  // vi.cpp
 extern "C" void port_os_profile_frame(unsigned) __attribute__((weak));
 
@@ -1505,6 +1508,57 @@ void reportStats() {
 
 void pumpEvents();
 
+// Auto frame rate (settings `frame_rate = 60`): when 60 fps gameplay keeps
+// missing retraces (a PC on battery, or too slow), the game runs slowed down,
+// since it moves one step per frame. It drops to 30 instead, and goes back to
+// 60 once its work per frame fits again: 12 misses in 120 frames drop it; at
+// 30, 9 frames in 10 under 13 ms of work over 150 frames bring 60 back. A PC
+// at the edge would swing between the two: a drop within 20 s of going back
+// doubles the frames measured before the next try (600 at most).
+// SMS_AUTO_FRAME_RATE=0 turns it off.
+void autoFrameRate(double dt) {
+    static const bool on = [] { const char* v = getenv("SMS_AUTO_FRAME_RATE"); return !v || strcmp(v, "0"); }();
+    if (!on || !&port_frame_rate || !&port_frame_rate_auto_capped || !&port_fps60_active ||
+        !sms_frontend_sync_game_rate || !s_idleClock)
+        return;
+    static double lastIdle = 0;
+    const double idleNow = s_idleClock();
+    const double work = dt - (idleNow - lastIdle);
+    lastIdle = idleNow;
+    static uint32_t frames = 0, misses = 0;
+    static size_t needed = 150;
+    static double backAt = -1e9;
+    static std::vector<double> works;
+    if (port_fps60_active) {
+        frames++;
+        misses += dt > 0.025 && dt < 0.25;  // not a load or a pause
+        if (frames < 120) return;
+        if (misses >= 12) {
+            needed = nowSeconds() - backAt < 20 ? std::min<size_t>(needed * 2, 600) : 150;
+            port_frame_rate = 30;
+            port_frame_rate_auto_capped = 1;
+            sms_frontend_sync_game_rate();
+            works.clear();
+            fprintf(stderr, "[gx-aurora] auto frame rate: %u missed retraces in 120 frames, 30 fps\n", misses);
+        }
+        frames = misses = 0;
+    } else if (port_frame_rate_auto_capped && dt < 0.25) {
+        works.push_back(work);
+        if (works.size() < needed) return;
+        std::sort(works.begin(), works.end());
+        const double p90 = works[works.size() * 9 / 10];
+        works.clear();
+        if (p90 < 0.013) {
+            port_frame_rate = 60;
+            port_frame_rate_auto_capped = 0;
+            sms_frontend_sync_game_rate();
+            frames = misses = 0;
+            backAt = nowSeconds();
+            fprintf(stderr, "[gx-aurora] auto frame rate: work %.1f ms a frame (9 in 10), back to 60 fps\n", p90 * 1000);
+        }
+    }
+}
+
 // frame, ms since the previous present, then within that interval: the game's
 // VI idle, Aurora submit (draw calls), the end-of-frame work, the swapchain wait
 // at the previous frame's start, the retraces that passed and the VI timer's
@@ -1577,6 +1631,7 @@ void present(bool show = true) {
                     s_profile.peeks, s_profile.peek*1000);
             s_profile = {};
         }
+        if (s_lastFrameEnd > 0) autoFrameRate(t1 - s_lastFrameEnd);
         s_lastFrameEnd = t1;
         reportStats();
     }

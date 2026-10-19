@@ -58,6 +58,10 @@ extern "C" __attribute__((weak)) void GXPC_SetWidescreen(float widthOver43);
 // patch framerate-01 reads it; logos, menus and movies stay at 30).
 extern "C" int port_frame_rate;
 int port_frame_rate = 30;
+// Set while the Aurora back end has dropped 60 fps gameplay to 30 because the
+// PC does not keep up (gx_aurora.cpp); a frame rate chosen in the menu clears it.
+extern "C" int port_frame_rate_auto_capped;
+int port_frame_rate_auto_capped = 0;
 
 // "16:9", "21:9", "16:10", "on" (16:9), "off"/"0", or a ratio such as 1.85.
 static float parse_widescreen(const char* v)
@@ -698,6 +702,7 @@ extern "C" float sms_frontend_apply_game_settings(const char* widescreen, int fr
     const float previous = port_widescreen;
     port_widescreen = parse_widescreen(widescreen);
     port_frame_rate = frameRate == 60 ? 60 : 30;
+    port_frame_rate_auto_capped = 0;
     port_skip_movies = skipMovies != 0;
     if (previous != port_widescreen)
         sms_frontend_camera_aspect_changed(port_widescreen / previous);
