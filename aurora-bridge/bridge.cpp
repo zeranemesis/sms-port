@@ -333,7 +333,8 @@ void translate(const SDL_Event& e) {
         push(ev);
         break;
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        ev.type = SAB_EV_MOUSEBUTTONDOWN;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        ev.type = e.type == SDL_EVENT_MOUSE_BUTTON_DOWN ? SAB_EV_MOUSEBUTTONDOWN : SAB_EV_MOUSEBUTTONUP;
         ev.button = e.button.button;
         push(ev);
         break;

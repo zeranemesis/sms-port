@@ -6,16 +6,17 @@
 # Keys: letters, digits, ENTER ESC SPACE TAB BACKSPACE UP DOWN LEFT RIGHT
 #       LSHIFT RSHIFT LCTRL RCTRL LALT RALT KP_0..KP_9 KP_ENTER F1..F4
 #       COMMA PERIOD SLASH SEMICOLON ... or #<SDL scancode>
+#       MOUSE_LEFT MOUSE_MIDDLE MOUSE_RIGHT (mouse buttons)
 # Loaded from ./bindings.txt (run.sh starts the game in this folder; or
 # ../../bindings.txt when started from build/<os>-<arch>/),
 # or from the path in SMS_BINDINGS. These are the built-in defaults:
 A = SPACE X
 B = LSHIFT RSHIFT C
-X = V
+X = V MOUSE_MIDDLE
 Y = F
 Z = Z
-L = Q
-R = E
+L = Q MOUSE_RIGHT
+R = E MOUSE_LEFT
 START = ENTER
 DPAD_UP = 1 KP_8
 DPAD_DOWN = 2 KP_2

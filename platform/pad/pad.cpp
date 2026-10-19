@@ -100,17 +100,19 @@ const KeyName kKeys[] = {
 	{ "KP_1", 89 }, { "KP_2", 90 }, { "KP_3", 91 }, { "KP_4", 92 }, { "KP_5", 93 }, { "KP_6", 94 },
 	{ "KP_7", 95 }, { "KP_8", 96 }, { "KP_9", 97 }, { "KP_0", 98 },
 	{ "LCTRL", 224 }, { "LSHIFT", 225 }, { "LALT", 226 }, { "RCTRL", 228 }, { "RSHIFT", 229 }, { "RALT", 230 },
+	// Mouse buttons, past SDL's scancodes (the Aurora back end sends them as keys).
+	{ "MOUSE_LEFT", 505 }, { "MOUSE_MIDDLE", 506 }, { "MOUSE_RIGHT", 507 },
 };
 
 // Default bindings (documented in README.md).
 const char* const kDefaultBindings =
     "A = SPACE X\n"
     "B = LSHIFT RSHIFT C\n"
-    "X = V\n"
+    "X = V MOUSE_MIDDLE\n"
     "Y = F\n"
     "Z = Z\n"
-    "L = Q\n"
-    "R = E\n"
+    "L = Q MOUSE_RIGHT\n"
+    "R = E MOUSE_LEFT\n"
     "START = ENTER\n"
     "DPAD_UP = 1 KP_8\n"
     "DPAD_DOWN = 2 KP_2\n"

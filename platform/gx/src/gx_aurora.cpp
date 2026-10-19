@@ -1777,11 +1777,20 @@ void pumpEvents() {
             if (s_mouseCamera && !s_mouseReleased) captureMouse(true);
             continue;
         case SAB_EV_MOUSEBUTTONDOWN:
-            if (s_mouseCamera && !s_mouseCaptured) {
+        case SAB_EV_MOUSEBUTTONUP:
+            // With mouse look, a click on the window first captures the mouse.
+            if (ev.type == SAB_EV_MOUSEBUTTONDOWN && s_mouseCamera && !s_mouseCaptured) {
                 s_mouseReleased = false;
                 captureMouse(true);
+                continue;
             }
-            continue;
+            // Left, middle and right buttons reach the pad as keys 505-507
+            // (MOUSE_LEFT, MOUSE_MIDDLE, MOUSE_RIGHT in bindings.txt).
+            if (ev.button < 1 || ev.button > 3) continue;
+            out.type = ev.type == SAB_EV_MOUSEBUTTONDOWN ? SAB_EV_KEYDOWN : SAB_EV_KEYUP;
+            out.key.state = ev.type == SAB_EV_MOUSEBUTTONDOWN ? 1 : 0;
+            out.key.scancode = 504 + ev.button;
+            break;
         case SAB_EV_KEYDOWN:
         case SAB_EV_KEYUP: {
             const bool down = ev.type == SAB_EV_KEYDOWN;
