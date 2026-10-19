@@ -89,6 +89,9 @@ SAB_API int sab_begin_frame(void);
 SAB_API void sab_end_frame(void);
 /* Submit game work without necessarily presenting it. VI selects scanout. */
 SAB_API void sab_finish_frame(int present);
+/* Statistics since the last call: the GX thread's working time, and the time
+ * callers waited for it. */
+SAB_API void sab_gx_thread_times(double* busySeconds, double* waitedSeconds);
 SAB_API void sab_retain_efb(void);
 SAB_API int sab_copy_display(const void* dest, uint16_t left, uint16_t top,
                              uint16_t width, uint16_t height, int clear);

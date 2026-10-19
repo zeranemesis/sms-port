@@ -34,6 +34,8 @@
 #include <windows.h>
 #include <dbghelp.h>
 #include <condition_variable>
+#include <chrono>
+#include <functional>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -65,6 +67,12 @@ public:
         m_thread.join();
     }
     bool running() const { return m_thread.joinable(); }
+    // Nothing queued or running: Aurora's state can be used without waiting.
+    bool idle() {
+        if (!m_thread.joinable()) return true;
+        std::lock_guard lock(m_mutex);
+        return m_queue.empty() && !m_busy;
+    }
     void push(const void* data, uint32_t size) {
         std::vector<uint8_t> buffer;
         {
@@ -79,35 +87,59 @@ public:
         buffer.assign(static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + size);
         {
             std::lock_guard lock(m_mutex);
-            m_queue.push_back(std::move(buffer));
+            m_queue.push_back(Item{std::move(buffer), {}});
+        }
+        m_work.notify_one();
+    }
+    // Work that uses Aurora's state but returns nothing to the game (a texture
+    // copy, a data pass), run in order with the stream.
+    void pushJob(std::function<void()> job) {
+        {
+            std::unique_lock lock(m_mutex);
+            m_space.wait(lock, [this] { return m_queue.size() < kMaxQueued; });
+            m_queue.push_back(Item{{}, std::move(job)});
         }
         m_work.notify_one();
     }
     void sync() {
         if (!m_thread.joinable() || std::this_thread::get_id() == m_thread.get_id()) return;
+        const auto t0 = std::chrono::steady_clock::now();
         std::unique_lock lock(m_mutex);
         m_idle.wait(lock, [this] { return m_queue.empty() && !m_busy; });
+        m_waited += std::chrono::steady_clock::now() - t0;
+    }
+    // Statistics: time the thread spent working, and callers spent waiting for it.
+    void takeTimes(double* busy, double* waited) {
+        std::lock_guard lock(m_mutex);
+        *busy = std::chrono::duration<double>(m_busyTime).count();
+        *waited = std::chrono::duration<double>(m_waited).count();
+        m_busyTime = m_waited = {};
     }
 
 private:
-    static constexpr size_t kMaxQueued = 3;
+    // Copies and data passes queue too: room for a frame's worth of them.
+    static constexpr size_t kMaxQueued = 16;
     void run() {
         for (;;) {
-            std::vector<uint8_t> buffer;
+            Item item;
             {
                 std::unique_lock lock(m_mutex);
                 m_work.wait(lock, [this] { return m_stop || !m_queue.empty(); });
                 if (m_queue.empty()) return;
-                buffer = std::move(m_queue.front());
+                item = std::move(m_queue.front());
                 m_queue.pop_front();
                 m_busy = true;
             }
             m_space.notify_one();
-            GXCallDisplayListLE(buffer.data(), uint32_t(buffer.size()));
+            const auto t0 = std::chrono::steady_clock::now();
+            if (item.job) item.job();
+            else GXCallDisplayListLE(item.bytes.data(), uint32_t(item.bytes.size()));
+            const auto spent = std::chrono::steady_clock::now() - t0;
             {
                 std::lock_guard lock(m_mutex);
+                m_busyTime += spent;
                 m_busy = false;
-                if (m_free.size() < kMaxQueued + 1) m_free.push_back(std::move(buffer));
+                if (!item.job && m_free.size() < kMaxQueued + 1) m_free.push_back(std::move(item.bytes));
                 if (m_queue.empty()) m_idle.notify_all();
             }
         }
@@ -115,10 +147,15 @@ private:
     std::thread m_thread;
     std::mutex m_mutex;
     std::condition_variable m_work, m_space, m_idle;
-    std::deque<std::vector<uint8_t>> m_queue;
+    struct Item {
+        std::vector<uint8_t> bytes;
+        std::function<void()> job;
+    };
+    std::deque<Item> m_queue;
     std::vector<std::vector<uint8_t>> m_free;
     bool m_busy = false;
     bool m_stop = false;
+    std::chrono::steady_clock::duration m_busyTime{}, m_waited{};
 };
 GxThread s_gxThread;
 
@@ -427,25 +464,35 @@ const char* sab_backend_name(void) {
 }
 
 int sab_poll_event(SabEvent* out) {
-    sab_gx_sync();
     if (!s_ready) return 0;
-    if (s_pending.empty()) {
-        pumpAurora();
-        if (s_pending.empty()) return 0;
-    }
+    // Pumping SDL's events touches Aurora's window: only while the GX thread
+    // is idle. Events already taken are handed out either way.
+    if (s_pending.empty() && s_gxThread.idle()) pumpAurora();
+    if (s_pending.empty()) return 0;
     *out = s_pending.front();
     s_pending.pop_front();
     return 1;
 }
 
+// With the GX thread, a data pass begins and ends in order on it, without the
+// game waiting: whether it began is kept there (s_dataPassOpen), so a pass that
+// could not begin is not ended.
+bool s_dataPassOpen = false;  // GX thread
 int sab_begin_data_pass(uint16_t width, uint16_t height) {
-    sab_gx_sync();
     if (!s_ready || !width || !height || width > 1024 || height > 1024) return 0;
+    if (s_gxThread.running()) {
+        s_gxThread.pushJob([width, height] {
+            aurora::gx::fifo::drain();
+            s_dataPassOpen = aurora::gfx::begin_data_pass(width, height);
+        });
+        return 1;
+    }
     aurora::gx::fifo::drain();
     return aurora::gfx::begin_data_pass(width, height) ? 1 : 0;
 }
 
-uint32_t sab_copy_readback_capacity(void) { sab_gx_sync(); return aurora::gfx::sms_readback::copy_capacity(); }
+// A constant: no need to wait for the GX thread.
+uint32_t sab_copy_readback_capacity(void) { return aurora::gfx::sms_readback::copy_capacity(); }
 
 int sab_flush_copy_readbacks(void) {
     sab_gx_sync();
@@ -466,8 +513,16 @@ int sab_flush_copy_readbacks(void) {
 }
 
 void sab_end_data_pass(void) {
-    sab_gx_sync();
     if (!s_ready) return;
+    if (s_gxThread.running()) {
+        s_gxThread.pushJob([] {
+            if (!s_dataPassOpen) return;
+            s_dataPassOpen = false;
+            aurora::gx::fifo::drain();
+            aurora::gfx::end_data_pass();
+        });
+        return;
+    }
     aurora::gx::fifo::drain();
     aurora::gfx::end_data_pass();
 }
@@ -522,6 +577,11 @@ void sab_finish_frame(int present) {
     if (present) sab_ui_overlay_draw();
     aurora::finish_recording_frame(present!=0);
 }
+void sab_gx_thread_times(double* busySeconds, double* waitedSeconds) {
+    *busySeconds = *waitedSeconds = 0;
+    if (s_gxThread.running()) s_gxThread.takeTimes(busySeconds, waitedSeconds);
+}
+
 void sab_retain_efb(void) { sab_gx_sync(); if (s_ready) aurora::gfx::retain_efb_for_ui(); }
 int sab_copy_display(const void* dest,uint16_t x,uint16_t y,uint16_t w,uint16_t h,int clear) {
     sab_gx_sync();
@@ -594,11 +654,28 @@ void sab_copy_tex(void* dest, uint16_t left, uint16_t top, uint16_t width, uint1
     sab_copy_tex_request(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, 0);
 }
 
+namespace {
+void copyTexNow(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
+                uint16_t dstHeight, uint32_t fmt, int clear, int readback, uint64_t requestId);
+}
+
+// Returns nothing to the caller: queued in order on the GX thread.
 void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height,
                           uint16_t dstWidth, uint16_t dstHeight, uint32_t fmt, int clear, int readback,
                           uint64_t requestId) {
-    sab_gx_sync();
     if (!s_ready) return;
+    if (s_gxThread.running()) {
+        s_gxThread.pushJob([=] {
+            copyTexNow(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, requestId);
+        });
+    } else {
+        copyTexNow(dest, left, top, width, height, dstWidth, dstHeight, fmt, clear, readback, requestId);
+    }
+}
+
+namespace {
+void copyTexNow(void* dest, uint16_t left, uint16_t top, uint16_t width, uint16_t height, uint16_t dstWidth,
+                uint16_t dstHeight, uint32_t fmt, int clear, int readback, uint64_t requestId) {
     if (readback) {
         // GX depth-copy formats carry the Z-format bit; this colour readback
         // shader cannot return depth data.
@@ -611,6 +688,7 @@ void sab_copy_tex_request(void* dest, uint16_t left, uint16_t top, uint16_t widt
     GXSetTexCopyDst(dstWidth, dstHeight, GXTexFmt(fmt), GX_FALSE);
     GXCopyTex(dest, clear ? GX_TRUE : GX_FALSE);
 }
+}  // namespace
 
 int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                            const uint32_t** rgba) {
@@ -626,7 +704,9 @@ int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height,
 
 int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                                    const uint32_t** rgba, uint64_t* requestId, int* success) {
-    sab_gx_sync();
+    // A poll: while the GX thread is busy, the read-backs that are ready come
+    // at the next one instead of the game waiting now.
+    if (!s_gxThread.idle()) return 0;
     if (!s_ready) return 0;
     if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {
         aurora::webgpu::g_instance.ProcessEvents();

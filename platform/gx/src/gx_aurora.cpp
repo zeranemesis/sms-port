@@ -1047,6 +1047,12 @@ void reportStats() {
             s_submitSeconds / n * 1000, s_presentAccum / n * 1000, s_acquireAccum / n * 1000, s_acquireLong,
             s_stats.draws / n, s_stats.vertices / n, s_stats.texLoads / n, s_stats.texRehash / n,
             s_stats.copies / n);
+    {
+        double busy = 0, waited = 0;
+        sab_gx_thread_times(&busy, &waited);
+        fprintf(stderr, "[gx-aurora] GX thread: busy %.2f ms, game waited %.2f ms per frame\n", busy / n * 1000,
+                waited / n * 1000);
+    }
     s_submitSeconds = 0;
     s_acquireAccum = 0;
     s_acquireLong = 0;
