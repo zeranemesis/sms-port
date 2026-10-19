@@ -944,6 +944,70 @@ DrawMapping drawMapping(uint32_t count) {
     return {1.f/wide,(spans?margin:anchorOffset(lo<=hi?(lo+hi)*.5f:320.f))/wide};
 }
 
+// A draw's vertices into the stream. Aurora's layout is the loader's with the
+// matrix indices first (9 bytes) instead of last, and every float (all but the
+// colours) byte-swapped: each vertex is at most four runs, matrix indices,
+// floats before the colours, the colours, floats after them.
+void emitVertices(uint8_t* out, const uint8_t* in, uint32_t count, uint32_t fmt, const VtxFmtLayout& L) {
+    const bool mtx = fmt & VF_MTX;
+    const uint32_t data = mtx ? L.mtx : L.stride;  // the loader's bytes before the matrix indices
+    uint32_t clr = data, clrBytes = 0;
+    for (int c = 1; c >= 0; c--)
+        if (fmt & (VF_CLR0 << c)) {
+            clr = L.clr[c];
+            clrBytes += 4;
+        }
+    const uint32_t after = clr + clrBytes;
+    auto swapWords = [](uint8_t* o, const uint8_t* i, uint32_t bytes) {
+        for (uint32_t k = 0; k < bytes; k += 4) {
+            uint32_t w;
+            std::memcpy(&w, i + k, 4);
+            w = __builtin_bswap32(w);
+            std::memcpy(o + k, &w, 4);
+        }
+    };
+    for (uint32_t v = 0; v < count; v++, in += s_primStride) {
+        if (mtx) {
+            std::memcpy(out, in + L.mtx, 9);
+            out += 9;
+        }
+        swapWords(out, in, clr);
+        std::memcpy(out + clr, in + clr, clrBytes);
+        swapWords(out + after, in + after, data - after);
+        out += data;
+    }
+}
+
+// The attribute-by-attribute copy emitVertices replaced, for SMS_GX_EMIT_CHECK.
+void emitVerticesReference(uint8_t* out, const uint8_t* in, uint32_t count, uint32_t fmt, const VtxFmtLayout& L) {
+    const bool mtx = fmt & VF_MTX;
+    const bool nrm = fmt & VF_NRM;
+    const uint32_t nrmBytes = (fmt & VF_NBT) ? 36 : 12;
+    for (uint32_t v = 0; v < count; v++, in += s_primStride) {
+        if (mtx) {
+            std::memcpy(out, in + L.mtx, 9);
+            out += 9;
+        }
+        copyBE32_3(out, in);
+        out += 12;
+        if (nrm) {
+            if (nrmBytes == 12) copyBE32_3(out, in + L.nrm);
+            else copyBE32(out, in + L.nrm, nrmBytes / 4);
+            out += nrmBytes;
+        }
+        for (int c = 0; c < 2; c++)
+            if (fmt & (VF_CLR0 << c)) {
+                std::memcpy(out, in + L.clr[c], 4);
+                out += 4;
+            }
+        for (int t = 0; t < 8; t++)
+            if (fmt & (VF_TEX0 << t)) {
+                copyBE32_2(out, in + L.tex[t]);
+                out += 8;
+            }
+    }
+}
+
 void emitDraw(uint8_t opcode, uint32_t count) {
     ProfileScope timing(s_profile.draw);
     if (s_profileLog) ++s_profile.draws;
@@ -987,30 +1051,19 @@ void emitDraw(uint8_t opcode, uint32_t count) {
     put16(uint16_t(count));
     size_t base = s_cmd.size();
     s_cmd.resize(base + size_t(count) * outStride);
-    uint8_t* out = &s_cmd[base];
-    const uint8_t* in = s_prim.data();
-    for (uint32_t v = 0; v < count; v++, in += s_primStride) {
-        if (mtx) {
-            std::memcpy(out, in + L.mtx, 9);
-            out += 9;
-        }
-        copyBE32_3(out, in);
-        out += 12;
-        if (nrm) {
-            if (nrmBytes == 12) copyBE32_3(out, in + L.nrm);
-            else copyBE32(out, in + L.nrm, nrmBytes / 4);
-            out += nrmBytes;
-        }
-        for (int c = 0; c < 2; c++)
-            if (fmt & (VF_CLR0 << c)) {
-                std::memcpy(out, in + L.clr[c], 4);
-                out += 4;
-            }
-        for (int t = 0; t < 8; t++)
-            if (fmt & (VF_TEX0 << t)) {
-                copyBE32_2(out, in + L.tex[t]);
-                out += 8;
-            }
+    emitVertices(&s_cmd[base], s_prim.data(), count, fmt, L);
+    // SMS_GX_EMIT_CHECK: compare with the attribute-by-attribute copy.
+    static const bool emitCheck = getenv("SMS_GX_EMIT_CHECK") != nullptr;
+    if (emitCheck) {
+        static std::vector<uint8_t> reference;
+        static uint32_t checked = 0, mismatches = 0;
+        reference.resize(size_t(count) * outStride);
+        emitVerticesReference(reference.data(), s_prim.data(), count, fmt, L);
+        checked++;
+        if (std::memcmp(reference.data(), &s_cmd[base], reference.size()) != 0 && mismatches++ < 8)
+            fprintf(stderr, "[gx-aurora] emit check: format %05x differs (%u draws checked)\n", fmt, checked);
+        if (checked % 100000 == 0)
+            fprintf(stderr, "[gx-aurora] emit check: %u draws, %u differ\n", checked, mismatches);
     }
     if(mapped) {
         emitViewport(1.f, 0.f);
