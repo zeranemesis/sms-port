@@ -128,8 +128,11 @@ Package: $asset
 SHA-256: $hash
 
 No game disc, extracted game files or copyrighted game assets are included. CubeShelf
-extracts the player's own European GMSP01 disc (ISO, GCM or RVZ) into GMSP01/files and
-starts the game with SMS_DISC_ROOT, SMS_CUBESHELF_MOD_LIST and SMS_CUBESHELF=1.
+gives the player's own European GMSP01 disc as it is when it is an ISO or GCM
+(SMS_DISC_IMAGE), or extracts an RVZ into GMSP01/files (SMS_DISC_ROOT), and starts the
+game with SMS_CUBESHELF_MOD_LIST and SMS_CUBESHELF=1.
+On a first launch the window shows the shader preparation (a few minutes); closing the
+window during it quits the game.
 The MSVC runtime DLLs are included, so the VC++ redistributable is not required.
 "@ | Set-Content -Encoding utf8 -LiteralPath (Join-Path $out 'release-notes.md')
 Write-Host "Package: $zip ($([math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 1)) MB) sha256 $hash"
