@@ -58,7 +58,12 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         if(!context)return;
         const std::string root=bindings.resourceDirectory;
         Rml::LoadFontFace(root+"/Inter-Regular.ttf",true);
-        Rml::LoadFontFace(root+"/FOT-NewRodin Pro DB.otf");
+        if(!Rml::LoadFontFace(root+"/FOT-NewRodin Pro DB.otf")) {
+            // The packages do not ship this font: without a face under its name RmlUi logs
+            // every element of the menu on every frame. Inter takes the name, in both weights.
+            for(auto weight:{Rml::Style::FontWeight::Normal,Rml::Style::FontWeight::Bold})
+                Rml::LoadFontFace(root+"/Inter-Regular.ttf","FOT-NewRodin Pro",Rml::Style::FontStyle::Normal,weight);
+        }
         Rml::LoadFontFace(root+"/AlegreyaSC-Regular.ttf");
         Rml::LoadFontFace(root+"/AlegreyaSC-Bold.ttf");
         Rml::LoadFontFace(root+"/MaterialSymbolsRounded-Regular.ttf");
