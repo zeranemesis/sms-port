@@ -2244,8 +2244,10 @@ int GXPC_InitAuto(int) {
     cfg.logLevel = envTrue("SMS_AURORA_DEBUG") ? 0 : 1;
     s_mouseCamera = envTrue("SMS_MOUSE_CAMERA");
     if (!sab_init(&cfg)) {
-        fprintf(stderr, "[gx-aurora] Aurora failed to start\n");
-        return 0;
+        // sab_init fails only when the window is closed while shaders are prepared:
+        // the player quit, and a game with no window must not go on running.
+        fprintf(stderr, "[gx-aurora] window closed before the game started\n");
+        exit(0);
     }
     fprintf(stderr, "[gx-aurora] Aurora ready (%s)\n", sab_backend_name());
     s_ready = true;
