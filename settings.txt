@@ -59,7 +59,7 @@ sharpen = 0
 # Brightness curve: 1.0 is the original picture.
 # brightness = 1.0
 
-skip_movies = on
+skip_movies = off
 audio = on
 # Master volume, 0 to 100.
 # volume = 100
