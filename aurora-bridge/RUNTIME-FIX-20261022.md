@@ -58,7 +58,7 @@ The bundled Dawn package uses revision
 - Resource lifetime correction: a Direct3D 12 run on the same Intel adapter,
   with `SMS_AURORA_VALIDATE=1` and `SMS_WINDOW_MODE=fullscreen`, completed all
   4,843 pipeline preparations in 170.16 seconds and remained running and
-  responsive after entering gameplay. No matching access violation, missing
+  responsive after shader preparation. No matching access violation, missing
   bind-group assertion or Dawn validation error was present at that checkpoint.
   This is a limited startup observation, not a full gameplay certification.
 - Fullscreen shortcut behavior: not yet observed interactively.
