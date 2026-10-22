@@ -4,6 +4,24 @@ cmake_minimum_required(VERSION 3.25)
 project(sms_aurora_bridge LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
+# This bridge shares one Dawn device across GX, render and compiler workers.
+# The Aurora checkout is external, so reject a build that omitted this patch.
+set(_sms_gpu_source "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/aurora/lib/webgpu/gpu.cpp")
+if(EXISTS "${_sms_gpu_source}")
+  file(READ "${_sms_gpu_source}" _sms_gpu_contents)
+  if(NOT _sms_gpu_contents MATCHES "requiredFeatures[.]push_back\\(wgpu::FeatureName::ImplicitDeviceSynchronization\\)")
+    message(FATAL_ERROR "Aurora needs the runtime fixes. Run: git -C third_party/aurora apply ../../aurora-bridge/aurora-runtime-fixes-20261022.patch")
+  endif()
+endif()
+set(_sms_gfx_source "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/aurora/lib/gfx/common.cpp")
+if(EXISTS "${_sms_gfx_source}")
+  file(READ "${_sms_gfx_source}" _sms_gfx_contents)
+  string(REGEX MATCH "void clear_caches\\(\\) noexcept \\{[^}]*\\}" _sms_clear_caches "${_sms_gfx_contents}")
+  if(_sms_clear_caches MATCHES "g_cachedBindGroups[.]clear")
+    message(FATAL_ERROR "Aurora still invalidates pending draw resources on resize. Apply aurora-bridge/aurora-runtime-fixes-20261022.patch first.")
+  endif()
+endif()
+
 # Reuse the dependency sources that the Mario Party 4 build already fetched,
 # so configuring never downloads anything.
 set(SMS_AURORA_DEPS "C:/Users/BEAVSN/Documents/Marioparty4/build/x-windows-ci-msvc/_deps"

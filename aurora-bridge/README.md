@@ -30,6 +30,38 @@ With `-DSMS_GX_BACKEND=aurora`, `platform/gx/src/gx_aurora.cpp` replaces the Ope
 
 `Construire-Aurora.cmd` performs both compiler phases with the installed Visual Studio x64 tools and MSYS2, then refreshes the runtime DLLs even when the game executable does not need relinking.
 
+### Fullscreen and threaded Dawn corrections (22 October 2026)
+
+After applying the six commits in `aurora-sms.patch`, also apply:
+
+```powershell
+git -C third_party/aurora apply ../../aurora-bridge/aurora-runtime-fixes-20261022.patch
+```
+
+This patch requests Dawn's `ImplicitDeviceSynchronization` feature when creating
+the device. Aurora creates resources and compiles pipelines while its render
+worker encodes commands; native Dawn otherwise leaves the shared device state
+unprotected. Each command encoder remains on its owning thread. The patch keeps
+Direct3D 12 and the existing workers. It reports an initialization error if the
+required feature is unavailable.
+
+It also preserves cached bind groups during a resize. A recording frame can
+still refer to those groups after the render worker has been synchronized;
+clearing the cache invalidated its deferred lookups. Existing age-based eviction
+and synchronized shutdown still release unused groups. A missing lookup now
+produces an explicit assertion in Release instead of dereferencing the end
+iterator. Set `SMS_AURORA_VALIDATE=1` to enable Dawn validation and shader
+robustness while diagnosing rendering errors; normal builds keep their existing
+validation policy.
+
+The bridge also processes F11 and Alt+Enter during shader preparation, consuming
+those shortcuts once and synchronizing workers before window changes. Previously
+the shortcuts stayed queued until the game began polling input.
+
+These are source corrections. A successful build alone does not establish that
+the reported Intel Direct3D 12 crash is resolved; runtime verification is still
+required. See `RUNTIME-FIX-20261022.md` for the evidence and verification status.
+
 ## PartyBoard menu
 
 Run `Jouer-Aurora.cmd`. Open the original Sunshine PartyBoard menu with **F1** or the controller **Guide** button. The game pauses while its retained image and the menu continue to render. Mouse, wheel, keyboard, text input, controller directions and stick navigation use the Aurora window.

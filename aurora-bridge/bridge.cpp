@@ -442,10 +442,34 @@ int sab_init(const SabConfig* c) {
         SDL_Window* window = mainWindow();
         const std::string title = window ? SDL_GetWindowTitle(window) : cfg.appName;
         int lastPercent = -1;
+        size_t checkedEvents = 0;
         auto lastDrawn = std::chrono::steady_clock::now() - std::chrono::seconds(1);
         const bool prepared = aurora::gfx::precompile_pipeline_cache([&](size_t ready, size_t total) {
+            // The preparation UI can still have a frame on Aurora's render worker.
+            // Drain both workers before SDL applies resize/fullscreen events, just
+            // as the game must do before changing the window between frames.
+            sab_gx_sync();
+            if (!aurora::gfx::render_worker::is_idle()) aurora::gfx::render_worker::synchronize();
             pumpAurora();
-            for (const auto& event : s_pending) if (event.type == SAB_EV_QUIT) return false;
+            // The game has not started polling yet. Keep its other input in order,
+            // inspecting only events added since the previous callback. Consumed
+            // window shortcuts must not toggle again when game polling begins.
+            size_t remaining = s_pending.size() - checkedEvents;
+            while (remaining-- > 0) {
+                const auto& event = s_pending[checkedEvents];
+                if (event.type == SAB_EV_QUIT) return false;
+                const bool windowShortcut = (event.type == SAB_EV_KEYDOWN || event.type == SAB_EV_KEYUP) &&
+                    (event.scancode == SDL_SCANCODE_F11 ||
+                     ((event.scancode == SDL_SCANCODE_RETURN || event.scancode == SDL_SCANCODE_KP_ENTER) &&
+                      (event.mod & SDL_KMOD_ALT)));
+                if (windowShortcut) {
+                    if (event.type == SAB_EV_KEYDOWN && !event.repeat)
+                        VISetWindowFullscreen(!VIGetWindowFullscreen());
+                    s_pending.erase(s_pending.begin() + checkedEvents);
+                } else {
+                    ++checkedEvents;
+                }
+            }
             const int percent = total ? int((std::min)(ready, total) * 100 / total) : 100;
             if (window && percent != lastPercent) {
                 const auto caption = title + " - Preparation des shaders : " + std::to_string(percent) + "%";

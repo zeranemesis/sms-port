@@ -1,0 +1,99 @@
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index e747548..eee584e 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -4,6 +4,8 @@
+ #include <array>
+ #include <cmath>
+ #include <cstdint>
++#include <cstdlib>
++#include <cstring>
+ #include <string_view>
+ #include <utility>
+ #include <vector>
+@@ -852,6 +854,16 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+         requiredLimits.maxDynamicStorageBuffersPerPipelineLayout, requiredLimits.maxStorageBuffersPerShaderStage,
+         requiredLimits.minUniformBufferOffsetAlignment, requiredLimits.minStorageBufferOffsetAlignment);
+     std::vector<wgpu::FeatureName> requiredFeatures;
++#ifdef WEBGPU_DAWN
++    // Resource creation and pipeline compilation run alongside the render worker.
++    // Native Dawn does not protect its device state unless this feature is requested.
++    // Each command encoder is still confined to the render worker: the feature
++    // intentionally does not synchronize simultaneous encoding on one encoder.
++    TRY(g_adapter.HasFeature(wgpu::FeatureName::ImplicitDeviceSynchronization),
++        "Threaded Aurora requires Dawn ImplicitDeviceSynchronization");
++    requiredFeatures.push_back(wgpu::FeatureName::ImplicitDeviceSynchronization);
++    Log.info("Enabled Dawn device synchronization for threaded rendering");
++#endif
+     g_bcTexturesSupported = false;
+     g_astcTexturesSupported = false;
+     g_textureComponentSwizzleSupported = false;
+@@ -884,7 +896,9 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+         .functionUserdata = nullptr,
+     });
+ 
+-    constexpr std::array enableToggles{
++    const char* validationEnv = std::getenv("SMS_AURORA_VALIDATE");
++    const bool validate = validationEnv != nullptr && std::strcmp(validationEnv, "1") == 0;
++    std::vector<const char*> enableToggles{
+     /* clang-format off */
+ #if _WIN32
+       "use_dxc",
+@@ -892,10 +906,6 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+       "emit_hlsl_debug_symbols",
+ #endif
+ #endif
+-#ifdef NDEBUG
+-      "skip_validation",
+-      "disable_robustness",
+-#endif
+ #ifndef ANDROID
+       "use_user_defined_labels_in_backend",
+ #endif
+@@ -903,6 +913,15 @@ bool initialize(AuroraBackend auroraBackend, bool allowCpu) {
+       "enable_immediate_error_handling",
+         /* clang-format on */
+     };
++#ifdef NDEBUG
++    if (!validate) {
++      enableToggles.push_back("skip_validation");
++      enableToggles.push_back("disable_robustness");
++    }
++#endif
++    if (validate) {
++      Log.info("SMS_AURORA_VALIDATE=1: Dawn validation and shader robustness enabled");
++    }
+     wgpu::DawnTogglesDescriptor togglesDescriptor({
+         .nextInChain = &cacheDescriptor,
+         .enabledToggleCount = enableToggles.size(),
+diff --git a/lib/gfx/common.cpp b/lib/gfx/common.cpp
+index 43463f2..47345aa 100644
+--- a/lib/gfx/common.cpp
++++ b/lib/gfx/common.cpp
+@@ -698,8 +698,14 @@ uint32_t get_sample_count() noexcept {
+ 
+ void clear_caches() noexcept {
+   g_offscreenCache.clear();
+-  std::lock_guard lock{g_bindGroupCacheMutex};
+-  g_cachedBindGroups.clear();
++  // A resize may arrive while the recording thread still owns an unsealed
++  // pass. Synchronizing the worker does not submit that pass: its draw
++  // commands still contain BindGroupRef hashes resolved later during encode.
++  // Bind groups describe textures/samplers/layouts, not the window size, and
++  // retain the resources they reference. Keep them available to those draws.
++  // Normal frame-age eviction reclaims unused groups (32-frame retention,
++  // swept every 16 frames), safely beyond the three in-flight frame slots.
++  // Shutdown clears the cache after draining and stopping the worker.
+ }
+ 
+ static OffscreenCacheEntry get_offscreen_textures(uint32_t width, uint32_t height) {
+@@ -1922,7 +1928,8 @@ BindGroupRef bind_group_ref(const WGPUBindGroupDescriptor& descriptor) {
+ wgpu::BindGroup find_bind_group(BindGroupRef id) {
+   std::lock_guard lock{g_bindGroupCacheMutex};
+   const auto it = g_cachedBindGroups.find(id);
+-  CHECK(it != g_cachedBindGroups.end(), "get_bind_group: failed to locate {:x}", id);
++  ASSERT(it != g_cachedBindGroups.end(), "get_bind_group: failed to locate {:x} (frame {}, cache size {})",
++         id, g_frameIndex, g_cachedBindGroups.size());
+   return it->second.bindGroup;
+ }
+ 
