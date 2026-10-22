@@ -61,7 +61,13 @@ The bundled Dawn package uses revision
   responsive after shader preparation. No matching access violation, missing
   bind-group assertion or Dawn validation error was present at that checkpoint.
   This is a limited startup observation, not a full gameplay certification.
-- Fullscreen shortcut behavior: not yet observed interactively.
+- Fullscreen shortcut behavior: the user confirmed both F11 transitions
+  (fullscreen to windowed and back to fullscreen) work in the corrected run.
+- Local deployment: the same tested DLLs were installed into CubeShelf's
+  Sunshine runtime, with the previous DLLs and runtime state backed up.
+  `local-patch.json` records file hashes and the backup location. The runtime
+  is marked locally modified (`Verified=false`); no new official release is
+  claimed. Diagnostic environment overrides were limited to the test process.
 - No automated test suite was run.
 
 Do not attribute the original crash conclusively to the synchronization defect
