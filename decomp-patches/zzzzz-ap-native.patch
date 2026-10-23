@@ -1,0 +1,278 @@
+Reason: opt-in native Archipelago hooks adapted to the PAL Aurora port
+--- a/include/System/FlagManager.hpp
++++ b/include/System/FlagManager.hpp
+@@ -69,6 +69,16 @@
+ 	u8 mSavedCardBools[119];
+ 	s32 mSavedCardInts[21];
+ 	s64 mSavedLastSaveTime;
++
++public:
++	// AP extension follows retail fields so their native offsets stay intact.
++	friend int SMSAPNativeSaveSelftest();
++	u8 mAPGuid[16];
++	u8 mAPSavedGuid[16];
++	bool mAPPersisted;
++	bool mAPSavePending;
++	u32 mAPOneUps;
++	u32 mAPSavedOneUps;
+ };
+ 
+ // The house global-accessor idiom (cf. SMSGetMarDirector, SMSGetCamera,
+--- a/src/System/FlagManager.cpp
++++ b/src/System/FlagManager.cpp
+@@ -1,3 +1,4 @@
++#include "port_ap.h"
+ #include <string.h>
+ #include <System/FlagManager.hpp>
+ #include <System/StageUtil.hpp>
+@@ -90,6 +91,11 @@
+ 
+ s32 TFlagManager::getFlag(u32 flag) const
+ {
++	if (port_ap_enabled()) {
++		if (flag == 0x40000) return port_ap_shines();
++		int value;
++		if (port_ap_ticket_flag(flag, &value)) return value;
++	}
+ 	u32 low = flag & 0xFFFF;
+ 	switch (flag >> 16) {
+ 	case 1:
+@@ -283,6 +289,7 @@
+ 
+ void TFlagManager::incFlag(u32 flag, s32 amount)
+ {
++	if (port_ap_enabled() && flag == 0x40000) return;
+ 	u32 low = flag & 0xFFFF;
+ 	switch (flag >> 16) {
+ 	case 2:
+@@ -415,6 +422,14 @@
+ 
+ void TFlagManager::load(JSUMemoryInputStream& in)
+ {
++	if (port_ap_enabled()) {
++		port_ap_reset_authority();
++		port_ap_new_guid(mAPGuid);
++		mAPPersisted = false;
++		mAPSavePending = false;
++		mAPOneUps = 0;
++		mAPSavedOneUps = 0;
++	}
+ 	resetCard();
+ 
+ 	u32 magic;
+@@ -441,9 +456,18 @@
+ 		u16 padding4;
+ 		in.read(&padding4, sizeof(padding4));
+ 
+-		u32 padding5;
+-		for (int i = 0; i < 16; ++i) {
+-			in.read(&padding5, sizeof(padding5));
++		u8 padding5[64];
++		in.read(padding5, sizeof(padding5));
++		if (port_ap_enabled() && memcmp(padding5, "SAP1", 4) == 0) {
++			memcpy(mAPGuid, padding5 + 4, 16);
++			mAPPersisted = true;
++			mAPOneUps = (u32)padding5[20] | ((u32)padding5[21] << 8)
++			    | ((u32)padding5[22] << 16) | ((u32)padding5[23] << 24);
++			mAPSavedOneUps = mAPOneUps;
++		}
++		if (port_ap_enabled()) {
++			memcpy(mAPSavedGuid, mAPGuid, 16);
++			mAPSavedOneUps = mAPOneUps;
+ 		}
+ 
+ 		in.read(&mCardBools, sizeof(mCardBools));
+@@ -463,6 +487,11 @@
+ 
+ void TFlagManager::restore()
+ {
++	if (port_ap_enabled()) {
++		port_ap_reset_authority();
++		memcpy(mAPGuid, mAPSavedGuid, 16);
++		mAPOneUps = mAPSavedOneUps;
++	}
+ 	resetCard();
+ 	mLastSaveTime = mSavedLastSaveTime;
+ 	memcpy(mCardBools, mSavedCardBools, sizeof(mCardBools));
+@@ -472,6 +501,14 @@
+ 
+ void TFlagManager::firstStart()
+ {
++	if (port_ap_enabled()) {
++		port_ap_reset_authority();
++		port_ap_new_guid(mAPGuid);
++		mAPPersisted = false;
++		mAPSavePending = false;
++		mAPOneUps = 0;
++		mAPSavedOneUps = 0;
++	}
+ 	resetCard();
+ 	memcpy(mSavedCardBools, mCardBools, sizeof(mCardBools));
+ 	memcpy(mSavedCardInts, mCardInts, sizeof(mCardInts));
+@@ -559,10 +596,15 @@
+ 	u16 padding2 = 0;
+ 	out.write(&padding2, sizeof(padding2));
+ 
+-	for (s32 i = 0; i < 16; ++i) {
+-		u32 padding3 = 0;
+-		out.write(&padding3, sizeof(padding3));
+-	}
++	u8 padding3[64] = {0};
++	if (port_ap_enabled()) {
++		memcpy(padding3, "SAP1", 4);
++		memcpy(padding3 + 4, mAPGuid, 16);
++		for (int i = 0; i < 4; ++i)
++			padding3[20 + i] = (u8)(mAPOneUps >> (8 * i));
++		mAPSavePending = true;
++	}
++	out.write(padding3, sizeof(padding3));
+ 
+ 	out.write(mCardBools, sizeof(mCardBools));
+ 	out.skip(0x200 - sizeof(mCardBools), 0);
+@@ -576,6 +618,12 @@
+ 
+ void TFlagManager::saveSuccess()
+ {
++	if (port_ap_enabled()) {
++		memcpy(mAPSavedGuid, mAPGuid, 16);
++		mAPSavedOneUps = mAPOneUps;
++		if (mAPSavePending) mAPPersisted = true;
++		mAPSavePending = false;
++	}
+ 	memcpy(mSavedCardBools, mCardBools, sizeof(mCardBools));
+ 	memcpy(mSavedCardInts, mCardInts, sizeof(mCardInts));
+ 	mSavedLastSaveTime = mLastSaveTime;
+@@ -583,6 +631,7 @@
+ 
+ void TFlagManager::saveFail()
+ {
++	if (port_ap_enabled()) mAPSavePending = false;
+ 	mLastSaveTime = mLastSaveTimeBackup;
+ 	incFlag(0x20000, -1);
+ }
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -1,3 +1,4 @@
++#include "port_ap.h"
+ #include <Player/WaterGun.hpp>
+ #include <Player/NozzleTrigger.hpp>
+ #include <Player/NozzleBase.hpp>
+@@ -1309,7 +1310,7 @@
+ 	mNozzleList[Hover]         = &mNozzleHover;
+ 	mNozzleList[Turbo]         = &mNozzleTurbo;
+ 	mCurrentNozzle             = Spray;
+-	mSecondNozzle              = Hover;
++	mSecondNozzle              = port_ap_enabled() ? port_ap_preferred_nozzle() : Hover;
+ 	mNozzleRocket.unk38C       = MSD_SE_PO_ROCKET_TRIGGER;
+ 	mNozzleTurbo.unk38C        = MSD_SE_PO_SNIPER_TRIGGER;
+ 	mNozzleDeform.mBomb.unk38C = MSD_SE_PO_SHOTGUN_TRIGGER;
+@@ -1674,6 +1675,7 @@
+ 
+ void TWaterGun::changeNozzle(TNozzleType nozzleType, bool animate)
+ {
++	if (!port_ap_nozzle_allowed(nozzleType)) return;
+ 	f32 usedWater = (f32)mCurrentWater
+ 	                / WaterGunCurNozzle2(this)->mEmitParams.mAmountMax.get();
+ 	if (nozzleType == Spray) {
+--- a/src/System/MarDirectorSetupObjects.cpp
++++ b/src/System/MarDirectorSetupObjects.cpp
+@@ -1,3 +1,4 @@
++#include "port_ap.h"
+ #include <System/MarDirector.hpp>
+ #include <JSystem/JKernel/JKRFileFinder.hpp>
+ #include <JSystem/JKernel/JKRMemArchive.hpp>
+@@ -244,7 +245,7 @@
+ 				unk4E |= 0x2;
+ 			}
+ 			TFlagManager::getInstance()->setFlag(0x60003, lVar9);
+-			if (TFlagManager::getInstance()->getFlag(0x40000) >= 20
++			if ((port_ap_enabled() && port_ap_ticket_mode() ? TFlagManager::getInstance()->getBool(0x103AB) : TFlagManager::getInstance()->getFlag(0x40000) >= 20)
+ 			    && !TFlagManager::getInstance()->getFlag(0x60003)) {
+ 				unk4E |= 0x2;
+ 			}
+@@ -252,7 +253,7 @@
+ 			// FALLTHROUGH!!!
+ 
+ 		case 2:
+-			if (TFlagManager::getInstance()->getFlag(0x40000) >= 20)
++			if ((port_ap_enabled() && port_ap_ticket_mode() ? TFlagManager::getInstance()->getBool(0x103AB) : TFlagManager::getInstance()->getFlag(0x40000) >= 20))
+ 				TFlagManager::getInstance()->setBool(true, 0x50004);
+ 			break;
+ 		}
+--- a/src/System/MarDirectorDirect.cpp
++++ b/src/System/MarDirectorDirect.cpp
+@@ -1,3 +1,7 @@
++#include "port_ap.h"
++class TFlagManager;
++int SMSAPNextPlazaScenario();
++bool SMSAPShouldReplayAirstrip(const TFlagManager*);
+ #include <System/MarDirector.hpp>
+ #include <JSystem/JDrama/JDRNameRefGen.hpp>
+ #include <JSystem/JKernel/JKRFileLoader.hpp>
+@@ -487,6 +491,7 @@
+ 	f64 deadF2;
+ 	f64 deadF3;
+ 
++	if (port_ap_enabled() && param_1 == 1) return SMSAPNextPlazaScenario();
+ 	int scenario = 0;
+ 	switch (param_1) {
+ 	case 1:
+@@ -687,7 +692,7 @@
+ 			if (unk261 == 7) {
+ 				TFlagManager::getInstance()->restore();
+ 				TFlagManager::getInstance()->setBool(true, 0x30001);
+-				if (!TFlagManager::getInstance()->getFlag(0x40000)) {
++				if (SMSAPShouldReplayAirstrip(TFlagManager::getInstance())) {
+ 					SMSGetApplication()->mNextArea.set(0, 0, 0);
+ 				} else {
+ 					SMSGetApplication()->mNextArea.set(1, 0xff, 0);
+@@ -1030,7 +1035,8 @@
+ 			if (currSeq.unk1 == 8) {
+ 				switch (TFlagManager::smInstance->getFlag(0x60003)) {
+ 				case 0:
+-					if (TFlagManager::smInstance->getFlag(0x40000) >= 0x14)
++					if (port_ap_enabled() && port_ap_ticket_mode() ? TFlagManager::smInstance->getBool(0x103AB)
++					                     : TFlagManager::smInstance->getFlag(0x40000) >= 0x14)
+ 						pcVar8 = "mareopen_startcamera";
+ 					break;
+ 				case 1:
+--- a/src/MoveBG/Item.cpp
++++ b/src/MoveBG/Item.cpp
+@@ -1,3 +1,4 @@
++#include "port_ap.h"
+ #include <MoveBG/Item.hpp>
+ #include <MoveBG/ItemManager.hpp>
+ #include <Map/MapMirror.hpp>
+@@ -1444,11 +1445,11 @@
+ 			return;
+ 		}
+ 	} else if (gpMarDirector->mMap == 1) {
+-		if (!TFlagManager::getInstance()->getBool(0x1038F)) {
++		if (!(port_ap_enabled() ? port_ap_yoshi() : TFlagManager::getInstance()->getBool(0x1038F))) {
+ 			makeObjDead();
+ 			return;
+ 		}
+-	} else if (!TFlagManager::getInstance()->getShineFlag(0x21)) {
++	} else if (!(port_ap_enabled() ? port_ap_yoshi() : TFlagManager::getInstance()->getShineFlag(0x21))) {
+ 		makeObjDead();
+ 		return;
+ 	}
+--- a/src/GC2D/CardLoad.cpp
++++ b/src/GC2D/CardLoad.cpp
+@@ -18,6 +18,7 @@
+ #include <GC2D/ShineTable.hpp>
+ #include <System/MarDirector.hpp>
+ #include <System/FlagManager.hpp>
++bool SMSAPShouldReplayAirstrip(const TFlagManager*);
+ #include <MSound/MSound.hpp>
+ #include <GC2D/Option.hpp>
+ #include <GC2D/ExPane.hpp>
+@@ -3129,7 +3130,7 @@
+ 	} break;
+ 
+ 	case PROGRESS_UNK29: {
+-		if (TFlagManager::getInstance()->getFlag(0x40000) < 1)
++		if (SMSAPShouldReplayAirstrip(TFlagManager::getInstance()))
+ #ifdef TARGET_PC
+ 			// Eclipse rewrites the `li r4, 0x0` at 0x80164E30 (the stage of a
+ 			// save with no shines; `li r4, 0x4E01`): its immediate is the stage.

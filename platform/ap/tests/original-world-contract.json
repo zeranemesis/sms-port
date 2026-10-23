@@ -1,0 +1,2621 @@
+{
+  "game": "Super Mario Sunshine",
+  "source_revision": "20cc30b58613ee28a7fe3dd4143f96c33fdadf72",
+  "manifest": {
+    "game": "Super Mario Sunshine",
+    "authors": [
+      "MrsMarinaRose",
+      "Joshark"
+    ],
+    "minimum_ap_version": "0.6.5",
+    "world_version": "0.6.2"
+  },
+  "items": {
+    "Shine Sprite": 523004,
+    "Blue Coin": 523014,
+    "Spray Nozzle": 523000,
+    "Hover Nozzle": 523001,
+    "Rocket Nozzle": 523002,
+    "Turbo Nozzle": 523003,
+    "Yoshi": 523013,
+    "Bianco Hills Ticket": 523005,
+    "Ricco Harbor Ticket": 523006,
+    "Gelato Beach Ticket": 523007,
+    "Pinna Park Ticket": 523008,
+    "Noki Bay Ticket": 523009,
+    "Sirena Beach Ticket": 523010,
+    "Pianta Village Ticket": 523011,
+    "1-UP": 523140
+  },
+  "locations": [
+    {
+      "id": 1,
+      "name": "Delfino Airstrip - Delfino Airstrip Dilemma",
+      "region": "Delfino Airstrip",
+      "category": "Shine",
+      "native_bit": 86
+    },
+    {
+      "id": 2,
+      "name": "Delfino Airstrip - Red Coin Waterworks",
+      "region": "Delfino Airstrip",
+      "category": "Shine",
+      "native_bit": 88
+    },
+    {
+      "id": 3,
+      "name": "Delfino Airstrip - Ice Cube",
+      "region": "Delfino Airstrip",
+      "category": "Blue Coin",
+      "native_bit": 120
+    },
+    {
+      "id": 4,
+      "name": "Delfino Plaza - Shine Sprite in the Sand",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 117
+    },
+    {
+      "id": 5,
+      "name": "Delfino Plaza - Clean the West Bell",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 96
+    },
+    {
+      "id": 6,
+      "name": "Delfino Plaza - Super Slide",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 90
+    },
+    {
+      "id": 7,
+      "name": "Delfino Plaza - Turbo Dash!",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 116
+    },
+    {
+      "id": 8,
+      "name": "Delfino Plaza - Lighthouse Roof",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 93
+    },
+    {
+      "id": 9,
+      "name": "Delfino Plaza - Clean the East Bell",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 97
+    },
+    {
+      "id": 10,
+      "name": "Delfino Plaza - Shine Gate",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 99
+    },
+    {
+      "id": 11,
+      "name": "Delfino Plaza - Lily Pad Ride",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 91
+    },
+    {
+      "id": 12,
+      "name": "Delfino Plaza - Turbo Track",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 87
+    },
+    {
+      "id": 13,
+      "name": "Delfino Plaza - Red Coin Field",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 92
+    },
+    {
+      "id": 14,
+      "name": "Delfino Plaza - Pachinko Game",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 89
+    },
+    {
+      "id": 15,
+      "name": "Delfino Plaza - The Gold Bird",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 118
+    },
+    {
+      "id": 16,
+      "name": "Delfino Plaza - Boxing Clever 1",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 94
+    },
+    {
+      "id": 17,
+      "name": "Delfino Plaza - Boxing Clever 2",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 95
+    },
+    {
+      "id": 18,
+      "name": "Delfino Plaza - Chuckster",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 98
+    },
+    {
+      "id": 19,
+      "name": "Delfino Plaza - 100 Coins",
+      "region": "Delfino Plaza",
+      "category": "Shine",
+      "native_bit": 107
+    },
+    {
+      "id": 20,
+      "name": "Delfino Plaza - Turbo Pillar",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 121
+    },
+    {
+      "id": 21,
+      "name": "Delfino Plaza - Burning Pianta",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 124
+    },
+    {
+      "id": 22,
+      "name": "Delfino Plaza - Shine Gate M",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 125
+    },
+    {
+      "id": 23,
+      "name": "Delfino Plaza - Tower M",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 126
+    },
+    {
+      "id": 24,
+      "name": "Delfino Plaza - Chuckster Room M",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 127
+    },
+    {
+      "id": 25,
+      "name": "Delfino Plaza - Sea Sewer",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 132
+    },
+    {
+      "id": 26,
+      "name": "Delfino Plaza - Tower Yellow Goo",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 133
+    },
+    {
+      "id": 27,
+      "name": "Delfino Plaza - Jail Cell",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 134
+    },
+    {
+      "id": 28,
+      "name": "Delfino Plaza - Police Station Yellow Goo",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 135
+    },
+    {
+      "id": 29,
+      "name": "Delfino Plaza - Shine Gate Sewer",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 136
+    },
+    {
+      "id": 30,
+      "name": "Delfino Plaza - Canal Sewer",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 137
+    },
+    {
+      "id": 31,
+      "name": "Delfino Plaza - Blue Bird Near Sirena Pipe",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 138
+    },
+    {
+      "id": 32,
+      "name": "Delfino Plaza - Blue Bird Near Crate Guy",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 139
+    },
+    {
+      "id": 33,
+      "name": "Delfino Plaza - Statue X",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 122
+    },
+    {
+      "id": 34,
+      "name": "Delfino Plaza - Bell Tower X",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 123
+    },
+    {
+      "id": 35,
+      "name": "Delfino Plaza - Pineapple Basket",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 128
+    },
+    {
+      "id": 36,
+      "name": "Delfino Plaza - Durian Basket",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 129
+    },
+    {
+      "id": 37,
+      "name": "Delfino Plaza - Banana Basket",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 130
+    },
+    {
+      "id": 38,
+      "name": "Delfino Plaza - Coconut Basket",
+      "region": "Delfino Plaza",
+      "category": "Blue Coin",
+      "native_bit": 131
+    },
+    {
+      "id": 39,
+      "name": "Boathouse Traders - Shine 1",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 70
+    },
+    {
+      "id": 40,
+      "name": "Boathouse Traders - Shine 2",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 71
+    },
+    {
+      "id": 41,
+      "name": "Boathouse Traders - Shine 3",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 72
+    },
+    {
+      "id": 42,
+      "name": "Boathouse Traders - Shine 4",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 73
+    },
+    {
+      "id": 43,
+      "name": "Boathouse Traders - Shine 5",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 74
+    },
+    {
+      "id": 44,
+      "name": "Boathouse Traders - Shine 6",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 75
+    },
+    {
+      "id": 45,
+      "name": "Boathouse Traders - Shine 7",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 76
+    },
+    {
+      "id": 46,
+      "name": "Boathouse Traders - Shine 8",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 77
+    },
+    {
+      "id": 47,
+      "name": "Boathouse Traders - Shine 9",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 78
+    },
+    {
+      "id": 48,
+      "name": "Boathouse Traders - Shine 10",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 79
+    },
+    {
+      "id": 49,
+      "name": "Boathouse Traders - Shine 11",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 80
+    },
+    {
+      "id": 50,
+      "name": "Boathouse Traders - Shine 12",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 81
+    },
+    {
+      "id": 51,
+      "name": "Boathouse Traders - Shine 13",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 82
+    },
+    {
+      "id": 52,
+      "name": "Boathouse Traders - Shine 14",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 83
+    },
+    {
+      "id": 53,
+      "name": "Boathouse Traders - Shine 15",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 84
+    },
+    {
+      "id": 54,
+      "name": "Boathouse Traders - Shine 16",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 85
+    },
+    {
+      "id": 55,
+      "name": "Boathouse Traders - Shine 17",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 108
+    },
+    {
+      "id": 56,
+      "name": "Boathouse Traders - Shine 18",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 109
+    },
+    {
+      "id": 57,
+      "name": "Boathouse Traders - Shine 19",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 110
+    },
+    {
+      "id": 58,
+      "name": "Boathouse Traders - Shine 20",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 111
+    },
+    {
+      "id": 59,
+      "name": "Boathouse Traders - Shine 21",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 112
+    },
+    {
+      "id": 60,
+      "name": "Boathouse Traders - Shine 22",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 113
+    },
+    {
+      "id": 61,
+      "name": "Boathouse Traders - Shine 23",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 114
+    },
+    {
+      "id": 62,
+      "name": "Boathouse Traders - Shine 24",
+      "region": "Boathouse Traders",
+      "category": "Shine",
+      "native_bit": 115
+    },
+    {
+      "id": 63,
+      "name": "Bianco Hills 1 - Road to the Big Windmill",
+      "region": "Bianco Hills 1",
+      "category": "Shine",
+      "native_bit": 0
+    },
+    {
+      "id": 64,
+      "name": "Bianco Hills 1 - 100 Coins",
+      "region": "Bianco Hills 1",
+      "category": "Shine",
+      "native_bit": 100
+    },
+    {
+      "id": 65,
+      "name": "Bianco Hills 1 - Windmill M",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 170
+    },
+    {
+      "id": 66,
+      "name": "Bianco Hills 1 - Windmill Pillar",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 171
+    },
+    {
+      "id": 67,
+      "name": "Bianco Hills 1 - Towers House M",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 188
+    },
+    {
+      "id": 68,
+      "name": "Bianco Hills 1 - Balcony",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 173
+    },
+    {
+      "id": 69,
+      "name": "Bianco Hills 1 - Underwater Right",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 180
+    },
+    {
+      "id": 70,
+      "name": "Bianco Hills 1 - Wall Side M",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 186
+    },
+    {
+      "id": 71,
+      "name": "Bianco Hills 1 - Wall Top M",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 187
+    },
+    {
+      "id": 72,
+      "name": "Bianco Hills 1 - Towers House",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 172
+    },
+    {
+      "id": 73,
+      "name": "Bianco Hills 1 - Pinwheel",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 189
+    },
+    {
+      "id": 74,
+      "name": "Bianco Hills 1 - X Behind Wall",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 190
+    },
+    {
+      "id": 75,
+      "name": "Bianco Hills 1 - River End",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 191
+    },
+    {
+      "id": 76,
+      "name": "Bianco Hills 1 - X Between Walls",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 197
+    },
+    {
+      "id": 77,
+      "name": "Bianco Hills 1 - Sail Platform",
+      "region": "Bianco Hills 1",
+      "category": "Blue Coin",
+      "native_bit": 198
+    },
+    {
+      "id": 78,
+      "name": "Bianco Hills 2 - Down with Petey Piranha!",
+      "region": "Bianco Hills 2",
+      "category": "Shine",
+      "native_bit": 1
+    },
+    {
+      "id": 79,
+      "name": "Bianco Hills 3 - The Hillside Cave Secret",
+      "region": "Bianco Hills 3",
+      "category": "Shine",
+      "native_bit": 2
+    },
+    {
+      "id": 80,
+      "name": "Bianco Hills 3 - Red Coins of the Hillside Cave",
+      "region": "Bianco Hills 3",
+      "category": "Shine",
+      "native_bit": 8
+    },
+    {
+      "id": 81,
+      "name": "Bianco Hills 3 - Treetop",
+      "region": "Bianco Hills 3",
+      "category": "Blue Coin",
+      "native_bit": 174
+    },
+    {
+      "id": 82,
+      "name": "Bianco Hills 3 - Tourist",
+      "region": "Bianco Hills 3",
+      "category": "Blue Coin",
+      "native_bit": 175
+    },
+    {
+      "id": 83,
+      "name": "Bianco Hills 3 - Windmill Pokey",
+      "region": "Bianco Hills 3",
+      "category": "Blue Coin",
+      "native_bit": 184
+    },
+    {
+      "id": 84,
+      "name": "Bianco Hills 3 - Cliff",
+      "region": "Bianco Hills 3",
+      "category": "Blue Coin",
+      "native_bit": 192
+    },
+    {
+      "id": 85,
+      "name": "Bianco Hills 3 - Highest Platform",
+      "region": "Bianco Hills 3",
+      "category": "Blue Coin",
+      "native_bit": 199
+    },
+    {
+      "id": 86,
+      "name": "Bianco Hills 4 - Red Coins of Windmill Village",
+      "region": "Bianco Hills 4",
+      "category": "Shine",
+      "native_bit": 3
+    },
+    {
+      "id": 87,
+      "name": "Bianco Hills 4 - Hillside Pokey",
+      "region": "Bianco Hills 4",
+      "category": "Blue Coin",
+      "native_bit": 178
+    },
+    {
+      "id": 88,
+      "name": "Bianco Hills 4 - Bridge Underside",
+      "region": "Bianco Hills 4",
+      "category": "Blue Coin",
+      "native_bit": 183
+    },
+    {
+      "id": 89,
+      "name": "Bianco Hills 4 - Rocket Box",
+      "region": "Bianco Hills 4",
+      "category": "Nozzle",
+      "native_bit": 872
+    },
+    {
+      "id": 90,
+      "name": "Bianco Hills 5 - Petey Piranha Strikes Back",
+      "region": "Bianco Hills 5",
+      "category": "Shine",
+      "native_bit": 4
+    },
+    {
+      "id": 91,
+      "name": "Bianco Hills 5 - Wall Tower Pianta",
+      "region": "Bianco Hills 5",
+      "category": "Blue Coin",
+      "native_bit": 177
+    },
+    {
+      "id": 92,
+      "name": "Bianco Hills 5 - Platforms Cross",
+      "region": "Bianco Hills 5",
+      "category": "Blue Coin",
+      "native_bit": 185
+    },
+    {
+      "id": 93,
+      "name": "Bianco Hills 6 - The Secret of the Dirty Lake",
+      "region": "Bianco Hills 6",
+      "category": "Shine",
+      "native_bit": 5
+    },
+    {
+      "id": 94,
+      "name": "Bianco Hills 6 - Red Coins of the Dirty Lake",
+      "region": "Bianco Hills 6",
+      "category": "Shine",
+      "native_bit": 9
+    },
+    {
+      "id": 95,
+      "name": "Bianco Hills 6 - Petey Pillar",
+      "region": "Bianco Hills 6",
+      "category": "Blue Coin",
+      "native_bit": 179
+    },
+    {
+      "id": 96,
+      "name": "Bianco Hills 6 - Underwater Left",
+      "region": "Bianco Hills 6",
+      "category": "Blue Coin",
+      "native_bit": 181
+    },
+    {
+      "id": 97,
+      "name": "Bianco Hills 6 - Blue Bird",
+      "region": "Bianco Hills 6",
+      "category": "Blue Coin",
+      "native_bit": 182
+    },
+    {
+      "id": 98,
+      "name": "Bianco Hills 6 - Chuckster Momma",
+      "region": "Bianco Hills 6",
+      "category": "Blue Coin",
+      "native_bit": 193
+    },
+    {
+      "id": 99,
+      "name": "Bianco Hills 6 - Turbo Box",
+      "region": "Bianco Hills 6",
+      "category": "Nozzle",
+      "native_bit": 873
+    },
+    {
+      "id": 100,
+      "name": "Bianco Hills 7 - Shadow Mario on the Loose",
+      "region": "Bianco Hills 7",
+      "category": "Shine",
+      "native_bit": 6
+    },
+    {
+      "id": 101,
+      "name": "Bianco Hills 7 - Towers House O",
+      "region": "Bianco Hills 7",
+      "category": "Blue Coin",
+      "native_bit": 194
+    },
+    {
+      "id": 102,
+      "name": "Bianco Hills 7 - Balcony House O",
+      "region": "Bianco Hills 7",
+      "category": "Blue Coin",
+      "native_bit": 195
+    },
+    {
+      "id": 103,
+      "name": "Bianco Hills 8 - The Red Coins of the Lake",
+      "region": "Bianco Hills 8",
+      "category": "Shine",
+      "native_bit": 7
+    },
+    {
+      "id": 104,
+      "name": "Bianco Hills 8 - Beehive",
+      "region": "Bianco Hills 8",
+      "category": "Blue Coin",
+      "native_bit": 176
+    },
+    {
+      "id": 105,
+      "name": "Bianco Hills 8 - Butterfly",
+      "region": "Bianco Hills 8",
+      "category": "Blue Coin",
+      "native_bit": 196
+    },
+    {
+      "id": 106,
+      "name": "Ricco Harbor 1 - Ricco 1 Only - Gooper Blooper Breaks Out",
+      "region": "Ricco Harbor 1",
+      "category": "Shine",
+      "native_bit": 10
+    },
+    {
+      "id": 107,
+      "name": "Ricco Harbor 1 - 100 Coins",
+      "region": "Ricco Harbor 1",
+      "category": "Shine",
+      "native_bit": 101
+    },
+    {
+      "id": 108,
+      "name": "Ricco Harbor 1 - Tower Wall",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 221
+    },
+    {
+      "id": 109,
+      "name": "Ricco Harbor 1 - Outer Ship M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 222
+    },
+    {
+      "id": 110,
+      "name": "Ricco Harbor 1 - Spawn Building Top M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 223
+    },
+    {
+      "id": 111,
+      "name": "Ricco Harbor 1 - Fruit Machine X",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 224
+    },
+    {
+      "id": 112,
+      "name": "Ricco Harbor 1 - Rooftop M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 226
+    },
+    {
+      "id": 113,
+      "name": "Ricco Harbor 1 - Far Ledge",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 228
+    },
+    {
+      "id": 114,
+      "name": "Ricco Harbor 1 - Short Beam",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 229
+    },
+    {
+      "id": 115,
+      "name": "Ricco Harbor 1 - Tower Platform",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 230
+    },
+    {
+      "id": 116,
+      "name": "Ricco Harbor 1 - Long Beam",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 231
+    },
+    {
+      "id": 117,
+      "name": "Ricco Harbor 1 - Off Catwalk",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 232
+    },
+    {
+      "id": 118,
+      "name": "Ricco Harbor 1 - Crane",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 234
+    },
+    {
+      "id": 119,
+      "name": "Ricco Harbor 1 - Blooper Open Water",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 235
+    },
+    {
+      "id": 120,
+      "name": "Ricco Harbor 1 - Fountain",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 237
+    },
+    {
+      "id": 121,
+      "name": "Ricco Harbor 1 - Underwater",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 238
+    },
+    {
+      "id": 122,
+      "name": "Ricco Harbor 1 - Tower X",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 239
+    },
+    {
+      "id": 123,
+      "name": "Ricco Harbor 1 - Fountain M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 240
+    },
+    {
+      "id": 124,
+      "name": "Ricco Harbor 1 - Tower Crate",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 248
+    },
+    {
+      "id": 125,
+      "name": "Ricco Harbor 1 - Tower Rocket",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 233
+    },
+    {
+      "id": 126,
+      "name": "Ricco Harbor 1 - Tower Ground M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 227
+    },
+    {
+      "id": 127,
+      "name": "Ricco Harbor 1 - Spawn Building Side M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 241
+    },
+    {
+      "id": 128,
+      "name": "Ricco Harbor 1 - Inner Ship M",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 246
+    },
+    {
+      "id": 129,
+      "name": "Ricco Harbor 1 - Yellow Submarine",
+      "region": "Ricco Harbor 1",
+      "category": "Blue Coin",
+      "native_bit": 249
+    },
+    {
+      "id": 130,
+      "name": "Ricco Harbor 2 - Blooper Surfing Safari",
+      "region": "Ricco Harbor 2",
+      "category": "Shine",
+      "native_bit": 11
+    },
+    {
+      "id": 131,
+      "name": "Ricco Harbor 2 - Blooper-Surfing Sequel",
+      "region": "Ricco Harbor 2",
+      "category": "Shine",
+      "native_bit": 19
+    },
+    {
+      "id": 132,
+      "name": "Ricco Harbor 2 - Blooper Underground Entrance",
+      "region": "Ricco Harbor 2",
+      "category": "Blue Coin",
+      "native_bit": 236
+    },
+    {
+      "id": 133,
+      "name": "Ricco Harbor 3 - The Caged Shine Sprite",
+      "region": "Ricco Harbor 3",
+      "category": "Shine",
+      "native_bit": 12
+    },
+    {
+      "id": 134,
+      "name": "Ricco Harbor 3 - Mesh Wall Klamber",
+      "region": "Ricco Harbor 3",
+      "category": "Blue Coin",
+      "native_bit": 243
+    },
+    {
+      "id": 135,
+      "name": "Ricco Harbor 3 - Mesh Ceiling Klamber",
+      "region": "Ricco Harbor 3",
+      "category": "Blue Coin",
+      "native_bit": 244
+    },
+    {
+      "id": 136,
+      "name": "Ricco Harbor 3 - Rocket Box",
+      "region": "Ricco Harbor 3",
+      "category": "Nozzle",
+      "native_bit": 874
+    },
+    {
+      "id": 137,
+      "name": "Ricco Harbor 4 - The Secret of Ricco Tower",
+      "region": "Ricco Harbor 4",
+      "category": "Shine",
+      "native_bit": 13
+    },
+    {
+      "id": 138,
+      "name": "Ricco Harbor 4 - Red Coins in Ricco Tower",
+      "region": "Ricco Harbor 4",
+      "category": "Shine",
+      "native_bit": 18
+    },
+    {
+      "id": 139,
+      "name": "Ricco Harbor 4 - Caged Blooper",
+      "region": "Ricco Harbor 4",
+      "category": "Blue Coin",
+      "native_bit": 247
+    },
+    {
+      "id": 140,
+      "name": "Ricco Harbor 5 - Gooper Blooper Returns",
+      "region": "Ricco Harbor 5",
+      "category": "Shine",
+      "native_bit": 14
+    },
+    {
+      "id": 141,
+      "name": "Ricco Harbor 6 - Red Coins on the Water",
+      "region": "Ricco Harbor 6",
+      "category": "Shine",
+      "native_bit": 15
+    },
+    {
+      "id": 142,
+      "name": "Ricco Harbor 7 - Shadow Mario Revisited",
+      "region": "Ricco Harbor 7",
+      "category": "Shine",
+      "native_bit": 16
+    },
+    {
+      "id": 143,
+      "name": "Ricco Harbor 7 - Turbo Box",
+      "region": "Ricco Harbor 7",
+      "category": "Nozzle",
+      "native_bit": 875
+    },
+    {
+      "id": 144,
+      "name": "Ricco Harbor 8 - Yoshi's Fruit Adventure",
+      "region": "Ricco Harbor 8",
+      "category": "Shine",
+      "native_bit": 17
+    },
+    {
+      "id": 145,
+      "name": "Ricco Harbor 8 - Butterflies",
+      "region": "Ricco Harbor 8",
+      "category": "Blue Coin",
+      "native_bit": 220
+    },
+    {
+      "id": 146,
+      "name": "Ricco Harbor 8 - Wall Klamber",
+      "region": "Ricco Harbor 8",
+      "category": "Blue Coin",
+      "native_bit": 225
+    },
+    {
+      "id": 147,
+      "name": "Ricco Harbor 8 - High Platform M",
+      "region": "Ricco Harbor 8",
+      "category": "Blue Coin",
+      "native_bit": 242
+    },
+    {
+      "id": 148,
+      "name": "Ricco Harbor 8 - Fish Basket",
+      "region": "Ricco Harbor 8",
+      "category": "Blue Coin",
+      "native_bit": 245
+    },
+    {
+      "id": 149,
+      "name": "Gelato Beach 1 - Dune Bud Sand Castle Secret",
+      "region": "Gelato Beach 1",
+      "category": "Shine",
+      "native_bit": 20
+    },
+    {
+      "id": 150,
+      "name": "Gelato Beach 1 - Red Coins in the Sand Castle",
+      "region": "Gelato Beach 1",
+      "category": "Shine",
+      "native_bit": 28
+    },
+    {
+      "id": 151,
+      "name": "Gelato Beach 1 - Sandy Shine Sprite",
+      "region": "Gelato Beach 1",
+      "category": "Shine",
+      "native_bit": 29
+    },
+    {
+      "id": 152,
+      "name": "Gelato Beach 1 - 100 Coins",
+      "region": "Gelato Beach 1",
+      "category": "Shine",
+      "native_bit": 102
+    },
+    {
+      "id": 153,
+      "name": "Gelato Beach 1 - Juicer",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 275
+    },
+    {
+      "id": 154,
+      "name": "Gelato Beach 1 - Rocket M",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 276
+    },
+    {
+      "id": 155,
+      "name": "Gelato Beach 1 - Spawn Triangle",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 277
+    },
+    {
+      "id": 156,
+      "name": "Gelato Beach 1 - Trees Triangle",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 278
+    },
+    {
+      "id": 157,
+      "name": "Gelato Beach 1 - Left Bird",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 280
+    },
+    {
+      "id": 158,
+      "name": "Gelato Beach 1 - Right Bird",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 281
+    },
+    {
+      "id": 159,
+      "name": "Gelato Beach 1 - Highest Rope",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 282
+    },
+    {
+      "id": 160,
+      "name": "Gelato Beach 1 - Pole",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 283
+    },
+    {
+      "id": 161,
+      "name": "Gelato Beach 1 - Deck",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 288
+    },
+    {
+      "id": 162,
+      "name": "Gelato Beach 1 - Swing",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 289
+    },
+    {
+      "id": 163,
+      "name": "Gelato Beach 1 - Big Tree",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 290
+    },
+    {
+      "id": 164,
+      "name": "Gelato Beach 1 - Crevice",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 291
+    },
+    {
+      "id": 165,
+      "name": "Gelato Beach 1 - Sand Cabana Roof",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 293
+    },
+    {
+      "id": 166,
+      "name": "Gelato Beach 1 - Shack",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 294
+    },
+    {
+      "id": 167,
+      "name": "Gelato Beach 1 - Red Cataquack",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 270
+    },
+    {
+      "id": 168,
+      "name": "Gelato Beach 1 - Sand Shine at Sand Cabana",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 271
+    },
+    {
+      "id": 169,
+      "name": "Gelato Beach 1 - Sand Shine at Surf Cabana",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 272
+    },
+    {
+      "id": 170,
+      "name": "Gelato Beach 1 - Middle Sand Shine",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 274
+    },
+    {
+      "id": 171,
+      "name": "Gelato Beach 1 - Close Underwater",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 284
+    },
+    {
+      "id": 172,
+      "name": "Gelato Beach 1 - Far Underwater",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 285
+    },
+    {
+      "id": 173,
+      "name": "Gelato Beach 1 - Blue Fish",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 286
+    },
+    {
+      "id": 174,
+      "name": "Gelato Beach 1 - Red Fish",
+      "region": "Gelato Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 287
+    },
+    {
+      "id": 175,
+      "name": "Gelato Beach 2 - Mirror Madness! Tilt, Slam, Bam!",
+      "region": "Gelato Beach 2",
+      "category": "Shine",
+      "native_bit": 21
+    },
+    {
+      "id": 176,
+      "name": "Gelato Beach 2 - Big Sand Shine",
+      "region": "Gelato Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 292
+    },
+    {
+      "id": 177,
+      "name": "Gelato Beach 3 - Wiggler Ahoy! Full Steam Ahead!",
+      "region": "Gelato Beach 3",
+      "category": "Shine",
+      "native_bit": 22
+    },
+    {
+      "id": 178,
+      "name": "Gelato Beach 4 - The Sand Bird is Born",
+      "region": "Gelato Beach 4",
+      "category": "Shine",
+      "native_bit": 23
+    },
+    {
+      "id": 179,
+      "name": "Gelato Beach 4 - Sand Bird A",
+      "region": "Gelato Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 296
+    },
+    {
+      "id": 180,
+      "name": "Gelato Beach 4 - Sand Bird B",
+      "region": "Gelato Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 297
+    },
+    {
+      "id": 181,
+      "name": "Gelato Beach 4 - Sand Bird C",
+      "region": "Gelato Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 298
+    },
+    {
+      "id": 182,
+      "name": "Gelato Beach 4 - Sand Bird D",
+      "region": "Gelato Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 299
+    },
+    {
+      "id": 183,
+      "name": "Gelato Beach 4 - Turbo Box",
+      "region": "Gelato Beach 4",
+      "category": "Nozzle",
+      "native_bit": 877
+    },
+    {
+      "id": 184,
+      "name": "Gelato Beach 5 - Il Piantissimo's Sand Sprint",
+      "region": "Gelato Beach 5",
+      "category": "Shine",
+      "native_bit": 24
+    },
+    {
+      "id": 185,
+      "name": "Gelato Beach 5 - Blue Cataquack",
+      "region": "Gelato Beach 5",
+      "category": "Blue Coin",
+      "native_bit": 273
+    },
+    {
+      "id": 186,
+      "name": "Gelato Beach 5 - Rocket Box",
+      "region": "Gelato Beach 5",
+      "category": "Nozzle",
+      "native_bit": 876
+    },
+    {
+      "id": 187,
+      "name": "Gelato Beach 6 - Red Coins in the Coral Reef",
+      "region": "Gelato Beach 6",
+      "category": "Shine",
+      "native_bit": 25
+    },
+    {
+      "id": 188,
+      "name": "Gelato Beach 6 - Yellow Goo Dune Bud",
+      "region": "Gelato Beach 6",
+      "category": "Blue Coin",
+      "native_bit": 279
+    },
+    {
+      "id": 189,
+      "name": "Gelato Beach 6 - Beehive",
+      "region": "Gelato Beach 6",
+      "category": "Blue Coin",
+      "native_bit": 295
+    },
+    {
+      "id": 190,
+      "name": "Gelato Beach 7 - It's Shadow Mario! After Him!",
+      "region": "Gelato Beach 7",
+      "category": "Shine",
+      "native_bit": 26
+    },
+    {
+      "id": 191,
+      "name": "Gelato Beach 8 - The Watermelon Festival",
+      "region": "Gelato Beach 8",
+      "category": "Shine",
+      "native_bit": 27
+    },
+    {
+      "id": 192,
+      "name": "Pinna Park 1 - Mecha-Bowser Appears!",
+      "region": "Pinna Park 1",
+      "category": "Shine",
+      "native_bit": 30
+    },
+    {
+      "id": 193,
+      "name": "Pinna Park 1 - Tree Sand Shine",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 348
+    },
+    {
+      "id": 194,
+      "name": "Pinna Park 1 - Cannon Sand Shine",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 349
+    },
+    {
+      "id": 195,
+      "name": "Pinna Park 1 - Orange Wall M",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 320
+    },
+    {
+      "id": 196,
+      "name": "Pinna Park 1 - Sand M",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 321
+    },
+    {
+      "id": 197,
+      "name": "Pinna Park 1 - Green Clam",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 322
+    },
+    {
+      "id": 198,
+      "name": "Pinna Park 1 - Left O",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 323
+    },
+    {
+      "id": 199,
+      "name": "Pinna Park 1 - Entrance Bird",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 324
+    },
+    {
+      "id": 200,
+      "name": "Pinna Park 1 - Pineapple Bird",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 325
+    },
+    {
+      "id": 201,
+      "name": "Pinna Park 1 - Ship Peak",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 326
+    },
+    {
+      "id": 202,
+      "name": "Pinna Park 1 - Cage Platform",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 327
+    },
+    {
+      "id": 203,
+      "name": "Pinna Park 1 - Right O",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 328
+    },
+    {
+      "id": 204,
+      "name": "Pinna Park 1 - White Wall X",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 329
+    },
+    {
+      "id": 205,
+      "name": "Pinna Park 1 - Tree X",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 330
+    },
+    {
+      "id": 206,
+      "name": "Pinna Park 1 - Ferris M",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 331
+    },
+    {
+      "id": 207,
+      "name": "Pinna Park 1 - Banana Triangle",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 332
+    },
+    {
+      "id": 208,
+      "name": "Pinna Park 1 - Ferris Triangle",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 333
+    },
+    {
+      "id": 209,
+      "name": "Pinna Park 1 - Stairs",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 334
+    },
+    {
+      "id": 210,
+      "name": "Pinna Park 1 - Girder",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 336
+    },
+    {
+      "id": 211,
+      "name": "Pinna Park 1 - Coaster Ledge",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 337
+    },
+    {
+      "id": 212,
+      "name": "Pinna Park 1 - Cage",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 338
+    },
+    {
+      "id": 213,
+      "name": "Pinna Park 1 - Stackin Stus",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 339
+    },
+    {
+      "id": 214,
+      "name": "Pinna Park 1 - Beach Butterfly A",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 343
+    },
+    {
+      "id": 215,
+      "name": "Pinna Park 1 - Beach Butterfly B",
+      "region": "Pinna Park 1",
+      "category": "Blue Coin",
+      "native_bit": 344
+    },
+    {
+      "id": 216,
+      "name": "Pinna Park 2 - The Beach Cannon's Secret",
+      "region": "Pinna Park 2",
+      "category": "Shine",
+      "native_bit": 31
+    },
+    {
+      "id": 217,
+      "name": "Pinna Park 2 - Red Coins in the Cannon",
+      "region": "Pinna Park 2",
+      "category": "Shine",
+      "native_bit": 38
+    },
+    {
+      "id": 218,
+      "name": "Pinna Park 2 - 100 Coins",
+      "region": "Pinna Park 2",
+      "category": "Shine",
+      "native_bit": 103
+    },
+    {
+      "id": 219,
+      "name": "Pinna Park 2 - Spawn Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 340
+    },
+    {
+      "id": 220,
+      "name": "Pinna Park 2 - Flower Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 341
+    },
+    {
+      "id": 221,
+      "name": "Pinna Park 2 - Gate Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 342
+    },
+    {
+      "id": 222,
+      "name": "Pinna Park 2 - Rock Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 345
+    },
+    {
+      "id": 223,
+      "name": "Pinna Park 2 - Middle Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 346
+    },
+    {
+      "id": 224,
+      "name": "Pinna Park 2 - Sunflower Basket",
+      "region": "Pinna Park 2",
+      "category": "Blue Coin",
+      "native_bit": 347
+    },
+    {
+      "id": 225,
+      "name": "Pinna Park 3 - Red Coins of the Pirate Ships",
+      "region": "Pinna Park 3",
+      "category": "Shine",
+      "native_bit": 32
+    },
+    {
+      "id": 226,
+      "name": "Pinna Park 4 - The Wilted Sunflowers",
+      "region": "Pinna Park 4",
+      "category": "Shine",
+      "native_bit": 33
+    },
+    {
+      "id": 227,
+      "name": "Pinna Park 5 - The Runaway Ferris Wheel",
+      "region": "Pinna Park 5",
+      "category": "Shine",
+      "native_bit": 34
+    },
+    {
+      "id": 228,
+      "name": "Pinna Park 6 - The Yoshi-Go-Round's Secret",
+      "region": "Pinna Park 6",
+      "category": "Shine",
+      "native_bit": 35
+    },
+    {
+      "id": 229,
+      "name": "Pinna Park 6 - Red Coins in the Yoshi-Go-Round",
+      "region": "Pinna Park 6",
+      "category": "Shine",
+      "native_bit": 39
+    },
+    {
+      "id": 230,
+      "name": "Pinna Park 6 - Park Butterfly",
+      "region": "Pinna Park 6",
+      "category": "Blue Coin",
+      "native_bit": 335
+    },
+    {
+      "id": 231,
+      "name": "Pinna Park 7 - Shadow Mario in the Park",
+      "region": "Pinna Park 7",
+      "category": "Shine",
+      "native_bit": 36
+    },
+    {
+      "id": 232,
+      "name": "Pinna Park 8 - Roller Coaster Balloons",
+      "region": "Pinna Park 8",
+      "category": "Shine",
+      "native_bit": 37
+    },
+    {
+      "id": 233,
+      "name": "Noki Bay 1 - Uncork the Waterfall",
+      "region": "Noki Bay 1",
+      "category": "Shine",
+      "native_bit": 50
+    },
+    {
+      "id": 234,
+      "name": "Noki Bay 1 - A Golden Bird",
+      "region": "Noki Bay 1",
+      "category": "Shine",
+      "native_bit": 59
+    },
+    {
+      "id": 235,
+      "name": "Noki Bay 1 - 100 Coins",
+      "region": "Noki Bay 1",
+      "category": "Shine",
+      "native_bit": 105
+    },
+    {
+      "id": 236,
+      "name": "Noki Bay 1 - Rocket Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 470
+    },
+    {
+      "id": 237,
+      "name": "Noki Bay 1 - Bottom Secret Path",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 471
+    },
+    {
+      "id": 238,
+      "name": "Noki Bay 1 - Top Secret Path",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 472
+    },
+    {
+      "id": 239,
+      "name": "Noki Bay 1 - Rocket",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 473
+    },
+    {
+      "id": 240,
+      "name": "Noki Bay 1 - Bottom Pulley",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 474
+    },
+    {
+      "id": 241,
+      "name": "Noki Bay 1 - Top Pulley",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 475
+    },
+    {
+      "id": 242,
+      "name": "Noki Bay 1 - Tall Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 476
+    },
+    {
+      "id": 243,
+      "name": "Noki Bay 1 - Turbo Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 477
+    },
+    {
+      "id": 244,
+      "name": "Noki Bay 1 - Shell Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 478
+    },
+    {
+      "id": 245,
+      "name": "Noki Bay 1 - Top Right Panel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 479
+    },
+    {
+      "id": 246,
+      "name": "Noki Bay 1 - Bottom Left Panel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 480
+    },
+    {
+      "id": 247,
+      "name": "Noki Bay 1 - Top Right Tunnel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 481
+    },
+    {
+      "id": 248,
+      "name": "Noki Bay 1 - Bottom Right Tunnel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 482
+    },
+    {
+      "id": 249,
+      "name": "Noki Bay 1 - Bottom Right Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 483
+    },
+    {
+      "id": 250,
+      "name": "Noki Bay 1 - Left Tunnel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 484
+    },
+    {
+      "id": 251,
+      "name": "Noki Bay 1 - Bottom Left Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 485
+    },
+    {
+      "id": 252,
+      "name": "Noki Bay 1 - Bird Cliff Panel",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 486
+    },
+    {
+      "id": 253,
+      "name": "Noki Bay 1 - Bird Cliff Alcove",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 487
+    },
+    {
+      "id": 254,
+      "name": "Noki Bay 1 - Spawn",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 490
+    },
+    {
+      "id": 255,
+      "name": "Noki Bay 1 - Coast",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 491
+    },
+    {
+      "id": 256,
+      "name": "Noki Bay 1 - Underwater",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 492
+    },
+    {
+      "id": 257,
+      "name": "Noki Bay 1 - Top Secret Path M",
+      "region": "Noki Bay 1",
+      "category": "Blue Coin",
+      "native_bit": 493
+    },
+    {
+      "id": 258,
+      "name": "Noki Bay 1 - Rocket Box",
+      "region": "Noki Bay 1",
+      "category": "Nozzle",
+      "native_bit": 884
+    },
+    {
+      "id": 259,
+      "name": "Noki Bay 2 - The Boss of Tricky Ruins",
+      "region": "Noki Bay 2",
+      "category": "Shine",
+      "native_bit": 51
+    },
+    {
+      "id": 260,
+      "name": "Noki Bay 2 - Right Urn",
+      "region": "Noki Bay 2",
+      "category": "Blue Coin",
+      "native_bit": 488
+    },
+    {
+      "id": 261,
+      "name": "Noki Bay 2 - Left Urn",
+      "region": "Noki Bay 2",
+      "category": "Blue Coin",
+      "native_bit": 489
+    },
+    {
+      "id": 262,
+      "name": "Noki Bay 3 - Red Coins in a Bottle",
+      "region": "Noki Bay 3",
+      "category": "Shine",
+      "native_bit": 52
+    },
+    {
+      "id": 263,
+      "name": "Noki Bay 4 - Eely-Mouth's Dentist",
+      "region": "Noki Bay 4",
+      "category": "Shine",
+      "native_bit": 53
+    },
+    {
+      "id": 264,
+      "name": "Noki Bay 4 - Deep Sea Front Pillar",
+      "region": "Noki Bay 4",
+      "category": "Blue Coin",
+      "native_bit": 495
+    },
+    {
+      "id": 265,
+      "name": "Noki Bay 4 - Deep Sea Right Pillar",
+      "region": "Noki Bay 4",
+      "category": "Blue Coin",
+      "native_bit": 496
+    },
+    {
+      "id": 266,
+      "name": "Noki Bay 4 - Deep Sea Close Left Pillar",
+      "region": "Noki Bay 4",
+      "category": "Blue Coin",
+      "native_bit": 497
+    },
+    {
+      "id": 267,
+      "name": "Noki Bay 4 - Deep Sea Far Left Pillar",
+      "region": "Noki Bay 4",
+      "category": "Blue Coin",
+      "native_bit": 499
+    },
+    {
+      "id": 268,
+      "name": "Noki Bay 5 - Il Piantissimo's Surf Swim",
+      "region": "Noki Bay 5",
+      "category": "Shine",
+      "native_bit": 54
+    },
+    {
+      "id": 269,
+      "name": "Noki Bay 6 - The Shell's Secret",
+      "region": "Noki Bay 6",
+      "category": "Shine",
+      "native_bit": 55
+    },
+    {
+      "id": 270,
+      "name": "Noki Bay 6 - Red Coins on the Half Shell",
+      "region": "Noki Bay 6",
+      "category": "Shine",
+      "native_bit": 58
+    },
+    {
+      "id": 271,
+      "name": "Noki Bay 6 - Spawn O",
+      "region": "Noki Bay 6",
+      "category": "Blue Coin",
+      "native_bit": 494
+    },
+    {
+      "id": 272,
+      "name": "Noki Bay 6 - Boathouse O",
+      "region": "Noki Bay 6",
+      "category": "Blue Coin",
+      "native_bit": 498
+    },
+    {
+      "id": 273,
+      "name": "Noki Bay 6 - Turbo Box",
+      "region": "Noki Bay 6",
+      "category": "Nozzle",
+      "native_bit": 885
+    },
+    {
+      "id": 274,
+      "name": "Noki Bay 7 - Hold It, Shadow Mario!",
+      "region": "Noki Bay 7",
+      "category": "Shine",
+      "native_bit": 56
+    },
+    {
+      "id": 275,
+      "name": "Noki Bay 8 - The Red Coin Fish",
+      "region": "Noki Bay 8",
+      "category": "Shine",
+      "native_bit": 57
+    },
+    {
+      "id": 276,
+      "name": "Sirena Beach 1 - The Manta Storm",
+      "region": "Sirena Beach 1",
+      "category": "Shine",
+      "native_bit": 40
+    },
+    {
+      "id": 277,
+      "name": "Sirena Beach 1 - 100 Coins",
+      "region": "Sirena Beach 1",
+      "category": "Shine",
+      "native_bit": 104
+    },
+    {
+      "id": 278,
+      "name": "Sirena Beach 1 - Ocean",
+      "region": "Sirena Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 387
+    },
+    {
+      "id": 279,
+      "name": "Sirena Beach 1 - Right Male Noki",
+      "region": "Sirena Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 373
+    },
+    {
+      "id": 280,
+      "name": "Sirena Beach 1 - Right Female Noki",
+      "region": "Sirena Beach 1",
+      "category": "Blue Coin",
+      "native_bit": 374
+    },
+    {
+      "id": 281,
+      "name": "Sirena Beach 2 - The Hotel Lobby's Secret",
+      "region": "Sirena Beach 2",
+      "category": "Shine",
+      "native_bit": 41
+    },
+    {
+      "id": 282,
+      "name": "Sirena Beach 2 - Red Coins in Boo's Big Mouth",
+      "region": "Sirena Beach 2",
+      "category": "Shine",
+      "native_bit": 48
+    },
+    {
+      "id": 283,
+      "name": "Sirena Beach 2 - Sign",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 370
+    },
+    {
+      "id": 284,
+      "name": "Sirena Beach 2 - Cabana Roof",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 371
+    },
+    {
+      "id": 285,
+      "name": "Sirena Beach 2 - Outside Torch",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 372
+    },
+    {
+      "id": 286,
+      "name": "Sirena Beach 2 - Hotel Ledge",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 375
+    },
+    {
+      "id": 287,
+      "name": "Sirena Beach 2 - Flowers",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 386
+    },
+    {
+      "id": 288,
+      "name": "Sirena Beach 2 - Third Floor Lamp",
+      "region": "Sirena Beach 2",
+      "category": "Blue Coin",
+      "native_bit": 392
+    },
+    {
+      "id": 289,
+      "name": "Sirena Beach 3 - Mysterious Hotel Delfino",
+      "region": "Sirena Beach 3",
+      "category": "Shine",
+      "native_bit": 42
+    },
+    {
+      "id": 290,
+      "name": "Sirena Beach 3 - Big Light",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 376
+    },
+    {
+      "id": 291,
+      "name": "Sirena Beach 3 - Box Hole",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 378
+    },
+    {
+      "id": 292,
+      "name": "Sirena Beach 3 - Glass Hole",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 379
+    },
+    {
+      "id": 293,
+      "name": "Sirena Beach 3 - White Painting",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 380
+    },
+    {
+      "id": 294,
+      "name": "Sirena Beach 3 - Dolpic Poster",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 381
+    },
+    {
+      "id": 295,
+      "name": "Sirena Beach 3 - Bookshelf",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 382
+    },
+    {
+      "id": 296,
+      "name": "Sirena Beach 3 - Attic",
+      "region": "Sirena Beach 3",
+      "category": "Blue Coin",
+      "native_bit": 383
+    },
+    {
+      "id": 297,
+      "name": "Sirena Beach 4 - The Secret of Casino Delfino",
+      "region": "Sirena Beach 4",
+      "category": "Shine",
+      "native_bit": 43
+    },
+    {
+      "id": 298,
+      "name": "Sirena Beach 4 - Red Coin Winnings in the Casino",
+      "region": "Sirena Beach 4",
+      "category": "Shine",
+      "native_bit": 49
+    },
+    {
+      "id": 299,
+      "name": "Sirena Beach 4 - Casino Torch",
+      "region": "Sirena Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 398
+    },
+    {
+      "id": 300,
+      "name": "Sirena Beach 4 - Slot machine",
+      "region": "Sirena Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 399
+    },
+    {
+      "id": 301,
+      "name": "Sirena Beach 4 - Crate",
+      "region": "Sirena Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 377
+    },
+    {
+      "id": 302,
+      "name": "Sirena Beach 4 - Attic Boo",
+      "region": "Sirena Beach 4",
+      "category": "Blue Coin",
+      "native_bit": 385
+    },
+    {
+      "id": 303,
+      "name": "Sirena Beach 5 - King Boo Down Below",
+      "region": "Sirena Beach 5",
+      "category": "Shine",
+      "native_bit": 44
+    },
+    {
+      "id": 304,
+      "name": "Sirena Beach 5 - Casino M",
+      "region": "Sirena Beach 5",
+      "category": "Blue Coin",
+      "native_bit": 391
+    },
+    {
+      "id": 305,
+      "name": "Sirena Beach 6 - Scrubbing Sirena Beach",
+      "region": "Sirena Beach 6",
+      "category": "Shine",
+      "native_bit": 45
+    },
+    {
+      "id": 306,
+      "name": "Sirena Beach 6 - Left Male Noki",
+      "region": "Sirena Beach 6",
+      "category": "Blue Coin",
+      "native_bit": 384
+    },
+    {
+      "id": 307,
+      "name": "Sirena Beach 6 - Left Female Noki",
+      "region": "Sirena Beach 6",
+      "category": "Blue Coin",
+      "native_bit": 390
+    },
+    {
+      "id": 308,
+      "name": "Sirena Beach 7 - Shadow Mario Checks In",
+      "region": "Sirena Beach 7",
+      "category": "Shine",
+      "native_bit": 46
+    },
+    {
+      "id": 309,
+      "name": "Sirena Beach 7 - Outside M",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 388
+    },
+    {
+      "id": 310,
+      "name": "Sirena Beach 7 - Second Floor M",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 389
+    },
+    {
+      "id": 311,
+      "name": "Sirena Beach 7 - Ground Floor Triangle",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 393
+    },
+    {
+      "id": 312,
+      "name": "Sirena Beach 7 - First Floor Triangle",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 394
+    },
+    {
+      "id": 313,
+      "name": "Sirena Beach 7 - Attic M",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 395
+    },
+    {
+      "id": 314,
+      "name": "Sirena Beach 7 - Second Floor X",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 396
+    },
+    {
+      "id": 315,
+      "name": "Sirena Beach 7 - First Floor X",
+      "region": "Sirena Beach 7",
+      "category": "Blue Coin",
+      "native_bit": 397
+    },
+    {
+      "id": 316,
+      "name": "Sirena Beach 8 - Red Coins in the Hotel",
+      "region": "Sirena Beach 8",
+      "category": "Shine",
+      "native_bit": 47
+    },
+    {
+      "id": 317,
+      "name": "Pianta Village 1 - Chain Chomplets Unchained",
+      "region": "Pianta Village 1",
+      "category": "Shine",
+      "native_bit": 60
+    },
+    {
+      "id": 318,
+      "name": "Pianta Village 1 - 100 Coins",
+      "region": "Pianta Village 1",
+      "category": "Shine",
+      "native_bit": 106
+    },
+    {
+      "id": 319,
+      "name": "Pianta Village 1 - River End",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 432
+    },
+    {
+      "id": 320,
+      "name": "Pianta Village 1 - Grass",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 433
+    },
+    {
+      "id": 321,
+      "name": "Pianta Village 1 - Back Tree",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 434
+    },
+    {
+      "id": 322,
+      "name": "Pianta Village 1 - River Bridge",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 435
+    },
+    {
+      "id": 323,
+      "name": "Pianta Village 1 - Left Tree",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 438
+    },
+    {
+      "id": 324,
+      "name": "Pianta Village 1 - Waterfall",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 439
+    },
+    {
+      "id": 325,
+      "name": "Pianta Village 1 - Wall Triangle",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 443
+    },
+    {
+      "id": 326,
+      "name": "Pianta Village 1 - Hot Tub Triangle",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 444
+    },
+    {
+      "id": 327,
+      "name": "Pianta Village 1 - Left M",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 445
+    },
+    {
+      "id": 328,
+      "name": "Pianta Village 1 - Right M",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 446
+    },
+    {
+      "id": 329,
+      "name": "Pianta Village 1 - Spawn M",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 447
+    },
+    {
+      "id": 330,
+      "name": "Pianta Village 1 - Underside M",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 448
+    },
+    {
+      "id": 331,
+      "name": "Pianta Village 1 - Moon",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 420
+    },
+    {
+      "id": 332,
+      "name": "Pianta Village 1 - Statue's Nose",
+      "region": "Pianta Village 1",
+      "category": "Blue Coin",
+      "native_bit": 429
+    },
+    {
+      "id": 333,
+      "name": "Pianta Village 2 - Il Piantissimo's Crazy Climb",
+      "region": "Pianta Village 2",
+      "category": "Shine",
+      "native_bit": 65
+    },
+    {
+      "id": 334,
+      "name": "Pianta Village 2 - Sign",
+      "region": "Pianta Village 2",
+      "category": "Blue Coin",
+      "native_bit": 431
+    },
+    {
+      "id": 335,
+      "name": "Pianta Village 3 - The Goopy Inferno",
+      "region": "Pianta Village 3",
+      "category": "Shine",
+      "native_bit": 62
+    },
+    {
+      "id": 336,
+      "name": "Pianta Village 3 - Giant M",
+      "region": "Pianta Village 3",
+      "category": "Blue Coin",
+      "native_bit": 430
+    },
+    {
+      "id": 337,
+      "name": "Pianta Village 3 - Burning Pianta",
+      "region": "Pianta Village 3",
+      "category": "Blue Coin",
+      "native_bit": 442
+    },
+    {
+      "id": 338,
+      "name": "Pianta Village 3 - FLUDD M",
+      "region": "Pianta Village 3",
+      "category": "Blue Coin",
+      "native_bit": 449
+    },
+    {
+      "id": 339,
+      "name": "Pianta Village 4 - Chain Chomp's Bath",
+      "region": "Pianta Village 4",
+      "category": "Shine",
+      "native_bit": 61
+    },
+    {
+      "id": 340,
+      "name": "Pianta Village 5 - Secret of the Village Underside",
+      "region": "Pianta Village 5",
+      "category": "Shine",
+      "native_bit": 64
+    },
+    {
+      "id": 341,
+      "name": "Pianta Village 5 - Red Coin Chucksters",
+      "region": "Pianta Village 5",
+      "category": "Shine",
+      "native_bit": 68
+    },
+    {
+      "id": 342,
+      "name": "Pianta Village 5 - Back Beehive",
+      "region": "Pianta Village 5",
+      "category": "Blue Coin",
+      "native_bit": 436
+    },
+    {
+      "id": 343,
+      "name": "Pianta Village 5 - Front Beehive",
+      "region": "Pianta Village 5",
+      "category": "Blue Coin",
+      "native_bit": 437
+    },
+    {
+      "id": 344,
+      "name": "Pianta Village 5 - Butterflies",
+      "region": "Pianta Village 5",
+      "category": "Blue Coin",
+      "native_bit": 440
+    },
+    {
+      "id": 345,
+      "name": "Pianta Village 6 - Piantas in Need",
+      "region": "Pianta Village 6",
+      "category": "Shine",
+      "native_bit": 63
+    },
+    {
+      "id": 346,
+      "name": "Pianta Village 6 - Pianta in Need A",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 421
+    },
+    {
+      "id": 347,
+      "name": "Pianta Village 6 - Pianta in Need B",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 422
+    },
+    {
+      "id": 348,
+      "name": "Pianta Village 6 - Pianta in Need C",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 423
+    },
+    {
+      "id": 349,
+      "name": "Pianta Village 6 - Pianta in Need D",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 424
+    },
+    {
+      "id": 350,
+      "name": "Pianta Village 6 - Pianta in Need E",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 425
+    },
+    {
+      "id": 351,
+      "name": "Pianta Village 6 - Pianta in Need F",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 426
+    },
+    {
+      "id": 352,
+      "name": "Pianta Village 6 - Pianta in Need G",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 427
+    },
+    {
+      "id": 353,
+      "name": "Pianta Village 6 - Pianta in Need H",
+      "region": "Pianta Village 6",
+      "category": "Blue Coin",
+      "native_bit": 428
+    },
+    {
+      "id": 354,
+      "name": "Pianta Village 7 - Shadow Mario Runs Wild",
+      "region": "Pianta Village 7",
+      "category": "Shine",
+      "native_bit": 66
+    },
+    {
+      "id": 355,
+      "name": "Pianta Village 8 - Fluff Festival Coin Hunt",
+      "region": "Pianta Village 8",
+      "category": "Shine",
+      "native_bit": 67
+    },
+    {
+      "id": 356,
+      "name": "Pianta Village 8 - Soak the Sun",
+      "region": "Pianta Village 8",
+      "category": "Shine",
+      "native_bit": 69
+    },
+    {
+      "id": 357,
+      "name": "Pianta Village 8 - Bird",
+      "region": "Pianta Village 8",
+      "category": "Blue Coin",
+      "native_bit": 441
+    },
+    {
+      "id": 358,
+      "name": "Pianta Village 8 - Rocket Box",
+      "region": "Pianta Village 8",
+      "category": "Nozzle",
+      "native_bit": 882
+    },
+    {
+      "id": 359,
+      "name": "Corona Mountain - Platform",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 540
+    },
+    {
+      "id": 360,
+      "name": "Corona Mountain - Back Right Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 541
+    },
+    {
+      "id": 361,
+      "name": "Corona Mountain - Left Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 542
+    },
+    {
+      "id": 362,
+      "name": "Corona Mountain - Front Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 543
+    },
+    {
+      "id": 363,
+      "name": "Corona Mountain - Front Left Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 544
+    },
+    {
+      "id": 364,
+      "name": "Corona Mountain - Front Right Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 545
+    },
+    {
+      "id": 365,
+      "name": "Corona Mountain - Back Left Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 546
+    },
+    {
+      "id": 366,
+      "name": "Corona Mountain - Far Back Left Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 547
+    },
+    {
+      "id": 367,
+      "name": "Corona Mountain - Far Back Right Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 548
+    },
+    {
+      "id": 368,
+      "name": "Corona Mountain - Right Lava",
+      "region": "Corona Mountain",
+      "category": "Blue Coin",
+      "native_bit": 549
+    },
+    {
+      "id": 369,
+      "name": "Corona Mountain - Rocket Box",
+      "region": "Corona Mountain",
+      "category": "Nozzle",
+      "native_bit": 886
+    }
+  ],
+  "source_counts": {
+    "Shine": 119,
+    "Blue Coin": 240,
+    "Nozzle": 10
+  },
+  "goal_native_bit": 119
+}
