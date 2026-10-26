@@ -4,6 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#ifndef _WIN32
+#include <filesystem>
+#include <chrono>
+#include <unistd.h>
+#endif
 #include <fstream>
 #include <mutex>
 #include <sstream>
@@ -103,9 +108,35 @@ bool copy_card(const std::string& from, const std::string& to, std::string& erro
     return true;
 }
 #else
-bool mkdirs(const std::string&) { return false; }
-bool copy_card(const std::string&, const std::string&, std::string& error) {
-    error = "Card backup is currently supported on Windows."; return false;
+bool mkdirs(const std::string& path) {
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    return !ec && std::filesystem::is_directory(path, ec);
+}
+bool copy_card(const std::string& from, const std::string& to, std::string& error) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const auto root = fs::symlink_status(from, ec);
+    if (ec || !fs::is_directory(root)) { error = "Invalid card directory."; return false; }
+    std::vector<fs::path> names;
+    bool index = false;
+    for (fs::directory_iterator it(from, ec), end; !ec && it != end; it.increment(ec)) {
+        const auto status = it->symlink_status(ec);
+        if (ec) break;
+        if (!fs::is_regular_file(status)) continue;
+        const auto name = it->path().filename();
+        if (name != "index.txt" && name.extension() != ".dat" && name.extension() != ".stat") continue;
+        index = index || name == "index.txt";
+        names.push_back(name);
+    }
+    if (ec || !index) { error = "Card index missing or unreadable."; return false; }
+    if (!mkdirs(to)) { error = "Cannot create destination."; return false; }
+    for (const auto& name : names) {
+        if (!fs::copy_file(fs::path(from) / name, fs::path(to) / name, fs::copy_options::none, ec)) {
+            error = "Card copy failed; original card was preserved."; return false;
+        }
+    }
+    return true;
 }
 #endif
 std::string unique_directory(const std::string& category) {
@@ -113,6 +144,8 @@ std::string unique_directory(const std::string& category) {
     out << data_directory() << "/" << category << "/" << (long long)std::time(NULL);
 #ifdef _WIN32
     out << "-" << GetCurrentProcessId() << "-" << GetTickCount64();
+#else
+    out << "-" << getpid() << "-" << std::chrono::steady_clock::now().time_since_epoch().count();
 #endif
     return out.str();
 }
@@ -307,6 +340,14 @@ std::vector<std::string> save_backups() {
             if(GetFileAttributesW(wide(path+"/backup.complete").c_str())!=INVALID_FILE_ATTRIBUTES)result.push_back(path);
         }while(FindNextFileW(search,&f));FindClose(search);
     }
+#else
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    for (fs::directory_iterator it(data_directory()+"/backups", ec), end; !ec && it != end; it.increment(ec)) {
+        if (!fs::is_directory(it->symlink_status(ec))) continue;
+        if (fs::is_regular_file(fs::symlink_status(it->path()/"backup.complete", ec)))
+            result.push_back(it->path().string());
+    }
 #endif
     std::sort(result.rbegin(),result.rend());return result;
 }
@@ -342,7 +383,17 @@ ServiceResult activate_pending_save_restore() {
     DeleteFileW(wide(manifest).c_str());
     return ServiceResult(true,"Restored card selected.",path);
 #else
-    return ServiceResult(false,"Restore requires Windows.");
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(fs::symlink_status(path, ec)) || ec
+        || !fs::is_regular_file(fs::symlink_status(path+"/index.txt", ec)) || ec)
+        return ServiceResult(false,"Restored card is missing.");
+    if (!atomic_text(data_directory()+"/active-card.txt",path+"\n"))
+        return ServiceResult(false,"Could not persist restored card selection.");
+    if (setenv("SMS_SAVE_DIR",path.c_str(),1)!=0)
+        return ServiceResult(false,"Could not select restored card.");
+    std::remove(manifest.c_str());
+    return ServiceResult(true,"Restored card selected.",path);
 #endif
 }
 void observe_game_progress(int shines,int coins) {

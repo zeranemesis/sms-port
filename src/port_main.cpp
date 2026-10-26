@@ -12,6 +12,9 @@ extern int SMSAPNativeOptionsSelftest();
 #include "port_win64_stack.h"
 
 extern void SMS_main(void);
+#ifdef SMS_ANDROID_APP
+#define main sms_android_host_main
+#endif
 
 struct Args {
 	int argc;
@@ -77,8 +80,12 @@ int main(int argc, char** argv)
 	return 0;
 #endif
 	pthread_attr_t attr;
-	pthread_attr_init(&attr);
-	pthread_attr_setstack(&attr, stack, size);
+	if (pthread_attr_init(&attr) != 0) return 1;
+	if (pthread_attr_setstack(&attr, stack, size) != 0) {
+		pthread_attr_destroy(&attr);
+		std::fprintf(stderr, "[port] cannot set the game's low stack\n");
+		return 1;
+	}
 	pthread_t th;
 	if (pthread_create(&th, &attr, run_game, &a) != 0) {
 		std::fprintf(stderr, "[port] cannot start the game thread\n");

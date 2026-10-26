@@ -36,3 +36,6 @@ window .mod-card { padding: 12dp; margin: 8dp 0; border: 1dp #009dda; border-rad
 window .mod-title { font-size: 18dp; margin-bottom: 6dp; }
 window .mod-status { margin: 8dp 0; }
 window .mod-card button { margin-top: 8dp; width: 100%; }
+
+/* Cards are vertical even when the shared theme makes divs inline. */
+window .mod-card, window .mod-title, window .mod-card .help { display: block; }

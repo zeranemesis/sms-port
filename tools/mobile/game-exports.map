@@ -1,0 +1,4 @@
+{
+    global: SDL_main; Java_org_smsunified_mobile_*;
+    local: *;
+};

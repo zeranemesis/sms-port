@@ -32,6 +32,19 @@
 #include <utility>
 #endif
 
+#ifdef __ANDROID__
+/* Bionic exposes these legacy names as function-like macros. They would
+ * rewrite JASystem::Calc's own bcopy/bzero declarations and definitions. */
+#include <strings.h>
+#undef bcopy
+#undef bzero
+#if defined(__aarch64__)
+/* Existing PC sound tracing uses an x86 cycle-counter intrinsic. On ARM64,
+ * use Clang's target counter; this value is diagnostic, not a game clock. */
+#define __builtin_ia32_rdtsc __builtin_readcyclecounter
+#endif
+#endif
+
 /* The decomp's configure.py passes -Dnullptr=0: nullptr is a plain 0, which
  * the game also assigns to integer fields (MActorAnmBck::unk28). Before C++11
  * it is no keyword (libc++ on macOS defines it as __nullptr in C++03 mode). */

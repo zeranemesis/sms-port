@@ -3,6 +3,10 @@
 #include "sms_aurora.h"
 #include "depth_z24x8.hpp"
 #include "sms_aurora_ui.h"
+#ifdef __ANDROID__
+#include "sms_aurora_audio.h"
+#include <android/log.h>
+#endif
 #include "ui_internal.h"
 #include "gfx/common.hpp"
 #include "gfx/render_worker.hpp"
@@ -30,9 +34,11 @@
 #include <string>
 #include <chrono>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <dbghelp.h>
+#endif
 #include <condition_variable>
 #include <chrono>
 #include <functional>
@@ -92,8 +98,8 @@ public:
         }
         m_work.notify_one();
     }
-    // Work that uses Aurora's state but returns nothing to the game (a texture
-    // copy, a data pass), run in order with the stream.
+    // Work that uses Aurora's state, run in order with the stream (frame
+    // generation's replayed frame, a frame begun without waiting).
     void pushJob(std::function<void()> job) {
         {
             std::unique_lock lock(m_mutex);
@@ -118,8 +124,7 @@ public:
     }
 
 private:
-    // Copies and data passes queue too: room for a frame's worth of them.
-    static constexpr size_t kMaxQueued = 16;
+    static constexpr size_t kMaxQueued = 16;  // frame generation queues a replay ahead of a frame
     void run() {
         for (;;) {
             Item item;
@@ -166,10 +171,17 @@ std::deque<SabEvent> s_pending;
 std::vector<uint8_t> s_fifo;
 
 void logCallback(AuroraLogLevel level, const char* module, const char* message, unsigned int len) {
+#ifdef __ANDROID__
+    static const int priorities[] = {ANDROID_LOG_DEBUG, ANDROID_LOG_INFO,
+        ANDROID_LOG_WARN, ANDROID_LOG_ERROR, ANDROID_LOG_FATAL};
+    const unsigned index = level >= LOG_DEBUG && level <= LOG_FATAL ? unsigned(level) : unsigned(LOG_ERROR);
+    __android_log_print(priorities[index], "SunshineAurora", "%s: %.*s", module, int(len), message);
+#else
     static const char* const kLevel[] = {"debug", "info", "warning", "error", "fatal"};
     std::fprintf(stderr, "[aurora %s] %s: %.*s\n", kLevel[level <= LOG_FATAL ? level : LOG_ERROR], module, int(len),
                  message);
     if (level >= LOG_ERROR) std::fflush(stderr);
+#endif
 }
 
 SDL_Window* mainWindow() {
@@ -180,6 +192,7 @@ SDL_Window* mainWindow() {
     return w;
 }
 
+#ifdef _WIN32
 // abort() inside Aurora or Dawn ends the process without a word: print where.
 void printStack(const char* why) {
     std::fprintf(stderr, "[sms_aurora] %s, stack:\n", why);
@@ -307,6 +320,8 @@ void onTerminate() {
     std::_Exit(3);
 }
 
+#endif
+
 void push(const SabEvent& ev) { s_pending.push_back(ev); }
 
 void translate(const SDL_Event& e) {
@@ -384,14 +399,23 @@ extern "C" {
 
 int sab_init(const SabConfig* c) {
     if (s_ready) return 1;
+#ifdef _WIN32
     std::signal(SIGABRT, onAbort);
     AddVectoredExceptionHandler(1, onException);
     std::set_terminate(onTerminate);
     _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+#endif
     AuroraConfig cfg{};
     cfg.appName = c && c->title ? c->title : "Super Mario Sunshine";
     cfg.userPath = c ? c->userPath : nullptr;
+#ifdef __ANDROID__
+    cfg.cachePath = std::getenv("SMS_AURORA_CACHE_PATH");
+#endif
     cfg.desiredBackend = c ? AuroraBackend(c->backend) : BACKEND_AUTO;
+#ifdef __ANDROID__
+    const char* allowCpu = std::getenv("SMS_AURORA_ALLOW_CPU_ADAPTER");
+    cfg.allowCpuAdapter = allowCpu && !std::strcmp(allowCpu, "1");
+#endif
     cfg.msaa = c && c->msaa ? c->msaa : 1;
     cfg.maxTextureAnisotropy = uint16_t(c && c->anisotropy ? c->anisotropy : 16);
     cfg.vsync = c ? c->vsync != 0 : true;
@@ -403,6 +427,10 @@ int sab_init(const SabConfig* c) {
     cfg.windowHeight = c && c->windowHeight ? c->windowHeight : 960;
     cfg.logCallback = logCallback;
     cfg.logLevel = c ? AuroraLogLevel(c->logLevel) : LOG_INFO;
+    // SMS_TEXTURE_DUMP: every texture the game loads is written once, under its
+    // texture-pack name, to texture_dumps in Aurora's cache folder (for checking
+    // which names a Dolphin pack must use, or for making one).
+    cfg.allowTextureDumps = std::getenv("SMS_TEXTURE_DUMP") != nullptr;
     cfg.mem1Size = 0;  // the game has its own MEM1 (platform/os)
     cfg.mem2Size = 0;
     char arg0[] = "sms";
@@ -424,7 +452,10 @@ int sab_init(const SabConfig* c) {
         SDL_Window* window = mainWindow();
         const std::string title = window ? SDL_GetWindowTitle(window) : cfg.appName;
         int lastPercent = -1;
+        size_t preparedCount = 0;
+        const auto preparationStarted = std::chrono::steady_clock::now();
         const bool prepared = aurora::gfx::precompile_pipeline_cache([&](size_t ready, size_t total) {
+            preparedCount = total;
             pumpAurora();
             for (const auto& event : s_pending) if (event.type == SAB_EV_QUIT) return false;
             const int percent = total ? int((std::min)(ready, total) * 100 / total) : 100;
@@ -436,9 +467,17 @@ int sab_init(const SabConfig* c) {
             return true;
         });
         if (window) SDL_SetWindowTitle(window, title.c_str());
+#ifdef __ANDROID__
+        std::fprintf(stderr, "[android] shader preparation: %zu pipelines, %.3f s, %s\n", preparedCount,
+            std::chrono::duration<double>(std::chrono::steady_clock::now()-preparationStarted).count(),
+            prepared ? "ready" : "cancelled");
+#endif
         if (!prepared) {
             s_gxThread.finish();
             s_ready = false;
+#ifdef __ANDROID__
+            sab_audio_close_all();
+#endif
             aurora_shutdown();
             return 0;
         }
@@ -447,6 +486,9 @@ int sab_init(const SabConfig* c) {
 }
 
 void sab_shutdown(void) {
+#ifdef __ANDROID__
+    sab_audio_close_all();
+#endif
     if (!s_ready) return;
     s_gxThread.sync();
     s_gxThread.finish();
@@ -816,8 +858,8 @@ int sab_poll_copy_readback(const void** dest, uint32_t* width, uint32_t* height,
 
 int sab_poll_copy_readback_request(const void** dest, uint32_t* width, uint32_t* height, uint64_t* frameId,
                                    const uint32_t** rgba, uint64_t* requestId, int* success) {
-    // A poll: while the GX thread is busy, the read-backs that are ready come
-    // at the next one instead of the game waiting now.
+    // A poll: when the GX thread is busy (a frame generation replay), the
+    // read-backs that are ready come at the next one instead of waiting now.
     if (!s_gxThread.idle()) return 0;
     if (!s_ready) return 0;
     if (aurora::webgpu::g_instance && aurora::gfx::render_worker::is_idle()) {

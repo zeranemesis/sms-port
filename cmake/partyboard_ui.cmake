@@ -7,6 +7,28 @@ get_filename_component(_sms_partyboard_root "${CMAKE_CURRENT_LIST_DIR}/.." ABSOL
 set(SMS_RMLUI_SOURCE_DIR "" CACHE PATH "Optional existing RmlUi 6.3 source tree")
 set(SMS_FREETYPE_SOURCE_DIR "" CACHE PATH "Optional existing FreeType 2.14.3 source tree")
 function(sms_add_partyboard_backend)
+    if(ANDROID AND SMS_GX_BACKEND STREQUAL "aurora")
+        # Same RmlUi ABI as the Android bridge, without desktop SDL2.
+        file(STRINGS "${SMS_AURORA_BRIDGE_BUILD}/CMakeCache.txt" _rml_cache
+            REGEX "^FETCHCONTENT_SOURCE_DIR_RMLUI:[^=]*=")
+        string(REGEX REPLACE "^[^=]*=" "" _rml_source "${_rml_cache}")
+        if(NOT EXISTS "${_rml_source}/Include/RmlUi/Core.h")
+            message(FATAL_ERROR "Build Android Aurora before its PartyBoard menu")
+        endif()
+        add_library(sms_partyboard_backend STATIC
+            "${_sms_partyboard_root}/platform/frontend/partyboard_backend_aurora.cpp"
+            "${_rml_source}/Backends/RmlUi_Platform_SDL.cpp")
+        target_compile_definitions(sms_partyboard_backend PRIVATE RMLUI_SDL_VERSION_MAJOR=3)
+        target_compile_features(sms_partyboard_backend PUBLIC cxx_std_17)
+        target_include_directories(sms_partyboard_backend PUBLIC
+            "${_sms_partyboard_root}/platform/frontend" "${_rml_source}/Include"
+            PRIVATE "${_sms_partyboard_root}/aurora-bridge" "${_sms_partyboard_root}/platform/gx/src"
+            "${_rml_source}/Backends" "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-src/include")
+        target_link_libraries(sms_partyboard_backend PUBLIC
+            "${SMS_AURORA_BRIDGE_BUILD}/librmlui.so" "${SMS_AURORA_BRIDGE_BUILD}/libsms_aurora.so"
+            "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-build/libSDL3.so")
+        return()
+    endif()
     set(BUILD_SHARED_LIBS OFF)
     set(FT_DISABLE_ZLIB ON CACHE BOOL "" FORCE)
     set(FT_DISABLE_BZIP2 ON CACHE BOOL "" FORCE)

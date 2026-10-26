@@ -165,15 +165,106 @@ struct LowStack {
 	pthread_t th;
 	bool used;
 	void* argument;
+#ifdef __ANDROID__
+	std::atomic<bool> joined;
+#endif
 };
 std::vector<LowStack*> g_low_stacks;
 
+#ifdef __ANDROID__
+// Bionic has no pthread_tryjoin_np. A cleanup notification means the host is
+// leaving, not that its TLS destructors and final stack accesses have finished.
+// Join on a separate native thread, never with g_cpu held, and publish reuse
+// only after pthread_join confirms the host has completely terminated.
+struct StackReapJob {
+	LowStack* stack;
+	pthread_t thread;
+};
+pthread_once_t g_stack_reaper_once = PTHREAD_ONCE_INIT;
+struct StackReaperState {
+	pthread_mutex_t mutex;
+	pthread_cond_t cv;
+	std::deque<StackReapJob> jobs;
+	StackReaperState()
+	{
+		if (pthread_mutex_init(&mutex, NULL) != 0 || pthread_cond_init(&cv, NULL) != 0)
+			abort();
+	}
+};
+
+StackReaperState& android_stack_reap_state()
+{
+	// Process lifetime, like the host scheduler. Do not destroy this queue while
+	// the detached reaper can still be completing the last host pthread joins.
+	static StackReaperState* state = new StackReaperState;
+	return *state;
+}
+
+void* android_stack_reaper(void*)
+{
+	StackReaperState& state = android_stack_reap_state();
+	for (;;) {
+		pthread_mutex_lock(&state.mutex);
+		while (state.jobs.empty())
+			pthread_cond_wait(&state.cv, &state.mutex);
+		StackReapJob job = state.jobs.front();
+		state.jobs.pop_front();
+		pthread_mutex_unlock(&state.mutex);
+		const int result = pthread_join(job.thread, NULL);
+		if (result == 0)
+			job.stack->joined.store(true, std::memory_order_release);
+		else
+			port_log("[os] Android stack join failed (%d); stack will not be reused\n", result);
+	}
+	return NULL;
+}
+
+void android_start_stack_reaper()
+{
+	android_stack_reap_state();
+	pthread_t thread;
+	int result = pthread_create(&thread, NULL, android_stack_reaper, NULL);
+	if (result == 0)
+		result = pthread_detach(thread);
+	if (result != 0) {
+		port_log("[os] cannot start Android stack reaper (%d)\n", result);
+		abort();
+	}
+}
+
+void android_queue_finished_stack(void* argument)
+{
+	StackReapJob job = {static_cast<LowStack*>(argument), pthread_self()};
+	StackReaperState& state = android_stack_reap_state();
+	pthread_mutex_lock(&state.mutex);
+	state.jobs.push_back(job);
+	pthread_cond_signal(&state.cv);
+	pthread_mutex_unlock(&state.mutex);
+}
+
+void* android_host_entry(void* argument)
+{
+	LowStack* stack = static_cast<LowStack*>(argument);
+	void* result;
+	pthread_cleanup_push(android_queue_finished_stack, stack);
+	result = host_entry(stack->argument);
+	pthread_cleanup_pop(1);
+	return result;
+}
+#endif
+
 LowStack* low_stack()
 {
+#ifdef __ANDROID__
+	pthread_once(&g_stack_reaper_once, android_start_stack_reaper);
+#endif
 	for (LowStack* ls : g_low_stacks) {
 		if (!ls->used)
 			return ls->used = true, ls;
-#ifdef __GLIBC__
+#ifdef __ANDROID__
+		if (ls->joined.exchange(false, std::memory_order_acq_rel))
+			return ls;
+#elif defined(__GLIBC__)
 		if (pthread_tryjoin_np(ls->th, NULL) == 0)
 			return ls;
 #elif defined(_WIN64)
@@ -186,7 +277,11 @@ LowStack* low_stack()
 		port_log("[os] no memory below 2 GiB for a thread stack\n");
 		abort();
 	}
+#ifdef __ANDROID__
+	LowStack* ls = new LowStack{p, pthread_t(), true, NULL, {false}};
+#else
 	LowStack* ls = new LowStack{p, pthread_t(), true, NULL};
+#endif
 	g_low_stacks.push_back(ls);
 	return ls;
 }
@@ -232,6 +327,9 @@ void switch_to(OSThread* self, OSThread* next, bool exiting)
 #endif
 #ifdef _WIN64
 		int create_result = pthread_create(&hn->th, &a, windows_host_entry, ls);
+#elif defined(__ANDROID__) && UINTPTR_MAX > 0xFFFFFFFFu
+		ls->argument = next;
+		int create_result = pthread_create(&hn->th, &a, android_host_entry, ls);
 #else
 		int create_result = pthread_create(&hn->th, &a, host_entry, next);
 #endif

@@ -18,6 +18,9 @@
 #include <dolphin/dsp.h>
 
 #include "dsp_mixer.h"
+#ifdef __ANDROID__
+#include <JSystem/JAudio/JASystem/JASDriverTables.hpp>
+#endif
 
 #include <deque>
 #include <string>
@@ -48,6 +51,19 @@ struct Hle {
 } g;
 
 const uint8_t* aram_lookup(uint32_t a) { return port_aram_ptr(a); }
+
+#ifdef __ANDROID__
+const uint32_t* setup_filter_pointer(uint32_t address, const uint32_t* retail_table)
+{
+	// The retail sender stores these two static table addresses in u32 mail
+	// words. Android PIE places their native symbols above 4 GiB. Restore only
+	// an exact match to the corresponding known table, without guessing high
+	// bits for arbitrary addresses or changing the DSP command protocol.
+	if (address && address == static_cast<uint32_t>(reinterpret_cast<uintptr_t>(retail_table)))
+		return retail_table;
+	return reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(address));
+}
+#endif
 
 void post(u32 m) { g.fromDsp.push_back(m); }
 
@@ -113,8 +129,14 @@ void execute()
 	case 0x81: // DsetupTable(n, CH_BUF, DSPRES_FILTER, DSPADPCM_FILTER, FX_BUF)
 		if (w.size() >= 5) {
 			port_dspmix_set_aram(aram_lookup);
-			port_dspmix_setup(w[0] & 0xFFFF, (void*)(uintptr_t)w[1], (const uint32_t*)(uintptr_t)w[2],
-			                  (const uint32_t*)(uintptr_t)w[3], (void*)(uintptr_t)w[4]);
+			const uint32_t* res_filter = (const uint32_t*)(uintptr_t)w[2];
+			const uint32_t* adpcm_filter = (const uint32_t*)(uintptr_t)w[3];
+#ifdef __ANDROID__
+			res_filter = setup_filter_pointer(w[2], JASystem::DSPInterface::DSPRES_FILTER);
+			adpcm_filter = setup_filter_pointer(w[3], JASystem::DSPInterface::DSPADPCM_FILTER);
+#endif
+			port_dspmix_setup(w[0] & 0xFFFF, (void*)(uintptr_t)w[1], res_filter,
+			                  adpcm_filter, (void*)(uintptr_t)w[4]);
 			port_log("[audio] DSP setup: %u voices at 0x%08x, FX lines at 0x%08x\n", (unsigned)(w[0] & 0xFFFF),
 			         (unsigned)w[1], (unsigned)w[4]);
 		}

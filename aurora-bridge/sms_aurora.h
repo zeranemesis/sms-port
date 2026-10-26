@@ -18,7 +18,9 @@
 extern "C" {
 #endif
 
-#ifdef SMS_AURORA_BUILD
+#if !defined(_WIN32)
+#define SAB_API __attribute__((visibility("default")))
+#elif defined(SMS_AURORA_BUILD)
 #define SAB_API __declspec(dllexport)
 #else
 #define SAB_API __declspec(dllimport)

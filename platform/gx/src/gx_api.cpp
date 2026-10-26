@@ -9,6 +9,11 @@
 
 #include <math.h>
 #include <string.h>
+#ifdef __ANDROID__
+#include "../../mobile/gx_static_memory.h"
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 #include "port_fpu.h"  // port_cvt_fp2unsigned: MWCC's __cvt_fp2unsigned, as the SDK converts
 #include "gx_sdk_math.h"  // the SDK's float arithmetic, as the DOL computes it
@@ -1274,9 +1279,27 @@ u32 GXGetTexBufferSize(u16 width, u16 height, u32 format, u8 mipmap, u8 maxLod) 
     return total;
 }
 
+#ifdef __ANDROID__
+static void* mobileTextureImage(void* image, u16 w, u16 h, uint32_t fmt, u8 mipmap) {
+    if (!image) return nullptr;
+    uint8_t levels = 1;
+    if (mipmap) for (uint32_t size = w > h ? w : h; size > 1; size >>= 1) ++levels;
+    const uint32_t bytes = GXGetTexBufferSize(w, h, fmt, mipmap, levels);
+    const void* resolved = port_gx_static_resolve(image, bytes);
+    if (!resolved) {
+        fprintf(stderr, "[gx] Android texture outside MEM1 or immutable whitelist: %p, %u bytes\n", image, bytes);
+        abort();
+    }
+    return const_cast<void*>(resolved);
+}
+#endif
 static void texObjInit(TexObjInt* t, void* image, u16 w, u16 h, uint32_t fmt, GXTexWrapMode ws, GXTexWrapMode wt, u8 mipmap) {
     memset(t, 0, sizeof(*t));
+#ifdef __ANDROID__
+    t->image = mobileTextureImage(image, w, h, fmt, mipmap);
+#else
     t->image = image;
+#endif
     t->fmt = uint8_t(fmt);
     t->mipmap = mipmap;
     uint32_t m0 = setField(0, 2, 0, ws);
@@ -1321,7 +1344,14 @@ void GXInitTexObjLOD(GXTexObj* obj, GXTexFilter minF, GXTexFilter magF, f32 minL
     if (maxLod > 10) maxLod = 10;
     t->mode1 = setField(setField(0, 8, 0, uint32_t(minLod * 16.0f)), 8, 8, uint32_t(maxLod * 16.0f));
 }
-void GXInitTexObjData(GXTexObj* obj, void* image) { reinterpret_cast<TexObjInt*>(obj)->image = image; }
+void GXInitTexObjData(GXTexObj* obj, void* image) {
+    TexObjInt* t = reinterpret_cast<TexObjInt*>(obj);
+#ifdef __ANDROID__
+    t->image = mobileTextureImage(image, GXGetTexObjWidth(obj), GXGetTexObjHeight(obj), t->fmt, t->mipmap);
+#else
+    t->image = image;
+#endif
+}
 void GXInitTexObjWrapMode(GXTexObj* obj, GXTexWrapMode s, GXTexWrapMode t) {
     TexObjInt* o = reinterpret_cast<TexObjInt*>(obj);
     o->mode0 = setField(setField(o->mode0, 2, 0, s), 2, 2, t);
@@ -1433,7 +1463,13 @@ u16 GXGetTexObjWidth(const GXTexObj* o) { return u16(getField(reinterpret_cast<c
 u16 GXGetTexObjHeight(const GXTexObj* o) { return u16(getField(reinterpret_cast<const TexObjInt*>(o)->image0, 10, 10) + 1); }
 GXTexWrapMode GXGetTexObjWrapS(const GXTexObj* o) { return GXTexWrapMode(getField(reinterpret_cast<const TexObjInt*>(o)->mode0, 2, 0)); }
 GXTexWrapMode GXGetTexObjWrapT(const GXTexObj* o) { return GXTexWrapMode(getField(reinterpret_cast<const TexObjInt*>(o)->mode0, 2, 2)); }
-void* GXGetTexObjData(const GXTexObj* o) { return const_cast<void*>(static_cast<const void*>(reinterpret_cast<const TexObjInt*>(o)->image)); }
+void* GXGetTexObjData(const GXTexObj* o) {
+    const void* image = reinterpret_cast<const TexObjInt*>(o)->image;
+#ifdef __ANDROID__
+    if (image) return const_cast<void*>(port_gx_static_original(image, 1));
+#endif
+    return const_cast<void*>(image);
+}
 void GXGetTexObjAll(const GXTexObj* o, void** image, u16* w, u16* h, GXTexFmt* fmt, GXTexWrapMode* ws, GXTexWrapMode* wt, u8* mip) {
     *image = GXGetTexObjData(o);
     *w = GXGetTexObjWidth(o);

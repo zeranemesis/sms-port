@@ -19,6 +19,9 @@ void sms_frontend_reload_input();
 float sms_frontend_apply_game_settings(const char*,int,int);
 void sms_frontend_sync_game_rate();
 void sms_frontend_apply_language(const char*);
+#ifdef __ANDROID__
+void sms_mobile_set_menu_visible(int);
+#endif
 }
 namespace {
 using namespace sms_frontend::store;
@@ -55,9 +58,11 @@ std::vector<std::string> mods() {
     std::sort(result.begin(),result.end());return result;
 }
 void applySettings() {
+#ifndef __ANDROID__
     GXPC_ApplyMenuWindowSettings(settings.get("vsync","off").c_str(),settings.get("window_mode","windowed").c_str(),
         settings.get("fullscreen_mode","desktop").c_str(),std::atoi(settings.get("display","0").c_str()),
         std::atoi(settings.get("window_scale","0").c_str()),enabled(settings.get("mouse_camera","off")));
+#endif
     static const char* keys[]={"camera_invert_x","camera_invert_y","camera_speed","free_camera","mouse_sensitivity"};
     static const char* variables[]={"SMS_CAMERA_INVERT_X","SMS_CAMERA_INVERT_Y","SMS_CAMERA_SPEED","SMS_FREE_CAMERA","SMS_MOUSE_SENSITIVITY"};
     static const char* defaults[]={"off","off","100","off","100"};
@@ -65,7 +70,11 @@ void applySettings() {
     environment("SMS_BINDINGS",bindings.path);
     sms_frontend_audio_volume(enabled(settings.get("audio","on"))?std::atoi(settings.get("volume","100").c_str()):0);
     sms_frontend_reload_input();
-    const float wide=sms_frontend_apply_game_settings(settings.get("widescreen","off").c_str(),
+    std::string wideSetting=settings.get("widescreen","off");
+#ifdef __ANDROID__
+    if(wideSetting=="auto") { uint32_t w=0,h=0;sab_get_window_size(&w,&h);if(h)wideSetting=std::to_string(float(w)/float(h)); }
+#endif
+    const float wide=sms_frontend_apply_game_settings(wideSetting.c_str(),
         std::atoi(settings.get("frame_rate","30").c_str()),enabled(settings.get("skip_movies","off")));
     sms_frontend_sync_game_rate();
     sms_frontend_apply_language(settings.get("language","en").c_str());
@@ -85,6 +94,9 @@ bool save() {
     applySettings();return true;
 }
 void resume() {
+#ifdef __ANDROID__
+    sms_mobile_set_menu_visible(0);
+#endif
     visible=false;sab_set_menu_paused(0);sms_frontend_audio_menu_pause(0);sms_frontend_reload_input();sms_partyboard::ResetInput();
 }
 }
@@ -95,6 +107,11 @@ void GXPC_MenuInit(void*,void*) {
     settings.path=getenv("SMS_SETTINGS")?getenv("SMS_SETTINGS"):"settings.txt";
     bindings.path=getenv("SMS_BINDINGS")?getenv("SMS_BINDINGS"):"bindings.txt";
     settings.load();bindings.load();
+#ifdef __ANDROID__
+    if(settings.values.find("widescreen")==settings.values.end())settings.set("widescreen","auto");
+    if(settings.values.find("resolution")==settings.values.end())settings.set("resolution","0");
+    if(settings.values.find("vsync")==settings.values.end())settings.set("vsync","on");
+#endif
     static const char* keys[]={"vsync","window_mode","fullscreen_mode","display","window_scale","mouse_camera","volume","audio","resolution","frame_rate","widescreen","aspect","overlay","language","skip_movies"};
     static const char* variables[]={"SMS_VSYNC","SMS_WINDOW_MODE","SMS_FULLSCREEN_MODE","SMS_DISPLAY","SMS_WINDOW_SCALE","SMS_MOUSE_CAMERA","SMS_VOLUME","SMS_AUDIO","SMS_GX_SCALE","SMS_FRAME_RATE","SMS_WIDESCREEN","SMS_ASPECT","SMS_OVERLAY","SMS_LANGUAGE","SMS_SKIP_MOVIES"};
     for(size_t i=0;i<sizeof(keys)/sizeof(keys[0]);++i)
@@ -150,10 +167,16 @@ void GXPC_MenuToggle(void) {
     if(!menu)return;
     if(visible) { if(!save())return;resume();menu->hide(); }
     else {
+#ifndef __ANDROID__
         const bool fullscreen=sab_is_fullscreen()!=0;
         if(!fullscreen)settings.set("window_mode","windowed");
         else if(settings.get("window_mode","windowed")=="windowed")settings.set("window_mode","borderless");
-        bindings.load();visible=true;sab_set_menu_paused(1);sms_frontend_audio_menu_pause(1);sms_frontend_reload_input();sms_partyboard::ResetInput();menu->show();
+#endif
+        bindings.load();visible=true;
+#ifdef __ANDROID__
+        sms_mobile_set_menu_visible(1);
+#endif
+        sab_set_menu_paused(1);sms_frontend_audio_menu_pause(1);sms_frontend_reload_input();sms_partyboard::ResetInput();menu->show();
     }
 }
 int GXPC_MenuProcessEvent(const void* raw) {

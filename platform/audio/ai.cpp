@@ -33,6 +33,9 @@
 #include <pthread.h>
 #include <time.h>
 #include <vector>
+#if defined(__ANDROID__) && defined(SMS_ANDROID_AURORA)
+#include "../../aurora-bridge/sms_aurora_audio.h"
+#endif
 
 extern "C" int port_audio_dsp_frame_pending(void) __attribute__((weak));
 extern "C" int GXPC_GetSpeed(void) __attribute__((weak));
@@ -81,6 +84,9 @@ struct Ai {
 	size_t head, count;
 	bool sdl;
 	uint32_t sdlDevice;
+#if defined(__ANDROID__) && defined(SMS_ANDROID_AURORA)
+	SabAudioHandle hostAudio;
+#endif
 	PFN_SDL_CloseAudioDevice closeDevice;
 	std::atomic<bool> stopping{false};
 	pthread_t clockThread;
@@ -145,6 +151,10 @@ void shutdown_output()
 	if (g.stopping.exchange(true))
 		return;
 	g.running = false;
+#if defined(__ANDROID__) && defined(SMS_ANDROID_AURORA)
+	sab_audio_close(g.hostAudio);
+	g.hostAudio = nullptr;
+#endif
 	// Close waits for any in-flight SDL callback to finish. Do not hold mu:
 	// that callback may still need it before SDL can join its audio thread.
 	if (g.sdlDevice) {
@@ -216,6 +226,24 @@ void* null_clock(void*)
 
 bool open_sdl()
 {
+#if defined(__ANDROID__) && defined(SMS_ANDROID_AURORA)
+	g.hostAudio = sab_audio_open(sdl_callback, nullptr);
+	if (!g.hostAudio) {
+		port_log("[audio] SDL3 output could not be opened\n");
+		return false;
+	}
+	// The device is paused until the AI device mode is visible to callbacks.
+	g.sdl = true;
+	if (!sab_audio_start(g.hostAudio)) {
+		g.sdl = false;
+		sab_audio_close(g.hostAudio);
+		g.hostAudio = nullptr;
+		port_log("[audio] SDL3 output could not be started\n");
+		return false;
+	}
+	port_log("[audio] SDL3 output: 32000 Hz signed 16-bit stereo input\n");
+	return true;
+#else
 #ifdef _WIN32
 	void* h = dlopen("SDL2.dll", RTLD_NOW | RTLD_GLOBAL);
 #elif defined(__APPLE__)
@@ -267,6 +295,7 @@ bool open_sdl()
 	pa(dev, 0);
 	port_log("[audio] SDL output: %d Hz, %u-frame device buffer\n", have.freq, have.samples);
 	return true;
+#endif
 }
 
 void init_output()

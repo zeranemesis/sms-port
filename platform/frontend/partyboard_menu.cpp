@@ -29,6 +29,11 @@ struct Row {
         : key(k),label(l),help(h),initial(d),choices(c) {}
 };
 const char* tab_titles[]={"Vidéo et graphismes","Audio","Manettes","Jeu","Sauvegardes","Mods","Succès","Mises à jour"};
+#ifdef __ANDROID__
+constexpr int kTabCount=6;
+#else
+constexpr int kTabCount=8;
+#endif
 const char* default_labels[]={"Bouton A","Bouton B","Bouton X","Bouton Y","Bouton Z","Gâchette L","Gâchette R","Start",
     "Croix haut","Croix bas","Croix gauche","Croix droite","Stick haut","Stick bas","Stick gauche","Stick droite",
     "Stick C haut","Stick C bas","Stick C gauche","Stick C droite","Marcher","Quitter"};
@@ -58,7 +63,13 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         if(!context)return;
         const std::string root=bindings.resourceDirectory;
         Rml::LoadFontFace(root+"/Inter-Regular.ttf",true);
-        Rml::LoadFontFace(root+"/FOT-NewRodin Pro DB.otf");
+        if(!Rml::LoadFontFace(root+"/FOT-NewRodin Pro DB.otf")) {
+            // Keep PartyBoard's original styles without requiring a proprietary
+            // font in the Android package. Register the bundled open font under
+            // the requested family for both normal and bold labels.
+            Rml::LoadFontFace(root+"/Inter-Regular.ttf","FOT-NewRodin Pro",Rml::Style::FontStyle::Normal,Rml::Style::FontWeight::Normal);
+            Rml::LoadFontFace(root+"/Inter-Regular.ttf","FOT-NewRodin Pro",Rml::Style::FontStyle::Normal,Rml::Style::FontWeight::Bold);
+        }
         Rml::LoadFontFace(root+"/AlegreyaSC-Regular.ttf");
         Rml::LoadFontFace(root+"/AlegreyaSC-Bold.ttf");
         Rml::LoadFontFace(root+"/MaterialSymbolsRounded-Regular.ttf");
@@ -66,7 +77,7 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             "<link type='text/rcss' href='window.rcss'/><link type='text/rcss' href='tabbing.rcss'/>"
             "<link type='text/rcss' href='sunshine.rcss'/></head><body><window id='settings-window' open>"
             "<tab-bar id='tabs' closable>";
-        for(int i=0;i<8;++i)markup+="<tab id='tab-"+std::to_string(i)+"' data-action='tab' data-index='"+std::to_string(i)+"' tabindex='0'>"+tab_titles[i]+"</tab>";
+        for(int i=0;i<kTabCount;++i)markup+="<tab id='tab-"+std::to_string(i)+"' data-action='tab' data-index='"+std::to_string(i)+"' tabindex='0'>"+tab_titles[i]+"</tab>";
         markup+="<tab-end-spacer/><close id='close' data-action='resume' tabindex='0'/></tab-bar>"
             "<content><pane id='options'/><pane id='detail'/></content>"
             "<div id='status-line'/><footer><button id='resume' data-action='resume'>Reprendre</button>"
@@ -105,14 +116,25 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         switch(page){
         case 0:
             add_info("fidelity","Fidélité au jeu d’origine","Choisir un profil inspiré du rendu GameCube ou du rendu original en haute résolution.");
+#ifndef __ANDROID__
             rows.push_back(Row("window_mode","Mode de fenêtre","F11 ou Alt+Entrée bascule le plein écran pendant le jeu.","windowed",{{"windowed","Fenêtré"},{"borderless","Sans bordure"},{"fullscreen","Plein écran exclusif"}}));
             rows.push_back(Row("window_scale","Taille de fenêtre","Taille de départ ; la fenêtre reste redimensionnable.","0",{{"0","Automatique"},{"1","640 × 480"},{"2","1280 × 960"},{"3","1920 × 1440"},{"4","2560 × 1920"}}));
+#endif
             rows.push_back(Row("vsync","Synchronisation verticale","Évite le déchirement. Le mode adaptatif autorise une image tardive.","off",{{"off","Désactivée"},{"on","Activée"},{"adaptive","Adaptative"}}));
+#ifdef __ANDROID__
+            rows.back().help="Synchronisation verticale : changement appliqué au prochain lancement sur Android.";
+#endif
             rows.push_back(Row("widescreen","Écran large","Affiche davantage du monde sans étirer les menus d'origine.","off",{{"off","4:3 d'origine"},{"16:9","16:9"},{"16:10","16:10"},{"21:9","21:9"},{"32:9","32:9"}}));
+#ifdef __ANDROID__
+            rows.back().choices.insert(rows.back().choices.begin(),{"auto","Automatique · format de l’écran"});
+#endif
             rows.push_back(Row("widescreen_hud","Position des compteurs","Position du HUD en écran large.","centre",{{"centre","Centre"},{"edges","Bords de l'écran"}}));
             rows.push_back(Row("aspect","Rapport d'image","Conserve les proportions, remplit la fenêtre ou utilise des multiples entiers.","keep",{{"keep","Conserver"},{"stretch","Étirer"},{"integer","Facteur entier"}}));
             rows.push_back(Row("present_filter","Filtre de présentation","Filtrage de l'image finale dans la fenêtre.","bilinear",{{"bilinear","Lisse"},{"nearest","Pixels bruts"}}));
             rows.push_back(Row("resolution","Résolution interne","Multiples de l'image GameCube 640 × 528. Les grandes valeurs sollicitent davantage le GPU.","1",{{"1","1× · 640 × 528"},{"2","2× · 1280 × 1056"},{"3","3× · 1920 × 1584"},{"4","4× · 2560 × 2112"},{"5","5× · 3200 × 2640"},{"6","6× · 3840 × 3168"},{"7","7× · 4480 × 3696"},{"8","8× · 5120 × 4224"}}));
+#ifdef __ANDROID__
+            rows.back().choices.insert(rows.back().choices.begin(),{"0","Résolution native de l’écran"});
+#endif
             rows.push_back(Row("msaa","Anticrénelage MSAA","Lisse les contours des polygones.","0",{{"0","Désactivé"},{"2","2×"},{"4","4×"},{"8","8×"}}));
             if(bindings.auroraRenderer) {
                 rows.back().choices={{"0","Désactivé"},{"4","4×"}};
@@ -127,14 +149,22 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             rows.push_back(number("volume","Volume général","Volume de sortie, de 0 à 100 %.",100,0,100,5));
             break;
         case 2:
+#ifdef __ANDROID__
+            rows.push_back(Row("touch_mode","Manette à l’écran","Comme Mario Party 4 : masque le tactile quand une manette est connectée.","auto",{{"auto","Automatique"},{"always","Toujours"},{"never","Jamais"}}));
+            rows.push_back(number("touch_opacity","Opacité du tactile","Transparence des commandes à l’écran.",70,10,100,5));
+            rows.push_back(number("touch_size","Taille du tactile","100 % : disposition normale.",100,80,120,5));
+#else
             for(int i=0;i<22;++i){Row r; r.key="binding-"+std::to_string(i);r.label=i<(int)bindings.bindingLabels.size()?bindings.bindingLabels[i]:default_labels[i];r.binding=i;
                 r.help="Sélectionnez Remplacer ou Ajouter, puis appuyez sur une touche. Échap annule la capture. Les manettes SDL sont reconnues automatiquement.";rows.push_back(r);}
+#endif
             rows.push_back(toggle("camera_invert_x","Inverser la caméra horizontalement","Inverse le stick droit et la souris.",false));
             rows.push_back(toggle("camera_invert_y","Inverser la caméra verticalement","Inverse le stick droit et la souris.",false));
             rows.push_back(toggle("free_camera","Caméra libre","La caméra conserve son orientation. L permet de la recentrer.",false));
             rows.push_back(number("camera_speed","Vitesse de caméra","100 % correspond à la vitesse d'origine.",100,25,300,5));
+#ifndef __ANDROID__
             rows.push_back(toggle("mouse_camera","Caméra à la souris","F10 libère la souris ; un clic dans le jeu la capture à nouveau.",false));
             rows.push_back(number("mouse_sensitivity","Sensibilité de la souris","Sensibilité de déplacement de la caméra.",100,10,500,5));
+#endif
             break;
         case 3:
             rows.push_back(Row("language","Langue du jeu","La langue est utilisée au prochain chargement de niveau, sans relancer le jeu. Les textes déjà chargés sont conservés.","en",{{"en","English"},{"fr","Français"},{"de","Deutsch"},{"es","Español"},{"it","Italiano"}}));
@@ -154,7 +184,9 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
                 break;
             }
             add_info("installed-mods","Mods installés","Activez ou désactivez vos mods. Les fichiers changent au prochain chargement de niveau ; les textures se rechargent en direct.");
+#ifndef __ANDROID__
             add_info("gamebanana","Télécharger des mods","Catalogue GameBanana : choisissez un mod puis une archive à télécharger et installer.");
+#endif
             rows.push_back(toggle("texture_packs","Textures HD","Autorise les packs de textures actifs.",true));
             rows.push_back(toggle("hd_cutscenes","Cinématiques HD","Utilise les films HD installés.",true));break;}
         case 6:
@@ -257,8 +289,8 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         for(size_t i=0;i<row.choices.size();++i)if(auto* e=element(("choice-"+std::to_string(i)).c_str()))e->SetPseudoClass("selected",row.choices[i].value==value(row));
     }
     void select_page(int next,bool focus) {
-        page=(next+8)%8;fidelity_menu=false;selected=0;capture=-1;if(bindings.refreshMods)bindings.availableMods=bindings.refreshMods();make_rows();render_rows();render_detail();
-        for(int i=0;i<8;++i)if(auto* e=element(("tab-"+std::to_string(i)).c_str()))e->SetPseudoClass("selected",i==page);
+        page=(next+kTabCount)%kTabCount;fidelity_menu=false;selected=0;capture=-1;if(bindings.refreshMods)bindings.availableMods=bindings.refreshMods();make_rows();render_rows();render_detail();
+        for(int i=0;i<kTabCount;++i)if(auto* e=element(("tab-"+std::to_string(i)).c_str()))e->SetPseudoClass("selected",i==page);
         if(focus)if(auto* e=element(("tab-"+std::to_string(page)).c_str())){e->Focus();e->ScrollIntoView();}
     }
     void select_row(int next,bool focus) {
@@ -336,7 +368,7 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         if(action=="capture"||action=="add-key"){capture=row.binding;add_key=action=="add-key";render_detail();return;}
         if(action=="cancel-capture"){capture=-1;render_detail();return;}
         if(action=="reset-binding"&&row.binding>=0&&bindings.setBinding){bindings.setBinding(row.binding,default_keys[row.binding]);render_rows();render_detail();return;}
-        if(action=="backup"){ServiceResult r=backup_saves();status_text(r.message+(r.path.empty()?"":" "+r.path));return;}
+        if(action=="backup"){ServiceResult r=backup_saves();if(r.ok)backups=save_backups();status_text(r.message);return;}
         if(action=="refresh-backups"){backups=save_backups();render_detail();return;}
         if(action=="restore"){int i=std::atoi(val.c_str());if(i>=0&&i<(int)backups.size()){ServiceResult r=prepare_save_restore(backups[i]);status_text(r.message);}return;}
         if(action=="check-update"){check_updates(installed_release());render_detail();return;}

@@ -14,6 +14,9 @@
 #include <ctype.h>
 #include <dlfcn.h>
 #include <vector>
+#ifdef __ANDROID__
+#include "mobile_input.h"
+#endif
 
 // --- SDL2 event ABI (SDL_events.h, SDL_scancode.h, SDL_gamecontroller.h) ---
 namespace sdl {
@@ -482,6 +485,11 @@ extern "C" u32 PADRead(PADStatus* status)
 	int cy      = held(C_CUP) * 100 - held(C_CDOWN) * 100;
 	s.substickX = (s8)(cx ? cx : axis8(g_axis[2], 100));
 	s.substickY = (s8)(cy ? cy : axis8(-g_axis[3], 100));
+#ifdef __ANDROID__
+	// UI/JNI producers publish snapshots; only the game thread writes PADStatus.
+	// Apply camera inversion once, below, to every source alike.
+	sms_mobile_pad_merge(&s);
+#endif
 	if (g_invertX)
 		s.substickX = (s8)(s.substickX == -128 ? 127 : -s.substickX);
 	if (g_invertY)

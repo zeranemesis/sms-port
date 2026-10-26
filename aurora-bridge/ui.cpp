@@ -79,6 +79,14 @@ void mousePosition(float x, float y, SabUiEvent& event) {
         uint32_t(std::max(pixelWidth, 1)), uint32_t(std::max(pixelHeight, 1)),
         std::max(source.size.width, 1u), std::max(source.size.height, 1u));
     const auto dimensions = aurora::rmlui::get_context()->GetDimensions();
+#ifdef __ANDROID__
+    // The mobile PartyBoard overlay fills the UI surface, including before
+    // the game has submitted its first XFB. A stale 4:3 game source must not
+    // displace touches on the full-screen menu or its bottom buttons.
+    event.x = x * float(dimensions.x) / float(std::max(width, 1));
+    event.y = y * float(dimensions.y) / float(std::max(height, 1));
+    return;
+#endif
     event.x = (x * float(pixelWidth) / float(std::max(width, 1)) - viewport.left) *
               float(dimensions.x) / std::max(viewport.width, 1.f);
     event.y = (y * float(pixelHeight) / float(std::max(height, 1)) - viewport.top) *
@@ -119,6 +127,52 @@ bool sab_ui_process_sdl(const SDL_Event& e) {
     if (!callbacks.event || !portalDocument) return false;
     SabUiEvent out{};
     out.modifiers = uint16_t(SDL_GetModState());
+#ifdef __ANDROID__
+    // SDL's synthesized mouse supports taps, but cannot scroll panes by drag.
+    // Delay the click until release so a swipe never activates its first row.
+    static bool touchActive = false, touchScrolled = false;
+    static SDL_FingerID touchFinger = 0;
+    static float touchX = 0, touchY = 0, lastY = 0;
+    const bool finger = e.type == SDL_EVENT_FINGER_DOWN || e.type == SDL_EVENT_FINGER_MOTION
+        || e.type == SDL_EVENT_FINGER_UP || e.type == SDL_EVENT_FINGER_CANCELED;
+    if (finger) {
+        if (e.type != SDL_EVENT_FINGER_DOWN && (!touchActive || e.tfinger.fingerID != touchFinger)) return false;
+        if (e.type == SDL_EVENT_FINGER_DOWN && touchActive) return true;
+        const auto dimensions = aurora::rmlui::get_context()->GetDimensions();
+        out.type = SAB_UI_MOUSE_MOVE;
+        out.x = e.tfinger.x * dimensions.x; out.y = e.tfinger.y * dimensions.y;
+        const bool consumed = callbacks.event(callbacks.userdata, &out) != 0;
+        if (!consumed) { touchActive = false; return false; }
+        if (e.type == SDL_EVENT_FINGER_DOWN) {
+            touchActive = true; touchScrolled = false; touchFinger = e.tfinger.fingerID;
+            touchX = out.x; touchY = lastY = out.y;
+        } else if (e.type == SDL_EVENT_FINGER_MOTION) {
+            if (std::abs(out.x-touchX) > 12.f || std::abs(out.y-touchY) > 12.f) touchScrolled = true;
+            if (touchScrolled) {
+                const float y = out.y;
+                out.type = SAB_UI_MOUSE_WHEEL; out.x = 0; out.y = (y-lastY)/32.f;
+                callbacks.event(callbacks.userdata, &out); lastY = y;
+            }
+        } else {
+            touchActive = false;
+            if (e.type == SDL_EVENT_FINGER_UP && !touchScrolled) {
+                out.x = touchX; out.y = touchY; out.button = SDL_BUTTON_LEFT;
+                out.type = SAB_UI_MOUSE_DOWN; callbacks.event(callbacks.userdata, &out);
+                out.type = SAB_UI_MOUSE_UP; callbacks.event(callbacks.userdata, &out);
+            }
+        }
+        return true;
+    }
+    const bool touchMouse = (e.type == SDL_EVENT_MOUSE_MOTION && e.motion.which == SDL_TOUCH_MOUSEID)
+        || ((e.type == SDL_EVENT_MOUSE_BUTTON_DOWN || e.type == SDL_EVENT_MOUSE_BUTTON_UP)
+            && e.button.which == SDL_TOUCH_MOUSEID);
+    if (touchMouse) {
+        out.type = SAB_UI_MOUSE_MOVE;
+        if (e.type == SDL_EVENT_MOUSE_MOTION) mousePosition(e.motion.x,e.motion.y,out);
+        else mousePosition(e.button.x,e.button.y,out);
+        return callbacks.event(callbacks.userdata, &out) != 0;
+    }
+#endif
     switch (e.type) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP:

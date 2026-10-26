@@ -1,0 +1,376 @@
+--- a/include/Strategic/spcinterp.hpp
++++ b/include/Strategic/spcinterp.hpp
+@@ -1,5 +1,12 @@
+ #ifndef STRATEGIC_SPCINTERP_HPP
+ #define STRATEGIC_SPCINTERP_HPP
++
++#if defined(TARGET_PC) && defined(__ANDROID__)
++#include "spc_native_registry.h"
++#define PORT_SPC_NATIVE(callback) port_spc_register(callback)
++#else
++#define PORT_SPC_NATIVE(callback) ((u32)(callback))
++#endif
+ 
+ #include <dolphin/types.h>
+ #include <string.h>
+@@ -729,6 +736,15 @@
+ 	// non-template dispatchBuiltinDefault duplicates the tail `bl` (79.3%).
+ 	virtual void dispatchBuiltin(u32 sym_index, u32 arg_count)
+ 	{
++#if defined(TARGET_PC) && defined(__ANDROID__)
++        TSpcSymbol* sym = mBinary->getSymbol(sym_index);
++        if (sym != nullptr && sym->mNativeCall != 0) {
++            mCurrentlyExecutingBuiltinName = mBinary->getSymbolName(sym);
++            port_spc_call_checked(sym->mNativeCall, this, arg_count);
++            return;
++        }
++        TSpcInterp::dispatchBuiltin(sym_index, arg_count);
++#else
+ 		typedef void (*TypedNativeCall)(TSpcTypedInterp<T>*, u32);
+ 		TSpcSymbol* sym = mBinary->getSymbol(sym_index);
+ 
+@@ -743,6 +759,7 @@
+ 		}
+ 
+ 		TSpcInterp::dispatchBuiltin(sym_index, arg_count);
++#endif
+ 	}
+ 
+ 	// fabricated
+--- a/src/Strategic/spcinterp.cpp
++++ b/src/Strategic/spcinterp.cpp
+@@ -136,15 +136,15 @@
+ 
+ void TSpcBinary::initSystemBuiltin()
+ {
+-	bindSystemDataToSymbol("yield", (u32)&spcYield);
+-	bindSystemDataToSymbol("exit", (u32)&spcExit);
+-	bindSystemDataToSymbol("lock", (u32)&spcLock);
+-	bindSystemDataToSymbol("unlock", (u32)&spcUnlock);
+-	bindSystemDataToSymbol("print", (u32)&spcPrint);
+-	bindSystemDataToSymbol("dump", (u32)&spcDump);
+-	bindSystemDataToSymbol("int", (u32)&spcInt);
+-	bindSystemDataToSymbol("float", (u32)&spcFloat);
+-	bindSystemDataToSymbol("typeof", (u32)&spcTypeof);
++	bindSystemDataToSymbol("yield", PORT_SPC_NATIVE(&spcYield));
++	bindSystemDataToSymbol("exit", PORT_SPC_NATIVE(&spcExit));
++	bindSystemDataToSymbol("lock", PORT_SPC_NATIVE(&spcLock));
++	bindSystemDataToSymbol("unlock", PORT_SPC_NATIVE(&spcUnlock));
++	bindSystemDataToSymbol("print", PORT_SPC_NATIVE(&spcPrint));
++	bindSystemDataToSymbol("dump", PORT_SPC_NATIVE(&spcDump));
++	bindSystemDataToSymbol("int", PORT_SPC_NATIVE(&spcInt));
++	bindSystemDataToSymbol("float", PORT_SPC_NATIVE(&spcFloat));
++	bindSystemDataToSymbol("typeof", PORT_SPC_NATIVE(&spcTypeof));
+ 	SpcTrace("TSpcBinary : system symbol installed\n");
+ }
+ 
+@@ -545,9 +545,11 @@
+ 		return;
+ 	}
+ 
++#if !defined(TARGET_PC) || !defined(__ANDROID__)
+ 	typedef void (*Call)(TSpcInterp*, u32);
+ 	Call call = (Call)sym->mNativeCall;
+-	if (call == nullptr) {
++#endif
++	if (sym->mNativeCall == 0) {
+ 		SpcTrace("TSpcInterp : unknown builtin function %s\n",
+ 		         mBinary->getSymbolName(sym));
+ 		for (int i = 0; i < (int)arg_count; ++i)
+@@ -557,7 +559,11 @@
+ 	}
+ 
+ 	mCurrentlyExecutingBuiltinName = mBinary->getSymbolName(sym);
++#if defined(TARGET_PC) && defined(__ANDROID__)
++	port_spc_call_checked(sym->mNativeCall, this, arg_count);
++#else
+ 	call(this, arg_count);
++#endif
+ }
+ 
+ void TSpcInterp::dispatchBuiltin(u32 sym_index, u32 arg_count)
+--- a/src/Strategic/liveinterp.cpp
++++ b/src/Strategic/liveinterp.cpp
+@@ -642,14 +642,14 @@
+ 
+ template <> void TSpcTypedBinary<TLiveActor>::initUserBuiltin()
+ {
+-	bindSystemDataToSymbol("pushNerve", (u32)&linPushNerve);
+-	bindSystemDataToSymbol("setBck", (u32)&linSetBck);
+-	bindSystemDataToSymbol("setBpk", (u32)&linSetBpk);
+-	bindSystemDataToSymbol("setBtp", (u32)&linSetBtp);
+-	bindSystemDataToSymbol("setBtk", (u32)&linSetBtk);
+-	bindSystemDataToSymbol("setBlk", (u32)&linSetBlk);
+-	bindSystemDataToSymbol("setBls", (u32)&linSetBls);
+-	bindSystemDataToSymbol("setSRT", (u32)&linSetSRT);
+-	bindSystemDataToSymbol("getSRT", (u32)&linGetSRT);
+-	bindSystemDataToSymbol("setAnmRate", (u32)&linSetAnmRate);
+-}
++	bindSystemDataToSymbol("pushNerve", PORT_SPC_NATIVE(&linPushNerve));
++	bindSystemDataToSymbol("setBck", PORT_SPC_NATIVE(&linSetBck));
++	bindSystemDataToSymbol("setBpk", PORT_SPC_NATIVE(&linSetBpk));
++	bindSystemDataToSymbol("setBtp", PORT_SPC_NATIVE(&linSetBtp));
++	bindSystemDataToSymbol("setBtk", PORT_SPC_NATIVE(&linSetBtk));
++	bindSystemDataToSymbol("setBlk", PORT_SPC_NATIVE(&linSetBlk));
++	bindSystemDataToSymbol("setBls", PORT_SPC_NATIVE(&linSetBls));
++	bindSystemDataToSymbol("setSRT", PORT_SPC_NATIVE(&linSetSRT));
++	bindSystemDataToSymbol("getSRT", PORT_SPC_NATIVE(&linGetSRT));
++	bindSystemDataToSymbol("setAnmRate", PORT_SPC_NATIVE(&linSetAnmRate));
++}
+--- a/src/Enemy/enemyinterp.cpp
++++ b/src/Enemy/enemyinterp.cpp
+@@ -67,13 +67,13 @@
+ // TODO: incorrect size. Map records 0xa0 (160).
+ void TEinBinary::initUserBuiltin()
+ {
+-	bindSystemDataToSymbol("setGraph", (u32)&einSetGraph);
+-	bindSystemDataToSymbol("walkToCurPathNode", (u32)&einWalkToCurPathNode);
++	bindSystemDataToSymbol("setGraph", PORT_SPC_NATIVE(&einSetGraph));
++	bindSystemDataToSymbol("walkToCurPathNode", PORT_SPC_NATIVE(&einWalkToCurPathNode));
+ 	bindSystemDataToSymbol("goToRandomNextGraphNode",
+-	                       (u32)&einGoToRandomNextGraphNode);
++	                       PORT_SPC_NATIVE(&einGoToRandomNextGraphNode));
+ 	bindSystemDataToSymbol("getLengthToCurPathNode",
+-	                       (u32)&einGetLengthToCurPathNode);
+-	bindSystemDataToSymbol("getLengthToMario", (u32)&einGetLengthToMario);
++	                       PORT_SPC_NATIVE(&einGetLengthToCurPathNode));
++	bindSystemDataToSymbol("getLengthToMario", PORT_SPC_NATIVE(&einGetLengthToMario));
+ }
+ 
+ // TODO: incorrect size. Map records 0x74 (116).
+--- a/src/System/EventWatcher.cpp
++++ b/src/System/EventWatcher.cpp
+@@ -1638,96 +1638,96 @@
+ template <> void TSpcTypedBinary<TEventWatcher>::initUserBuiltin()
+ {
+ 	// clang-format off
+-  bindSystemDataToSymbol("getSystemFlag", (u32)&evGetSystemFlag);
+-  bindSystemDataToSymbol("setSystemFlag", (u32)&evSetSystemFlag);
+-  bindSystemDataToSymbol("getNameRefHandle", (u32)&evGetNameRefHandle);
+-  bindSystemDataToSymbol("getNameRefName", (u32)&evGetNameRefName);
+-  bindSystemDataToSymbol("getNPCType", (u32)&evGetNPCType);
+-  bindSystemDataToSymbol("setFlagNPCDontTalk", (u32)&evSetFlagNPCDontTalk);
+-  bindSystemDataToSymbol("setFlagNPCDontThrow", (u32)&evSetFlagNPCDontThrow);
+-  bindSystemDataToSymbol("setFlagNPCDead", (u32)&evSetFlagNPCDead);
+-  bindSystemDataToSymbol("isNearSameActors", (u32)&evIsNearSameActors);
+-  bindSystemDataToSymbol("isNearActors", (u32)&evIsNearActors);
+-  bindSystemDataToSymbol("getTalkNPC", (u32)&evGetTalkNPC);
+-  bindSystemDataToSymbol("getTalkNPCName", (u32)&evGetTalkNPCName);
+-  bindSystemDataToSymbol("setTalkMsgID", (u32)&evSetTalkMsgID);
+-  bindSystemDataToSymbol("getTalkMode", (u32)&evGetTalkMode);
+-  bindSystemDataToSymbol("getTalkSelectedValue", (u32)&evGetTalkSelectedValue);
+-  bindSystemDataToSymbol("setValue2TalkVariable", (u32)&evSetValue2TalkVariable);
+-  bindSystemDataToSymbol("isTalkModeNow", (u32)&evIsTalkModeNow);
+-  bindSystemDataToSymbol("setFlagNPCCanTaken", (u32)&evSetFlagNPCCanTaken);
+-  bindSystemDataToSymbol("pushNerve4LiveActor", (u32)&evPushNerve4LiveActor);
+-  bindSystemDataToSymbol("isOnLiveActorFlag", (u32)&evIsOnLiveActorFlag);
+-  bindSystemDataToSymbol("setHide4LiveActor", (u32)&evSetHide4LiveActor);
+-  bindSystemDataToSymbol("setDead4LiveActor", (u32)&evSetDead4LiveActor);
+-  bindSystemDataToSymbol("setTimeLimit", (u32)&evSetTimeLimit);
+-  bindSystemDataToSymbol("setAttentionTime", (u32)&evSetAttentionTime);
+-  bindSystemDataToSymbol("setPollutionIncreaseCount", (u32)&evSetPollutionIncreaseCount);
+-  bindSystemDataToSymbol("getRestTime", (u32)&evGetRestTime);
+-  bindSystemDataToSymbol("getPollutionLevel", (u32)&evGetPollutionLevel);
+-  bindSystemDataToSymbol("setNextStage", (u32)&evSetNextStage);
+-  bindSystemDataToSymbol("registerMovie", (u32)&evRegisterMovie);
+-  bindSystemDataToSymbol("gameOver", (u32)&evGameOver);
+-  bindSystemDataToSymbol("isGraffitoCoverage0", (u32)&evIsGraffitoCoverage0);
+-  bindSystemDataToSymbol("setGraffitoMultiplied", (u32)&evSetGraffitoMultiplied);
+-  bindSystemDataToSymbol("isBossDefeated", (u32)&evIsBossDefeated);
+-  bindSystemDataToSymbol("launchEventClearDemo", (u32)&evLaunchEventClearDemo);
+-  bindSystemDataToSymbol("isEMarioReachedToGoal", (u32)&evIsEMarioReachedToGoal);
+-  bindSystemDataToSymbol("isEMarioDownWaitingToTalk", (u32)&evIsEMarioDownWaitingToTalk);
+-  bindSystemDataToSymbol("startEMarioRunAway", (u32)&evStartEMarioRunAway);
+-  bindSystemDataToSymbol("startEMarioGateDrawing", (u32)&evStartEMarioGateDrawing);
+-  bindSystemDataToSymbol("startEMarioDisappear", (u32)&evStartEMarioDisappear);
+-  bindSystemDataToSymbol("startOpenModelGate", (u32)&evStartOpenModelGate);
+-  bindSystemDataToSymbol("isMapEventFinishedAll", (u32)&evIsMapEventFinishedAll);
+-  bindSystemDataToSymbol("raiseBuilding", (u32)&evRaiseBuilding);
+-  bindSystemDataToSymbol("forceCloseTalk", (u32)&evForceCloseTalk);
+-  bindSystemDataToSymbol("insertTimer", (u32)&evInsertTimer);
+-  bindSystemDataToSymbol("startTimer", (u32)&evStartTimer);
+-  bindSystemDataToSymbol("startMonteman", (u32)&evStartMonteman);
+-  bindSystemDataToSymbol("stopTimer", (u32)&evStopTimer);
+-  bindSystemDataToSymbol("monteManReachFlag", (u32)&evMonteManReachFlag);
+-  bindSystemDataToSymbol("getTime", (u32)&evGetTime);
+-  bindSystemDataToSymbol("killShine", (u32)&evKillShine);
+-  bindSystemDataToSymbol("killMushroom1up", (u32)&evKillMushroom1up);
+-  bindSystemDataToSymbol("appearMushroom1up", (u32)&evAppearMushroom1up);
+-  bindSystemDataToSymbol("appearShineFromNPC", (u32)&evAppearShineFromNPC);
+-  bindSystemDataToSymbol("appearShineFromNPCWithoutDemo", (u32)&evAppearShineFromNPCWithoutDemo);
+-  bindSystemDataToSymbol("appearShineFromKageMario", (u32)&evAppearShineFromKageMario);
+-  bindSystemDataToSymbol("appearShine", (u32)&evAppearShine);
+-  bindSystemDataToSymbol("appearShineForWoodBox", (u32)&evAppearShineForWoodBox);
+-  bindSystemDataToSymbol("changeNozzle", (u32)&evChangeNozzle);
+-  bindSystemDataToSymbol("startMarioTalking", (u32)&evStartMarioTalking);
+-  bindSystemDataToSymbol("isInsideCube", (u32)&evIsInsideCube);
+-  bindSystemDataToSymbol("setMarioWaiting", (u32)&evSetMarioWaiting);
+-  bindSystemDataToSymbol("setTransScale", (u32)&evSetTransScale);
+-  bindSystemDataToSymbol("setEventID", (u32)&evSetEventID);
+-  bindSystemDataToSymbol("startBGM", (u32)&evStartBGM);
+-  bindSystemDataToSymbol("stopBGM", (u32)&evStopBGM);
+-  bindSystemDataToSymbol("startMiss", (u32)&evStartMiss);
+-  bindSystemDataToSymbol("startSE", (u32)&evStartSE);
+-  bindSystemDataToSymbol("startEventSE", (u32)&evStartEventSE);
+-  bindSystemDataToSymbol("changeSunglass", (u32)&evChangeSunglass);
+-  bindSystemDataToSymbol("setCollision", (u32)&evSetCollision);
+-  bindSystemDataToSymbol("warpMario", (u32)&evWarpMario);
+-  bindSystemDataToSymbol("startAppearJetBalloon", (u32)&evStartAppearJetBalloon);
+-  bindSystemDataToSymbol("appear8RedCoinsAndTimer", (u32)&evAppear8RedCoinsAndTimer);
+-  bindSystemDataToSymbol("warpFrontToMario", (u32)&evWarpFrontToMario);
+-  bindSystemDataToSymbol("appearReadyGo", (u32)&evAppearReadyGo);
+-  bindSystemDataToSymbol("onNeutralMarioKey", (u32)&evOnNeutralMarioKey);
+-  bindSystemDataToSymbol("invalidatePad", (u32)&evInvalidatePad);
+-  bindSystemDataToSymbol("startMontemanBGM", (u32)&evStartMontemanBGM);
+-  bindSystemDataToSymbol("startMontemanFanfare", (u32)&evStartMontemanFanfare);
+-  bindSystemDataToSymbol("checkWoodBox", (u32)&evCheckWoodBox);
+-  bindSystemDataToSymbol("refreshWoodBox", (u32)&evRefreshWoodBox);
+-  bindSystemDataToSymbol("killWoodBox", (u32)&evKillWoodBox);
+-  bindSystemDataToSymbol("maniCoinFallDown", (u32)&evManiCoinDown);
+-  bindSystemDataToSymbol("eggYoshiStartFruit", (u32)&evEggYoshiStartFruit);
+-  bindSystemDataToSymbol("putNozzle", (u32)&evPutNozzle);
+-  bindSystemDataToSymbol("startMareBottleDemo", (u32)&evStartMareBottleDemo);
+-  bindSystemDataToSymbol("isFinishMareBottleDemo", (u32)&evIsFinishMareBottleDemo);
+-  bindSystemDataToSymbol("isInsideFastCube", (u32)&evIsInsideFastCube);
+-  bindSystemDataToSymbol("setEventForWaterMelon", (u32)&evSetEventForWaterMelon);
+-  bindSystemDataToSymbol("isWaterMelonIsReached", (u32)&evIsWaterMelonIsReached);
++  bindSystemDataToSymbol("getSystemFlag", PORT_SPC_NATIVE(&evGetSystemFlag));
++  bindSystemDataToSymbol("setSystemFlag", PORT_SPC_NATIVE(&evSetSystemFlag));
++  bindSystemDataToSymbol("getNameRefHandle", PORT_SPC_NATIVE(&evGetNameRefHandle));
++  bindSystemDataToSymbol("getNameRefName", PORT_SPC_NATIVE(&evGetNameRefName));
++  bindSystemDataToSymbol("getNPCType", PORT_SPC_NATIVE(&evGetNPCType));
++  bindSystemDataToSymbol("setFlagNPCDontTalk", PORT_SPC_NATIVE(&evSetFlagNPCDontTalk));
++  bindSystemDataToSymbol("setFlagNPCDontThrow", PORT_SPC_NATIVE(&evSetFlagNPCDontThrow));
++  bindSystemDataToSymbol("setFlagNPCDead", PORT_SPC_NATIVE(&evSetFlagNPCDead));
++  bindSystemDataToSymbol("isNearSameActors", PORT_SPC_NATIVE(&evIsNearSameActors));
++  bindSystemDataToSymbol("isNearActors", PORT_SPC_NATIVE(&evIsNearActors));
++  bindSystemDataToSymbol("getTalkNPC", PORT_SPC_NATIVE(&evGetTalkNPC));
++  bindSystemDataToSymbol("getTalkNPCName", PORT_SPC_NATIVE(&evGetTalkNPCName));
++  bindSystemDataToSymbol("setTalkMsgID", PORT_SPC_NATIVE(&evSetTalkMsgID));
++  bindSystemDataToSymbol("getTalkMode", PORT_SPC_NATIVE(&evGetTalkMode));
++  bindSystemDataToSymbol("getTalkSelectedValue", PORT_SPC_NATIVE(&evGetTalkSelectedValue));
++  bindSystemDataToSymbol("setValue2TalkVariable", PORT_SPC_NATIVE(&evSetValue2TalkVariable));
++  bindSystemDataToSymbol("isTalkModeNow", PORT_SPC_NATIVE(&evIsTalkModeNow));
++  bindSystemDataToSymbol("setFlagNPCCanTaken", PORT_SPC_NATIVE(&evSetFlagNPCCanTaken));
++  bindSystemDataToSymbol("pushNerve4LiveActor", PORT_SPC_NATIVE(&evPushNerve4LiveActor));
++  bindSystemDataToSymbol("isOnLiveActorFlag", PORT_SPC_NATIVE(&evIsOnLiveActorFlag));
++  bindSystemDataToSymbol("setHide4LiveActor", PORT_SPC_NATIVE(&evSetHide4LiveActor));
++  bindSystemDataToSymbol("setDead4LiveActor", PORT_SPC_NATIVE(&evSetDead4LiveActor));
++  bindSystemDataToSymbol("setTimeLimit", PORT_SPC_NATIVE(&evSetTimeLimit));
++  bindSystemDataToSymbol("setAttentionTime", PORT_SPC_NATIVE(&evSetAttentionTime));
++  bindSystemDataToSymbol("setPollutionIncreaseCount", PORT_SPC_NATIVE(&evSetPollutionIncreaseCount));
++  bindSystemDataToSymbol("getRestTime", PORT_SPC_NATIVE(&evGetRestTime));
++  bindSystemDataToSymbol("getPollutionLevel", PORT_SPC_NATIVE(&evGetPollutionLevel));
++  bindSystemDataToSymbol("setNextStage", PORT_SPC_NATIVE(&evSetNextStage));
++  bindSystemDataToSymbol("registerMovie", PORT_SPC_NATIVE(&evRegisterMovie));
++  bindSystemDataToSymbol("gameOver", PORT_SPC_NATIVE(&evGameOver));
++  bindSystemDataToSymbol("isGraffitoCoverage0", PORT_SPC_NATIVE(&evIsGraffitoCoverage0));
++  bindSystemDataToSymbol("setGraffitoMultiplied", PORT_SPC_NATIVE(&evSetGraffitoMultiplied));
++  bindSystemDataToSymbol("isBossDefeated", PORT_SPC_NATIVE(&evIsBossDefeated));
++  bindSystemDataToSymbol("launchEventClearDemo", PORT_SPC_NATIVE(&evLaunchEventClearDemo));
++  bindSystemDataToSymbol("isEMarioReachedToGoal", PORT_SPC_NATIVE(&evIsEMarioReachedToGoal));
++  bindSystemDataToSymbol("isEMarioDownWaitingToTalk", PORT_SPC_NATIVE(&evIsEMarioDownWaitingToTalk));
++  bindSystemDataToSymbol("startEMarioRunAway", PORT_SPC_NATIVE(&evStartEMarioRunAway));
++  bindSystemDataToSymbol("startEMarioGateDrawing", PORT_SPC_NATIVE(&evStartEMarioGateDrawing));
++  bindSystemDataToSymbol("startEMarioDisappear", PORT_SPC_NATIVE(&evStartEMarioDisappear));
++  bindSystemDataToSymbol("startOpenModelGate", PORT_SPC_NATIVE(&evStartOpenModelGate));
++  bindSystemDataToSymbol("isMapEventFinishedAll", PORT_SPC_NATIVE(&evIsMapEventFinishedAll));
++  bindSystemDataToSymbol("raiseBuilding", PORT_SPC_NATIVE(&evRaiseBuilding));
++  bindSystemDataToSymbol("forceCloseTalk", PORT_SPC_NATIVE(&evForceCloseTalk));
++  bindSystemDataToSymbol("insertTimer", PORT_SPC_NATIVE(&evInsertTimer));
++  bindSystemDataToSymbol("startTimer", PORT_SPC_NATIVE(&evStartTimer));
++  bindSystemDataToSymbol("startMonteman", PORT_SPC_NATIVE(&evStartMonteman));
++  bindSystemDataToSymbol("stopTimer", PORT_SPC_NATIVE(&evStopTimer));
++  bindSystemDataToSymbol("monteManReachFlag", PORT_SPC_NATIVE(&evMonteManReachFlag));
++  bindSystemDataToSymbol("getTime", PORT_SPC_NATIVE(&evGetTime));
++  bindSystemDataToSymbol("killShine", PORT_SPC_NATIVE(&evKillShine));
++  bindSystemDataToSymbol("killMushroom1up", PORT_SPC_NATIVE(&evKillMushroom1up));
++  bindSystemDataToSymbol("appearMushroom1up", PORT_SPC_NATIVE(&evAppearMushroom1up));
++  bindSystemDataToSymbol("appearShineFromNPC", PORT_SPC_NATIVE(&evAppearShineFromNPC));
++  bindSystemDataToSymbol("appearShineFromNPCWithoutDemo", PORT_SPC_NATIVE(&evAppearShineFromNPCWithoutDemo));
++  bindSystemDataToSymbol("appearShineFromKageMario", PORT_SPC_NATIVE(&evAppearShineFromKageMario));
++  bindSystemDataToSymbol("appearShine", PORT_SPC_NATIVE(&evAppearShine));
++  bindSystemDataToSymbol("appearShineForWoodBox", PORT_SPC_NATIVE(&evAppearShineForWoodBox));
++  bindSystemDataToSymbol("changeNozzle", PORT_SPC_NATIVE(&evChangeNozzle));
++  bindSystemDataToSymbol("startMarioTalking", PORT_SPC_NATIVE(&evStartMarioTalking));
++  bindSystemDataToSymbol("isInsideCube", PORT_SPC_NATIVE(&evIsInsideCube));
++  bindSystemDataToSymbol("setMarioWaiting", PORT_SPC_NATIVE(&evSetMarioWaiting));
++  bindSystemDataToSymbol("setTransScale", PORT_SPC_NATIVE(&evSetTransScale));
++  bindSystemDataToSymbol("setEventID", PORT_SPC_NATIVE(&evSetEventID));
++  bindSystemDataToSymbol("startBGM", PORT_SPC_NATIVE(&evStartBGM));
++  bindSystemDataToSymbol("stopBGM", PORT_SPC_NATIVE(&evStopBGM));
++  bindSystemDataToSymbol("startMiss", PORT_SPC_NATIVE(&evStartMiss));
++  bindSystemDataToSymbol("startSE", PORT_SPC_NATIVE(&evStartSE));
++  bindSystemDataToSymbol("startEventSE", PORT_SPC_NATIVE(&evStartEventSE));
++  bindSystemDataToSymbol("changeSunglass", PORT_SPC_NATIVE(&evChangeSunglass));
++  bindSystemDataToSymbol("setCollision", PORT_SPC_NATIVE(&evSetCollision));
++  bindSystemDataToSymbol("warpMario", PORT_SPC_NATIVE(&evWarpMario));
++  bindSystemDataToSymbol("startAppearJetBalloon", PORT_SPC_NATIVE(&evStartAppearJetBalloon));
++  bindSystemDataToSymbol("appear8RedCoinsAndTimer", PORT_SPC_NATIVE(&evAppear8RedCoinsAndTimer));
++  bindSystemDataToSymbol("warpFrontToMario", PORT_SPC_NATIVE(&evWarpFrontToMario));
++  bindSystemDataToSymbol("appearReadyGo", PORT_SPC_NATIVE(&evAppearReadyGo));
++  bindSystemDataToSymbol("onNeutralMarioKey", PORT_SPC_NATIVE(&evOnNeutralMarioKey));
++  bindSystemDataToSymbol("invalidatePad", PORT_SPC_NATIVE(&evInvalidatePad));
++  bindSystemDataToSymbol("startMontemanBGM", PORT_SPC_NATIVE(&evStartMontemanBGM));
++  bindSystemDataToSymbol("startMontemanFanfare", PORT_SPC_NATIVE(&evStartMontemanFanfare));
++  bindSystemDataToSymbol("checkWoodBox", PORT_SPC_NATIVE(&evCheckWoodBox));
++  bindSystemDataToSymbol("refreshWoodBox", PORT_SPC_NATIVE(&evRefreshWoodBox));
++  bindSystemDataToSymbol("killWoodBox", PORT_SPC_NATIVE(&evKillWoodBox));
++  bindSystemDataToSymbol("maniCoinFallDown", PORT_SPC_NATIVE(&evManiCoinDown));
++  bindSystemDataToSymbol("eggYoshiStartFruit", PORT_SPC_NATIVE(&evEggYoshiStartFruit));
++  bindSystemDataToSymbol("putNozzle", PORT_SPC_NATIVE(&evPutNozzle));
++  bindSystemDataToSymbol("startMareBottleDemo", PORT_SPC_NATIVE(&evStartMareBottleDemo));
++  bindSystemDataToSymbol("isFinishMareBottleDemo", PORT_SPC_NATIVE(&evIsFinishMareBottleDemo));
++  bindSystemDataToSymbol("isInsideFastCube", PORT_SPC_NATIVE(&evIsInsideFastCube));
++  bindSystemDataToSymbol("setEventForWaterMelon", PORT_SPC_NATIVE(&evSetEventForWaterMelon));
++  bindSystemDataToSymbol("isWaterMelonIsReached", PORT_SPC_NATIVE(&evIsWaterMelonIsReached));
+ 	// clang-format on
+ 	TNpcEvent::initNpcBuiltin(this);
+ }
+--- a/src/NPC/NpcEvent.cpp
++++ b/src/NPC/NpcEvent.cpp
+@@ -403,25 +403,25 @@
+ void TNpcEvent::initNpcBuiltin(TSpcTypedBinary<TEventWatcher>* param_1)
+ {
+ 	// clang-format off
+-  param_1->bindSystemDataToSymbol("getAddressFromViewObjName", (u32)&evGetAddressFromViewObjName);
+-  param_1->bindSystemDataToSymbol("checkCurNerve4Npc", (u32)&evCheckCurNerve4Npc);
+-  param_1->bindSystemDataToSymbol("checkLatestNerve4Npc", (u32)&evCheckLatestNerve4Npc);
+-  param_1->bindSystemDataToSymbol("isNpcSinkBottom", (u32)&evIsNpcSinkBottom);
+-  param_1->bindSystemDataToSymbol("isGameModeNormal", (u32)&evIsGameModeNormal);
+-  param_1->bindSystemDataToSymbol("__forceStartTalk", (u32)&ev__ForceStartTalk);
+-  param_1->bindSystemDataToSymbol("__forceStartTalkExceptNpc", (u32)&ev__ForceStartTalkExceptNpc);
+-  param_1->bindSystemDataToSymbol("connectDummyNpc", (u32)&evConnectDummyNpc);
+-  param_1->bindSystemDataToSymbol("onTalkToDummyNpc", (u32)&evOnTalkToDummyNpc);
+-  param_1->bindSystemDataToSymbol("setNpcBalloonMessage", (u32)&evSetNpcBalloonMessage);
+-  param_1->bindSystemDataToSymbol("setNpcTalkForbidCount", (u32)&evSetNpcTalkForbidCount);
+-  param_1->bindSystemDataToSymbol("npcDanceOn", (u32)&evNpcDanceOn);
+-  param_1->bindSystemDataToSymbol("npcDanceOffHappyOn", (u32)&evNpcDanceOffHappyOn);
+-  param_1->bindSystemDataToSymbol("resetFruitNum", (u32)&evResetFruitNum);
+-  param_1->bindSystemDataToSymbol("getFruitNum", (u32)&evGetFruitNum);
+-  param_1->bindSystemDataToSymbol("setFruitType", (u32)&evSetFruitType);
+-  param_1->bindSystemDataToSymbol("fireStartDemoCamera", (u32)&evFireStartDemoCamera);
+-  param_1->bindSystemDataToSymbol("isDemoMode", (u32)&evIsDemoMode);
+-  param_1->bindSystemDataToSymbol("checkMonteClear", (u32)&evCheckMonteClear);
++  param_1->bindSystemDataToSymbol("getAddressFromViewObjName", PORT_SPC_NATIVE(&evGetAddressFromViewObjName));
++  param_1->bindSystemDataToSymbol("checkCurNerve4Npc", PORT_SPC_NATIVE(&evCheckCurNerve4Npc));
++  param_1->bindSystemDataToSymbol("checkLatestNerve4Npc", PORT_SPC_NATIVE(&evCheckLatestNerve4Npc));
++  param_1->bindSystemDataToSymbol("isNpcSinkBottom", PORT_SPC_NATIVE(&evIsNpcSinkBottom));
++  param_1->bindSystemDataToSymbol("isGameModeNormal", PORT_SPC_NATIVE(&evIsGameModeNormal));
++  param_1->bindSystemDataToSymbol("__forceStartTalk", PORT_SPC_NATIVE(&ev__ForceStartTalk));
++  param_1->bindSystemDataToSymbol("__forceStartTalkExceptNpc", PORT_SPC_NATIVE(&ev__ForceStartTalkExceptNpc));
++  param_1->bindSystemDataToSymbol("connectDummyNpc", PORT_SPC_NATIVE(&evConnectDummyNpc));
++  param_1->bindSystemDataToSymbol("onTalkToDummyNpc", PORT_SPC_NATIVE(&evOnTalkToDummyNpc));
++  param_1->bindSystemDataToSymbol("setNpcBalloonMessage", PORT_SPC_NATIVE(&evSetNpcBalloonMessage));
++  param_1->bindSystemDataToSymbol("setNpcTalkForbidCount", PORT_SPC_NATIVE(&evSetNpcTalkForbidCount));
++  param_1->bindSystemDataToSymbol("npcDanceOn", PORT_SPC_NATIVE(&evNpcDanceOn));
++  param_1->bindSystemDataToSymbol("npcDanceOffHappyOn", PORT_SPC_NATIVE(&evNpcDanceOffHappyOn));
++  param_1->bindSystemDataToSymbol("resetFruitNum", PORT_SPC_NATIVE(&evResetFruitNum));
++  param_1->bindSystemDataToSymbol("getFruitNum", PORT_SPC_NATIVE(&evGetFruitNum));
++  param_1->bindSystemDataToSymbol("setFruitType", PORT_SPC_NATIVE(&evSetFruitType));
++  param_1->bindSystemDataToSymbol("fireStartDemoCamera", PORT_SPC_NATIVE(&evFireStartDemoCamera));
++  param_1->bindSystemDataToSymbol("isDemoMode", PORT_SPC_NATIVE(&evIsDemoMode));
++  param_1->bindSystemDataToSymbol("checkMonteClear", PORT_SPC_NATIVE(&evCheckMonteClear));
+ 	// clang-format on
+ }
+ 

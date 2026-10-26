@@ -30,6 +30,10 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O2 -g" CACHE STRING "" FORCE)
 # resource structs). Build -m32 when the host has multilib; otherwise fall back
 # to -m64 so compile work can proceed.
 set(SMS_ARCH "auto" CACHE STRING "auto, 32 or 64")
+if(ANDROID)
+  set(SMS_ARCH "64")
+  set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
 if(SMS_ARCH STREQUAL "auto")
   include(CheckCXXSourceCompiles)
   set(CMAKE_REQUIRED_FLAGS "-m32")
@@ -44,8 +48,10 @@ if(SMS_ARCH STREQUAL "auto")
     message(WARNING "-m32 does not link here (install gcc-multilib g++-multilib); building -m64")
   endif()
 endif()
-add_compile_options(-m${SMS_ARCH})
-add_link_options(-m${SMS_ARCH})
+if(NOT ANDROID)
+  add_compile_options(-m${SMS_ARCH})
+  add_link_options(-m${SMS_ARCH})
+endif()
 message(STATUS "SMS port: building -m${SMS_ARCH}")
 
 # --- Decomp translation units -----------------------------------------------
@@ -116,7 +122,7 @@ check_cxx_compiler_flag("-fno-unreachable-traps" SMS_HAVE_NO_UNREACHABLE_TRAPS)
 if(SMS_HAVE_NO_UNREACHABLE_TRAPS)
   list(APPEND SMS_GAME_FLAGS -fno-unreachable-traps)
 endif()
-if(SMS_ARCH STREQUAL "64")
+if(SMS_ARCH STREQUAL "64" AND NOT ANDROID)
   list(APPEND SMS_GAME_FLAGS -fno-pie)
 endif()
 # Clang rejects the game's pointer-to-int truncations ((int)ptr, (u32)ptr) as
@@ -235,6 +241,12 @@ if(SMS_WITH_GX AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/CMakeLists.txt
 endif()
 
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
+if(ANDROID)
+  # net_game uses the public GX interface even in an archive-only build.
+  target_include_directories(sms_game PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/mobile
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/include)
+endif()
 target_sources(sms_game PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/platform/frontend/game_progress.cpp)
 if(SMS_ARCHIPELAGO)
   add_compile_definitions(SMS_ARCHIPELAGO=1)
@@ -259,6 +271,12 @@ endif()
 if(TARGET sms_gx AND SMS_GX_OVERRIDE_INCLUDE_DIR)
   # GXVert.h vertex writers become functions implemented by sms_gx.
   target_include_directories(sms_game BEFORE PRIVATE ${SMS_GX_OVERRIDE_INCLUDE_DIR})
+elseif(ANDROID)
+  # Compile archive-only Android game code against the same native GX entry
+  # points it will use when the renderer is linked in a later build stage.
+  target_include_directories(sms_game BEFORE PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/port_include
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform/gx/include)
 endif()
 target_compile_definitions(sms_game PRIVATE ${SMS_COMMON_DEFS})
 target_compile_options(sms_game PRIVATE ${SMS_GAME_FLAGS})
@@ -291,6 +309,9 @@ if(APPLE)
   if(NOT SMS_OBJCOPY)
     message(FATAL_ERROR "llvm-objcopy required on macOS (brew install llvm)")
   endif()
+elseif(ANDROID)
+  set(_object_prefix "")
+  set(SMS_OBJCOPY "${CMAKE_OBJCOPY}")
 elseif(WIN32)
   # COFF adds a leading underscore to each 32-bit C++ symbol.
   if(SMS_ARCH STREQUAL "32")
@@ -334,8 +355,18 @@ if(WIN32 OR APPLE)
   list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/trace/trace\\.cpp$")
 endif()
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/retroachievements.*\\.cpp$")
-add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
-set_source_files_properties(platform/frontend/gamebanana.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
+option(SMS_ANDROID_APP "Build the game as an SDLActivity native library" OFF)
+if(ANDROID AND SMS_ANDROID_APP)
+  add_library(sms SHARED ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
+  target_compile_definitions(sms PRIVATE SMS_ANDROID_APP=1)
+  target_include_directories(sms PRIVATE "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-src/include")
+  target_link_libraries(sms PRIVATE "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-build/libSDL3.so" log)
+  target_link_options(sms PRIVATE "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/tools/mobile/game-exports.map")
+  set_property(TARGET sms APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mobile/game-exports.map")
+else()
+  add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
+endif()
+set_source_files_properties(platform/frontend/gamebanana.cpp platform/frontend/pc_services.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
 include(cmake/retroachievements.cmake)
 target_link_libraries(sms PRIVATE sms_retroachievements)
 if(WIN32)
@@ -423,7 +454,7 @@ elseif(APPLE)
 else()
   target_link_options(sms PRIVATE -Wl,--defsym=lbl_80004600=0x80004600)
 endif()
-if(SMS_ARCH STREQUAL "64")
+if(SMS_ARCH STREQUAL "64" AND NOT ANDROID)
   target_compile_options(sms PRIVATE -fno-pie)
   if(NOT APPLE AND NOT WIN32)
     target_link_options(sms PRIVATE -no-pie)
@@ -472,15 +503,53 @@ else()
   endif()
 endif()
 
-if(SMS_GX_BACKEND STREQUAL "aurora")
+if(WIN32 AND SMS_GX_BACKEND STREQUAL "aurora")
   add_custom_command(TARGET sms POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
     ${SMS_AURORA_RUNTIME_DLLS} "$<TARGET_FILE_DIR:sms>")
 endif()
+if(ANDROID AND SMS_GX_BACKEND STREQUAL "aurora")
+  option(SMS_ANDROID_OPTIMIZE_CPU "Optimize native ARM64 game and GX CPU hot paths" ON)
+  if(SMS_ANDROID_OPTIMIZE_CPU)
+    # Keep the original floating-point rules (-ffp-contract=off, no fast-math).
+    # O3 enables additional inlining and loop optimization without changing
+    # resolution, simulation cadence, precision or scene contents.
+    foreach(_sms_cpu_target sms_game sms sms_gx)
+      target_compile_options(${_sms_cpu_target} PRIVATE -O3)
+    endforeach()
+  endif()
+  target_compile_definitions(sms PRIVATE SMS_ANDROID_AURORA=1)
+  set_source_files_properties(platform/frontend/pc_services.cpp PROPERTIES
+    COMPILE_DEFINITIONS SMS_FRONTEND_AURORA=1)
+  add_executable(sms_gx_static_integration_test EXCLUDE_FROM_ALL
+    tools/mobile/gx_static_integration_test.cpp platform/mobile/gx_static_memory.cpp)
+  target_include_directories(sms_gx_static_integration_test PRIVATE
+    ${SMS_PORT_SRC}/port_include platform/gx/port_include platform/gx/include
+    platform/gx/src platform/mobile ${SMS_DECOMP_INCLUDE_DIRS})
+  target_compile_definitions(sms_gx_static_integration_test PRIVATE ${SMS_COMMON_DEFS})
+  target_compile_features(sms_gx_static_integration_test PRIVATE cxx_std_17)
+  target_link_libraries(sms_gx_static_integration_test PRIVATE sms_gx)
+  add_library(sms_mobile_surface_probe SHARED EXCLUDE_FROM_ALL
+    tools/mobile/surface_probe.cpp tools/mobile/gx_static_integration_test.cpp
+    platform/mobile/gx_static_memory.cpp)
+  target_include_directories(sms_mobile_surface_probe PRIVATE
+    ${SMS_PORT_SRC}/port_include platform/gx/port_include platform/gx/include
+    platform/gx/src platform/mobile aurora-bridge ${SMS_DECOMP_INCLUDE_DIRS}
+    "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-src/include")
+  target_compile_definitions(sms_mobile_surface_probe PRIVATE
+    ${SMS_COMMON_DEFS} SMS_GX_INTEGRATION_NO_MAIN=1)
+  target_compile_features(sms_mobile_surface_probe PRIVATE cxx_std_17)
+  target_link_libraries(sms_mobile_surface_probe PRIVATE sms_gx
+    "${SMS_AURORA_BRIDGE_BUILD}/_deps/sdl-build/libSDL3.so" log)
+  target_link_options(sms_mobile_surface_probe PRIVATE
+    "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/tools/mobile/surface-exports.map")
+  set_property(TARGET sms_mobile_surface_probe APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/tools/mobile/surface-exports.map")
+endif()
 option(SMS_PARTYBOARD_UI "Use the PartyBoard RmlUi menu for the native game" ON)
-if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND NOT TARGET SDL2::SDL2)
+if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND NOT ANDROID AND NOT TARGET SDL2::SDL2)
   find_package(SDL2 QUIET CONFIG)
 endif()
-if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND TARGET SDL2::SDL2)
+if(SMS_PARTYBOARD_UI AND TARGET sms_gx AND (ANDROID OR TARGET SDL2::SDL2))
   include(cmake/partyboard_ui.cmake)
   target_sources(sms_partyboard_backend PRIVATE platform/frontend/partyboard_menu.cpp)
   if(SMS_GX_BACKEND STREQUAL "aurora")

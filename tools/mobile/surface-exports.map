@@ -1,0 +1,4 @@
+{
+    global: SDL_main;
+    local: *;
+};

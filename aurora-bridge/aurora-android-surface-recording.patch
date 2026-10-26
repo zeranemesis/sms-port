@@ -1,0 +1,398 @@
+diff --git a/lib/aurora.cpp b/lib/aurora.cpp
+index 8308988..207cd17 100644
+--- a/lib/aurora.cpp
++++ b/lib/aurora.cpp
+@@ -208,30 +208,77 @@ const AuroraEvent* update() noexcept {
+   return window::poll_events();
+ }
+ 
++#if defined(SDL_PLATFORM_ANDROID)
++// Surface mutations remain serialized; ordinary CPU recording only needs the
++// atomic lifecycle gate. The worker requests maintenance instead of changing
++// framebuffer configuration while the recording thread builds its next frame.
++static std::atomic_bool g_androidSurfaceRefresh{false};
++#endif
++
+ bool begin_frame() noexcept {
+   ZoneScoped;
+ #ifdef AURORA_ENABLE_GX
++  static FILE* profile = [] {
++    const char* path = std::getenv("SMS_AURORA_BEGIN_PROFILE");
++    FILE* file = path && *path ? std::fopen(path,"w") : nullptr;
++    if (file) std::setvbuf(file,nullptr,_IOFBF,16384);
++    return file;
++  }();
++  using Clock = std::chrono::steady_clock;
++  const auto stamp = [&] { return profile ? Clock::now() : Clock::time_point{}; };
++  const auto started = stamp();
++  auto locked = started, checked = started;
++#if defined(SDL_PLATFORM_ANDROID)
++  static const bool surfaceReference = std::getenv("SMS_ANDROID_SURFACE_LOCK_REFERENCE") != nullptr;
++  static uint64_t surfaceGeneration = 0;
++  const uint64_t observedGeneration = window::surface_generation();
++  if (!window::is_presentable() || window::is_paused()) {
++    g_androidSurfaceRefresh.store(true,std::memory_order_release);
++    return false;
++  }
++  const bool refresh = g_androidSurfaceRefresh.exchange(false,std::memory_order_acq_rel);
++  if (refresh || observedGeneration != surfaceGeneration) {
++    // refresh_surface marshals maintenance to the rendering thread. The CPU
++    // never waits for queued work while holding Android's Activity mutex.
++    if (!webgpu::refresh_surface(false)) {
++      g_androidSurfaceRefresh.store(true,std::memory_order_release);
++      return false;
++    }
++    surfaceGeneration = observedGeneration;
++  }
++  if (surfaceReference) {
++    window::SurfaceLock lock;
++    locked = stamp();
++  }
++#else
+   {
+     window::SurfaceLock surfaceLock;
++    locked = stamp();
+     if (!window::is_presentable()) {
+       webgpu::release_surface();
+       return false;
+     }
+-    if (window::is_paused()) {
+-      return false;
+-    }
++    if (window::is_paused()) return false;
+     if (!g_surface) {
+       webgpu::refresh_surface(true);
+-      if (!g_surface) {
+-        return false;
+-      }
++      if (!g_surface) return false;
+     }
+   }
++#endif
+ 
++  checked = stamp();
+   imgui::new_frame(window::get_window_size());
++  const auto imguiDone = stamp();
+   if (!gfx::begin_frame()) {
+     return false;
+   }
++  if (profile) {
++    const auto ended = stamp();
++    const auto ms = [](auto a, auto b) { return std::chrono::duration<double,std::milli>(b-a).count(); };
++    std::fprintf(profile,"at_ms %.3f surface_lock %.3f surface_check %.3f imgui %.3f gfx %.3f total %.3f\n",
++        ms(Clock::time_point{},started),ms(started,locked),ms(locked,checked),ms(checked,imguiDone),
++        ms(imguiDone,ended),ms(started,ended));
++  }
+ #endif
+   return true;
+ }
+@@ -266,7 +313,14 @@ void end_frame(bool present) noexcept {
+     wgpu::Texture currentTexture;
+     wgpu::TextureView currentView;
+     auto surfaceStatus = wgpu::SurfaceGetCurrentTextureStatus::Error;
+-    if (present && window::is_presentable() && g_surface) {
++#if defined(SDL_PLATFORM_ANDROID)
++    const bool surfaceCurrent = webgpu::surface_is_current();
++    if (present && window::is_presentable() && !surfaceCurrent)
++      g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#else
++    constexpr bool surfaceCurrent = true;
++#endif
++    if (present && window::is_presentable() && g_surface && surfaceCurrent) {
+       ZoneScopedN("Acquire texture");
+       wgpu::SurfaceTexture surfaceTexture;
+       g_surface.GetCurrentTexture(&surfaceTexture);
+@@ -356,6 +410,9 @@ void end_frame(bool present) noexcept {
+       if (presentStatus != wgpu::Status::Success) {
+         Log.warn("Surface present failed: {}", static_cast<int>(presentStatus));
+         webgpu::release_surface();
++#if defined(SDL_PLATFORM_ANDROID)
++        g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#endif
+       }
+       };
+       if (presentAfterUs != 0) {
+@@ -370,6 +427,13 @@ void end_frame(bool present) noexcept {
+       } else {
+         doPresent();
+       }
++#if defined(SDL_PLATFORM_ANDROID)
++    } else if (present && !g_surface && window::is_presentable()) {
++      g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#endif
++    } else if (present && g_surface && !surfaceCurrent) {
++      // Android replaced or invalidated the window after this frame began.
++      // Let the recording thread refresh it; never query the stale Surface.
+     } else if (present && g_surface) {
+       switch (surfaceStatus) {
+       case wgpu::SurfaceGetCurrentTextureStatus::Timeout:
+@@ -378,15 +442,25 @@ void end_frame(bool present) noexcept {
+       case wgpu::SurfaceGetCurrentTextureStatus::SuccessSuboptimal:
+       case wgpu::SurfaceGetCurrentTextureStatus::Outdated:
+         Log.info("Surface texture is {}, reconfiguring swapchain", magic_enum::enum_name(surfaceStatus));
++#if defined(SDL_PLATFORM_ANDROID)
++        g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#else
+         webgpu::refresh_surface(false);
++#endif
+         break;
+       case wgpu::SurfaceGetCurrentTextureStatus::Lost:
+         Log.warn("Surface texture is {}, releasing surface", magic_enum::enum_name(surfaceStatus));
+         webgpu::release_surface();
++#if defined(SDL_PLATFORM_ANDROID)
++        g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#endif
+         break;
+       case wgpu::SurfaceGetCurrentTextureStatus::Error:
+         Log.warn("Surface texture is {}, dropping surface", magic_enum::enum_name(surfaceStatus));
+         g_surface = {};
++#if defined(SDL_PLATFORM_ANDROID)
++        g_androidSurfaceRefresh.store(true,std::memory_order_release);
++#endif
+         break;
+       default:
+         if (!window::is_presentable()) {
+diff --git a/lib/gfx/render_worker.cpp b/lib/gfx/render_worker.cpp
+index bcef2dd..da58798 100644
+--- a/lib/gfx/render_worker.cpp
++++ b/lib/gfx/render_worker.cpp
+@@ -335,6 +335,8 @@ void synchronize() {
+   sync->cv.wait(lock, [&] { return sync->complete; });
+ }
+ 
++bool is_running() noexcept { return g_running.load(std::memory_order_acquire); }
++
+ bool is_worker_thread() noexcept { return g_workerThreadId == std::this_thread::get_id(); }
+ 
+ bool is_idle() noexcept {
+diff --git a/lib/gfx/render_worker.hpp b/lib/gfx/render_worker.hpp
+index 082ad91..c907395 100644
+--- a/lib/gfx/render_worker.hpp
++++ b/lib/gfx/render_worker.hpp
+@@ -83,6 +83,7 @@ void enqueue_end_frame(uint64_t frameId, WorkCallback work);
+ void enqueue_work(WorkCallback work);
+ void synchronize();
+ 
++bool is_running() noexcept;
+ bool is_worker_thread() noexcept;
+ bool is_idle() noexcept;
+ 
+diff --git a/lib/webgpu/gpu.cpp b/lib/webgpu/gpu.cpp
+index e747548..a4a1e4d 100644
+--- a/lib/webgpu/gpu.cpp
++++ b/lib/webgpu/gpu.cpp
+@@ -36,6 +36,10 @@ static Module Log("aurora::gpu");
+ wgpu::Device g_device;
+ wgpu::Queue g_queue;
+ wgpu::Surface g_surface;
++#if defined(SDL_PLATFORM_ANDROID)
++static void* g_surfaceNativeWindow = nullptr;
++static uint64_t g_configuredSurfaceGeneration = 0;
++#endif
+ wgpu::BackendType g_backendType;
+ GraphicsConfig g_graphicsConfig;
+ TextureWithSampler g_frameBuffer;
+@@ -710,6 +714,25 @@ static wgpu::BackendType to_wgpu_backend(AuroraBackend backend) {
+   }
+ }
+ 
++bool surface_matches_window() noexcept {
++#if defined(SDL_PLATFORM_ANDROID)
++  auto* window = window::get_sdl_window();
++  const auto current = window ? SDL_GetPointerProperty(SDL_GetWindowProperties(window),
++      SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER,nullptr) : nullptr;
++  return g_surface && current && current == g_surfaceNativeWindow;
++#else
++  return bool(g_surface);
++#endif
++}
++
++bool surface_is_current() noexcept {
++#if defined(SDL_PLATFORM_ANDROID)
++  return surface_matches_window() && g_configuredSurfaceGeneration == window::surface_generation();
++#else
++  return bool(g_surface);
++#endif
++}
++
+ static bool create_surface() {
+   SDL_Window* window = window::get_sdl_window();
+   if (window == nullptr) {
+@@ -731,6 +754,10 @@ static bool create_surface() {
+     Log.error("Failed to create surface");
+     return false;
+   }
++#if defined(SDL_PLATFORM_ANDROID)
++  g_surfaceNativeWindow = SDL_GetPointerProperty(SDL_GetWindowProperties(window),
++      SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER,nullptr);
++#endif
+   return true;
+ }
+ 
+@@ -1038,14 +1065,39 @@ void shutdown() {
+ }
+ 
+ void release_surface() noexcept {
++#if defined(SDL_PLATFORM_ANDROID)
++  if (gfx::render_worker::is_running() && !gfx::render_worker::is_worker_thread()) {
++    gfx::render_worker::enqueue_work([] {
++      window::SurfaceLock lock;
++      release_surface();
++    });
++    gfx::render_worker::synchronize();
++    return;
++  }
++#endif
+   gfx::gpu_synchronize();
+   if (g_surface) {
+     g_surface.Unconfigure();
+   }
+   g_surface = {};
++#if defined(SDL_PLATFORM_ANDROID)
++  g_surfaceNativeWindow = nullptr;
++#endif
+ }
+ 
+ bool refresh_surface(bool recreate) {
++#if defined(SDL_PLATFORM_ANDROID)
++  if (gfx::render_worker::is_running() && !gfx::render_worker::is_worker_thread()) {
++    bool result = false;
++    gfx::render_worker::enqueue_work([&result,recreate] {
++      window::SurfaceLock lock;
++      result = refresh_surface(recreate);
++    });
++    gfx::render_worker::synchronize();
++    return result;
++  }
++  recreate = recreate || !surface_matches_window();
++#endif
+   gfx::gpu_synchronize();
+   if (!g_instance || !g_device) {
+     return false;
+@@ -1075,6 +1127,17 @@ bool refresh_surface(bool recreate) {
+ }
+ 
+ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height, bool force) {
++#if defined(SDL_PLATFORM_ANDROID)
++  if (gfx::render_worker::is_running() && !gfx::render_worker::is_worker_thread()) {
++    gfx::render_worker::enqueue_work([=] {
++      window::SurfaceLock lock;
++      resize_swapchain(width,height,native_width,native_height,force);
++    });
++    gfx::render_worker::synchronize();
++    return;
++  }
++  if (!window::is_presentable()) return;
++#endif
+   gfx::gpu_synchronize();
+   if (!g_surface || !g_device || width == 0 || height == 0 || native_height == 0 || native_width == 0) {
+     return;
+@@ -1094,6 +1157,9 @@ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, ui
+   auto surfaceConfiguration = g_graphicsConfig.surfaceConfiguration;
+   surfaceConfiguration.device = g_device;
+   g_surface.Configure(&surfaceConfiguration);
++#if defined(SDL_PLATFORM_ANDROID)
++  g_configuredSurfaceGeneration = window::surface_generation();
++#endif
+   g_frameBuffer = create_render_texture(width, height, true);
+   g_frameBufferResolved = create_render_texture(width, height, false);
+   g_depthBuffer = create_depth_texture(width, height);
+diff --git a/lib/webgpu/gpu.hpp b/lib/webgpu/gpu.hpp
+index 1a873cb..d0042d9 100644
+--- a/lib/webgpu/gpu.hpp
++++ b/lib/webgpu/gpu.hpp
+@@ -57,6 +57,8 @@ extern bool g_textureComponentSwizzleSupported;
+ bool initialize(AuroraBackend backend, bool allowCpu);
+ void shutdown();
+ void release_surface() noexcept;
++bool surface_matches_window() noexcept;
++bool surface_is_current() noexcept;
+ bool refresh_surface(bool recreate = true);
+ void resize_swapchain(uint32_t width, uint32_t height, uint32_t native_width, uint32_t native_height,
+                       bool force = false);
+diff --git a/lib/window.cpp b/lib/window.cpp
+index 16c9115..5700fcf 100644
+--- a/lib/window.cpp
++++ b/lib/window.cpp
+@@ -3,6 +3,7 @@
+ #ifdef AURORA_ENABLE_GX
+ #include "imgui.hpp"
+ #include "webgpu/gpu.hpp"
++#include "gfx/common.hpp"
+ #endif
+ #include "input.hpp"
+ #include "internal.hpp"
+@@ -82,8 +83,12 @@ Vec2<int> fit_frame_buffer_to_aspect(int width, int height, float aspect) {
+ }
+ 
+ void resize_swapchain() noexcept {
+-#if defined(SDL_PLATFORM_ANDROID)
+-  SurfaceLock surfaceLock;
++#if defined(SDL_PLATFORM_ANDROID) && defined(AURORA_ENABLE_GX)
++  if (!is_presentable()) return;
++  // Surface ownership stays on the render worker, including SDL resize events.
++  webgpu::refresh_surface(false);
++  g_windowSize = get_window_size();
++  return;
+ #endif
+   const auto size = get_window_size();
+   if (size == g_windowSize) {
+@@ -122,10 +127,17 @@ bool SDLCALL lifecycle_event_watch(void*, SDL_Event* event) {
+   switch (event->type) {
+ #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_APPLE)
+   case SDL_EVENT_WINDOW_MINIMIZED:
+-    g_backgrounded.store(true, std::memory_order_relaxed);
++#if defined(SDL_PLATFORM_ANDROID)
++  case SDL_EVENT_WILL_ENTER_BACKGROUND:
++  case SDL_EVENT_DID_ENTER_BACKGROUND:
++#endif
++    g_backgrounded.store(true, std::memory_order_release);
+     break;
+   case SDL_EVENT_WINDOW_RESTORED:
+-    g_backgrounded.store(false, std::memory_order_relaxed);
++#if defined(SDL_PLATFORM_ANDROID)
++  case SDL_EVENT_DID_ENTER_FOREGROUND:
++#endif
++    g_backgrounded.store(false, std::memory_order_release);
+     break;
+ #endif
+   default:
+@@ -212,8 +224,12 @@ void process_event(SDL_Event& event) {
+     } else if (event.type == g_sdlCustomEventsStart + CustomEvent::RefreshSurface) {
+       // Refresh surface (vsync changed)
+ #ifdef AURORA_ENABLE_GX
++#if defined(SDL_PLATFORM_ANDROID)
++      if (is_presentable()) webgpu::refresh_surface(false);
++#else
+       SurfaceLock surfaceLock;
+       webgpu::refresh_surface(false);
++#endif
+ #endif
+     }
+     break;
+@@ -472,7 +488,12 @@ bool is_presentable() noexcept {
+          g_surfaceReady.load(std::memory_order_acquire);
+ }
+ 
+-void set_surface_ready(bool ready) noexcept { g_surfaceReady.store(ready, std::memory_order_release); }
++static std::atomic<uint64_t> g_surfaceGeneration{0};
++uint64_t surface_generation() noexcept { return g_surfaceGeneration.load(std::memory_order_acquire); }
++void set_surface_ready(bool ready) noexcept {
++  const bool wasReady = g_surfaceReady.exchange(ready,std::memory_order_acq_rel);
++  if (!ready && wasReady) g_surfaceGeneration.fetch_add(1,std::memory_order_release);
++}
+ 
+ SurfaceLock::SurfaceLock() noexcept {
+ #if defined(SDL_PLATFORM_ANDROID)
+diff --git a/lib/window.hpp b/lib/window.hpp
+index 5361995..fc98f6c 100644
+--- a/lib/window.hpp
++++ b/lib/window.hpp
+@@ -41,6 +41,7 @@ SDL_Renderer* get_sdl_renderer();
+ bool is_paused() noexcept;
+ bool is_presentable() noexcept;
+ void set_surface_ready(bool ready) noexcept;
++uint64_t surface_generation() noexcept;
+ void set_title(const char* title);
+ void set_fullscreen(bool fullscreen);
+ bool get_fullscreen();

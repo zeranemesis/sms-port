@@ -1,0 +1,13 @@
+Reason: native GX decodes FIFO commands immediately and GXEnableBreakPt/GXDisableBreakPt are no-ops. Use the existing manager flag that skips FIFO breakpoint bookkeeping; retain all token callbacks and GPU readbacks. Android only.
+--- a/src/System/DrawSyncManager.cpp
++++ b/src/System/DrawSyncManager.cpp
+@@ -125,1 +125,9 @@
++#if defined(__ANDROID__)
++	// Native GX owns its command buffers; there is no hardware FIFO to stop.
++	// Bit 2 suppresses only breakpoint messages. Pixel-metric token callbacks
++	// above remain synchronous and keep their original ordering.
++	mFlags = getenv("SMS_NATIVE_FIFO_REFERENCE") ? 0 : 2;
++#else
+ 	mFlags = 0;
++#endif
++

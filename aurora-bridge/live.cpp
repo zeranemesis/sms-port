@@ -135,7 +135,12 @@ void sab_apply_window_settings(const char* vsync,const char* mode,const char* fu
 void sab_apply_graphics_settings(int scale,int msaa,int fxaa,int aniso,float gamma,const char* aspect,const char* filter,float wide) {
     sab_gx_sync();
     // WebGPU exposes one or four samples for these render attachments.
-    GraphicsSettings next{true,std::clamp(scale,1,8),msaa>1?4:1,fxaa!=0,std::clamp(aniso,1,16),
+#ifdef __ANDROID__
+    constexpr int minimumScale = 0; // Native surface resolution on mobile.
+#else
+    constexpr int minimumScale = 1;
+#endif
+    GraphicsSettings next{true,std::clamp(scale,minimumScale,8),msaa>1?4:1,fxaa!=0,std::clamp(aniso,1,16),
                       std::clamp(gamma,0.5f,2.f),wide,aspect?aspect:"keep",filter?filter:"bilinear"};
     if(next.scale==graphicsSettings.scale&&next.msaa==graphicsSettings.msaa&&next.fxaa==graphicsSettings.fxaa&&
        next.anisotropy==graphicsSettings.anisotropy&&next.gamma==graphicsSettings.gamma&&next.widescreen==graphicsSettings.widescreen&&

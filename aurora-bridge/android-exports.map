@@ -1,0 +1,4 @@
+{
+  global: sab_*; Java_org_smsunified_mobile_AuroraActivity_nativeSurfaceReady;
+  local: *;
+};

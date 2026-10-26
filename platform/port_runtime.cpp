@@ -16,6 +16,9 @@
 #include <execinfo.h>
 #include "port_host.h"
 #include "disc/gcdisc.h"
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
@@ -86,6 +89,12 @@ extern "C" void port_log(const char* fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
+#ifdef __ANDROID__
+	va_list copy;
+	va_copy(copy, ap);
+	__android_log_vprint(ANDROID_LOG_INFO, "SunshineGame", fmt, copy);
+	va_end(copy);
+#endif
 	std::vfprintf(stderr, fmt, ap);
 	va_end(ap);
 	std::fflush(stderr);
@@ -247,12 +256,17 @@ static void map_mem1()
 #else
 	void* p = map_exact(want, port_mem1_size);
 	if (p != want) {
+#ifdef __ANDROID__
+		port_log("[port] cannot reserve exact MEM1 at 0x80000000; refusing incompatible addresses\n");
+		exit(1);
+#else
 		port_log("[port] cannot map MEM1 at 0x80000000; falling back to a heap block\n");
 		p = mmap(NULL, port_mem1_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 		if (p == MAP_FAILED) {
 			port_log("[port] out of memory for MEM1\n");
 			exit(1);
 		}
+#endif
 	}
 #endif
 	port_mem1_base = (u8*)p;
@@ -712,7 +726,9 @@ extern "C" float sms_frontend_apply_game_settings(const char* widescreen, int fr
 extern "C" void sms_frontend_activate_save_restore();
 extern "C" void port_init(int argc, char** argv)
 {
+#ifndef __ANDROID__
 	run_launcher(argc, argv);
+#endif
 	load_settings();
 	// The PAL DolphinJet frontend is local-only.
 	port_setenv("SMS_NET_MODE", "off", 1);
@@ -761,7 +777,7 @@ extern "C" void port_init(int argc, char** argv)
 #ifdef _WIN32
 	for (int sig : {SIGSEGV, SIGFPE, SIGILL, SIGABRT})
 		signal(sig, crash_handler);
-#else
+#elif !defined(__ANDROID__)
 	struct sigaction sa;
 	memset(&sa, 0, sizeof sa);
 	sa.sa_sigaction = crash_handler;

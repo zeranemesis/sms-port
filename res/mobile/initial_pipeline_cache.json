@@ -1,0 +1,23 @@
+{
+  "source": "Android ARM64 Aurora runtime pipeline descriptions; no game assets or driver binaries",
+  "coverage": "Observed boot, PartyBoard menus and Bianco Hills 2,0 only; other scenes compile when first seen",
+  "schema": 1,
+  "groups": [
+    [
+      0,
+      2,
+      2
+    ],
+    [
+      1,
+      13,
+      404
+    ],
+    [
+      2,
+      1,
+      11
+    ]
+  ],
+  "sha256": "633025337c57dcc1136e1a040b700345a953402b962e985857418ac62472fe43"
+}

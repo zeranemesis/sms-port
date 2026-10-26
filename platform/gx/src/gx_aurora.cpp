@@ -20,13 +20,19 @@
 
 #include <dolphin/gx.h>
 
+#ifdef _WIN32
 #include <direct.h>
+#else
+#include <sys/stat.h>
+static int _mkdir(const char* path) { return mkdir(path, 0777); }
+#endif
 #include <string>
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <map>
 #include <memory>
@@ -44,6 +50,9 @@ extern "C" uint32_t VIGetRetraceCount(void);
 extern "C" int port_fps60_active __attribute__((weak));  // the game's (frame rate patches)
 extern "C" int port_frame_rate __attribute__((weak));            // port_runtime.cpp
 extern "C" int port_frame_rate_auto_capped __attribute__((weak));
+#ifdef __ANDROID__
+extern "C" float port_widescreen;
+#endif
 extern "C" void sms_frontend_sync_game_rate(void) __attribute__((weak));
 extern "C" double port_vi_take_late_max(void) __attribute__((weak));  // vi.cpp
 extern "C" void port_os_profile_frame(unsigned) __attribute__((weak));
@@ -77,6 +86,27 @@ std::vector<std::string> texturePackPaths() {
             else current+=c;
         }
     } else paths={"mods/textures","../../mods/textures"};
+    // CubeShelf's active mods (SMS_CUBESHELF_MOD_LIST, read as platform/dvd
+    // reads it): Dolphin texture packs (tex1_*.png/dds, in any sub-folder)
+    // are found under each mod's folder, whatever else the mod holds.
+    if(const char* list=getenv("SMS_CUBESHELF_MOD_LIST"); list&&*list) {
+        std::ifstream input(list,std::ios::binary);
+        std::string base=list;
+        const size_t cut=base.find_last_of("/\\");
+        base=cut==std::string::npos?std::string("."):base.substr(0,cut);
+        std::string line;
+        bool first=true;
+        while(std::getline(input,line)) {
+            if(first&&line.compare(0,3,"\xEF\xBB\xBF")==0)line.erase(0,3);
+            first=false;
+            while(!line.empty()&&(line.back()=='\r'||line.back()==' '||line.back()=='\t'))line.pop_back();
+            const size_t start=line.find_first_not_of(" \t");
+            if(start==std::string::npos||line[start]=='#')continue;
+            line=line.substr(start);
+            const bool absolute=line[0]=='/'||line[0]=='\\'||(line.size()>1&&line[1]==':');
+            paths.push_back(absolute?line:base+"/"+line);
+        }
+    }
     if(const char* selected=getenv("SMS_MOD")) {
         std::string name;
         for(char c:std::string(selected)+";") {
@@ -1630,6 +1660,9 @@ void writeFrameLog(double t0, double t1) {
     lastIdle = idle;
     lastSubmit = s_submitTotalSeconds;
     lastRetrace = retrace;
+    // Bounded diagnostic buffering also makes short stage audits readable.
+    static unsigned logLines = 0;
+    if (++logLines % 120 == 0) std::fflush(s_frameLog);
 }
 
 // VI chooses the visible XFB independently of the buffer GX is writing.
@@ -1866,7 +1899,13 @@ bool envTrue(const char* name) {
 
 int backendFromEnv() {
     const char* e = getenv("SMS_AURORA_BACKEND");
-    if (!e || !*e) return 2;  // Direct3D 12
+    if (!e || !*e) {
+#ifdef __ANDROID__
+        return 4; // Vulkan: do not probe desktop D3D backends on Android.
+#else
+        return 2; // Direct3D 12
+#endif
+    }
     if (!strcmp(e, "auto")) return 0;
     if (!strcmp(e, "d3d11")) return 1;
     if (!strcmp(e, "d3d12")) return 2;
@@ -2230,6 +2269,9 @@ int GXPC_InitAuto(int) {
     SabConfig cfg;
     memset(&cfg, 0, sizeof cfg);
     cfg.title = "Super Mario Sunshine";
+#ifdef __ANDROID__
+    cfg.userPath = getenv("SMS_AURORA_USER_PATH");
+#endif
     cfg.windowWidth = 1280;
     cfg.windowHeight = 960;
     // Widescreen: the window starts at the wide aspect, as the OpenGL port's does.
@@ -2254,6 +2296,36 @@ int GXPC_InitAuto(int) {
     s_efbW = 640;
     s_efbH = 480;
     sab_set_efb_size(s_efbW, s_efbH);
+#ifdef __ANDROID__
+    // Android has no PC settings menu to initialize presentation. Derive the
+    // camera width from the actual SDL surface, then use the existing GX
+    // widescreen/HUD transforms and aspect-preserving presentation together.
+    uint32_t displayWidth = 0, displayHeight = 0;
+    sab_get_window_size(&displayWidth, &displayHeight);
+    const char* requestedWide = getenv("SMS_WIDESCREEN");
+    if ((!requestedWide || !*requestedWide || !strcmp(requestedWide, "auto")) && displayHeight) {
+        s_widescreen = std::clamp(float(displayWidth) / float(displayHeight) / (4.f / 3.f), 1.f, 3.f);
+        port_widescreen = s_widescreen;
+    }
+    const auto integerSetting = [](const char* name, int fallback) {
+        const char* value = getenv(name);
+        return value && *value ? atoi(value) : fallback;
+    };
+    const char* gamma = getenv("SMS_GAMMA");
+    const char* hud = getenv("SMS_WIDESCREEN_HUD");
+    s_hudEdges = hud && !strcmp(hud, "edges");
+    const char* aspect = getenv("SMS_ASPECT");
+    const char* filter = getenv("SMS_PRESENT_FILTER");
+    const char* fxaa = getenv("SMS_FXAA");
+    // Zero preserves Aurora's native surface resolution; aspect correction must
+    // not silently replace it with a lower fixed GameCube resolution.
+    sab_apply_graphics_settings(integerSetting("SMS_GX_SCALE", 0), integerSetting("SMS_MSAA", 1),
+        fxaa && (!strcmp(fxaa, "on") || !strcmp(fxaa, "1")), integerSetting("SMS_ANISO", 1),
+        gamma && *gamma ? float(atof(gamma)) : 1.f,
+        aspect && *aspect ? aspect : "keep", filter && *filter ? filter : "bilinear", s_widescreen);
+    fprintf(stderr, "[android] display %ux%u: camera width %.4f times 4:3, presentation %s\n",
+        displayWidth, displayHeight, s_widescreen, aspect && *aspect ? aspect : "keep");
+#endif
     const char* tp=getenv("SMS_TEXTURE_PACKS");
     s_texturePacks=!tp||(strcmp(tp,"0")&&strcmp(tp,"off"));
     refreshTexturePacks();

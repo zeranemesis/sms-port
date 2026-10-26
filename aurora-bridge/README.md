@@ -204,3 +204,21 @@ remain part of the main repository; rebuild and deploy the DLL and EXE together.
 - Display copies retain a GPU image per XFB address and apply the GX colour/alpha/depth clear masks. VI selects the visible copy or opaque black; unchanged scanout is not requested again at every retrace. Pending game work can be submitted without presenting it. EFB contents survive these boundaries and menu pause. Exact VI filtering/interlacing, XFB CPU readback (`GXPC_ReadXFB`), and longer scene-transition validation remain unfinished. See `artifacts/aurora-vi-20261013/RESULTS.md`.
 - EFB checkpoints resume appending in a fresh mapped staging slot after the already uploaded prefix, preserving shared GPU buffer offsets. Prefixes are aligned to four bytes and checked after worker synchronization; recording does not read or upload the skipped prefix. This removes a measured 19â€“23 ms mapped-memory clone at Delfino without replacing the current EFB read with stale data. See `artifacts/aurora-perf-20261014/RESULTS.md` for the scoped performance observations and limits.
 - Remaining performance changes and comparisons are in `artifacts/aurora-opt-20261014/RESULTS.md`: optional synchronous reports, adaptive EFB tiles with full-reference comparison, preparation caches, precise VI waits, and suppression of redundant matrix/texture state updates. They do not certify constant 60 FPS across the game.
+
+## Android surface recording optimization (2026-10-25)
+
+Apply `aurora-android-surface-recording.patch` on top of the existing Aurora
+integration checkout before rebuilding the Android bridge:
+
+```powershell
+git -C third_party/aurora apply ../../aurora-bridge/aurora-android-surface-recording.patch
+```
+
+The patch keeps the Activity mutex for surface maintenance and presentation,
+but uses the existing atomic lifecycle gate during ordinary CPU recording.
+The render worker requests surface refresh; the recording thread performs it
+between frames after draining queued work, before taking the Activity mutex.
+`SMS_ANDROID_SURFACE_LOCK_REFERENCE=1` restores the per-frame lock for A/B tests.
+The optional begin-frame profile reports lock, surface-check, ImGui and GX times.
+Do not reapply to a checkout that already contains this patch; a reverse
+`git apply --reverse --check` verifies the applied state.

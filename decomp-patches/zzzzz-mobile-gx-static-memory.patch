@@ -1,0 +1,135 @@
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -1,3 +1,7 @@
++#if defined(TARGET_PC) && defined(__ANDROID__)
++#include "gx_static_memory.h"
++#include <stdlib.h>
++#endif
+ #include <System/Application.hpp>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -333,6 +337,25 @@
+ 	return rec->unk81C;
+ }
+ 
++#if defined(TARGET_PC) && defined(__ANDROID__)
++extern u8* port_mem1_base;
++extern u32 port_mem1_size;
++extern u8 NullTexData[32];
++struct MobileStaticPool { u8* base; size_t used; };
++static MobileStaticPool mobileStaticPool;
++static void* mobileStaticAllocate(size_t bytes, size_t alignment, void* context) {
++    MobileStaticPool* pool = (MobileStaticPool*)context;
++    size_t previous = __atomic_load_n(&pool->used, __ATOMIC_RELAXED);
++    for (;;) {
++        size_t offset = (previous + alignment - 1) & ~(alignment - 1);
++        if (offset > 0x2000 || bytes > 0x2000 - offset) return 0;
++        if (__atomic_compare_exchange_n(&pool->used, &previous, offset + bytes,
++                                        false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
++            return pool->base + offset;
++    }
++}
++#endif
++
+ void TApplication::initialize()
+ {
+ 	OSProtectRange(0, nullptr, 0x80000000, 0);
+@@ -343,6 +366,17 @@
+ 	JKRExpHeap::createRoot(1, false);
+ 	JKRExpHeap::create(PORT_HEAP64(0x20000), JKRGetRootHeap(), false)->becomeSystemHeap();
+ 	JKRGetRootHeap()->becomeCurrentHeap();
++#if defined(TARGET_PC) && defined(__ANDROID__)
++    // The later scene solid heap consumes the root's remaining free block.
++    // Reserve this bounded persistent arena before that happens; never stage
++    // immutable FIFO resources in a scene heap that will be freed.
++    mobileStaticPool.base = (u8*)JKRHeap::alloc(0x2000, 0x20, JKRGetRootHeap());
++    mobileStaticPool.used = 0;
++    if (!mobileStaticPool.base) abort();
++    if (!port_gx_static_configure(port_mem1_base, port_mem1_size,
++                                  mobileStaticAllocate, &mobileStaticPool) ||
++        !port_gx_static_register(NullTexData, sizeof(NullTexData))) abort();
++#endif
+ 	DVDInit();
+ 	MarErrInit();
+ 	VIInit();
+--- a/src/MarioUtil/gd-reinit-gx.cpp
++++ b/src/MarioUtil/gd-reinit-gx.cpp
+@@ -1,3 +1,7 @@
++#if defined(TARGET_PC) && defined(__ANDROID__)
++#include "gx_static_memory.h"
++#include <stdlib.h>
++#endif
+ #include <dolphin/gx.h>
+ #include <dolphin/mtx.h>
+ #include <dolphin/types.h>
+@@ -141,6 +145,9 @@
+ static void ReInitTexture()
+ {
+ 	GXTexObj obj;
++#if defined(TARGET_PC) && defined(__ANDROID__)
++    if (!port_gx_static_register(NullTexData, sizeof(NullTexData))) abort();
++#endif
+ 	GXInitTexObj(&obj, &NullTexData, 4, 4, GX_TF_IA8, GX_CLAMP, GX_CLAMP, 0);
+ 	GXLoadTexObj(&obj, GX_TEXMAP0);
+ 	GXLoadTexObj(&obj, GX_TEXMAP1);
+--- a/src/Map/BathWaterManager.cpp
++++ b/src/Map/BathWaterManager.cpp
+@@ -1,3 +1,7 @@
++#if defined(TARGET_PC) && defined(__ANDROID__)
++#include "gx_static_memory.h"
++#include <stdlib.h>
++#endif
+ #include <Map/BathWaterManager.hpp>
+ #include <JSystem/ResTIMG.hpp>
+ #include <JSystem/JDrama/JDRNameRefGen.hpp>
+@@ -1142,6 +1146,9 @@
+ 			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+ 			0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+ 		};
++#if defined(TARGET_PC) && defined(__ANDROID__)
++        if (!port_gx_static_register(clear_z_TX, sizeof(clear_z_TX))) abort();
++#endif
+ 		GXInitTexObj(&unk80114, clear_z_TX, 4, 4, GX_TF_Z24X8, GX_REPEAT,
+ 		             GX_REPEAT, 0);
+ 		GXInitTexObjLOD(&unk80114, GX_NEAR, GX_NEAR, 0.0f, 0.0f, 0.0f, GX_FALSE,
+--- a/src/Player/ModelWaterManager.cpp
++++ b/src/Player/ModelWaterManager.cpp
+@@ -1,3 +1,7 @@
++#if defined(TARGET_PC) && defined(__ANDROID__)
++#include "gx_static_memory.h"
++#include <stdlib.h>
++#endif
+ #include <Player/ModelWaterManager.hpp>
+ #include <Player/MarioAccess.hpp>
+ #include <Player/SplashManager.hpp>
+@@ -1829,6 +1833,11 @@
+ void init_sphere_glist()
+ {
+ 	sphere_glist_p = tmp_data;
++#if defined(TARGET_PC) && defined(__ANDROID__)
++    sphere_glist_p = const_cast<void*>(port_gx_static_register(tmp_data, sizeof(tmp_data)));
++    if (!sphere_glist_p) abort();
++    GXPC_AddBigEndianRange(sphere_glist_p, sizeof(tmp_data));
++#endif
+ 	sphere_pos_t   = (u8*)sphere_glist_p + 0x760;
+ }
+ 
+@@ -1854,12 +1863,17 @@
+ 		static bool initialized = false;
+ 		if (!initialized) {
+ 			sphere_glist_p = tmp_data;
++#if defined(TARGET_PC) && defined(__ANDROID__)
++    sphere_glist_p = const_cast<void*>(port_gx_static_register(tmp_data, sizeof(tmp_data)));
++    if (!sphere_glist_p) abort();
++    GXPC_AddBigEndianRange(sphere_glist_p, sizeof(tmp_data));
++#endif
+ 			initialized    = 1;
+ 			sphere_pos_t   = (u8*)sphere_glist_p + 0x760;
+ #ifdef TARGET_PC
+ 			// tmp_data is retail's bytes: the s16 sphere positions after the
+ 			// display list are big-endian, like data loaded from the disc.
+-			GXPC_AddBigEndianRange(tmp_data, sizeof(tmp_data));
++			GXPC_AddBigEndianRange(sphere_glist_p, sizeof(tmp_data));
+ #endif
+ 		}
+ 

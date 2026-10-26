@@ -11,7 +11,12 @@ option(SMS_GX_BUILD_TESTS "Build the headless self-test" ON)
 # on WebGPU, built with MSVC) instead of OpenGL: the GX front end is shared.
 set(SMS_GX_BACKEND "opengl" CACHE STRING "GX renderer: opengl or aurora")
 set_property(CACHE SMS_GX_BACKEND PROPERTY STRINGS opengl aurora)
-set(SMS_AURORA_BRIDGE_BUILD "${CMAKE_CURRENT_SOURCE_DIR}/../../build/aurora-bridge" CACHE PATH
+if(ANDROID)
+  set(_sms_aurora_default "${CMAKE_CURRENT_SOURCE_DIR}/../../build/android-arm64-aurora")
+else()
+  set(_sms_aurora_default "${CMAKE_CURRENT_SOURCE_DIR}/../../build/aurora-bridge")
+endif()
+set(SMS_AURORA_BRIDGE_BUILD "${_sms_aurora_default}" CACHE PATH
     "Build directory of aurora-bridge (sms_aurora.dll, sms_aurora.lib and the DLLs they need)")
 
 set(SMS_GX_SOURCES
@@ -86,9 +91,16 @@ set_target_properties(sms_gx PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(SMS_GX_BACKEND STREQUAL "aurora")
     target_compile_definitions(sms_gx PRIVATE SMS_GX_AURORA=1)
     target_include_directories(sms_gx PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../aurora-bridge)
+    if(ANDROID)
+        add_library(sms_aurora_mobile SHARED IMPORTED GLOBAL)
+        set_target_properties(sms_aurora_mobile PROPERTIES
+            IMPORTED_LOCATION "${SMS_AURORA_BRIDGE_BUILD}/libsms_aurora.so")
+        target_link_libraries(sms_gx PUBLIC sms_aurora_mobile)
+    else()
     target_link_libraries(sms_gx PUBLIC ${SMS_AURORA_BRIDGE_BUILD}/sms_aurora.lib)
     file(GLOB SMS_AURORA_RUNTIME_DLLS ${SMS_AURORA_BRIDGE_BUILD}/*.dll)
     set(SMS_AURORA_RUNTIME_DLLS "${SMS_AURORA_RUNTIME_DLLS}" CACHE INTERNAL "")
+    endif()
     message(STATUS "sms_gx: Aurora back end (${SMS_AURORA_BRIDGE_BUILD})")
 endif()
 # Window (SDL2) and headless (EGL) context creation; both optional so the

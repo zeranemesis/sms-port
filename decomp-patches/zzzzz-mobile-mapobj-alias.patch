@@ -1,0 +1,25 @@
+Reason: Android Clang requires explicit bounds on PC table export aliases; preserve the original tables and symbols.
+--- a/src/MoveBG/MapObjInit.cpp
++++ b/src/MoveBG/MapObjInit.cpp
+@@ -10820,1 +10820,5 @@
++#if defined(__ANDROID__)
++extern TMapObjData* portExport_sObjDataTable[sizeof(sObjDataTable) / sizeof(sObjDataTable[0])] __asm__("sObjDataTable") __attribute__((alias("_ZL13sObjDataTable")));
++#else
+ extern TMapObjData* portExport_sObjDataTable[] __asm__("sObjDataTable") __attribute__((alias("_ZL13sObjDataTable")));
++#endif
+--- a/src/Player/MarioDraw.cpp
++++ b/src/Player/MarioDraw.cpp
+@@ -42,1 +42,5 @@
++#if defined(__ANDROID__)
++extern unkTMarioAnimeFilesStruct portExport_marioAnimeFiles[sizeof(marioAnimeFiles) / sizeof(marioAnimeFiles[0])] __asm__("marioAnimeFiles") __attribute__((alias("_ZL15marioAnimeFiles")));
++#else
+ extern unkTMarioAnimeFilesStruct portExport_marioAnimeFiles[] __asm__("marioAnimeFiles") __attribute__((alias("_ZL15marioAnimeFiles")));
++#endif
+--- a/src/Player/Yoshi.cpp
++++ b/src/Player/Yoshi.cpp
+@@ -65,1 +65,5 @@
++#if defined(__ANDROID__)
++extern GXColor portExport_bodyColor[sizeof(bodyColor) / sizeof(bodyColor[0])] __asm__("bodyColor") __attribute__((alias("_ZL9bodyColor")));
++#else
+ extern GXColor portExport_bodyColor[] __asm__("bodyColor") __attribute__((alias("_ZL9bodyColor")));
++#endif
