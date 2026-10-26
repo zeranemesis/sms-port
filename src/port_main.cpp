@@ -3,6 +3,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include "port_platform.h"
+#ifdef SMS_ARCHIPELAGO
+#include <cstring>
+extern int SMSAPNativeSaveSelftest();
+extern int SMSAPNativeBlueSelftest();
+extern int SMSAPNativeOptionsSelftest();
+#endif
 #include "port_win64_stack.h"
 
 extern void SMS_main(void);
@@ -16,6 +22,11 @@ static void* run_game(void* p)
 {
 	Args* a = (Args*)p;
 	port_init(a->argc, a->argv);
+#ifdef SMS_ARCHIPELAGO
+	if (a->argc == 2 && std::strcmp(a->argv[1], "--ap-native-save-selftest") == 0) std::exit(SMSAPNativeSaveSelftest());
+	if (a->argc == 2 && std::strcmp(a->argv[1], "--ap-native-blue-selftest") == 0) std::exit(SMSAPNativeBlueSelftest());
+	if (a->argc == 2 && std::strcmp(a->argv[1], "--ap-native-options-selftest") == 0) std::exit(SMSAPNativeOptionsSelftest());
+#endif
 	std::fprintf(stderr, "[port] entering SMS_main\n");
 	SMS_main();
 	std::fprintf(stderr, "[port] SMS_main returned\n");

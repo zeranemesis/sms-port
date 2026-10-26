@@ -70,6 +70,10 @@ include(${CMAKE_BINARY_DIR}/decomp_sources.cmake)
 # Port patches (decomp-patches/*.patch) are applied to copies of the touched
 # files under the build tree; those copies replace the originals in the
 # source lists.
+option(SMS_ARCHIPELAGO "Build the opt-in Sunshine Archipelago adapter" OFF)
+if(SMS_ARCHIPELAGO AND SMS_ECLIPSE)
+  message(FATAL_ERROR "Archipelago supports standard Sunshine, not Eclipse")
+endif()
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/patches.cmake)
 
 set(SMS_REGION "GMSP01" CACHE STRING "Game region: GMSP01, GMSJ01, GMSE01")
@@ -232,6 +236,10 @@ endif()
 
 add_library(sms_game STATIC ${SMS_DECOMP_CXX_SOURCES} ${SMS_DECOMP_C_SOURCES})
 target_sources(sms_game PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/platform/frontend/game_progress.cpp)
+if(SMS_ARCHIPELAGO)
+  add_compile_definitions(SMS_ARCHIPELAGO=1)
+  target_sources(sms_game PRIVATE ${SMS_PORT_SRC}/ap_game.cpp)
+endif()
 # Host THP decoders (the decomp's SDK decoder, patched; platform/thp).
 include(${CMAKE_CURRENT_SOURCE_DIR}/platform/thp/thp.cmake)
 # The SDK's PADClamp (dead zone / octagon), built from the decomp as C.
@@ -312,6 +320,9 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
+if(NOT SMS_ARCHIPELAGO)
+  list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/ap/")
+endif()
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/game_progress\\.cpp$")
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/frontend/partyboard_(backend(_aurora)?|menu)\\.cpp$")
 # platform/mods/eclipse is built by cmake/eclipse.cmake, and only with SMS_ECLIPSE.
@@ -563,4 +574,11 @@ elseif(SMS_BUNDLE_DISC)
     COMMENT "Bundling ${SMS_BUNDLE_DISC} into sms-standalone"
     VERBATIM)
   add_custom_target(sms_standalone ALL DEPENDS ${_standalone})
+endif()
+
+if(SMS_ARCHIPELAGO)
+  add_executable(sms_ap_bridge_test EXCLUDE_FROM_ALL platform/ap/tests/bridge_test.cpp platform/ap/bridge.cpp)
+  target_include_directories(sms_ap_bridge_test PRIVATE ${SMS_PORT_SRC}/port_include)
+  target_compile_features(sms_ap_bridge_test PRIVATE cxx_std_11)
+  target_link_libraries(sms_ap_bridge_test PRIVATE Threads::Threads)
 endif()

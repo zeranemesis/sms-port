@@ -1,0 +1,26 @@
+Reason: optional Archipelago game-thread bridge, without save-state dependencies
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -1007,10 +1007,13 @@
+ // getVideo()): retail's low region runs to 0xac (the TRect temp) where ours
+ // ended at 0x38, i.e. inline temporaries from an expansion this body lacks;
+ // plus the gpMSound reload noted below.
++void ApplicationAPFrame(TApplication*, bool);
++void ApplicationAPInput(TApplication*, bool);
+ int TApplication::gameLoop()
+ {
+ 	u32 nextState = APP_STATE_DEFAULT;
+ 	while (nextState <= APP_STATE_DEFAULT) {
++		ApplicationAPFrame(this, false);
+ 		mDisplay->startRendering();
+ 
+ 		ApplicationStartTimerTwice(mDisplay->getVideo()->mLastRetraceTime, 0);
+@@ -1021,6 +1024,8 @@
+ 			mGamePads[i]->updateMeaning();
+ 			mGamePads[i]->onFlag(0x40);
+ 		}
++
++		ApplicationAPInput(this, false);
+ 
+ 		if (int dvderr = drawDVDErr()) {
+ 			SMSRumbleMgr->reset();

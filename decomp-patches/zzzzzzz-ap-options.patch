@@ -1,0 +1,28 @@
+Reason: selectable episodes and alternate FLUDD starts use native state without fabricating completion flags
+--- a/include/System/FlagManager.hpp
++++ b/include/System/FlagManager.hpp
+@@ -74,1 +74,2 @@
+ 	friend int SMSAPNativeSaveSelftest();
++	friend int SMSAPNativeOptionsSelftest();
+--- a/src/GC2D/SelectMenu.cpp
++++ b/src/GC2D/SelectMenu.cpp
+@@ -1,1 +1,2 @@
++#include "port_ap.h"
+ #include <dolphin/gx.h>
+@@ -659,3 +660,4 @@
++		mNumUnlockedShines = port_ap_episode_count(mNumUnlockedShines);
+ 		if (mNumUnlockedShines == 0) {
+ 			mNumUnlockedShines = 1;
+ 		}
+--- a/src/Player/MarioInit.cpp
++++ b/src/Player/MarioInit.cpp
+@@ -1,1 +1,2 @@
++#include "port_ap.h"
+ #include <Player/Mario.hpp>
+@@ -336,1 +337,6 @@
++	if (port_ap_enabled()) {
++		port_ap_observe_fludd_stage((local_20 & 1) != 0);
++		if (!port_ap_fludd_allowed())
++			offFlag(MARIO_FLAG_HAS_FLUDD);
++	}
+ 	SMS_SetMarioAccessParams();
