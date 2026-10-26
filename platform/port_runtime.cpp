@@ -544,6 +544,48 @@ static std::string find_rom_image()
 	return n == 1 ? image : std::string();
 }
 
+#ifdef _WIN32
+// Started outside CubeShelf with no game anywhere: ask for the disc image and
+// keep it in settings.txt as disc_image. Cancelling explains and quits, where
+// the game used to crash on the missing files.
+static void ask_disc_image()
+{
+	typedef BOOL(WINAPI * GetOpenFileNameAFn)(LPOPENFILENAMEA);
+	HMODULE dlg = LoadLibraryA("comdlg32.dll");
+	GetOpenFileNameAFn open = dlg ? (GetOpenFileNameAFn)GetProcAddress(dlg, "GetOpenFileNameA") : nullptr;
+	char path[MAX_PATH] = "";
+	for (;;) {
+		OPENFILENAMEA ofn;
+		memset(&ofn, 0, sizeof ofn);
+		ofn.lStructSize = sizeof ofn;
+		ofn.lpstrFilter = "GameCube disc image (*.iso, *.gcm, *.ciso)\0*.iso;*.gcm;*.ciso\0All files\0*.*\0";
+		ofn.lpstrFile   = path;
+		ofn.nMaxFile    = sizeof path;
+		ofn.lpstrTitle  = "Choisir l'image disque de Super Mario Sunshine (ISO, GCM ou CISO)";
+		ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+		if (!open || !open(&ofn)) {
+			MessageBoxA(NULL,
+			            "Aucun jeu n'a ete choisi.\n\nLancez le jeu depuis CubeShelf, ou relancez-le et choisissez "
+			            "votre image disque de Super Mario Sunshine (ISO, GCM ou CISO ; un RVZ doit d'abord "
+			            "etre converti en ISO avec Dolphin).",
+			            "Super Mario Sunshine", MB_OK | MB_ICONINFORMATION);
+			exit(0);
+		}
+		if (gcdisc_probe(path))
+			break;
+		MessageBoxA(NULL, "Ce fichier n'est pas une image disque GameCube lisible (ISO, GCM ou CISO).",
+		            "Super Mario Sunshine", MB_OK | MB_ICONWARNING);
+	}
+	port_setenv("SMS_DISC_IMAGE", path, 1);
+	const char* settings = settings_path();
+	if (FILE* f = fopen(settings ? settings : "settings.txt", "a")) {
+		fprintf(f, "\ndisc_image = %s\n", path);
+		fclose(f);
+	}
+	port_log("[port] game chosen: %s\n", path);
+}
+#endif
+
 // The key bindings file platform/pad reads (the same search as settings.txt).
 static const char* bindings_path()
 {
@@ -773,6 +815,11 @@ extern "C" void port_init(int argc, char** argv)
 			port_setenv("SMS_DISC_IMAGE", find_rom_image().c_str(), 1);
 			port_log("[port] game: %s\n", find_rom_image().c_str());
 		}
+#ifdef _WIN32
+		// the default "." source is an extracted folder, so it needs data/
+		else if (access("data", 0) != 0 && !getenv("SMS_HEADLESS"))
+			ask_disc_image();
+#endif
 	}
 #ifdef _WIN32
 	for (int sig : {SIGSEGV, SIGFPE, SIGILL, SIGABRT})
