@@ -108,7 +108,7 @@ foreach(m moveset eclipse)
   target_compile_options(${m}_objs PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
   set(_o ${CMAKE_CURRENT_BINARY_DIR}/${m}_module.o)
   add_custom_command(OUTPUT ${_o}
-    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -o ${_o} $<TARGET_OBJECTS:${m}_objs>
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -fuse-ld=bfd -o ${_o} $<TARGET_OBJECTS:${m}_objs>
     COMMAND ${_localize} ${_o}
     DEPENDS ${m}_objs $<TARGET_OBJECTS:${m}_objs> COMMAND_EXPAND_LISTS VERBATIM)
   list(APPEND _modules ${_o})
@@ -123,7 +123,7 @@ if(WIN32)
   # A linker script makes ld write a PE image, not an object: link plainly and
   # rename the section (modhooks.cpp brackets sms_mod_ctors$m on Windows).
   add_custom_command(OUTPUT ${_obj}
-    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -o ${_obj}
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -fuse-ld=bfd -o ${_obj}
       $<TARGET_OBJECTS:bse_objs> ${_modules}
     # clang's .llvm_addrsig would end up as a section of the executable.
     COMMAND ${SMS_GNU_OBJCOPY} --rename-section .ctors=sms_mod_ctors$m --remove-section=.llvm_addrsig ${_obj}
@@ -135,7 +135,7 @@ if(WIN32)
     COMMAND_EXPAND_LISTS VERBATIM)
 else()
   add_custom_command(OUTPUT ${_obj}
-    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
+    COMMAND ${CMAKE_CXX_COMPILER} ${_arch} -r -nostdlib -fuse-ld=bfd -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld -o ${_obj}
       $<TARGET_OBJECTS:bse_objs> ${_modules}
     DEPENDS bse_objs $<TARGET_OBJECTS:bse_objs> ${_modules} ${CMAKE_CURRENT_SOURCE_DIR}/mod_ctors.ld
     COMMAND_EXPAND_LISTS VERBATIM)
