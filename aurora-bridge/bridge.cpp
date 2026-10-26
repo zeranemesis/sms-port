@@ -18,6 +18,7 @@
 #include <aurora/aurora.h>
 #include <aurora/event.h>
 #include <aurora/gfx.h>
+#include <aurora/imgui.h>
 #include <aurora/sms_ext.h>
 #include <dolphin/gx.h>
 #include <dolphin/gx/GXExtra.h>
@@ -380,6 +381,23 @@ void translate(const SDL_Event& e) {
     }
 }
 
+// The shader preparation, drawn in the window: on a first launch it lasts minutes,
+// and a black window looks like a game that does not start.
+void drawPreparation(int percent) {
+    if (!aurora_begin_frame()) return;
+    const ImVec2 size = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(size.x * .5f, size.y * .5f), ImGuiCond_Always, ImVec2(.5f, .5f));
+    ImGui::SetNextWindowSize(ImVec2(size.x * .6f, 0.f), ImGuiCond_Always);
+    if (ImGui::Begin("##shader-preparation", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav)) {
+        ImGui::TextUnformatted("Preparation des shaders : quelques minutes au premier lancement");
+        ImGui::TextUnformatted("Preparing shaders: a few minutes on the first launch");
+        ImGui::ProgressBar(float(percent) / 100.f, ImVec2(-1.f, 0.f));
+    }
+    ImGui::End();
+    aurora_end_frame();
+}
+
 void pumpAurora() {
     for (const AuroraEvent* e = aurora_update(); e && e->type != AURORA_NONE; ++e) {
         if (e->type == AURORA_EXIT) {
@@ -454,6 +472,7 @@ int sab_init(const SabConfig* c) {
         int lastPercent = -1;
         size_t preparedCount = 0;
         const auto preparationStarted = std::chrono::steady_clock::now();
+        auto lastDrawn = std::chrono::steady_clock::now() - std::chrono::seconds(1);
         const bool prepared = aurora::gfx::precompile_pipeline_cache([&](size_t ready, size_t total) {
             preparedCount = total;
             pumpAurora();
@@ -463,6 +482,10 @@ int sab_init(const SabConfig* c) {
                 const auto caption = title + " - Preparation des shaders : " + std::to_string(percent) + "%";
                 SDL_SetWindowTitle(window, caption.c_str());
                 lastPercent = percent;
+            }
+            if (std::chrono::steady_clock::now() - lastDrawn > std::chrono::milliseconds(100)) {
+                drawPreparation(percent);
+                lastDrawn = std::chrono::steady_clock::now();
             }
             return true;
         });

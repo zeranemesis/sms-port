@@ -15,6 +15,7 @@ CubeShelf takes the newest GitHub release of zeranemesis/sms-port and its `sms-p
 
 ## Launch
 
+An ISO or GCM is opened by the game as it is: CubeShelf extracts nothing and adds `SMS_DISC_IMAGE=<absolute path of the image>`, which the game takes over `SMS_DISC_ROOT`.
 CubeShelf converts an RVZ with DolphinTool, extracts the disc's files into `GMSP01/files` beside `sms.exe`, and starts `sms.exe` in its own folder with:
 
 ```text
