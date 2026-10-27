@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 
 #ifdef SMS_GX_HAVE_SDL2
 #include <SDL.h>
@@ -47,6 +48,10 @@ int main(int argc, char** argv) {
     expect(gx::initialWindowLayout({0, 0, 3840, 2160}, 21.0 / 9).w == 1280, "ultrawide default remains manageable");
     const auto invalid = gx::initialWindowLayout({0, 0, 640, 480}, 0);
     expect(invalid.w > 0 && invalid.h > 0, "invalid aspect ratio has a safe fallback");
+    const auto nanAspect = gx::initialWindowLayout({0, 0, 640, 480}, std::numeric_limits<double>::quiet_NaN());
+    expect(nanAspect.w > 0 && nanAspect.h > 0, "NaN aspect ratio has a safe fallback");
+    const auto infiniteAspect = gx::initialWindowLayout({0, 0, 640, 480}, std::numeric_limits<double>::infinity());
+    expect(infiniteAspect.w > 0 && infiniteAspect.h > 0, "infinite aspect ratio has a safe fallback");
 
 #ifdef SMS_GX_HAVE_SDL2
     if (argc > 1 && std::strcmp(argv[1], "--window") == 0) {
