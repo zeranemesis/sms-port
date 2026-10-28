@@ -2,16 +2,22 @@
 #include "pc_services.h"
 #include "gamebanana.h"
 #include "retroachievements.h"
+#include "../mods/randomizer/runtime.h"
+#include "../mods/randomizer/localization.h"
+#include <cstdio>
 #include <RmlUi/Core/Elements/ElementFormControl.h>
 #include <RmlUi/Core.h>
 #include <RmlUi/Core/Input.h>
 #include <algorithm>
+#include <cerrno>
 #include <cstdlib>
 #include <sstream>
 #include <utility>
 
 namespace sms_frontend {
 namespace {
+using sms_randomizer::Text;
+const char* rtext(Text id) { return port_randomizer_text(static_cast<unsigned>(id)); }
 std::string escape(const std::string& value) {
     std::string result;
     for(char c:value){if(c=='&')result+="&amp;";else if(c=='<')result+="&lt;";else if(c=='>')result+="&gt;";else if(c=='\"')result+="&quot;";else if(c=='\'')result+="&#39;";else result+=c;}
@@ -76,6 +82,8 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         std::string markup="<rml><head><title>Super Mario Sunshine — PartyBoard</title>"
             "<link type='text/rcss' href='window.rcss'/><link type='text/rcss' href='tabbing.rcss'/>"
             "<link type='text/rcss' href='sunshine.rcss'/></head><body><window id='settings-window' open>"
+            "<div id='game-brand'><img src='sunshine-logo.png' alt='Super Mario Sunshine' width='144' height='80'/>"
+            "<div class='brand-copy'><div class='brand-title'>Super Mario Sunshine</div><div class='help'>Réglages et mods</div></div></div>"
             "<tab-bar id='tabs' closable>";
         for(int i=0;i<kTabCount;++i)markup+="<tab id='tab-"+std::to_string(i)+"' data-action='tab' data-index='"+std::to_string(i)+"' tabindex='0'>"+tab_titles[i]+"</tab>";
         markup+="<tab-end-spacer/><close id='close' data-action='resume' tabindex='0'/></tab-bar>"
@@ -178,6 +186,8 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
             add_info("restore","Restaurer une sauvegarde","Prépare une nouvelle carte pour le prochain démarrage. La carte actuelle reste intacte.");
             add_info("card-path","Dossier de sauvegarde","La carte active utilise le dossier ci-dessous.");backups=save_backups();break;
         case 5:{
+            add_info("mod-eclipse","Super Mario Eclipse","Une nouvelle aventure Sunshine, avec des niveaux, personnages et défis supplémentaires.");
+            add_info("mod-randomizer","Super Mario Sunshine Randomizer",rtext(Text::Description));
             if (std::getenv("SMS_CUBESHELF") && std::string(std::getenv("SMS_CUBESHELF"))=="1") {
                 add_info("cubeshelf-mods","Mods gérés par CubeShelf","Téléchargez, activez et organisez vos mods dans CubeShelf. Les choix sont chargés au lancement du jeu. Les réglages graphiques, audio et manettes restent disponibles ici.");
                 rows.push_back(toggle("texture_packs","Textures HD","Autorise les textures des mods sélectionnés dans CubeShelf.",true));
@@ -244,6 +254,53 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         }else if(row.key=="achievements"){
             html+="<div>"+escape(ra::status())+"</div>";
             for(const ra::Achievement& a:ra::achievements())html+="<div class='achievement "+std::string(a.unlocked?"unlocked":"locked")+"'><div>"+escape(a.title)+" · "+(a.unlocked?"Débloqué":"Verrouillé")+"</div><div class='help'>"+escape(a.description)+"</div></div>";
+        }else if(row.key=="mod-eclipse"){
+            html+="<div class='mod-card'><div class='section-heading'>Créateurs</div><div>JoshuaMK, CyrusLoS et l’Eclipse Team</div>"
+                "<div class='help'>Moteur : BetterSunshineEngine, JoshuaMKW et ses contributeurs.</div></div>";
+#ifdef __ANDROID__
+            html+="<div class='mod-card'>Le port natif Eclipse est disponible sur PC. Son adaptation mobile reste à réaliser.</div>";
+#else
+            html+="<div class='mod-card'>Port natif PC disponible. Pour jouer, activez Super Mario Eclipse dans les mods de CubeShelf avec votre disque américain.</div>";
+#endif
+            html+="<div class='help'>Projet : github.com/JoshuaMKW/Super-Mario-Eclipse</div>";
+        }else if(row.key=="mod-randomizer"){
+            const std::string configured=bindings.getSetting?bindings.getSetting("randomizer_mode","off"):"off";
+            const Text state=configured=="classic"||configured=="classic-test"?Text::Enabled:
+                             configured=="entrances"?Text::EntrancePreview:Text::Disabled;
+            html+="<div class='mod-card'><div class='section-heading'>"+escape(rtext(Text::Creator))+"</div><div>TheAzack9</div>"
+                "<div class='help'>"+escape(rtext(Text::Engine))+"</div></div>"
+                "<div class='help'>"+escape(rtext(Text::Project))+" : github.com/TheAzack9/SMS_Randomizer</div>";
+            html+="<div class='mod-card'><div>"+escape(rtext(Text::NextLaunch))+"</div><div>"+escape(rtext(state))+"</div></div>";
+            if(port_randomizer_classic()) {
+                unsigned unlocked=0;
+                for(unsigned bits=port_randomizer_unlocks();bits;bits>>=1) unlocked+=bits&1;
+                char description[1024];
+                std::snprintf(description,sizeof(description),rtext(Text::Classic),unlocked);
+                html+="<div class='mod-card'>"+escape(description)+"</div>";
+                html+="<div class='mod-card'><div>"+escape(rtext(Text::Abilities))+"</div>";
+                const unsigned owned=port_randomizer_unlocks();
+                for(unsigned bit=0;bit<23;++bit) if((owned&(1u<<bit))&&bit!=10)
+                    if(const char* name=port_randomizer_unlock_name(1u<<bit)) html+="<div>"+escape(name)+"</div>";
+                if(owned==0x400) html+="<div class='help'>"+escape(rtext(Text::NoAbilities))+"</div>";
+                html+="</div>";
+            } else if(port_randomizer_active()) html+="<div class='mod-card'>"+escape(rtext(Text::Preview))+"</div>";
+#ifndef __ANDROID__
+            html+="<div class='mod-card'><div>"+escape(rtext(Text::Seed))+"</div><input id='randomizer-seed' type='text' maxlength='10' value='"+
+                escape(bindings.getSetting?bindings.getSetting("randomizer_seed","1"):"1")+"'/>"+
+                button("randomizer-enable",rtext(Text::Enable))+button("randomizer-disable",rtext(Text::Disable))+
+                "<div class='help'>"+escape(rtext(Text::Restart))+"</div></div>";
+            if(port_randomizer_active()) {
+                html+="<div class='mod-card'><div>"+escape(rtext(Text::Nozzles))+"</div>";
+                if(port_randomizer_can_use_nozzle(4)) html+=button("randomizer-nozzle",rtext(Text::Hover),"4");
+                if(port_randomizer_can_use_nozzle(1)) html+=button("randomizer-nozzle",rtext(Text::Rocket),"1");
+                if(port_randomizer_can_use_nozzle(5)) html+=button("randomizer-nozzle",rtext(Text::Turbo),"5");
+                if(!port_randomizer_can_use_nozzle(4)&&!port_randomizer_can_use_nozzle(1)&&!port_randomizer_can_use_nozzle(5))
+                    html+="<div class='help'>"+escape(rtext(Text::NoNozzles))+"</div>";
+                html+="</div>";
+            }
+#else
+            html+="<div class='help'>"+escape(rtext(Text::PCOnly))+"</div>";
+#endif
         }else if(row.key=="installed-mods"){
             html+=button("mods-refresh","Actualiser les mods installés");
             const auto mods=gamebanana_installed();
@@ -321,6 +378,31 @@ struct PartyBoardMenu::Impl : Rml::EventListener {
         capture=-1;document->Hide();closing=false;return true;
     }
     void dispatch(const std::string& action,const std::string& val) {
+        if(action=="randomizer-enable"||action=="randomizer-disable"){
+            if(!bindings.setSetting)return;
+            const std::string previousMode=bindings.getSetting?bindings.getSetting("randomizer_mode","off"):"off";
+            const std::string previousSeed=bindings.getSetting?bindings.getSetting("randomizer_seed","1"):"1";
+            if(action=="randomizer-enable"){
+                auto* input=dynamic_cast<Rml::ElementFormControl*>(element("randomizer-seed"));
+                const std::string seed=input?input->GetValue():"";
+                if(seed.empty()||!std::all_of(seed.begin(),seed.end(),[](char c){return c>='0'&&c<='9';})){
+                    status_text(rtext(Text::InvalidSeed));return;
+                }
+                errno=0;char* end=nullptr;const auto number=std::strtoull(seed.c_str(),&end,10);
+                if(errno||*end||number>4294967295ULL){status_text(rtext(Text::SeedBounds));return;}
+                bindings.setSetting("randomizer_seed",std::to_string(number));
+                bindings.setSetting("randomizer_mode","classic");
+            }else bindings.setSetting("randomizer_mode","off");
+            const bool saved=bindings.onSave&&bindings.onSave();
+            if(!saved){bindings.setSetting("randomizer_mode",previousMode);bindings.setSetting("randomizer_seed",previousSeed);}
+            render_detail();
+            status_text(rtext(saved?Text::Saved:Text::SaveFailed));
+            return;
+        }
+        if(action=="randomizer-nozzle"){
+            port_randomizer_request_nozzle(std::atoi(val.c_str()));
+            status_text(rtext(Text::NozzleReady));return;
+        }
         if(action=="fidelity-open"||action=="fidelity-back"){
             fidelity_menu=action=="fidelity-open";selected=0;make_rows();render_rows();render_detail();return;
         }

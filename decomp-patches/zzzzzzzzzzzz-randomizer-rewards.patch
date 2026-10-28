@@ -1,0 +1,89 @@
+Reason: classic reward Shines use the original model and rainbow material, with a named reward in the native Shine-get HUD
+--- a/src/MoveBG/Item.cpp
++++ b/src/MoveBG/Item.cpp
+@@ -1,2 +1,11 @@
+ #include <MoveBG/Item.hpp>
++#ifdef TARGET_PC
++#include <JSystem/J3D/J3DGraphLoader/J3DModelLoader.hpp>
++#include <JSystem/J3D/J3DGraphBase/J3DMaterial.hpp>
++#include <stdio.h>
++extern "C" int port_randomizer_classic();
++extern "C" unsigned port_randomizer_reward(unsigned);
++extern "C" void* port_randomizer_shine_model(unsigned*);
++extern "C" void port_randomizer_shine_color(unsigned char*);
++#endif
+ #include <MoveBG/ItemManager.hpp>
+@@ -729,2 +738,19 @@
+ {
++#ifdef TARGET_PC
++    if (port_randomizer_classic() && (cue & CUE_CALC_ANIM) && !unk1B4 &&
++        port_randomizer_reward(mEventId) && port_randomizer_shine_model(0)) {
++        J3DModel* model = getModel();
++        if (model && model->getModelData() && model->getModelData()->getMaterialNum()) {
++            J3DMaterial* material = model->getModelData()->getMaterialNodePointer(0);
++            if (material) {
++                unsigned char rgb[3];
++                port_randomizer_shine_color(rgb);
++                J3DGXColor* color = material->getMatColor(0);
++                if (color) { color->color.r = rgb[0]; color->color.g = rgb[1]; color->color.b = rgb[2]; }
++                J3DGXColor* tev = material->getTevKColor(0);
++                if (tev) tev->color.a = 0xcf;
++            }
++        }
++    }
++#endif
+ 	if ((cue & CUE_CALC_ANIM) && !checkLiveFlag(LIVE_FLAG_DEAD)) {
+@@ -889,2 +915,24 @@
+ 	                                   | (2 << J3DMLF_TevStageNumShift);
++#ifdef TARGET_PC
++    if (port_randomizer_classic() && port_randomizer_reward(mEventId) &&
++        !TFlagManager::smInstance->getShineFlag(mEventId)) {
++        unsigned size = 0;
++        void* original = port_randomizer_shine_model(&size);
++        if (original) {
++            void* resource = JKRHeap::alloc(size, 32, 0);
++            if (resource) {
++                memcpy(resource, original, size);
++                port_res_to_native_named(resource, size, "unlockshine.bmd");
++                J3DModelData* data = J3DModelLoaderDataBase::load(resource, 0x10040000);
++                if (data) {
++                    J3DModel* model = new J3DModel(data, 0, 1);
++                    mMActor = new MActor(mMActorKeeper->getMActorAnmData());
++                    mMActor->setModel(model, 0);
++                    fprintf(stderr, "[randomizer] Rainbow reward Shine %u created\n", mEventId);
++                    return;
++                }
++            }
++        }
++    }
++#endif
+ 	MActor* result;
+--- a/src/GC2D/ConsoleStr.cpp
++++ b/src/GC2D/ConsoleStr.cpp
+@@ -1,2 +1,8 @@
+ #include <GC2D/ConsoleStr.hpp>
++#ifdef TARGET_PC
++#include <MoveBG/Item.hpp>
++#include <JSystem/J2D/J2DPrint.hpp>
++extern "C" int port_randomizer_classic();
++extern "C" int port_randomizer_reward_message(unsigned, char*, unsigned);
++#endif
+ #include <GC2D/BoundPane.hpp>
+@@ -394,2 +400,17 @@
+ 		local_1a0.setup2D();
++#ifdef TARGET_PC
++        if (port_randomizer_classic() && unk2B4 == 2 && gpMarDirector->unk25C && gpSystemFont) {
++            char message[128];
++            if (port_randomizer_reward_message(gpMarDirector->unk25C->getEventId(), message, sizeof(message))) {
++                J2DPrint print(gpSystemFont, 0);
++                print.setFontSize(20, 20);
++                J2DPrint::TSize size;
++                print.getSize(size, "%s", message);
++                const JDrama::TRect& viewport = graphics->getViewport();
++                const int x = viewport.x1 + (viewport.x2 - viewport.x1 - size.unk0) * 0.5f;
++                const int y = viewport.y1 + (viewport.y2 - viewport.y1) * 0.8f;
++                print.print(x, y, "%s", message);
++            }
++        }
++#endif
+ 		graphics->setScissor(rect);

@@ -341,6 +341,7 @@ file(GLOB_RECURSE SMS_PLATFORM_SOURCES CONFIGURE_DEPENDS
 # platform/gx/CMakeLists.txt defining a library target `sms_gx`, it is linked
 # in and its strong GX* definitions replace the weak stubs.
 list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/gx/")
+list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/mods/randomizer/tests/")
 if(NOT SMS_ARCHIPELAGO)
   list(FILTER SMS_PLATFORM_SOURCES EXCLUDE REGEX "/platform/ap/")
 endif()
@@ -366,7 +367,7 @@ if(ANDROID AND SMS_ANDROID_APP)
 else()
   add_executable(sms ${SMS_PORT_SRC}/port_main.cpp ${SMS_PLATFORM_SOURCES})
 endif()
-set_source_files_properties(platform/frontend/gamebanana.cpp platform/frontend/pc_services.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
+set_source_files_properties(platform/frontend/gamebanana.cpp platform/frontend/pc_services.cpp platform/mods/randomizer/runtime.cpp PROPERTIES COMPILE_OPTIONS "-std=gnu++17")
 include(cmake/retroachievements.cmake)
 target_link_libraries(sms PRIVATE sms_retroachievements)
 if(WIN32)

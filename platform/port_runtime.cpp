@@ -1,6 +1,7 @@
 // Port runtime: logging, stub accounting, and the boot sequence that stands in
 // for the GameCube IPL/__start/OSInit before SMS_main runs.
 #include "sms_mod/modhooks.h"
+#include "mods/randomizer/runtime.h"
 #include "port_compat.h"
 #include "port_platform.h"
 #include "port_stub.h"
@@ -454,6 +455,8 @@ static const struct {
 } kSettings[] = {
 	{ "language", "SMS_LANGUAGE" },
 	{ "menu_start", "SMS_MENU_ON_START" },
+	{ "randomizer_mode", "SMS_RANDOMIZER_MODE" },
+	{ "randomizer_seed", "SMS_RANDOMIZER_SEED" },
 	{ "texture_packs", "SMS_TEXTURE_PACKS" }, // on (mods/textures), off, or folders
 	{ "texture_pack_mb", "SMS_TEXTURE_PACK_MB" },
 	{ "hd_cutscenes", "SMS_HD_CUTSCENES" }, // follows HD textures; 0 disables
@@ -775,6 +778,8 @@ extern "C" void port_init(int argc, char** argv)
 	// The PAL DolphinJet frontend is local-only.
 	port_setenv("SMS_NET_MODE", "off", 1);
 	sms_frontend_activate_save_restore();
+	if (!port_randomizer_prepare())
+		exit(1);
 	pick_glx_vendor();
 	if (const char* m = getenv("SMS_SKIP_MOVIES"))
 		port_skip_movies = *m && strcmp(m, "0") != 0;

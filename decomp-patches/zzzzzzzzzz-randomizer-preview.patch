@@ -1,0 +1,109 @@
+Reason: opt-in native entrance randomizer preview; standard game and original saves remain separate
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -2,2 +2,3 @@
+ #include <stdio.h>
++#include <string.h>
+ #include <stdlib.h>
+@@ -639,2 +640,50 @@
+ 
++#ifdef TARGET_PC
++extern "C" int port_randomizer_active();
++extern "C" int port_randomizer_ready();
++extern "C" void port_randomizer_add_scene(unsigned);
++extern "C" int port_randomizer_finish_scenes();
++extern "C" int port_randomizer_route(unsigned, unsigned);
++static void ApplicationRandomizerTransition(TApplication* app)
++{
++    if (!port_randomizer_active() || app->mAppState != TApplication::APP_STATE_GAMEPLAY)
++        return;
++    if (!port_randomizer_ready()) {
++        TNameRefPtrAryT<TNameRefAryT<TScenarioArchiveName> >& tables = *app->unk30;
++        for (unsigned stage = 0; stage < tables.getChildren().size() && stage < 256; ++stage) {
++            TNameRefAryT<TScenarioArchiveName>* episodes = tables.getChildren()[stage];
++            if (!episodes) continue;
++            for (unsigned episode = 0; episode < episodes->size() && episode < 256; ++episode) {
++                const char* name = episodes->getChildren()[episode].mArcName;
++                if (!name) continue;
++                char path[256];
++                snprintf(path, sizeof(path), "/data/scene/%s", name);
++                bool exists = DVDConvertPathToEntrynum(path) >= 0;
++                char* ext = strrchr(path, '.');
++                if (!exists && ext && strcmp(ext, ".arc") == 0) {
++                    strcpy(ext, ".szs");
++                    exists = DVDConvertPathToEntrynum(path) >= 0;
++                }
++                if (exists) port_randomizer_add_scene(stage << 8 | episode);
++            }
++        }
++        if (!port_randomizer_finish_scenes()) {
++            app->mAppState = TApplication::APP_STATE_QUIT;
++            return;
++        }
++    }
++    const unsigned requested = app->mNextArea.getStage() << 8 | app->mNextArea.getScenario();
++    const unsigned destination = port_randomizer_route(requested, app->mCurrArea.getStage() << 8 | app->mCurrArea.getScenario());
++    app->mNextArea.set(destination >> 8, destination & 255, 0);
++    TFlagManager* flags = TFlagManager::getInstance();
++    flags->setBool(true, 0x1038F);
++    flags->setBool(true, 0x10386);
++    flags->setBool(true, 0x10387);
++    for (unsigned area = 0; area < 10; ++area) {
++        flags->setNozzleRight(area, 0);
++        flags->setNozzleRight(area, 1);
++    }
++}
++#endif
++
+ void TApplication::proc()
+@@ -775,2 +824,5 @@
+ 		mAppState = nextState;
++#ifdef TARGET_PC
++		ApplicationRandomizerTransition(this);
++#endif
+ 		mPrevArea = mCurrArea;
+--- a/src/Player/MarioInit.cpp
++++ b/src/Player/MarioInit.cpp
+@@ -339,4 +339,11 @@
+ 
++#ifdef TARGET_PC
++extern "C" int port_randomizer_active();
++#endif
++
+ void TMario::loadAfter()
+ {
++#ifdef TARGET_PC
++	if (port_randomizer_active() && isMario()) onFlag(MARIO_FLAG_HAS_FLUDD);
++#endif
+ 	if (checkFlag(MARIO_FLAG_HAS_FLUDD))
+@@ -361,2 +368,8 @@
+ 	initMirrorModel();
++#ifdef TARGET_PC
++    if (port_randomizer_active() && isMario() && getFludd()) {
++        getFludd()->changeNozzle(TWaterGun::Hover, false);
++        getFludd()->changeNozzle(TWaterGun::Spray, false);
++    }
++#endif
+ }
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -133,2 +133,7 @@
+ 
++#ifdef TARGET_PC
++extern "C" int port_randomizer_active();
++extern "C" int port_randomizer_take_nozzle();
++#endif
++
+ void TMario::perform(u32 cue, JDrama::TGraphics* graphics)
+@@ -142,2 +147,11 @@
+ 	if (cue & CUE_MOVE) {
++#ifdef TARGET_PC
++        if (port_randomizer_active() && isMario() && getFludd()) {
++            const int nozzle = port_randomizer_take_nozzle();
++            if (nozzle >= 0) {
++                getFludd()->changeNozzle(static_cast<TWaterGun::TNozzleType>(nozzle), false);
++                getFludd()->changeNozzle(TWaterGun::Spray, false);
++            }
++        }
++#endif
+ 		thinkFreeze();

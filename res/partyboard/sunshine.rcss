@@ -1,4 +1,20 @@
 /* Sunshine document glue. PartyBoard window.rcss/tabbing.rcss remain untouched. */
+window #game-brand {
+    display: flex;
+    align-items: center;
+    gap: 20dp;
+    padding: 8dp 24dp;
+    flex: 0 0 auto;
+    border-bottom: 1dp #009dda;
+}
+window #game-brand img { width: 144dp; height: 80dp; }
+window .brand-copy { display: flex; flex-flow: column; gap: 4dp; }
+window .brand-title { font-size: 22dp; font-weight: bold; }
+@media (max-height: 640dp) {
+    window #game-brand { padding: 4dp 16dp; gap: 12dp; }
+    window #game-brand img { width: 90dp; height: 50dp; }
+    window .brand-title { font-size: 18dp; }
+}
 window footer {
     display: flex;
     flex-flow: row;
@@ -38,4 +54,4 @@ window .mod-status { margin: 8dp 0; }
 window .mod-card button { margin-top: 8dp; width: 100%; }
 
 /* Cards are vertical even when the shared theme makes divs inline. */
-window .mod-card, window .mod-title, window .mod-card .help { display: block; }
+window .mod-card, window .mod-title, window .mod-card > div { display: block; }

@@ -1,0 +1,16 @@
+Reason: Randomizer text follows the actual PAL language option, including saved options and live language changes
+--- a/src/System/FlagManager.cpp
++++ b/src/System/FlagManager.cpp
+@@ -123,2 +123,6 @@
+ }
++
++#ifdef TARGET_PC
++extern "C" void port_randomizer_set_language(unsigned);
++#endif
+ 
+@@ -181,2 +185,5 @@
+ 			mOptionInts[low] = value;
++#ifdef TARGET_PC
++            if (flag == 0xA0001) port_randomizer_set_language(static_cast<unsigned>(value));
++#endif
+ 		}

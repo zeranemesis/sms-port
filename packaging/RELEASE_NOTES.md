@@ -1,33 +1,28 @@
-A native PC port of Super Mario Sunshine, built from the decompilation, with a launcher and PC enhancements.
+# Sunshine Aurora — v0.4.0-rc.1
 
-### New in this release: HD cutscenes
-- **All 21 movies at 3x resolution** (AI-enhanced, 1920 x 960), with their original timing, subtitles and audio. From the original project's HD cutscene release.
-- On the launcher's **Graphics** page, **HD cutscenes → Download and install** downloads the movie patches (about 5.7 GB), builds the movies from your own disc image and checks every one against its published checksum. Nothing else needs installing. A switch then turns them on or off.
-- The install is all-or-nothing: if it fails or you cancel it, you keep whatever you had before.
-- **Brought up to date with the original project**: its audio fixes (excess reverb tails, abrupt sound endings and doubled footstep echoes) and the latest decompilation.
+Préversion du Randomizer classique intégré au menu natif PC PAL.
 
-### Online co-op (first stage)
-- A new **Online** page in the launcher: one player chooses **Host**, the others choose **Join** and enter the host's address, and everyone presses Play.
-- Other players appear in your game when you are in the same level and episode, fully animated, with their cap, hands, FLUDD and nozzle, and a **name tag** over their head.
-- Up to **8 players**. It works on a home network straight away. Over the internet, the host forwards UDP port 27016 (it can be changed) on their router.
-- Everyone needs this version. Each player plays their own game for now: levels, enemies and Shine Sprites are not shared yet. Shared progress is the next stage.
-- The launcher's sidebar now fits all of its pages on shorter screens.
+- **F1 → Mods → Super Mario Sunshine Randomizer** : choisir une seed et activer ou désactiver le mod. Fermer puis relancer le jeu pour appliquer le choix.
+- Sauvegardes séparées par seed ; anciens profils classiques conservés ; retour au jeu normal avec sa carte habituelle.
+- Générateur original, premiers contrôles de progression de Mario et de J.E.T., annonce de capacité et liste des déblocages dans le menu.
+- Textes du Randomizer suivant la langue du jeu : français, anglais, allemand, espagnol et italien.
+- Menu Sunshine avec logo et crédits : TheAzack9, contributeurs BetterSunshineEngine ; JoshuaMK, CyrusLoS et Eclipse Team pour Eclipse.
 
-### Earlier: HD texture pack installer
-- **Download and install** on the Graphics page fetches the [Super Mario Sunshine UHD Texture Pack](https://github.com/qashto/Super_Mario_Sunshine_UHD_Texture_Pack) (qashto, razius) from its own release, with progress, resume and Cancel. You can then switch it on or off, reinstall it or remove it.
+**Le portage du Randomizer reste expérimental et incomplet.** Les scripts, interactions et objectifs restants, ainsi qu'une campagne complète, doivent encore être validés. Il est réservé au Sunshine standard PC, sans combinaison avec Eclipse, Android ou Archipelago. La référence analysée est le mod original bêta 0.3.6.
 
-**These downloads contain no game data.** You need your own disc image of Super Mario Sunshine, North America (GMSE01), revision 0 (ISO, GCM, NKit ISO or Dolphin CISO). The launcher's Install page copies it into place.
+Le modèle spécial des Soleils de capacité doit être fourni depuis la copie patchée de l'utilisateur (`rom/randomizer-beta-0.3.6/unlockshine.bmd`). Il n'est pas distribué. Sans lui, le modèle normal reste affiché ; le message de capacité et la liste restent disponibles. Voir le guide inclus dans le paquet.
 
-### Downloads
-- **Windows (64-bit):** `SMS-PC-Port-*-windows-x64.zip`. Unzip anywhere and run `sms.exe`.
-- **Linux (64-bit):** `SMS-PC-Port-*-linux-x86_64.AppImage`. Make it executable (`chmod +x`) and run it. Settings, the installed disc image and mods live in `~/.local/share/sms-port`.
+## Téléchargements
 
-### Launcher
-- **Install:** browse for or drag in your disc image. It is checked (game, region, revision) and copied into the game folder, or used where it is.
-- **Display:** windowed, borderless or exclusive fullscreen (choose the resolution and refresh rate), monitor, vsync (off, on, adaptive), widescreen up to 32:9 or matched to your monitor, HUD position, aspect (keep, stretch, integer) and scaling filter.
-- **Graphics:** internal resolution 1x to 8x (it recommends one for your monitor), MSAA 2x/4x/8x, FXAA, anisotropic filtering up to 16x, sharpening, brightness and HD texture packs.
-- **Camera:** invert X and Y separately, a free camera that no longer swings back behind Mario (L recentres it), camera speed, and mouse look with sensitivity.
-- **Gameplay, Audio and Controls:** 30 or 60 fps, skip intro movies, mods, performance overlay, master volume and keyboard rebinding. Controllers work automatically.
+- `sms-pal-win-x64.zip` : **nouveau** runtime PC PAL Aurora. Extraire puis lancer `sms.exe`, ou utiliser CubeShelf. F1 ouvre les réglages et les mods. Une copie personnelle européenne GMSP01 du jeu est nécessaire.
+- `sms-eclipse-win-x64.zip` : runtime Eclipse **inchangé**, repris à l'identique de v0.3.3.
+- `Sunshine-Aurora-arm64-v8a.apk` : application Android ARM64 **inchangée**, reprise à l'identique de v0.3.3. Elle ne contient pas le nouveau Randomizer natif PC.
+- `checksums.txt` : empreintes SHA-256 des trois téléchargements.
 
-### In game
-F11 or Alt+Enter toggles fullscreen. F10 releases the mouse when mouse look is on. `` ` `` shows the performance overlay. Esc quits.
+Aucun disque ni fichier extrait du jeu n'est distribué. La police propriétaire locale NewRodin est exclue du nouveau paquet PC ; Inter assure le repli.
+
+## Note de développement
+
+La [note de développement](https://github.com/zeranemesis/sms-port/blob/cubeshelf-v0.4.0-rc.1/docs/DEVELOPMENT-NOTES.md) détaille les changements, validations et limites. Elle est aussi incluse dans le paquet PC avec le guide Randomizer.
+
+Validation : compilation Aurora Windows x64, 19 cas de runtime, quatre démarrages depuis les réglages enregistrés, 255 textes/messages traduits, 72 cas du générateur original plus huit cas PAL, et 1 025 comparaisons de couleurs. La présentation finale du HUD et les clics du menu ne sont pas visuellement confirmés.

@@ -1,0 +1,162 @@
+Reason: opt-in classic Randomizer integration test; original seed generation and progressive ability hooks
+--- a/src/Player/MarioCollision.cpp
++++ b/src/Player/MarioCollision.cpp
+@@ -138,4 +138,11 @@
+ 
++#ifdef TARGET_PC
++extern "C" unsigned port_randomizer_unlocks();
++#endif
++
+ bool TMario::canTake(THitActor* object)
+ {
++#ifdef TARGET_PC
++    if (isMario() && !(port_randomizer_unlocks() & (1u << 3))) return false;
++#endif
+ 	return mGamePad->checkMeaning(TMarioGamePad::MEANING_0x100)
+--- a/src/Player/MarioInit.cpp
++++ b/src/Player/MarioInit.cpp
+@@ -341,2 +341,8 @@
+ extern "C" int port_randomizer_active();
++extern "C" int port_randomizer_fludd_available();
++extern "C" int port_randomizer_backup_nozzle();
++extern "C" int port_randomizer_can_use_nozzle(unsigned);
++extern "C" void port_randomizer_player_loaded(int);
++extern "C" int port_randomizer_classic();
++extern "C" unsigned port_randomizer_unlocks();
+ #endif
+@@ -346,3 +352,6 @@
+ #ifdef TARGET_PC
+-	if (port_randomizer_active() && isMario()) onFlag(MARIO_FLAG_HAS_FLUDD);
++	if (port_randomizer_active() && isMario()) {
++        if (port_randomizer_fludd_available()) onFlag(MARIO_FLAG_HAS_FLUDD);
++        else offFlag(MARIO_FLAG_HAS_FLUDD);
++    }
+ #endif
+@@ -369,6 +378,22 @@
+ #ifdef TARGET_PC
+-    if (port_randomizer_active() && isMario() && getFludd()) {
+-        getFludd()->changeNozzle(TWaterGun::Hover, false);
+-        getFludd()->changeNozzle(TWaterGun::Spray, false);
++    if (port_randomizer_active() && isMario() && getFludd() && port_randomizer_fludd_available()) {
++        const int backup = port_randomizer_backup_nozzle();
++        if (backup >= 0) getFludd()->changeNozzle(static_cast<TWaterGun::TNozzleType>(backup), false);
++        if (port_randomizer_can_use_nozzle(TWaterGun::Spray)) getFludd()->changeNozzle(TWaterGun::Spray, false);
+     }
++    if (port_randomizer_classic() && isMario()) {
++        const unsigned owned = port_randomizer_unlocks();
++        if (owned & (1u << 11)) onFlag(MARIO_FLAG_HAS_SHIRT);
++        else offFlag(MARIO_FLAG_HAS_SHIRT);
++        if (mCap) {
++            if (owned & (1u << 12)) mCap->setModelActive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
++            else mCap->setModelInactive(TMarioCap::E_CAP_MODEL_SUNGLASSES);
++            if (owned & (1u << 13)) mCap->setModelActive(TMarioCap::E_CAP_MODEL_HELMET);
++            else {
++                mCap->setModelInactive(TMarioCap::E_CAP_MODEL_HELMET);
++                offFlag(MARIO_FLAG_HELMET);
++            }
++        }
++    }
++    if (isMario()) port_randomizer_player_loaded(checkFlag(MARIO_FLAG_HAS_FLUDD));
+ #endif
+--- a/src/Player/MarioJump.cpp
++++ b/src/Player/MarioJump.cpp
+@@ -294,4 +294,11 @@
+ 
++#ifdef TARGET_PC
++extern "C" unsigned port_randomizer_unlocks();
++#endif
++
+ BOOL TMario::considerJumpRotate()
+ {
++#ifdef TARGET_PC
++    if (isMario() && !(port_randomizer_unlocks() & (1u << 4))) return 0;
++#endif
+ 	int spC;
+--- a/src/Player/MarioMain.cpp
++++ b/src/Player/MarioMain.cpp
+@@ -136,2 +136,3 @@
+ extern "C" int port_randomizer_take_nozzle();
++extern "C" int port_randomizer_can_use_nozzle(unsigned);
+ #endif
+@@ -152,3 +153,4 @@
+                 getFludd()->changeNozzle(static_cast<TWaterGun::TNozzleType>(nozzle), false);
+-                getFludd()->changeNozzle(TWaterGun::Spray, false);
++                if (port_randomizer_can_use_nozzle(TWaterGun::Spray))
++                    getFludd()->changeNozzle(TWaterGun::Spray, false);
+             }
+--- a/src/Player/MarioMove.cpp
++++ b/src/Player/MarioMove.cpp
+@@ -772,4 +772,16 @@
+ 
++#ifdef TARGET_PC
++extern "C" int port_randomizer_filter_action(unsigned*, int, int*);
++#endif
++
+ int TMario::changePlayerStatus(u32 status, u32 arg, bool force)
+ {
++#ifdef TARGET_PC
++    unsigned requested = status;
++    int clear_holder = 0;
++    const int allowed = port_randomizer_filter_action(&requested, isMario(), &clear_holder);
++    if (clear_holder) mHolder = 0;
++    if (!allowed) return 0;
++    status = requested;
++#endif
+ 	if (!force) {
+--- a/src/Player/WaterGun.cpp
++++ b/src/Player/WaterGun.cpp
+@@ -1571,4 +1571,12 @@
+ 
++#ifdef TARGET_PC
++extern "C" int port_randomizer_can_use_nozzle(unsigned);
++extern "C" int port_randomizer_can_switch_backup();
++#endif
++
+ void TWaterGun::changeNozzle(TNozzleType nozzleType, bool animate)
+ {
++#ifdef TARGET_PC
++    if (!port_randomizer_can_use_nozzle(nozzleType)) return;
++#endif
+ 	f32 usedWater = (f32)mCurrentWater
+@@ -2085,2 +2093,5 @@
+ {
++#ifdef TARGET_PC
++    if (!port_randomizer_can_switch_backup()) return;
++#endif
+ 	// TODO: Missing stack space
+--- a/src/System/Application.cpp
++++ b/src/System/Application.cpp
+@@ -642,2 +642,5 @@
+ extern "C" int port_randomizer_active();
++extern "C" int port_randomizer_classic();
++extern "C" unsigned port_randomizer_unlocks();
++extern "C" void port_randomizer_set_collected(unsigned, int);
+ extern "C" int port_randomizer_ready();
+@@ -674,2 +677,7 @@
+     }
++    if (port_randomizer_classic()) {
++        TFlagManager* saved = TFlagManager::getInstance();
++        for (unsigned shine = 0; shine < 120; ++shine)
++            port_randomizer_set_collected(shine, saved->getShineFlag(shine));
++    }
+     const unsigned requested = app->mNextArea.getStage() << 8 | app->mNextArea.getScenario();
+@@ -678,3 +686,3 @@
+     TFlagManager* flags = TFlagManager::getInstance();
+-    flags->setBool(true, 0x1038F);
++    flags->setBool((port_randomizer_unlocks() & (1u << 14)) != 0, 0x1038F);
+     flags->setBool(true, 0x10386);
+--- a/src/System/FlagManager.cpp
++++ b/src/System/FlagManager.cpp
+@@ -309,2 +309,6 @@
+ 
++#ifdef TARGET_PC
++extern "C" void port_randomizer_set_collected(unsigned, int);
++#endif
++
+ void TFlagManager::setShineFlag(u8 shine)
+@@ -319,2 +323,5 @@
+ 	}
++#ifdef TARGET_PC
++    port_randomizer_set_collected(shine, 1);
++#endif
+ }

@@ -1,5 +1,12 @@
 # PartyBoard menu resources
 
+`sunshine-logo.png` is the logo supplied by the user for this Sunshine menu.
+Super Mario Sunshine artwork belongs to Nintendo.
+
+Mod credits shown in the menu: Super Mario Eclipse — JoshuaMK, CyrusLoS and the
+Eclipse Team; Super Mario Sunshine Randomizer — TheAzack9. BetterSunshineEngine
+and its contributors are credited as the mods' engine.
+
 `window.rcss` and `tabbing.rcss` are exact copies from the user's local `C:/Marioparty4-switch-port/res/rml` reference, originating from https://github.com/zeranemesis/Marioparty4.
 The reference's UI component source credits TwilitRealm.
 The Sunshine RmlUi document uses the same window, tab bar, pane and select-button structure, original stylesheets and font files.

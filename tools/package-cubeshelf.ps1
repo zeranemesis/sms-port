@@ -53,6 +53,14 @@ $strip = Join-Path $msys 'mingw64\bin\strip.exe'
 if ($LASTEXITCODE -ne 0) { throw 'strip failed' }
 Get-ChildItem -LiteralPath $Build -Filter '*.dll' -File | Copy-Item -Destination $package
 Copy-Item -Recurse -LiteralPath (Join-Path $Build 'res') -Destination $package
+# This optional local font has no redistribution permission; Inter is the fallback.
+$localFont = Join-Path $package 'res\partyboard\FOT-NewRodin Pro DB.otf'
+if (Test-Path -LiteralPath $localFont) { Remove-Item -LiteralPath $localFont }
+if (-not $Eclipse) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $package 'docs') | Out-Null
+    Copy-Item -LiteralPath (Join-Path $root 'docs\RANDOMIZER-CLASSIQUE.md') -Destination (Join-Path $package 'docs')
+    Copy-Item -LiteralPath (Join-Path $root 'docs\DEVELOPMENT-NOTES.md') -Destination (Join-Path $package 'docs')
+}
 
 # sms_aurora.dll is built against the shared MSVC runtime. Ship it beside the
 # game (app-local deployment) so a PC without the VC++ redistributable starts.
@@ -89,7 +97,10 @@ F1 opens graphics, audio and controls.
 @'
 Super Mario Sunshine native PAL runtime for CubeShelf (Aurora renderer: Direct3D 12, Vulkan or Direct3D 11).
 No game disc or game files are included: CubeShelf prepares them from your own GMSP01 disc.
-F1 opens graphics, audio and controls. Mods are managed by CubeShelf: file mods from GameBanana
+F1 opens graphics, audio, controls and Mods. Sunshine Randomizer (experimental native port)
+can be enabled or disabled there; restart the game to apply the selection. Each seed has
+its own save profile. See docs/RANDOMIZER-CLASSIQUE.md for limits and optional visual assets.
+Other file mods are managed by CubeShelf: file mods from GameBanana
 are applied over the disc each launch. Super Mario Eclipse runs on its own runtime (sms-eclipse).
 '@ | Set-Content -Encoding utf8 -LiteralPath (Join-Path $package 'README.txt')
 }
