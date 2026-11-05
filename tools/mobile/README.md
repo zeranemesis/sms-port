@@ -1,4 +1,34 @@
-# Android ARM64: premier jalon
+# Sunshine Aurora sur Android ARM64
+
+## APK du jeu — préversion 0.4.0-rc.2
+
+L'application du jeu est maintenant distincte des anciens diagnostics décrits
+plus bas. Elle demande Android 9/API 28 ou plus, un appareil ARM64 avec Vulkan,
+et une copie personnelle PAL GMSP01 au format ISO/GCM. Installer
+`Sunshine-Aurora-arm64-v8a.apk`, puis utiliser « Importer mon disque PAL » et
+« Jouer ». Le bouton MENU ouvre le menu PartyBoard ; les commandes tactiles
+et les manettes Android sont prises en charge.
+
+Construction depuis la racine du dépôt, avec le SDK/NDK et le bridge Aurora
+locaux déjà préparés :
+
+```powershell
+.\tools\mobile\build-game.ps1 -App -Target sms -Jobs 6
+python -X utf8 .\tools\mobile\build-surface-app.py --game
+```
+
+Sorties : `build/android-game-app/Sunshine-Aurora-arm64-v8a.apk` et `build.json`.
+Le packaging contrôle les dépendances ARM64, la signature et l'alignement de
+l'APK. La clé de développement locale existante est conservée pour permettre
+la mise à jour des anciennes installations sans changer de signature. Ne pas
+désinstaller une ancienne version pour résoudre un problème de signature :
+la désinstallation effacerait ses données locales.
+
+Cette préversion ne prend pas en charge le Randomizer natif PC, Eclipse ou
+iOS. La compilation et l'installation ne prouvent pas une campagne complète
+ni les performances sur tous les téléphones. Aucun disque n'est inclus.
+
+## Historique — premier jalon de diagnostic mémoire
 
 Ces outils construisent un **diagnostic mémoire**, en exécutable shell ou APK.
 Le jeu n'est pas encore inclus.

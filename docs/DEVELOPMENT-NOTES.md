@@ -1,4 +1,29 @@
-# Note de développement — v0.4.0-rc.1 — 28 octobre 2026
+# Note de développement — v0.4.0-rc.2 — 5 novembre 2026
+
+Cette release reconstruit l'application Android ARM64 depuis les sources
+actuelles. L'APK annonce `versionName=0.4.0-rc.2` et `versionCode=2`, avec le
+même identifiant `org.smsunified.aurora` et la même clé de développement locale
+que les versions précédentes pour permettre une mise à jour sur place.
+
+Le jeu Android utilise Aurora/Vulkan et le menu PartyBoard partagé, avec import
+du disque PAL personnel, commandes tactiles et manettes. Le Randomizer natif
+reste réservé au PC ; la reconstruction Android n'en active pas le portage.
+Le guide `tools/mobile/README.md` décrit maintenant la construction et
+l'installation de l'APK du jeu, avant l'historique des diagnostics.
+
+Validation du 5 novembre : compilation ARM64 du runtime complet ; packaging
+des 49 bibliothèques natives ; signature APK et alignement de 16 Kio contrôlés ;
+certificat identique à celui de l'APK précédent ; installation et démarrage
+du launcher réussis sur l'AYN Thor connecté. L'application annonce bien
+`versionCode=2` et `versionName=0.4.0-rc.2`. Aucun disque n'a été importé pendant
+ce contrôle : le démarrage du moteur et une partie complète n'ont pas été
+retestés sur cet appareil pour cette release.
+
+Les binaires PC Sunshine sont réemballés avec cette note et le guide actuel,
+sans nouvelle modification du moteur PC. Le runtime Eclipse reste celui de
+v0.3.3. Aucun disque ni donnée extraite du jeu n'est distribué.
+
+## Historique : v0.4.0-rc.1 — 28 octobre 2026
 
 Cette préversion apporte le Randomizer classique au runtime PC PAL Aurora et
 au menu natif. Elle ne constitue pas encore un port complet du mod original.
